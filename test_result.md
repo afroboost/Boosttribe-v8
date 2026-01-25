@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Test the Beattribe application - a music platform landing page with specific design elements, header components, hero section, and responsive design requirements"
+user_problem_statement: "Test the Beattribe Admin Panel at /admin - verify admin panel access, live theme editing (slogan changes), color editing (primary color), button labels editing, save & reset functionality, and validation for invalid hex colors"
 
 frontend:
   - task: "Design Elements - Logo and Title"

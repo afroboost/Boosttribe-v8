@@ -185,15 +185,12 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Design Elements - Logo and Title"
-    - "Header Components"
-    - "Hero Section Content"
-    - "Background and Visual Effects"
-    - "Responsive Design"
-    - "Interactive Elements"
-    - "TypeScript Conversion"
-    - "Dynamic Theme Content from theme.json"
-    - "CSS Variables --bt- Prefix"
+    - "Admin Panel Access"
+    - "Live Theme Editing - Slogan"
+    - "Color Editing - Primary Color"
+    - "Button Labels Editing"
+    - "Save & Reset Functionality"
+    - "Validation - Invalid Hex Color"
   stuck_tasks: []
   test_all: true
   test_priority: "high_first"

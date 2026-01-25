@@ -33,19 +33,21 @@ const App: React.FC = () => {
       <ToastProvider>
         <div className="App">
           <BrowserRouter>
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/session" element={<SessionPage />} />
-              <Route path="/session/:sessionId" element={<SessionPage />} />
-              <Route 
-                path="/admin" 
-                element={
-                  <ProtectedRoute>
-                    <AdminDashboard />
-                  </ProtectedRoute>
-                } 
-              />
-            </Routes>
+            <SocketProvider>
+              <Routes>
+                <Route path="/" element={<HomePage />} />
+                <Route path="/session" element={<SessionPage />} />
+                <Route path="/session/:sessionId" element={<SessionPage />} />
+                <Route 
+                  path="/admin" 
+                  element={
+                    <ProtectedRoute>
+                      <AdminDashboard />
+                    </ProtectedRoute>
+                  } 
+                />
+              </Routes>
+            </SocketProvider>
           </BrowserRouter>
         </div>
       </ToastProvider>

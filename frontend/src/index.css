@@ -2,83 +2,231 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-    margin: 0;
-    font-family:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen",
-        "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
-        sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-    font-family:
-        source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
-}
+/* Beattribe Font Imports */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
 
 @layer base {
     :root {
-        --background: 0 0% 100%;
-        --foreground: 0 0% 3.9%;
-        --card: 0 0% 100%;
-        --card-foreground: 0 0% 3.9%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 0 0% 3.9%;
-        --primary: 0 0% 9%;
-        --primary-foreground: 0 0% 98%;
-        --secondary: 0 0% 96.1%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 0 0% 96.1%;
-        --muted-foreground: 0 0% 45.1%;
-        --accent: 0 0% 96.1%;
-        --accent-foreground: 0 0% 9%;
+        /* Beattribe Design System - --bt- prefix */
+        --bt-background: 0 0% 0%;
+        --bt-primary: 266 100% 59%;
+        --bt-secondary: 324 100% 59%;
+        --bt-surface: 240 11% 9%;
+        --bt-surface-alpha: rgba(20, 20, 25, 0.85);
+        
+        /* Text colors */
+        --bt-text-primary: 0 0% 100%;
+        --bt-text-secondary: 0 0% 70%;
+        --bt-text-muted: 0 0% 50%;
+        
+        /* Gradient colors (raw hex) */
+        --bt-gradient-start: #8A2EFF;
+        --bt-gradient-end: #FF2FB3;
+        --bt-gradient-primary: linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%);
+        
+        /* Glow effects */
+        --bt-glow-primary: 0 0 60px rgba(138, 46, 255, 0.4);
+        --bt-glow-secondary: 0 0 60px rgba(255, 47, 179, 0.3);
+        --bt-glow-combined: 0 0 80px rgba(138, 46, 255, 0.5), 0 0 120px rgba(255, 47, 179, 0.3);
+        
+        /* Shadows */
+        --bt-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+        --bt-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+        --bt-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+        --bt-shadow-glow: 0 4px 24px rgba(138, 46, 255, 0.25);
+        
+        /* Border */
+        --bt-border: 0 0% 20%;
+        --bt-border-hover: 0 0% 30%;
+        
+        /* Typography */
+        --bt-font-heading: 'Space Grotesk', sans-serif;
+        --bt-font-body: 'Inter', sans-serif;
+        
+        /* Spacing */
+        --bt-space-xs: 0.25rem;
+        --bt-space-sm: 0.5rem;
+        --bt-space-md: 1rem;
+        --bt-space-lg: 1.5rem;
+        --bt-space-xl: 2rem;
+        --bt-space-2xl: 3rem;
+        --bt-space-3xl: 4rem;
+        
+        /* Border radius */
+        --bt-radius-sm: 6px;
+        --bt-radius-md: 12px;
+        --bt-radius-lg: 16px;
+        --bt-radius-xl: 24px;
+        --bt-radius-full: 9999px;
+        
+        /* Transitions */
+        --bt-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+        --bt-transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+        --bt-transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+        
+        /* Standard shadcn variables mapped to Beattribe */
+        --background: 0 0% 0%;
+        --foreground: 0 0% 100%;
+        --card: 240 11% 6%;
+        --card-foreground: 0 0% 100%;
+        --popover: 240 11% 6%;
+        --popover-foreground: 0 0% 100%;
+        --primary: 266 100% 59%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 324 100% 59%;
+        --secondary-foreground: 0 0% 100%;
+        --muted: 240 11% 15%;
+        --muted-foreground: 0 0% 60%;
+        --accent: 266 100% 59%;
+        --accent-foreground: 0 0% 100%;
         --destructive: 0 84.2% 60.2%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 89.8%;
-        --input: 0 0% 89.8%;
-        --ring: 0 0% 3.9%;
-        --chart-1: 12 76% 61%;
-        --chart-2: 173 58% 39%;
-        --chart-3: 197 37% 24%;
-        --chart-4: 43 74% 66%;
-        --chart-5: 27 87% 67%;
-        --radius: 0.5rem;
+        --destructive-foreground: 0 0% 100%;
+        --border: 0 0% 15%;
+        --input: 0 0% 15%;
+        --ring: 266 100% 59%;
+        --radius: 0.75rem;
     }
-    .dark {
-        --background: 0 0% 3.9%;
-        --foreground: 0 0% 98%;
-        --card: 0 0% 3.9%;
-        --card-foreground: 0 0% 98%;
-        --popover: 0 0% 3.9%;
-        --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 0 0% 14.9%;
-        --secondary-foreground: 0 0% 98%;
-        --muted: 0 0% 14.9%;
-        --muted-foreground: 0 0% 63.9%;
-        --accent: 0 0% 14.9%;
-        --accent-foreground: 0 0% 98%;
-        --destructive: 0 62.8% 30.6%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 0 0% 14.9%;
-        --input: 0 0% 14.9%;
-        --ring: 0 0% 83.1%;
-        --chart-1: 220 70% 50%;
-        --chart-2: 160 60% 45%;
-        --chart-3: 30 80% 55%;
-        --chart-4: 280 65% 60%;
-        --chart-5: 340 75% 55%;
+}
+
+/* Base body styles */
+body {
+    margin: 0;
+    font-family: var(--bt-font-body);
+    background-color: hsl(var(--bt-background));
+    color: hsl(var(--bt-text-primary));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.6;
+}
+
+/* Headings use Space Grotesk */
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--bt-font-heading);
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+/* Code font */
+code {
+    font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+}
+
+/* Gradient text utility */
+.bt-gradient-text {
+    background: var(--bt-gradient-primary);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+/* Glow effect utility */
+.bt-glow {
+    filter: drop-shadow(var(--bt-glow-primary));
+}
+
+/* Surface with backdrop blur */
+.bt-surface {
+    background: var(--bt-surface-alpha);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+/* Custom scrollbar for Beattribe */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: hsl(var(--bt-surface));
+}
+
+::-webkit-scrollbar-thumb {
+    background: hsl(var(--bt-border));
+    border-radius: var(--bt-radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--bt-border-hover));
+}
+
+/* Selection color */
+::selection {
+    background: rgba(138, 46, 255, 0.3);
+    color: white;
+}
+
+/* Focus styles */
+:focus-visible {
+    outline: 2px solid var(--bt-gradient-start);
+    outline-offset: 2px;
+}
+
+/* Animation keyframes */
+@keyframes bt-pulse-glow {
+    0%, 100% {
+        opacity: 0.6;
+        transform: scale(1);
     }
+    50% {
+        opacity: 1;
+        transform: scale(1.05);
+    }
+}
+
+@keyframes bt-float {
+    0%, 100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-10px);
+    }
+}
+
+@keyframes bt-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes bt-gradient-shift {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
+
+/* Animation utilities */
+.bt-animate-pulse-glow {
+    animation: bt-pulse-glow 3s ease-in-out infinite;
+}
+
+.bt-animate-float {
+    animation: bt-float 6s ease-in-out infinite;
+}
+
+.bt-animate-fade-in {
+    animation: bt-fade-in 0.6s ease-out forwards;
+}
+
+.bt-animate-gradient {
+    background-size: 200% 200%;
+    animation: bt-gradient-shift 4s ease infinite;
 }
 
 @layer base {
     * {
         @apply border-border;
-    }
-    body {
-        @apply bg-background text-foreground;
     }
 }
 

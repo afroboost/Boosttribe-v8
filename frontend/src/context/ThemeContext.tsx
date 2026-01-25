@@ -1,6 +1,9 @@
 import React, { createContext, useContext, ReactNode, useState, useCallback } from 'react';
 import { BeattribeTheme, theme as initialThemeConfig } from '@/config/theme.types';
 
+// LocalStorage key for theme persistence
+const STORAGE_KEY = 'bt_theme_config';
+
 // Deep partial type for partial updates
 type DeepPartial<T> = {
   [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
@@ -10,8 +13,11 @@ type DeepPartial<T> = {
 interface ThemeContextType {
   theme: BeattribeTheme;
   updateConfig: (updates: DeepPartial<BeattribeTheme>) => void;
+  saveConfig: () => boolean;
   resetConfig: () => void;
+  clearStoredConfig: () => void;
   hasChanges: boolean;
+  isStoredConfig: boolean;
 }
 
 // Create context with default value
@@ -55,6 +61,43 @@ function deepMerge(target: BeattribeTheme, source: DeepPartial<BeattribeTheme>):
   return result;
 }
 
+// Load theme from LocalStorage
+function loadStoredTheme(): BeattribeTheme | null {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as BeattribeTheme;
+      // Validate the structure has required fields
+      if (parsed.name && parsed.slogan && parsed.colors && parsed.fonts) {
+        return parsed;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load stored theme config:', error);
+  }
+  return null;
+}
+
+// Save theme to LocalStorage
+function saveThemeToStorage(theme: BeattribeTheme): boolean {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(theme));
+    return true;
+  } catch (error) {
+    console.error('Failed to save theme config:', error);
+    return false;
+  }
+}
+
+// Clear theme from LocalStorage
+function clearStoredTheme(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch (error) {
+    console.warn('Failed to clear stored theme:', error);
+  }
+}
+
 // Apply CSS variables to document
 function applyCSSVariables(theme: BeattribeTheme): void {
   const root = document.documentElement;
@@ -77,11 +120,17 @@ function applyCSSVariables(theme: BeattribeTheme): void {
 
 // Theme Provider component
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
-  // State for the theme configuration
-  const [theme, setTheme] = useState<BeattribeTheme>(() => 
-    JSON.parse(JSON.stringify(initialThemeConfig)) as BeattribeTheme
-  );
+  // Initialize from LocalStorage or default config
+  const [theme, setTheme] = useState<BeattribeTheme>(() => {
+    const storedTheme = loadStoredTheme();
+    if (storedTheme) {
+      return storedTheme;
+    }
+    return JSON.parse(JSON.stringify(initialThemeConfig)) as BeattribeTheme;
+  });
+  
   const [hasChanges, setHasChanges] = useState<boolean>(false);
+  const [isStoredConfig, setIsStoredConfig] = useState<boolean>(() => loadStoredTheme() !== null);
 
   // Apply CSS variables on mount and when theme changes
   React.useEffect(() => {
@@ -96,17 +145,38 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     setHasChanges(true);
   }, []);
 
-  // Reset to initial config
+  // Save config to LocalStorage
+  const saveConfig = useCallback((): boolean => {
+    const success = saveThemeToStorage(theme);
+    if (success) {
+      setHasChanges(false);
+      setIsStoredConfig(true);
+    }
+    return success;
+  }, [theme]);
+
+  // Reset to initial config (from JSON file)
   const resetConfig = useCallback(() => {
     setTheme(JSON.parse(JSON.stringify(initialThemeConfig)) as BeattribeTheme);
     setHasChanges(false);
   }, []);
 
+  // Clear stored config and reset to defaults
+  const clearStoredConfig = useCallback(() => {
+    clearStoredTheme();
+    setTheme(JSON.parse(JSON.stringify(initialThemeConfig)) as BeattribeTheme);
+    setHasChanges(false);
+    setIsStoredConfig(false);
+  }, []);
+
   const value: ThemeContextType = {
     theme,
     updateConfig,
+    saveConfig,
     resetConfig,
+    clearStoredConfig,
     hasChanges,
+    isStoredConfig,
   };
 
   return (

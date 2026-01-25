@@ -22,32 +22,35 @@ interface ThemeProviderProps {
   children: ReactNode;
 }
 
-// Deep merge utility function
-function deepMerge<T extends Record<string, unknown>>(target: T, source: DeepPartial<T>): T {
-  const result = { ...target };
+// Deep merge utility function with proper typing
+function deepMerge(target: BeattribeTheme, source: DeepPartial<BeattribeTheme>): BeattribeTheme {
+  const result = JSON.parse(JSON.stringify(target)) as BeattribeTheme;
   
-  for (const key in source) {
-    if (Object.prototype.hasOwnProperty.call(source, key)) {
-      const sourceValue = source[key];
-      const targetValue = target[key];
-      
-      if (
-        sourceValue !== null &&
-        typeof sourceValue === 'object' &&
-        !Array.isArray(sourceValue) &&
-        targetValue !== null &&
-        typeof targetValue === 'object' &&
-        !Array.isArray(targetValue)
-      ) {
-        (result as Record<string, unknown>)[key] = deepMerge(
-          targetValue as Record<string, unknown>,
-          sourceValue as DeepPartial<Record<string, unknown>>
-        );
-      } else if (sourceValue !== undefined) {
-        (result as Record<string, unknown>)[key] = sourceValue;
+  function mergeDeep(targetObj: Record<string, unknown>, sourceObj: Record<string, unknown>): void {
+    for (const key in sourceObj) {
+      if (Object.prototype.hasOwnProperty.call(sourceObj, key)) {
+        const sourceValue = sourceObj[key];
+        const targetValue = targetObj[key];
+        
+        if (
+          sourceValue !== null &&
+          sourceValue !== undefined &&
+          typeof sourceValue === 'object' &&
+          !Array.isArray(sourceValue) &&
+          targetValue !== null &&
+          targetValue !== undefined &&
+          typeof targetValue === 'object' &&
+          !Array.isArray(targetValue)
+        ) {
+          mergeDeep(targetValue as Record<string, unknown>, sourceValue as Record<string, unknown>);
+        } else if (sourceValue !== undefined) {
+          targetObj[key] = sourceValue;
+        }
       }
     }
   }
+  
+  mergeDeep(result as unknown as Record<string, unknown>, source as unknown as Record<string, unknown>);
   
   return result;
 }
@@ -75,7 +78,9 @@ function applyCSSVariables(theme: BeattribeTheme): void {
 // Theme Provider component
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
   // State for the theme configuration
-  const [theme, setTheme] = useState<BeattribeTheme>(initialThemeConfig);
+  const [theme, setTheme] = useState<BeattribeTheme>(() => 
+    JSON.parse(JSON.stringify(initialThemeConfig)) as BeattribeTheme
+  );
   const [hasChanges, setHasChanges] = useState<boolean>(false);
 
   // Apply CSS variables on mount and when theme changes
@@ -85,16 +90,15 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
 
   // Update config function - performs deep merge
   const updateConfig = useCallback((updates: DeepPartial<BeattribeTheme>) => {
-    setTheme(currentTheme => {
-      const newTheme = deepMerge(currentTheme, updates);
-      return newTheme;
+    setTheme((currentTheme: BeattribeTheme): BeattribeTheme => {
+      return deepMerge(currentTheme, updates);
     });
     setHasChanges(true);
   }, []);
 
   // Reset to initial config
   const resetConfig = useCallback(() => {
-    setTheme(initialThemeConfig);
+    setTheme(JSON.parse(JSON.stringify(initialThemeConfig)) as BeattribeTheme);
     setHasChanges(false);
   }, []);
 

@@ -925,6 +925,17 @@ export const SessionPage: React.FC = () => {
                     </span>
                   </div>
                 )}
+                <div className="flex justify-between items-center">
+                  <span className="text-white/60 text-sm">Sync</span>
+                  <Badge 
+                    className={socket.isSupabaseMode
+                      ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                      : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                    }
+                  >
+                    {socket.isSupabaseMode ? 'Supabase' : 'Local'}
+                  </Badge>
+                </div>
               </CardContent>
             </Card>
 

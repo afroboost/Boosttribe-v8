@@ -144,9 +144,9 @@ export const SessionPage: React.FC = () => {
   const { theme } = useTheme();
   const { showToast } = useToast();
   
-  // Determine if user is host based on URL
+  // Track if user created this session (host) or joined via URL (participant)
+  const [isHost, setIsHost] = useState<boolean>(!urlSessionId);
   const [sessionId, setSessionId] = useState<string | null>(urlSessionId || null);
-  const isHost = useMemo(() => !urlSessionId, [urlSessionId]);
   
   const [selectedTrack, setSelectedTrack] = useState(DEMO_TRACKS[0]);
   const [audioState, setAudioState] = useState<AudioState | null>(null);
@@ -158,6 +158,7 @@ export const SessionPage: React.FC = () => {
   const handleCreateSession = useCallback(() => {
     const newSessionId = generateSessionId();
     setSessionId(newSessionId);
+    setIsHost(true); // Creator is always the host
     navigate(`/session/${newSessionId}`, { replace: true });
     showToast('Session créée ! Partagez le lien avec vos amis.', 'success');
   }, [navigate, showToast]);

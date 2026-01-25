@@ -346,7 +346,17 @@ export const SessionPage: React.FC = () => {
   const [showNicknameModal, setShowNicknameModal] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
   
+  // Playlist state (draggable)
+  const [tracks, setTracks] = useState<Track[]>(DEMO_TRACKS);
   const [selectedTrack, setSelectedTrack] = useState(DEMO_TRACKS[0]);
+  
+  // Participants state with volume/mute controls
+  const [participantsState, setParticipantsState] = useState<Participant[]>(BASE_PARTICIPANTS);
+  
+  // Host mic state
+  const [hostMicGain, setHostMicGain] = useState(80);
+  const [hostMicMuted, setHostMicMuted] = useState(false);
+  
   const [audioState, setAudioState] = useState<AudioState | null>(null);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);

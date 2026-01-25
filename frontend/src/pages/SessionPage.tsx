@@ -91,20 +91,11 @@ const DEMO_TRACKS: Track[] = [
   },
 ];
 
-interface Participant {
-  id: string;
-  name: string;
-  avatar: string;
-  isSynced: boolean;
-  isCurrentUser?: boolean;
-  isHost?: boolean;
-}
-
 // Base mock participants (will be augmented with current user)
 const BASE_PARTICIPANTS: Participant[] = [
-  { id: '2', name: 'Sarah K.', avatar: 'SK', isSynced: true },
-  { id: '3', name: 'Alex M.', avatar: 'AM', isSynced: true },
-  { id: '4', name: 'Emma L.', avatar: 'EL', isSynced: false },
+  { id: '2', name: 'Sarah K.', avatar: 'SK', isSynced: true, volume: 100, isMuted: false },
+  { id: '3', name: 'Alex M.', avatar: 'AM', isSynced: true, volume: 100, isMuted: false },
+  { id: '4', name: 'Emma L.', avatar: 'EL', isSynced: false, volume: 80, isMuted: false },
 ];
 
 // Helper functions for LocalStorage

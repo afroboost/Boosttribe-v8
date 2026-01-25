@@ -1,0 +1,30 @@
+{
+  "name": "Beattribe",
+  "slogan": "Unite Through Rhythm",
+  "colors": {
+    "background": "#000000",
+    "primary": "#8A2EFF",
+    "secondary": "#FF2FB3",
+    "surface": "rgba(20, 20, 25, 0.85)",
+    "surfaceSolid": "#14141A",
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "rgba(255, 255, 255, 0.7)",
+      "muted": "rgba(255, 255, 255, 0.5)"
+    },
+    "gradient": {
+      "primary": "linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)",
+      "glow": "rgba(138, 46, 255, 0.5)"
+    }
+  },
+  "fonts": {
+    "heading": "Space Grotesk",
+    "body": "Inter"
+  },
+  "borderRadius": {
+    "sm": "6px",
+    "md": "12px",
+    "lg": "16px",
+    "full": "9999px"
+  }
+}

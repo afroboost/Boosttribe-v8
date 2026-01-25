@@ -1,0 +1,257 @@
+/* Beattribe Global Styles */
+/* Font imports */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Beattribe Design System Variables */
+:root {
+  /* --bt- prefix for Beattribe brand */
+  --bt-background: 0 0% 0%;
+  --bt-primary: 266 100% 59%;
+  --bt-secondary: 324 100% 59%;
+  --bt-surface: 240 11% 9%;
+  --bt-surface-alpha: rgba(20, 20, 25, 0.85);
+  
+  /* Text colors */
+  --bt-text-primary: 0 0% 100%;
+  --bt-text-secondary: 0 0% 100% / 0.7;
+  --bt-text-muted: 0 0% 100% / 0.5;
+  
+  /* Gradient colors (raw hex for gradient use) */
+  --bt-gradient-start: #8A2EFF;
+  --bt-gradient-end: #FF2FB3;
+  --bt-gradient-primary: linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%);
+  --bt-gradient-text: linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%);
+  
+  /* Glow effects */
+  --bt-glow-primary: 0 0 60px rgba(138, 46, 255, 0.4);
+  --bt-glow-secondary: 0 0 60px rgba(255, 47, 179, 0.3);
+  --bt-glow-combined: 0 0 80px rgba(138, 46, 255, 0.5), 0 0 120px rgba(255, 47, 179, 0.3);
+  
+  /* Shadows */
+  --bt-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --bt-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --bt-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --bt-shadow-glow: 0 4px 24px rgba(138, 46, 255, 0.25);
+  
+  /* Border */
+  --bt-border: 0 0% 100% / 0.1;
+  --bt-border-hover: 0 0% 100% / 0.2;
+  
+  /* Typography */
+  --bt-font-heading: 'Space Grotesk', sans-serif;
+  --bt-font-body: 'Inter', sans-serif;
+  
+  /* Spacing */
+  --bt-space-xs: 0.25rem;
+  --bt-space-sm: 0.5rem;
+  --bt-space-md: 1rem;
+  --bt-space-lg: 1.5rem;
+  --bt-space-xl: 2rem;
+  --bt-space-2xl: 3rem;
+  --bt-space-3xl: 4rem;
+  
+  /* Border radius */
+  --bt-radius-sm: 6px;
+  --bt-radius-md: 12px;
+  --bt-radius-lg: 16px;
+  --bt-radius-xl: 24px;
+  --bt-radius-full: 9999px;
+  
+  /* Transitions */
+  --bt-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --bt-transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --bt-transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Base styles */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--bt-font-body);
+  background-color: hsl(var(--bt-background));
+  color: hsl(var(--bt-text-primary));
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Headings use Space Grotesk */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--bt-font-heading);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+/* Gradient text utility */
+.bt-gradient-text {
+  background: var(--bt-gradient-text);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Glow effect utility */
+.bt-glow {
+  filter: drop-shadow(var(--bt-glow-primary));
+}
+
+.bt-glow-combined {
+  text-shadow: var(--bt-glow-combined);
+}
+
+/* Surface with backdrop blur */
+.bt-surface {
+  background: var(--bt-surface-alpha);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Button base styles */
+.bt-button {
+  font-family: var(--bt-font-body);
+  font-weight: 500;
+  border-radius: var(--bt-radius-full);
+  transition: transform var(--bt-transition-fast), 
+              box-shadow var(--bt-transition-base),
+              background var(--bt-transition-base);
+}
+
+.bt-button:hover {
+  transform: translateY(-2px);
+}
+
+.bt-button:active {
+  transform: translateY(0);
+}
+
+/* Gradient button */
+.bt-button-gradient {
+  background: var(--bt-gradient-primary);
+  color: white;
+  border: none;
+  box-shadow: var(--bt-shadow-glow);
+}
+
+.bt-button-gradient:hover {
+  box-shadow: 0 6px 32px rgba(138, 46, 255, 0.4), 0 0 60px rgba(255, 47, 179, 0.2);
+}
+
+/* Outline button */
+.bt-button-outline {
+  background: transparent;
+  color: hsl(var(--bt-text-primary));
+  border: 1px solid hsl(var(--bt-border));
+}
+
+.bt-button-outline:hover {
+  border-color: hsl(var(--bt-border-hover));
+  background: hsl(var(--bt-surface));
+}
+
+/* Ghost button */
+.bt-button-ghost {
+  background: transparent;
+  color: hsl(var(--bt-text-secondary));
+  border: none;
+}
+
+.bt-button-ghost:hover {
+  color: hsl(var(--bt-text-primary));
+  background: hsl(var(--bt-surface) / 0.5);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--bt-surface));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--bt-border));
+  border-radius: var(--bt-radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--bt-border-hover));
+}
+
+/* Selection color */
+::selection {
+  background: rgba(138, 46, 255, 0.3);
+  color: white;
+}
+
+/* Focus styles */
+:focus-visible {
+  outline: 2px solid var(--bt-gradient-start);
+  outline-offset: 2px;
+}
+
+/* Animation keyframes */
+@keyframes bt-pulse-glow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes bt-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes bt-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bt-gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Animation utilities */
+.bt-animate-pulse-glow {
+  animation: bt-pulse-glow 3s ease-in-out infinite;
+}
+
+.bt-animate-float {
+  animation: bt-float 6s ease-in-out infinite;
+}
+
+.bt-animate-fade-in {
+  animation: bt-fade-in 0.6s ease-out forwards;
+}
+
+.bt-animate-gradient {
+  background-size: 200% 200%;
+  animation: bt-gradient-shift 4s ease infinite;
+}

@@ -2,6 +2,7 @@ import React from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import "@/styles/globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
+import { SocketProvider } from "@/context/SocketContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import Header from "@/components/layout/Header";

@@ -783,55 +783,25 @@ export const SessionPage: React.FC = () => {
 
             {/* Participants */}
             <Card className="border-white/10 bg-white/5">
-              <CardHeader>
+              <CardHeader className="pb-3">
                 <CardTitle className="text-white text-lg">
                   Participants ({participants.length})
                 </CardTitle>
+                {isHost && (
+                  <CardDescription className="text-white/50 text-xs">
+                    Contrôlez le volume de chaque participant
+                  </CardDescription>
+                )}
               </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {participants.map((participant) => (
-                    <div 
-                      key={participant.id}
-                      className={`flex items-center gap-3 p-2 rounded-lg ${
-                        participant.isCurrentUser 
-                          ? 'bg-[#8A2EFF]/10 border border-[#8A2EFF]/30' 
-                          : 'bg-white/5'
-                      }`}
-                    >
-                      <div 
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white relative"
-                        style={{ 
-                          background: participant.isCurrentUser 
-                            ? theme.colors.gradient.primary 
-                            : 'linear-gradient(135deg, #666 0%, #444 100%)' 
-                        }}
-                      >
-                        {participant.avatar}
-                        {participant.isHost && (
-                          <span className="absolute -top-1 -right-1 text-xs">👑</span>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className="text-white text-sm truncate block">
-                          {participant.name}
-                          {participant.isCurrentUser && (
-                            <span className="text-[#8A2EFF] ml-1">(Vous)</span>
-                          )}
-                        </span>
-                        {participant.isHost && !participant.isCurrentUser && (
-                          <span className="text-yellow-400 text-xs">Hôte</span>
-                        )}
-                      </div>
-                      <div 
-                        className={`w-2 h-2 rounded-full ${
-                          participant.isSynced ? 'bg-green-400' : 'bg-yellow-400'
-                        }`}
-                        title={participant.isSynced ? 'Synchronisé' : 'En synchronisation...'}
-                      />
-                    </div>
-                  ))}
-                </div>
+              <CardContent className="pt-0">
+                <ParticipantControls
+                  participants={participants}
+                  isHost={isHost}
+                  onVolumeChange={handleParticipantVolumeChange}
+                  onMuteToggle={handleParticipantMuteToggle}
+                  onEject={handleParticipantEject}
+                  theme={theme}
+                />
               </CardContent>
             </Card>
 

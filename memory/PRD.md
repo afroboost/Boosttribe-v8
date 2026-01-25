@@ -8,8 +8,9 @@
 - **Build**: Create React App (CRA) avec CRACO
 - **UI Components**: Shadcn/UI + Radix UI
 - **Drag & Drop**: @dnd-kit/core + @dnd-kit/sortable
+- **Real-time**: BroadcastChannel API (prêt pour Socket.io)
 - **Routing**: react-router-dom v6
-- **Storage**: LocalStorage (thème, pseudo)
+- **Storage**: LocalStorage (thème, pseudo), SessionStorage (userId)
 
 ## Fonctionnalités Implémentées
 
@@ -25,49 +26,72 @@
 
 ### ✅ Phase 2 - Playlist & Modération (Complété - 25 Jan 2026)
 - [x] **Playlist Drag & Drop** (10 titres max)
-  - ScrollArea (max-h-400px) pour la playlist
-  - Icône GripVertical pour le déplacement
-  - Réorganisation fluide avec @dnd-kit
 - [x] **Panel de Modération Participants**
-  - Slider de volume miniature par participant
-  - Bouton Mute/Unmute minimaliste
-  - Bouton Eject (X) dans menu discret
 - [x] **Contrôle Micro Hôte**
-  - Slider de gain dans le header
-  - Toggle Mute/Unmute
-- [x] **Design sobre**
-  - Icônes lucide-react (stroke-width 1.5)
-  - Bordures fines (border-white/10)
-  - Scrollbars ultra-fines/masquées
+- [x] **Design minimaliste** (lucide-react, bordures fines)
+
+### ✅ Phase 3 - WebSocket Temps Réel (Complété - 25 Jan 2026)
+- [x] **SocketProvider** avec BroadcastChannel API
+- [x] **Modération temps réel**:
+  - CMD_MUTE_USER → Force mute côté participant
+  - CMD_UNMUTE_USER → Réactive le son
+  - CMD_EJECT_USER → Redirection vers / avec toast
+  - CMD_VOLUME_CHANGE → Ajustement volume distant
+- [x] **Sync Playlist** → Réorganisation synchronisée pour tous
+- [x] **Logs console** pour debug ([SOCKET IN/OUT])
+
+## Architecture Socket
+
+```
+SocketContext.tsx
+├── BroadcastChannel API (inter-tabs)
+├── Events:
+│   ├── CMD_MUTE_USER
+│   ├── CMD_UNMUTE_USER
+│   ├── CMD_EJECT_USER
+│   ├── CMD_VOLUME_CHANGE
+│   ├── SYNC_PLAYLIST
+│   ├── SYNC_PLAYBACK
+│   ├── USER_JOINED
+│   └── USER_LEFT
+└── Listeners: onMuted, onEjected, onPlaylistSync
+```
 
 ## Fichiers Clés
 ```
 /app/frontend/src/
+├── context/
+│   ├── SocketContext.tsx    # Communication temps réel
+│   └── ThemeContext.tsx
 ├── components/audio/
-│   ├── AudioPlayer.tsx      # Lecteur principal
-│   ├── PlaylistDnD.tsx      # Playlist Drag & Drop
-│   ├── ParticipantControls.tsx  # Modération
-│   └── HostMicControl.tsx   # Contrôle micro
-├── components/ui/
-│   ├── scroll-area.tsx      # Radix ScrollArea
-│   └── slider.tsx           # Radix Slider
-├── pages/SessionPage.tsx    # Page session complète
-├── hooks/useAudioSync.ts    # Logique audio sync
-└── styles/globals.css       # Design tokens
+│   ├── AudioPlayer.tsx
+│   ├── PlaylistDnD.tsx
+│   ├── ParticipantControls.tsx
+│   └── HostMicControl.tsx
+├── pages/SessionPage.tsx
+└── App.tsx (wrappé avec SocketProvider)
 ```
+
+## Test Inter-Onglets
+
+1. **Onglet 1 (Host)**: Créer session → `/session`
+2. **Onglet 2 (Participant)**: Copier URL → rejoindre
+3. **Test Mute**: Host clique mute sur Sarah K. → Console montre CMD_MUTE_USER
+4. **Test Eject**: Host éjecte un participant → Redirection + toast
 
 ## Backlog (P1-P3)
 
 ### P0 - Priorité immédiate
-- [ ] Synchronisation audio temps réel (WebSockets)
+- [ ] Remplacer BroadcastChannel par Socket.io (backend Node.js)
+- [ ] Sync playback audio (play/pause/seek)
 
 ### P1 - Court terme
 - [ ] Convertir shadcn/ui .jsx restants en .tsx
-- [ ] Persistance backend du thème
+- [ ] Persistance session (participants réels via WebSocket)
 
 ### P2 - Moyen terme
-- [ ] Pseudo "Coach" par défaut pour l'hôte
-- [ ] Upload de fichiers audio personnalisés
+- [ ] Upload fichiers audio personnalisés
+- [ ] Chat en temps réel
 
 ### P3 - Long terme
 - [ ] Authentification réelle
@@ -79,6 +103,7 @@
 - **Session Participant**: /session/{id}
 
 ## Notes Techniques
+- BroadcastChannel = communication inter-onglets (même origine)
+- Pour migration Socket.io: modifier uniquement `SocketContext.tsx`
 - Hot reload activé
-- Build: `npm run build`
-- Sync audio = SIMULATION (console.log uniquement)
+- Build: `npm run build` ✅ (131 kB gzip)

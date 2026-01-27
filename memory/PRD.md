@@ -8,9 +8,10 @@
 - **Build**: Create React App (CRA) avec CRACO
 - **UI Components**: Shadcn/UI + Radix UI
 - **Drag & Drop**: @dnd-kit/core + @dnd-kit/sortable
-- **Real-time**: BroadcastChannel API (prêt pour Socket.io)
+- **Real-time**: Supabase Realtime Channels (mode local si non configuré)
+- **Storage**: Supabase Storage (bucket: audio-tracks)
 - **Routing**: react-router-dom v6
-- **Storage**: LocalStorage (thème, pseudo), SessionStorage (userId)
+- **Persistence**: LocalStorage (thème, pseudo), SessionStorage (userId)
 
 ## Fonctionnalités Implémentées
 
@@ -24,86 +25,139 @@
 - [x] Modal de saisie de pseudo avec persistance
 - [x] Routes dynamiques (/session/:sessionId)
 
-### ✅ Phase 2 - Playlist & Modération (Complété - 25 Jan 2026)
+### ✅ Phase 2 - Playlist & Modération (Complété)
 - [x] **Playlist Drag & Drop** (10 titres max)
 - [x] **Panel de Modération Participants**
 - [x] **Contrôle Micro Hôte**
 - [x] **Design minimaliste** (lucide-react, bordures fines)
 
-### ✅ Phase 3 - WebSocket Temps Réel (Complété - 25 Jan 2026)
-- [x] **SocketProvider** avec BroadcastChannel API
+### ✅ Phase 3 - Real-Time (Complété - 27 Jan 2026)
+- [x] **SocketProvider** avec Supabase Realtime
 - [x] **Modération temps réel**:
   - CMD_MUTE_USER → Force mute côté participant
   - CMD_UNMUTE_USER → Réactive le son
   - CMD_EJECT_USER → Redirection vers / avec toast
   - CMD_VOLUME_CHANGE → Ajustement volume distant
 - [x] **Sync Playlist** → Réorganisation synchronisée pour tous
-- [x] **Logs console** pour debug ([SOCKET IN/OUT])
+- [x] **Mode Local** → Message d'avertissement si Supabase non configuré
+- [x] **Logs console** pour debug ([REALTIME IN/OUT])
 
-## Architecture Socket
+### ✅ Phase 4 - Supabase Integration (Complété - 27 Jan 2026)
+- [x] **supabaseClient.ts** - Configuration client avec détection auto
+- [x] **TrackUploader.tsx** - Composant upload MP3
+- [x] **SocketContext.tsx** - Refactoring pour Supabase Realtime uniquement
+- [x] **.env.example** - Documentation complète de configuration
+- [x] **Indicateur de connexion** - Badge Supabase/Local dans l'UI
+- [x] **Message "Mode Local"** - Avertissement visible si backend non connecté
+
+## Architecture Supabase
 
 ```
-SocketContext.tsx
-├── BroadcastChannel API (inter-tabs)
-├── Events:
-│   ├── CMD_MUTE_USER
-│   ├── CMD_UNMUTE_USER
-│   ├── CMD_EJECT_USER
-│   ├── CMD_VOLUME_CHANGE
-│   ├── SYNC_PLAYLIST
-│   ├── SYNC_PLAYBACK
-│   ├── USER_JOINED
-│   └── USER_LEFT
-└── Listeners: onMuted, onEjected, onPlaylistSync
+supabaseClient.ts
+├── Configuration
+│   ├── REACT_APP_SUPABASE_URL
+│   ├── REACT_APP_SUPABASE_ANON_KEY
+│   └── REACT_APP_SUPABASE_BUCKET (default: audio-tracks)
+│
+├── Storage Functions
+│   ├── uploadAudioFile(file, sessionId) → UploadResult
+│   ├── deleteAudioFile(filePath) → boolean
+│   └── listSessionFiles(sessionId) → string[]
+│
+├── Realtime Functions
+│   ├── createSessionChannel(sessionId, onMessage) → RealtimeChannel
+│   ├── broadcastToSession(channel, payload) → boolean
+│   └── unsubscribeChannel(channel) → void
+│
+└── Database Functions
+    ├── savePlaylist(playlist) → boolean
+    └── loadPlaylist(sessionId) → PlaylistRecord | null
 ```
 
-## Fichiers Clés
+## Events Temps Réel
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| CMD_MUTE_USER | Host → Participant | Force mute audio |
+| CMD_UNMUTE_USER | Host → Participant | Réactive audio |
+| CMD_EJECT_USER | Host → Participant | Éjecte de la session |
+| CMD_VOLUME_CHANGE | Host → Participant | Change volume distant |
+| SYNC_PLAYLIST | Host → All | Synchronise ordre playlist |
+| SYNC_PLAYBACK | Host → All | Synchronise lecture |
+| USER_JOINED | Any → All | Annonce arrivée |
+| USER_LEFT | Any → All | Annonce départ |
+
+## Configuration Supabase Requise
+
+### 1. Storage Bucket
+```sql
+-- Créer bucket "audio-tracks" avec:
+- Public: OUI
+- Allowed MIME types: audio/mpeg, audio/mp3
+- Max file size: 50MB
 ```
-/app/frontend/src/
-├── context/
-│   ├── SocketContext.tsx    # Communication temps réel
-│   └── ThemeContext.tsx
-├── components/audio/
-│   ├── AudioPlayer.tsx
-│   ├── PlaylistDnD.tsx
-│   ├── ParticipantControls.tsx
-│   └── HostMicControl.tsx
-├── pages/SessionPage.tsx
-└── App.tsx (wrappé avec SocketProvider)
+
+### 2. Policies
+```sql
+-- Public read
+CREATE POLICY "Allow public read" ON storage.objects
+FOR SELECT USING (bucket_id = 'audio-tracks');
+
+-- Authenticated upload
+CREATE POLICY "Allow upload" ON storage.objects
+FOR INSERT WITH CHECK (bucket_id = 'audio-tracks');
 ```
 
-## Test Inter-Onglets
+### 3. Table Playlists (optionnel)
+```sql
+CREATE TABLE playlists (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  session_id TEXT UNIQUE NOT NULL,
+  tracks JSONB NOT NULL DEFAULT '[]',
+  selected_track_id INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 
-1. **Onglet 1 (Host)**: Créer session → `/session`
-2. **Onglet 2 (Participant)**: Copier URL → rejoindre
-3. **Test Mute**: Host clique mute sur Sarah K. → Console montre CMD_MUTE_USER
-4. **Test Eject**: Host éjecte un participant → Redirection + toast
+ALTER TABLE playlists ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all" ON playlists FOR ALL USING (true) WITH CHECK (true);
+```
 
-## Backlog (P1-P3)
+## Files de Référence
 
-### P0 - Priorité immédiate
-- [ ] Remplacer BroadcastChannel par Socket.io (backend Node.js)
-- [ ] Sync playback audio (play/pause/seek)
+| File | Description |
+|------|-------------|
+| `/frontend/src/lib/supabaseClient.ts` | Client Supabase + fonctions Storage/Realtime |
+| `/frontend/src/context/SocketContext.tsx` | Provider temps réel |
+| `/frontend/src/components/audio/TrackUploader.tsx` | Composant upload MP3 |
+| `/frontend/src/pages/SessionPage.tsx` | Page session principale |
+| `/frontend/.env.example` | Documentation configuration |
 
-### P1 - Court terme
-- [ ] Convertir shadcn/ui .jsx restants en .tsx
-- [ ] Persistance session (participants réels via WebSocket)
+## Tâches à Venir
 
-### P2 - Moyen terme
-- [ ] Upload fichiers audio personnalisés
-- [ ] Chat en temps réel
+### P1 - Priorité Haute
+- [ ] Convertir composants `.jsx` → `.tsx` restants
+- [ ] Refactoring SessionPage.tsx (trop volumineux)
 
-### P3 - Long terme
-- [ ] Authentification réelle
-- [ ] Base de données pour sessions
+### P2 - Priorité Moyenne  
+- [ ] Nickname Host "Coach" par défaut éditable
+- [ ] Persister thème dans Supabase
+- [ ] Authentification réelle (remplacer MDP hardcodé)
 
-## Credentials de Test
-- **Admin**: /admin → MDP: `BEATTRIBE2026`
-- **Session Host**: /session (créer nouvelle)
-- **Session Participant**: /session/{id}
+### P3 - Backlog
+- [ ] Equalizer visuel avancé
+- [ ] Chat texte temps réel
+- [ ] Historique des sessions
 
-## Notes Techniques
-- BroadcastChannel = communication inter-onglets (même origine)
-- Pour migration Socket.io: modifier uniquement `SocketContext.tsx`
-- Hot reload activé
-- Build: `npm run build` ✅ (131 kB gzip)
+## Credentials Test
+- **Admin URL**: `/admin`
+- **Password**: `BEATTRIBE2026`
+- **Supabase**: Nécessite `.env` avec `REACT_APP_SUPABASE_URL` et `REACT_APP_SUPABASE_ANON_KEY`
+
+## Notes Importantes
+
+⚠️ **Mode Local Active** : Sans configuration Supabase, l'application fonctionne en mode local. Les fonctionnalités temps réel multi-appareils ne sont pas disponibles. L'upload utilise un mock avec `URL.createObjectURL()`.
+
+✅ **Build Status**: `npm run build` réussit sans erreurs ni warnings.
+
+✅ **Prêt pour Déploiement**: Le code est prêt pour Emergent et Vercel. Il suffit de configurer les variables d'environnement Supabase.

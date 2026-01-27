@@ -92,13 +92,17 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   
   // Refs for channels
   const supabaseChannelRef = useRef<RealtimeChannel | null>(null);
-  const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
   
   // State
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [userId] = useState(generateUserId);
   const isHostRef = useRef(false);
+  
+  // Determine connection mode
+  const connectionMode: ConnectionMode = isSupabaseConfigured ? 'supabase' : 'local';
   
   // Event listeners storage
   const listenersRef = useRef<{

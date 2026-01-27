@@ -171,7 +171,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [userId, navigate, showToast]);
 
-  // Send message (auto-selects channel type)
+  // Send message via Supabase Realtime only
   const sendMessage = useCallback((type: RealtimeEventType, targetUserId?: string, data?: unknown) => {
     const payload: RealtimePayload = {
       type,
@@ -183,14 +183,12 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     console.log('[REALTIME OUT]', type, { target: targetUserId });
 
-    // Send via Supabase if available
+    // Send via Supabase Realtime (primary method)
     if (supabaseChannelRef.current) {
       broadcastToSession(supabaseChannelRef.current, payload);
-    }
-    
-    // Also send via BroadcastChannel (for same-browser tabs)
-    if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage(payload);
+    } else if (!isSupabaseConfigured) {
+      // Local mode - log but don't send (no network available)
+      console.log('[LOCAL MODE] Command logged:', type, payload);
     }
   }, [userId]);
 

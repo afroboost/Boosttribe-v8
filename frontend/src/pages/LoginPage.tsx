@@ -125,8 +125,22 @@ const LoginPage: React.FC = () => {
       'Password should be at least 6 characters': 'Le mot de passe doit faire au moins 6 caractères',
       'Unable to validate email address: invalid format': 'Format d\'email invalide',
       'Supabase non configuré': 'Service d\'authentification non disponible',
+      'Email not confirmed': 'Veuillez confirmer votre email avant de vous connecter',
+      'User not found': 'Aucun compte trouvé avec cet email',
+      'Network request failed': 'Erreur réseau. Vérifiez votre connexion.',
+      'Google Auth non activé': 'Google Auth non activé. Configurez-le dans Supabase Dashboard.',
+      'provider is not enabled': 'Google Auth non activé dans Supabase',
+      'unsupported provider': 'Google Auth non activé dans Supabase',
     };
-    return translations[message] || message;
+    
+    // Check for partial matches
+    for (const [key, value] of Object.entries(translations)) {
+      if (message.toLowerCase().includes(key.toLowerCase())) {
+        return value;
+      }
+    }
+    
+    return message;
   };
 
   // Check if Supabase is configured

@@ -340,45 +340,54 @@ export const SessionPage: React.FC = () => {
     isHost,
     onPeerConnected: (peerId) => {
       console.log('[PEERJS] Participant connected:', peerId);
-      showToast(`Participant WebRTC connecté`, 'success');
     },
     onPeerDisconnected: (peerId) => {
       console.log('[PEERJS] Participant disconnected:', peerId);
     },
     onReceiveAudio: (stream) => {
       console.log('[PEERJS] 🔊 Receiving host audio');
-      showToast(`Réception audio de l'hôte`, 'default');
     },
     onError: (error) => {
       console.error('[PEERJS] Error:', error);
     },
   });
 
-  // Connect to PeerJS when session starts
+  // Connect to PeerJS when session starts (only once)
+  const peerConnectedRef = useRef(false);
   useEffect(() => {
-    if (sessionId && nickname) {
+    if (sessionId && nickname && !peerConnectedRef.current) {
+      peerConnectedRef.current = true;
       connectPeer().then(success => {
         if (success) {
           console.log('[PEERJS] Connected as', isHost ? 'HOST' : 'PARTICIPANT');
         }
       });
     }
-    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, nickname, isHost]);
+
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
       disconnectPeer();
     };
-  }, [sessionId, nickname, isHost, connectPeer, disconnectPeer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Broadcast audio when host mic stream changes
+  const isBroadcastingRef = useRef(false);
   useEffect(() => {
-    if (isHost && hostMicStream && peerState.isConnected) {
+    if (isHost && hostMicStream && peerState.isConnected && !isBroadcastingRef.current) {
       console.log('[PEERJS] Broadcasting host mic stream');
+      isBroadcastingRef.current = true;
       broadcastAudio(hostMicStream);
-    } else if (isHost && !hostMicStream && peerState.isBroadcasting) {
+    } else if (isHost && !hostMicStream && isBroadcastingRef.current) {
       console.log('[PEERJS] Stopping broadcast');
+      isBroadcastingRef.current = false;
       stopBroadcast();
     }
-  }, [isHost, hostMicStream, peerState.isConnected, peerState.isBroadcasting, broadcastAudio, stopBroadcast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, hostMicStream, peerState.isConnected]);
 
   // Duck effect: lower music when host speaks
   const handleDuckMusic = useCallback((shouldDuck: boolean) => {

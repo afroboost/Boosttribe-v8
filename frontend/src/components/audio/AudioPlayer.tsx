@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import { Repeat, Repeat1 } from 'lucide-react';
 import { useAudioSync, AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
 

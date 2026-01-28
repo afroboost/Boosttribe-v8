@@ -80,16 +80,20 @@ export const Header: React.FC = () => {
 
           {/* Navigation - Dynamic from theme (without Communauté) */}
           <nav className="hidden md:flex items-center gap-8">
-            {filteredNavLinks.map((link) => (
-              <a 
-                key={link.href}
-                href={link.href} 
-                className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
-                style={{ fontFamily: fonts.body }}
-              >
-                {link.label}
-              </a>
-            ))}
+            {filteredNavLinks.map((link) => {
+              // Skip "Tarifs" as we add it separately with correct route
+              if (link.label.toLowerCase() === 'tarifs') return null;
+              return (
+                <a 
+                  key={link.href}
+                  href={link.href} 
+                  className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
+                  style={{ fontFamily: fonts.body }}
+                >
+                  {link.label}
+                </a>
+              );
+            })}
             <Link 
               to="/pricing"
               className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"

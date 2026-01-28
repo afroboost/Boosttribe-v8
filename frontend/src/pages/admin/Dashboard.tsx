@@ -150,8 +150,8 @@ const Dashboard: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe'>('identity');
-  const [dbStatus, setDbStatus] = useState<'connected' | 'error' | 'checking'>('checking');
-  const [dbError, setDbError] = useState<string | null>(null);
+  const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
+  // Note: No dbError state - we use "auto-healing" mode
 
   // ADMIN BYPASS: Check email directly for instant access
   const userEmail = user?.email?.toLowerCase() || '';

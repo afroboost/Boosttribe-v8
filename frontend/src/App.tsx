@@ -13,6 +13,7 @@ import HeroSection from "@/components/sections/HeroSection";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import SessionPage from "@/pages/SessionPage";
 import PricingPage from "@/pages/PricingPage";
+import FeaturesPage from "@/pages/FeaturesPage";
 import LoginPage from "@/pages/LoginPage";
 
 // Global settings loader component
@@ -52,6 +53,7 @@ const App: React.FC = () => {
                     <Route path="/" element={<HomePage />} />
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/pricing" element={<PricingPage />} />
+                    <Route path="/features" element={<FeaturesPage />} />
                     <Route 
                       path="/session" 
                       element={

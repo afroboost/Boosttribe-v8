@@ -58,7 +58,7 @@ export interface UploadResult {
 
 /**
  * Upload an audio file to Supabase Storage
- * Converts File to ArrayBuffer to avoid "body stream already read" error
+ * Uses Blob with explicit content type to avoid "body stream already read" error
  */
 export async function uploadAudioFile(
   file: File,
@@ -89,29 +89,32 @@ export async function uploadAudioFile(
   const timestamp = Date.now();
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
   const filePath = `${sessionId}/${timestamp}_${sanitizedName}`;
+  const contentType = file.type || 'audio/mpeg';
 
   console.log('[SUPABASE STORAGE] 📤 Tentative d\'upload vers : audio-tracks');
   console.log('[SUPABASE STORAGE] Fichier:', { 
     name: file.name,
     path: filePath,
     size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-    type: file.type || 'audio/mpeg'
+    type: contentType
   });
 
   try {
-    // Convert File to ArrayBuffer to avoid stream issues
+    // CRITICAL FIX: Read file as ArrayBuffer first, then create a fresh Blob
+    // This prevents the "body stream already read" error
     const arrayBuffer = await file.arrayBuffer();
+    const blob = new Blob([arrayBuffer], { type: contentType });
     
-    // Upload using SDK with ArrayBuffer (not File stream)
+    // Upload using the Blob (not the original File)
     const { data, error } = await supabase.storage
       .from(AUDIO_BUCKET)
-      .upload(filePath, arrayBuffer, {
+      .upload(filePath, blob, {
         cacheControl: '3600',
         upsert: false,
-        contentType: file.type || 'audio/mpeg',
+        contentType: contentType,
       });
 
-    // Handle error
+    // Handle error - DO NOT read the response again
     if (error) {
       console.error('[SUPABASE STORAGE] ❌ Erreur:', error.message);
       
@@ -135,7 +138,7 @@ export async function uploadAudioFile(
       return { success: false, error: error.message };
     }
 
-    // Success - get public URL
+    // Success - get public URL (no reading of response body)
     if (data?.path) {
       const { data: urlData } = supabase.storage
         .from(AUDIO_BUCKET)
@@ -155,10 +158,17 @@ export async function uploadAudioFile(
     
   } catch (err) {
     console.error('[SUPABASE STORAGE] Exception:', err);
-    return { 
-      success: false, 
-      error: err instanceof Error ? err.message : 'Erreur lors de l\'upload' 
-    };
+    
+    // Check for specific stream errors
+    const errMessage = err instanceof Error ? err.message : 'Erreur lors de l\'upload';
+    if (errMessage.includes('stream') || errMessage.includes('body')) {
+      return { 
+        success: false, 
+        error: 'Erreur de lecture du fichier. Veuillez réessayer.' 
+      };
+    }
+    
+    return { success: false, error: errMessage };
   }
 }
 

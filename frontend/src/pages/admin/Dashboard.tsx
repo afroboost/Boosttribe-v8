@@ -357,6 +357,9 @@ const Dashboard: React.FC = () => {
       setHasChanges(false);
       setDbStatus('connected');
       
+      // Refresh global settings cache
+      refreshSiteSettings();
+      
       // Update theme context for live preview
       updateConfig({
         name: settings.site_name,

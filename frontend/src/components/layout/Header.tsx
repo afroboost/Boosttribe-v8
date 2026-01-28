@@ -1,10 +1,37 @@
 import React from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { useTheme } from "@/context/ThemeContext";
+import { useAuth } from "@/context/AuthContext";
+import { LogOut, User } from "lucide-react";
 
 export const Header: React.FC = () => {
   const { theme } = useTheme();
   const { name, colors, fonts, navigation, buttons } = theme;
+  const { isAuthenticated, profile, signOut, isAdmin } = useAuth();
+  const navigate = useNavigate();
+
+  // Filter out "Communauté" from navigation
+  const filteredNavLinks = navigation.links.filter(
+    link => link.label.toLowerCase() !== 'communauté'
+  );
+
+  const handleStartClick = () => {
+    if (isAuthenticated) {
+      navigate('/session');
+    } else {
+      navigate('/login', { state: { from: '/session' } });
+    }
+  };
+
+  const handleLoginClick = () => {
+    navigate('/login');
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate('/');
+  };
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50">
@@ -19,7 +46,7 @@ export const Header: React.FC = () => {
         <div className="flex items-center justify-between h-16 sm:h-20">
           {/* Logo */}
           <div className="flex items-center">
-            <a href="/" className="flex items-center gap-2 group">
+            <Link to="/" className="flex items-center gap-2 group">
               {/* Logo Icon */}
               <div 
                 className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center"
@@ -48,12 +75,12 @@ export const Header: React.FC = () => {
               >
                 {name}
               </span>
-            </a>
+            </Link>
           </div>
 
-          {/* Navigation - Dynamic from theme */}
+          {/* Navigation - Dynamic from theme (without Communauté) */}
           <nav className="hidden md:flex items-center gap-8">
-            {navigation.links.map((link) => (
+            {filteredNavLinks.map((link) => (
               <a 
                 key={link.href}
                 href={link.href} 
@@ -63,20 +90,70 @@ export const Header: React.FC = () => {
                 {link.label}
               </a>
             ))}
+            <Link 
+              to="/pricing"
+              className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
+              style={{ fontFamily: fonts.body }}
+            >
+              Tarifs
+            </Link>
           </nav>
 
-          {/* CTA Buttons - Dynamic from theme */}
+          {/* CTA Buttons */}
           <div className="flex items-center gap-3">
-            <PrimaryButton 
-              variant="outline" 
-              size="sm"
-              className="hidden sm:inline-flex"
-            >
-              {buttons.login}
-            </PrimaryButton>
-            <PrimaryButton size="sm">
-              {buttons.start}
-            </PrimaryButton>
+            {isAuthenticated ? (
+              <>
+                {/* User info */}
+                <div className="hidden sm:flex items-center gap-2 text-sm text-white/70">
+                  <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center">
+                    {profile?.avatar_url ? (
+                      <img 
+                        src={profile.avatar_url} 
+                        alt="" 
+                        className="w-8 h-8 rounded-full"
+                      />
+                    ) : (
+                      <User size={16} />
+                    )}
+                  </div>
+                  <span className="max-w-[100px] truncate">
+                    {profile?.full_name || profile?.email?.split('@')[0]}
+                  </span>
+                  {isAdmin && (
+                    <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full">
+                      Admin
+                    </span>
+                  )}
+                </div>
+                
+                {/* Sign out button */}
+                <button
+                  onClick={handleSignOut}
+                  className="p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                  title="Déconnexion"
+                >
+                  <LogOut size={18} />
+                </button>
+
+                <PrimaryButton size="sm" onClick={handleStartClick}>
+                  Ma session
+                </PrimaryButton>
+              </>
+            ) : (
+              <>
+                <PrimaryButton 
+                  variant="outline" 
+                  size="sm"
+                  className="hidden sm:inline-flex"
+                  onClick={handleLoginClick}
+                >
+                  {buttons.login}
+                </PrimaryButton>
+                <PrimaryButton size="sm" onClick={handleStartClick}>
+                  {buttons.start}
+                </PrimaryButton>
+              </>
+            )}
           </div>
         </div>
       </div>

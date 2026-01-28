@@ -318,6 +318,7 @@ export const SessionPage: React.FC = () => {
   // Host mic state
   const [hostMicActive, setHostMicActive] = useState(false);
   const [musicDucked, setMusicDucked] = useState(false);
+  const [hostMicStream, setHostMicStream] = useState<MediaStream | null>(null);
   const originalVolumeRef = useRef<number>(100);
   
   const [audioState, setAudioState] = useState<AudioState | null>(null);
@@ -325,6 +326,59 @@ export const SessionPage: React.FC = () => {
   const [linkCopied, setLinkCopied] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [autoPlayPending, setAutoPlayPending] = useState<string | null>(null);
+
+  // PeerJS for WebRTC voice broadcast
+  const {
+    state: peerState,
+    connect: connectPeer,
+    disconnect: disconnectPeer,
+    broadcastAudio,
+    stopBroadcast,
+    remoteAudioRef,
+  } = usePeerAudio({
+    sessionId: sessionId || 'default',
+    isHost,
+    onPeerConnected: (peerId) => {
+      console.log('[PEERJS] Participant connected:', peerId);
+      showToast(`Participant WebRTC connecté`, 'success');
+    },
+    onPeerDisconnected: (peerId) => {
+      console.log('[PEERJS] Participant disconnected:', peerId);
+    },
+    onReceiveAudio: (stream) => {
+      console.log('[PEERJS] 🔊 Receiving host audio');
+      showToast(`Réception audio de l'hôte`, 'default');
+    },
+    onError: (error) => {
+      console.error('[PEERJS] Error:', error);
+    },
+  });
+
+  // Connect to PeerJS when session starts
+  useEffect(() => {
+    if (sessionId && nickname) {
+      connectPeer().then(success => {
+        if (success) {
+          console.log('[PEERJS] Connected as', isHost ? 'HOST' : 'PARTICIPANT');
+        }
+      });
+    }
+    
+    return () => {
+      disconnectPeer();
+    };
+  }, [sessionId, nickname, isHost, connectPeer, disconnectPeer]);
+
+  // Broadcast audio when host mic stream changes
+  useEffect(() => {
+    if (isHost && hostMicStream && peerState.isConnected) {
+      console.log('[PEERJS] Broadcasting host mic stream');
+      broadcastAudio(hostMicStream);
+    } else if (isHost && !hostMicStream && peerState.isBroadcasting) {
+      console.log('[PEERJS] Stopping broadcast');
+      stopBroadcast();
+    }
+  }, [isHost, hostMicStream, peerState.isConnected, peerState.isBroadcasting, broadcastAudio, stopBroadcast]);
 
   // Duck effect: lower music when host speaks
   const handleDuckMusic = useCallback((shouldDuck: boolean) => {

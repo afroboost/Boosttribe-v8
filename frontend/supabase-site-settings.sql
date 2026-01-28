@@ -4,6 +4,9 @@
 -- This table stores the CMS configuration for the site
 -- Run this in your Supabase SQL Editor
 
+-- Drop existing table if needed (uncomment if you want to reset)
+-- DROP TABLE IF EXISTS site_settings;
+
 -- Create site_settings table
 CREATE TABLE IF NOT EXISTS site_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -13,6 +16,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   site_slogan TEXT NOT NULL DEFAULT 'Unite Through Rhythm',
   site_description TEXT NOT NULL DEFAULT 'Rejoignez la communauté des beatmakers et producteurs.',
   site_badge TEXT NOT NULL DEFAULT 'La communauté des créateurs',
+  favicon_url TEXT DEFAULT '',
   
   -- Colors (hex format)
   color_primary TEXT NOT NULL DEFAULT '#8A2EFF',
@@ -42,6 +46,14 @@ CREATE TABLE IF NOT EXISTS site_settings (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Add favicon_url column if table exists but column doesn't
+DO $$ 
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'site_settings' AND column_name = 'favicon_url') THEN
+    ALTER TABLE site_settings ADD COLUMN favicon_url TEXT DEFAULT '';
+  END IF;
+END $$;
+
 -- Insert default settings if not exists
 INSERT INTO site_settings (id, site_name)
 SELECT gen_random_uuid(), 'Beattribe'
@@ -49,6 +61,11 @@ WHERE NOT EXISTS (SELECT 1 FROM site_settings LIMIT 1);
 
 -- Enable RLS
 ALTER TABLE site_settings ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies
+DROP POLICY IF EXISTS "Anyone can read site settings" ON site_settings;
+DROP POLICY IF EXISTS "Admin can update site settings" ON site_settings;
+DROP POLICY IF EXISTS "Admin can insert site settings" ON site_settings;
 
 -- Policy: Anyone can read site settings
 CREATE POLICY "Anyone can read site settings"
@@ -96,6 +113,8 @@ CREATE TRIGGER site_settings_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION update_site_settings_timestamp();
 
--- Grant access to authenticated users
+-- Grant access
 GRANT SELECT ON site_settings TO authenticated;
 GRANT SELECT ON site_settings TO anon;
+GRANT UPDATE ON site_settings TO authenticated;
+GRANT INSERT ON site_settings TO authenticated;

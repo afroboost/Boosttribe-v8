@@ -437,12 +437,12 @@ const Dashboard: React.FC = () => {
                 <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
                   <Check size={12} className="mr-1" /> Supabase
                 </Badge>
-              ) : dbStatus === 'error' ? (
-                <Badge className="bg-red-500/20 text-red-400 border-red-500/30">
-                  <AlertTriangle size={12} className="mr-1" /> Erreur DB
+              ) : dbStatus === 'offline' ? (
+                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                  💾 Mode local
                 </Badge>
               ) : (
-                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
                   <RefreshCw size={12} className="mr-1 animate-spin" /> Connexion...
                 </Badge>
               )}
@@ -473,17 +473,15 @@ const Dashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* DB Error Alert */}
-        {dbError && (
-          <div className="mb-6 p-4 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-3">
-            <AlertTriangle className="text-red-400 flex-shrink-0 mt-0.5" size={20} />
-            <div>
-              <p className="text-red-400 font-medium">Configuration Supabase requise</p>
-              <p className="text-red-400/70 text-sm mt-1">{dbError}</p>
-              <p className="text-white/50 text-xs mt-2">
-                Exécutez le fichier <code className="text-purple-400">/app/frontend/supabase-site-settings.sql</code> dans votre Supabase SQL Editor.
-              </p>
-            </div>
+        {/* Info banner for offline mode (soft, non-blocking) */}
+        {dbStatus === 'offline' && (
+          <div className="mb-6 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-3">
+            <span className="text-yellow-400/80 text-sm">
+              💡 Mode local actif - Les modifications ne seront pas persistées. 
+              <Link to="/" className="underline ml-1 hover:text-yellow-300">
+                Configurez Supabase
+              </Link> pour la sauvegarde.
+            </span>
           </div>
         )}
 
@@ -494,7 +492,7 @@ const Dashboard: React.FC = () => {
               👑 Gestion du Site (CMS)
             </h1>
             <p className="text-white/60">
-              Modifiez l'identité, les couleurs et les textes. Sauvegarde dans Supabase.
+              Modifiez l'identité, les couleurs et les textes.
             </p>
           </div>
           <div className="flex gap-3">

@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
-import { LogOut, User } from "lucide-react";
+import { LogOut, User, Settings } from "lucide-react";
 
 export const Header: React.FC = () => {
   const { theme } = useTheme();
@@ -26,6 +26,10 @@ export const Header: React.FC = () => {
 
   const handleLoginClick = () => {
     navigate('/login');
+  };
+
+  const handleAdminClick = () => {
+    navigate('/admin');
   };
 
   const handleSignOut = async () => {
@@ -125,11 +129,22 @@ export const Header: React.FC = () => {
                   </span>
                   {isAdmin && (
                     <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full">
-                      Admin
+                      👑 Admin
                     </span>
                   )}
                 </div>
                 
+                {/* Admin button - Only visible to admin */}
+                {isAdmin && (
+                  <button
+                    onClick={handleAdminClick}
+                    className="p-2 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors"
+                    title="Gérer le Site"
+                  >
+                    <Settings size={18} />
+                  </button>
+                )}
+
                 {/* Sign out button */}
                 <button
                   onClick={handleSignOut}

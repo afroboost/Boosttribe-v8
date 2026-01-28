@@ -58,7 +58,7 @@ export interface UploadResult {
 
 /**
  * Upload an audio file to Supabase Storage
- * Uses Blob with explicit content type to avoid "body stream already read" error
+ * Uses raw File object directly - SDK handles everything
  */
 export async function uploadAudioFile(
   file: File,
@@ -89,32 +89,16 @@ export async function uploadAudioFile(
   const timestamp = Date.now();
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
   const filePath = `${sessionId}/${timestamp}_${sanitizedName}`;
-  const contentType = file.type || 'audio/mpeg';
 
-  console.log('[SUPABASE STORAGE] 📤 Tentative d\'upload vers : audio-tracks');
-  console.log('[SUPABASE STORAGE] Fichier:', { 
-    name: file.name,
-    path: filePath,
-    size: `${(file.size / 1024 / 1024).toFixed(2)} MB`,
-    type: contentType
-  });
+  console.log('[SUPABASE STORAGE] 📤 Upload:', filePath);
 
   try {
-    // CRITICAL FIX: Read file as ArrayBuffer first, then create a fresh Blob
-    // This prevents the "body stream already read" error
-    const arrayBuffer = await file.arrayBuffer();
-    const blob = new Blob([arrayBuffer], { type: contentType });
-    
-    // Upload using the Blob (not the original File)
+    // SIMPLE SDK CALL - Let Supabase handle the file directly
     const { data, error } = await supabase.storage
       .from(AUDIO_BUCKET)
-      .upload(filePath, blob, {
-        cacheControl: '3600',
-        upsert: false,
-        contentType: contentType,
-      });
+      .upload(filePath, file);
 
-    // Handle error - DO NOT read the response again
+    // Handle error
     if (error) {
       console.error('[SUPABASE STORAGE] ❌ Erreur:', error.message);
       
@@ -126,7 +110,6 @@ export async function uploadAudioFile(
       }
       
       if (errMsg.includes('policy') || errMsg.includes('permission') || errMsg.includes('403')) {
-        console.warn('[SUPABASE] ⚠️ Vérifiez vos politiques SQL RLS');
         logBucketConfigInstructions();
         return { success: false, error: 'Permission refusée. Vérifiez les policies RLS.' };
       }
@@ -138,14 +121,13 @@ export async function uploadAudioFile(
       return { success: false, error: error.message };
     }
 
-    // Success - get public URL (no reading of response body)
+    // Success - get public URL
     if (data?.path) {
       const { data: urlData } = supabase.storage
         .from(AUDIO_BUCKET)
         .getPublicUrl(data.path);
 
-      console.log('[SUPABASE STORAGE] ✅ Upload réussi !');
-      console.log('[SUPABASE STORAGE] URL publique:', urlData.publicUrl);
+      console.log('[SUPABASE STORAGE] ✅ Upload réussi:', urlData.publicUrl);
 
       return {
         success: true,
@@ -158,17 +140,10 @@ export async function uploadAudioFile(
     
   } catch (err) {
     console.error('[SUPABASE STORAGE] Exception:', err);
-    
-    // Check for specific stream errors
-    const errMessage = err instanceof Error ? err.message : 'Erreur lors de l\'upload';
-    if (errMessage.includes('stream') || errMessage.includes('body')) {
-      return { 
-        success: false, 
-        error: 'Erreur de lecture du fichier. Veuillez réessayer.' 
-      };
-    }
-    
-    return { success: false, error: errMessage };
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : 'Erreur lors de l\'upload' 
+    };
   }
 }
 

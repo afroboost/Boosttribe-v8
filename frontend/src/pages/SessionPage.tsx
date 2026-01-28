@@ -808,6 +808,8 @@ export const SessionPage: React.FC = () => {
               sessionId={sessionId}
               onStateChange={handleAudioStateChange}
               onSyncUpdate={handleSyncStateChange}
+              onTrackEnded={handleTrackEnded}
+              onRepeatModeChange={setRepeatMode}
             />
 
             {/* Track Selection (Host only) */}

@@ -76,6 +76,12 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
         {participant.isHost && (
           <span className="absolute -top-1 -right-1 text-xs">👑</span>
         )}
+        {/* Mic active indicator */}
+        {participant.isMicActive && (
+          <span className="absolute -bottom-0.5 -right-0.5 p-0.5 rounded-full bg-green-500 border border-black">
+            <Mic size={8} strokeWidth={2} className="text-white" />
+          </span>
+        )}
       </div>
 
       {/* Name & Status */}

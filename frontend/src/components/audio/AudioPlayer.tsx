@@ -34,12 +34,16 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   sessionId = null,
   onStateChange,
   onSyncUpdate,
+  onTrackEnded,
+  onRepeatModeChange,
   className = '',
 }) => {
   const {
     audioRef,
     audioState,
     syncState,
+    repeatMode,
+    cycleRepeatMode,
     play,
     pause,
     seek,
@@ -49,9 +53,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     startLiveSession,
     endLiveSession,
     loadAudio,
-  } = useAudioSync({ isHost, sessionId, onStateChange, onSyncUpdate });
+  } = useAudioSync({ isHost, sessionId, onStateChange, onSyncUpdate, onTrackEnded });
 
   const [showVolume, setShowVolume] = useState(false);
+
+  // Notify parent of repeat mode changes
+  useEffect(() => {
+    onRepeatModeChange?.(repeatMode);
+  }, [repeatMode, onRepeatModeChange]);
 
   // Load audio when src changes
   useEffect(() => {

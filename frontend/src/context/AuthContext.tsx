@@ -94,26 +94,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
 
       if (error) {
-        console.error('[AUTH] Error fetching profile:', error);
-        
-        // If profile doesn't exist, create one
-        if (error.code === 'PGRST116') {
-          const newProfile = await createProfile(userId);
-          return newProfile;
+        // Table doesn't exist or profile not found
+        if (error.code === 'PGRST116' || error.code === '42P01') {
+          console.warn('[AUTH] Profile not found, creating default profile');
+          // Create a local profile without database
+          return createLocalProfile(userId);
         }
-        return null;
+        console.error('[AUTH] Error fetching profile:', error.message);
+        // Return local profile on error
+        return createLocalProfile(userId);
       }
 
       return data as UserProfile;
     } catch (err) {
       console.error('[AUTH] Exception fetching profile:', err);
-      return null;
+      // Return local profile on exception
+      return createLocalProfile(userId);
     }
   }, []);
 
-  // Create new profile for user
+  // Create local profile (fallback when DB is not ready)
+  const createLocalProfile = (userId: string): UserProfile => {
+    // Check if this user should be admin (by email)
+    const adminEmails = ['contact.artboost@gmail.com'];
+    const userEmail = user?.email || '';
+    const isAdminUser = adminEmails.includes(userEmail.toLowerCase());
+
+    return {
+      id: userId,
+      email: userEmail,
+      full_name: user?.user_metadata?.full_name || userEmail.split('@')[0] || '',
+      avatar_url: user?.user_metadata?.avatar_url || '',
+      role: isAdminUser ? 'admin' : 'user',
+      subscription_status: isAdminUser ? 'enterprise' : 'trial',
+      has_accepted_terms: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  };
+
+  // Create new profile for user in database
   const createProfile = async (userId: string): Promise<UserProfile | null> => {
-    if (!supabase || !user) return null;
+    if (!supabase || !user) return createLocalProfile(userId);
 
     const newProfile: Partial<UserProfile> = {
       id: userId,
@@ -135,14 +157,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
 
       if (error) {
-        console.error('[AUTH] Error creating profile:', error);
-        return null;
+        console.error('[AUTH] Error creating profile:', error.message);
+        return createLocalProfile(userId);
       }
 
       return data as UserProfile;
     } catch (err) {
       console.error('[AUTH] Exception creating profile:', err);
-      return null;
+      return createLocalProfile(userId);
     }
   };
 

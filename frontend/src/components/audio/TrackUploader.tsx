@@ -176,8 +176,45 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
         data-testid="file-input"
       />
 
+      {/* Trial Limit Reached - Show upgrade prompt */}
+      {isTrialLimitReached && status === 'idle' && (
+        <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
+              <Lock size={20} className="text-yellow-400" />
+            </div>
+            <div className="flex-1">
+              <p className="text-yellow-400 text-sm font-medium">
+                Limite de la version d'essai : {trackLimit} chanson{trackLimit > 1 ? 's' : ''} max
+              </p>
+              <p className="text-yellow-400/60 text-xs">
+                Passez à un abonnement pour uploader plus de musique
+              </p>
+            </div>
+          </div>
+          <Link to="/pricing">
+            <Button
+              size="sm"
+              className="w-full text-white border-none"
+              style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+            >
+              <Crown size={14} className="mr-2" />
+              Voir les offres
+            </Button>
+          </Link>
+        </div>
+      )}
+
+      {/* Admin badge */}
+      {isAdmin && status === 'idle' && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-purple-500/10 border border-purple-500/30">
+          <Crown size={14} className="text-purple-400" />
+          <span className="text-xs text-purple-400">Mode Admin - Upload illimité</span>
+        </div>
+      )}
+
       {/* Upload Area */}
-      {status === 'idle' && (
+      {status === 'idle' && !isTrialLimitReached && (
         <button
           onClick={triggerFilePicker}
           disabled={!canUpload}

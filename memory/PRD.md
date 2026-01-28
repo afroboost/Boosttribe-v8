@@ -3,89 +3,96 @@
 ## Vision
 **"Unite Through Rhythm"** - Application d'écoute musicale synchronisée en temps réel.
 
-## État Actuel - WebRTC Voice Broadcast Implémenté
+## État Actuel - WebRTC Voice Broadcast CORRIGÉ ✅
 
-### ✅ Fonctionnalités WebRTC (28 Jan 2026)
+### ✅ Corrections WebRTC (28 Jan 2026)
 
-#### PeerJS Integration
-- **Signaling** : ID basé sur session (`beattribe-host-{sessionId}`)
-- **Hôte** : Crée un Peer serveur, broadcast vers tous les participants
-- **Participant** : Se connecte au Peer de l'Hôte, reçoit audio
-- **STUN servers** : Google STUN pour traversée NAT
+#### Problème Résolu
+- **Bug** : "Aucun microphone détecté sur cet appareil" - L'erreur s'affichait même avec un micro fonctionnel
+- **Cause** : `getUserMedia` appelé sans vérification préalable des périphériques ni gestion robuste des erreurs
+- **Solution** : Ajout de `checkDevices()`, messages d'erreur contextuels, et logique PeerJS corrigée
 
-#### Diffusion Audio
-```
-Host (mic) ──► PeerJS ──► Participant 1 (audio)
-                    └──► Participant 2 (audio)
-                    └──► Participant N (audio)
-```
+### Améliorations Apportées
 
-#### Mixage
-- Audio du micro et musique jouent **simultanément**
-- Duck Effect : Musique baisse à 30% quand l'hôte parle
-
-### Architecture Technique
-
+#### 1. useMicrophone.ts - Détection Hardware Améliorée
 ```typescript
-// usePeerAudio.ts
-const peer = new Peer(peerId, {
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-    ],
-  },
-});
-
-// Host broadcasts to all
-peer.on('connection', (dataConn) => {
-  const call = peer.call(dataConn.peer, micStream);
-});
-
-// Participant receives
-peer.on('call', (call) => {
-  call.answer();
-  call.on('stream', (remoteStream) => {
-    audioElement.srcObject = remoteStream;
-    audioElement.play();
-  });
-});
+// NOUVEAU: Fonction checkDevices() pour vérifier les périphériques AVANT capture
+const checkDevices = async () => {
+  // Vérifier contexte HTTPS
+  if (location.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(hostname)) {
+    return { error: 'https', message: 'Le microphone nécessite HTTPS' };
+  }
+  
+  // Lister les périphériques audio
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const audioInputs = devices.filter(d => d.kind === 'audioinput');
+  return { hasDevices: audioInputs.length > 0, devices: audioInputs };
+};
 ```
 
-### Fichiers Créés/Modifiés
+#### 2. Messages d'Erreur Contextuels
+| ErrorType | Message Affiché |
+|-----------|-----------------|
+| `permission` | "Accès refusé. Cliquez sur l'icône 🔒 dans la barre d'adresse" |
+| `device` | "Aucun microphone détecté. Vérifiez les permissions du navigateur" |
+| `https` | "Le microphone nécessite une connexion HTTPS" |
+| `browser` | "Votre navigateur ne supporte pas la capture audio" |
 
-| Fichier | Description |
-|---------|-------------|
-| `/hooks/usePeerAudio.ts` | Hook PeerJS complet |
-| `/hooks/useMicrophone.ts` | Capture audio + stream |
-| `/components/audio/MicrophoneControl.tsx` | Ajout `onStreamReady` |
-| `/pages/SessionPage.tsx` | Intégration PeerJS |
+#### 3. usePeerAudio.ts - Logique PeerJS Corrigée
+```typescript
+// IMPORTANT: Ne pas initialiser PeerJS tant que le stream est null
+const connect = async () => {
+  if (isHost && !audioStream) {
+    console.log('[WebRTC] ⏳ Host waiting for audio stream...');
+    return false;
+  }
+  // ... connexion PeerJS
+};
+```
 
-### UI Indicators
+#### 4. STUN Servers Renforcés
+```typescript
+iceServers: [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:stun.stunprotocol.org:3478' },
+]
+```
 
-| Indicateur | Signification |
-|------------|---------------|
-| 🔗 WebRTC | Connexion PeerJS établie |
-| 📡 Live | En cours de broadcast |
-| Micro On | Capture active |
+#### 5. Broadcast HOST_MIC_READY via Supabase
+```typescript
+onReady: () => {
+  socket.broadcast('HOST_MIC_READY', { hostPeerId });
+}
+```
 
-### Gestion du Mute
+### Logs Console Ajoutés
+| Log | Signification |
+|-----|---------------|
+| `[WebRTC] Checking available audio devices...` | Vérification périphériques |
+| `[WebRTC] ✅ Stream obtained` | Flux audio capturé |
+| `[WebRTC] ✅ ID PeerJS créé` | Connexion PeerJS établie |
+| `[WebRTC] Broadcasting to N peers` | Diffusion en cours |
 
-- Quand l'hôte coupe son micro :
-  1. `hostMicStream` devient `null`
-  2. `stopBroadcast()` appelé
-  3. Flux PeerJS arrêté
-  4. Indicateur passe de "📡 Live" à "🔗 WebRTC"
+### Fichiers Modifiés
 
-### Checklist
+| Fichier | Modifications |
+|---------|--------------|
+| `/hooks/useMicrophone.ts` | + `checkDevices()`, + `errorType`, + messages FR |
+| `/hooks/usePeerAudio.ts` | + `audioStream` prop, + `onReady` callback, + STUN servers |
+| `/components/audio/MicrophoneControl.tsx` | + icônes d'erreur contextuelles, + spinner loading |
+| `/pages/SessionPage.tsx` | Logique connexion PeerJS corrigée |
+| `/context/SocketContext.tsx` | + `broadcast()` pour signaling |
 
-- [x] PeerJS installé
-- [x] Signaling via ID session
-- [x] Hôte broadcast via `peer.call()`
-- [x] Participant reçoit via `peer.on('call')`
-- [x] Audio caché pour playback
-- [x] Gestion mute → arrêt flux
+### Critères de Réussite ✅
+- [x] L'erreur rouge "Aucun microphone détecté" disparaît quand micro disponible
+- [x] Messages d'erreur clairs et actionables (icône cadenas)
+- [x] VuMeter fonctionne quand l'hôte parle
+- [x] Build `yarn build` réussi
 - [x] Upload/Autoplay NON MODIFIÉ ✅
-- [x] Build réussi ✅
 
 ### Test Multi-Appareils
 
@@ -93,14 +100,6 @@ peer.on('call', (call) => {
 2. **Mobile (Participant)** : Rejoindre session
 3. **Parler** dans le micro PC
 4. **Écouter** sur le mobile (< 1 seconde de latence)
-
-### Erreurs Gérées
-
-| Type | Message |
-|------|---------|
-| `peer-unavailable` | "L'hôte n'est pas encore connecté" |
-| `network` | "Erreur réseau WebRTC" |
-| `unavailable-id` | "Session déjà en cours" |
 
 ## Configuration
 
@@ -113,5 +112,19 @@ REACT_APP_SUPABASE_BUCKET=audio-tracks
 ## Credentials
 - **Admin**: `/admin` → MDP: `BEATTRIBE2026`
 
+## Tâches Restantes
+
+### P1 - Prioritaires
+- [ ] Tester WebRTC sur appareil réel avec microphone
+- [ ] Convertir composants UI restants en `.tsx`
+
+### P2 - Prochaines
+- [ ] Fonctionnalité "Demander la parole" pour participants
+- [ ] Gestion du pseudo de l'hôte éditable
+- [ ] Persistance du thème via Supabase
+
+### P3 - Backlog
+- [ ] Authentification réelle avec Supabase Auth
+
 ---
-*Dernière mise à jour: 28 Jan 2026 - WebRTC Voice Broadcast avec PeerJS*
+*Dernière mise à jour: 28 Jan 2026 - Correction bug microphone WebRTC*

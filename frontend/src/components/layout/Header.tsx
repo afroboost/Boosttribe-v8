@@ -138,10 +138,11 @@ export const Header: React.FC = () => {
                 {isAdmin && (
                   <button
                     onClick={handleAdminClick}
-                    className="p-2 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors"
-                    title="Gérer le Site"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors text-sm"
+                    title="Gestion du Site"
                   >
-                    <Settings size={18} />
+                    <Settings size={16} />
+                    <span className="hidden sm:inline">Gestion Site</span>
                   </button>
                 )}
 

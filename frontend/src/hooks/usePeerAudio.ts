@@ -177,7 +177,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           
           dataConn.on('open', () => {
             dataConnectionsRef.current.set(dataConn.peer, dataConn);
-            updateState(prev => ({
+            setState(prev => ({
+              ...prev,
               connectedPeers: [...prev.connectedPeers, dataConn.peer],
             }));
             onPeerConnected?.(dataConn.peer);

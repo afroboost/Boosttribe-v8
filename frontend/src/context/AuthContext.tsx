@@ -61,6 +61,9 @@ const TRACK_LIMITS: Record<SubscriptionStatus, number> = {
 // Context
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+// Admin emails constant (used for instant bypass)
+const ADMIN_EMAILS = ['contact.artboost@gmail.com'];
+
 // Provider
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -68,11 +71,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // ADMIN CHECK: By email OR by profile role (email takes priority)
+  const isAdminByEmail = user?.email ? ADMIN_EMAILS.includes(user.email.toLowerCase()) : false;
+  const isAdmin = isAdminByEmail || profile?.role === 'admin';
+  
   // Derived state
   const isAuthenticated = !!user;
-  const isAdmin = profile?.role === 'admin';
-  const isSubscribed = profile?.subscription_status !== 'none' && profile?.subscription_status !== 'trial';
-  const hasAcceptedTerms = profile?.has_accepted_terms ?? false;
+  const isSubscribed = isAdmin || (profile?.subscription_status !== 'none' && profile?.subscription_status !== 'trial');
+  const hasAcceptedTerms = isAdmin || (profile?.has_accepted_terms ?? false);
   const trackLimit = isAdmin ? -1 : TRACK_LIMITS[profile?.subscription_status || 'none'];
 
   // Check upload limit

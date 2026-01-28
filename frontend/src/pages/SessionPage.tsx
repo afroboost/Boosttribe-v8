@@ -1159,6 +1159,17 @@ export const SessionPage: React.FC = () => {
           </div>
         </div>
       </main>
+
+      {/* Hidden audio element for receiving host voice via WebRTC */}
+      {!isHost && (
+        <audio 
+          ref={remoteAudioRef}
+          autoPlay
+          playsInline
+          className="hidden"
+          data-testid="remote-audio"
+        />
+      )}
     </div>
   );
 };

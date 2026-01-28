@@ -338,64 +338,65 @@ export const SessionPage: React.FC = () => {
   } = usePeerAudio({
     sessionId: sessionId || 'default',
     isHost,
-    audioStream: hostMicStream, // Pass stream to usePeerAudio
     onPeerConnected: (peerId) => {
-      console.log('[WebRTC] Participant connected:', peerId);
+      console.log('[SESSION] Participant connected:', peerId);
     },
     onPeerDisconnected: (peerId) => {
-      console.log('[WebRTC] Participant disconnected:', peerId);
+      console.log('[SESSION] Participant disconnected:', peerId);
     },
     onReceiveAudio: (stream) => {
-      console.log('[WebRTC] 🔊 Receiving host audio');
+      console.log('[SESSION] 🔊 Receiving host audio');
     },
     onError: (error) => {
-      console.error('[WebRTC] Error:', error);
+      console.error('[SESSION] WebRTC Error:', error);
     },
     onReady: () => {
       // Broadcast HOST_MIC_READY via Supabase when PeerJS is ready
       if (isHost && socket.isSupabaseMode) {
-        console.log('[WebRTC] Broadcasting HOST_MIC_READY to participants');
+        console.log('[SESSION] Broadcasting HOST_MIC_READY');
         socket.broadcast('HOST_MIC_READY', { hostPeerId: `beattribe-host-${sessionId?.replace(/[^a-zA-Z0-9]/g, '')}` });
       }
     },
   });
 
-  // Connect to PeerJS when session starts
-  // For HOST: Only connect when we have an audio stream
-  // For PARTICIPANT: Connect immediately to receive audio
+  // Connect Participant to PeerJS immediately
   const peerConnectedRef = useRef(false);
   useEffect(() => {
-    if (!sessionId || !nickname) return;
+    if (!sessionId || !nickname || isHost) return;
     
-    // Participant: connect immediately
-    if (!isHost && !peerConnectedRef.current) {
+    // Participant: connect immediately to receive audio
+    if (!peerConnectedRef.current) {
       peerConnectedRef.current = true;
+      console.log('[SESSION] Participant connecting to PeerJS...');
       connectPeer().then(success => {
-        if (success) {
-          console.log('[WebRTC] Connected as PARTICIPANT');
-        }
+        console.log('[SESSION] Participant PeerJS connected:', success);
       });
     }
-    
-    // Host: only connect when we have a mic stream
-    if (isHost && hostMicStream && !peerConnectedRef.current) {
-      peerConnectedRef.current = true;
-      connectPeer().then(success => {
-        if (success) {
-          console.log('[WebRTC] Connected as HOST with audio stream');
-        }
-      });
-    }
-  }, [sessionId, nickname, isHost, hostMicStream, connectPeer]);
+  }, [sessionId, nickname, isHost, connectPeer]);
 
-  // Reset peer connection flag when stream is lost
+  // Host: Connect to PeerJS when mic stream is ready
   useEffect(() => {
-    if (isHost && !hostMicStream && peerConnectedRef.current) {
-      console.log('[WebRTC] Host lost mic stream, will reconnect when stream returns');
+    if (!sessionId || !nickname || !isHost) return;
+    
+    if (hostMicStream && !peerConnectedRef.current) {
+      peerConnectedRef.current = true;
+      console.log('[SESSION] Host connecting to PeerJS with stream...');
+      connectPeer(hostMicStream).then(success => {
+        if (success) {
+          console.log('[SESSION] Host PeerJS connected, starting broadcast');
+          broadcastAudio(hostMicStream);
+        }
+      });
+    }
+    
+    // Host lost mic stream - disconnect
+    if (!hostMicStream && peerConnectedRef.current && isHost) {
+      console.log('[SESSION] Host lost mic stream, disconnecting PeerJS');
       peerConnectedRef.current = false;
+      stopBroadcast();
       disconnectPeer();
     }
-  }, [isHost, hostMicStream, disconnectPeer]);
+  }, [sessionId, nickname, isHost, hostMicStream, connectPeer, broadcastAudio, stopBroadcast, disconnectPeer]);
 
   // Cleanup on unmount
   useEffect(() => {

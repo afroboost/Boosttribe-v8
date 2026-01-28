@@ -1,5 +1,6 @@
 import React, { useEffect, useCallback, useState } from 'react';
-import { useAudioSync, AudioState, SyncState } from '@/hooks/useAudioSync';
+import { Repeat, Repeat1 } from 'lucide-react';
+import { useAudioSync, AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
 
 // Format time helper
 function formatTime(seconds: number): string {

@@ -402,10 +402,6 @@ export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn
       updateAudioState({ isPlaying: false });
     };
 
-    const handleEnded = () => {
-      updateAudioState({ isPlaying: false, currentTime: 0 });
-    };
-
     const handleWaiting = () => {
       updateAudioState({ isBuffering: true });
     };
@@ -434,7 +430,6 @@ export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn
     audio.addEventListener('timeupdate', handleTimeUpdate);
     audio.addEventListener('play', handlePlay);
     audio.addEventListener('pause', handlePause);
-    audio.addEventListener('ended', handleEnded);
     audio.addEventListener('waiting', handleWaiting);
     audio.addEventListener('canplay', handleCanPlay);
     audio.addEventListener('error', handleError);
@@ -449,13 +444,39 @@ export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn
       audio.removeEventListener('timeupdate', handleTimeUpdate);
       audio.removeEventListener('play', handlePlay);
       audio.removeEventListener('pause', handlePause);
-      audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('waiting', handleWaiting);
       audio.removeEventListener('canplay', handleCanPlay);
       audio.removeEventListener('error', handleError);
       audio.removeEventListener('volumechange', handleVolumeChange);
     };
   }, [audioState.volume, audioState.isPlaying, updateAudioState]);
+
+  // Separate effect for 'ended' event to handle repeat mode with proper cleanup
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleEnded = () => {
+      console.log('[AUDIO] Track ended. RepeatMode:', repeatMode);
+      
+      if (repeatMode === 'one') {
+        // Repeat current track: reset to 0 and play
+        audio.currentTime = 0;
+        audio.play().catch(console.error);
+      } else {
+        // For 'all' or 'none': notify parent to handle next track
+        updateAudioState({ isPlaying: false, currentTime: 0 });
+        onTrackEnded?.();
+      }
+    };
+
+    audio.addEventListener('ended', handleEnded);
+
+    // Cleanup function to prevent memory leaks
+    return () => {
+      audio.removeEventListener('ended', handleEnded);
+    };
+  }, [repeatMode, onTrackEnded, updateAudioState]);
 
   // Cleanup on unmount
   useEffect(() => {

@@ -187,30 +187,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user, fetchProfile]);
 
-  // Sign in with email
+  // Sign in with email - using Supabase SDK only
   const signInWithEmail = useCallback(async (email: string, password: string) => {
     if (!supabase) {
       return { error: { message: 'Supabase non configuré' } as AuthError };
     }
 
+    setIsLoading(true);
+    
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim().toLowerCase(),
         password,
       });
 
       if (error) {
         console.error('[AUTH] Sign in error:', error.message);
+        setIsLoading(false);
         return { error };
       }
 
       console.log('[AUTH] Sign in successful:', data.user?.email);
+      
+      // Profile will be loaded by onAuthStateChange listener
       return { error: null };
     } catch (err) {
       console.error('[AUTH] Sign in exception:', err);
+      setIsLoading(false);
+      
+      // Handle stream error specifically
+      const errorMessage = err instanceof Error ? err.message : 'Erreur de connexion';
+      if (errorMessage.includes('stream') || errorMessage.includes('body')) {
+        return { 
+          error: { 
+            message: 'Erreur réseau. Veuillez réessayer.' 
+          } as AuthError 
+        };
+      }
+      
       return { 
         error: { 
-          message: err instanceof Error ? err.message : 'Erreur de connexion' 
+          message: errorMessage
         } as AuthError 
       };
     }

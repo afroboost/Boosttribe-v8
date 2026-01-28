@@ -3,6 +3,9 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { isSupabaseConfigured } from '@/lib/supabaseClient';
 
+// Admin emails for instant bypass (no DB check needed)
+const ADMIN_EMAILS = ['contact.artboost@gmail.com'];
+
 interface RequireAuthProps {
   children: React.ReactNode;
   requireSubscription?: boolean;
@@ -10,13 +13,13 @@ interface RequireAuthProps {
 
 /**
  * Wrapper component that redirects to login if user is not authenticated
- * If requireSubscription is true, also checks for valid subscription
+ * ADMIN BYPASS: Admin emails get instant access without waiting for profile
  */
 export const RequireAuth: React.FC<RequireAuthProps> = ({ 
   children, 
   requireSubscription = false 
 }) => {
-  const { isAuthenticated, isLoading, isSubscribed, isAdmin } = useAuth();
+  const { isAuthenticated, isLoading, isSubscribed, isAdmin, user } = useAuth();
   const location = useLocation();
 
   // If Supabase is not configured, allow access (demo mode)
@@ -24,8 +27,18 @@ export const RequireAuth: React.FC<RequireAuthProps> = ({
     return <>{children}</>;
   }
 
-  // Show loading state
-  if (isLoading) {
+  // ADMIN BYPASS: Check email directly for instant access
+  const userEmail = user?.email?.toLowerCase() || '';
+  const isAdminByEmail = ADMIN_EMAILS.includes(userEmail);
+
+  // Admin by email gets INSTANT access (no loading wait)
+  if (isAdminByEmail && user) {
+    console.log('[RequireAuth] ⚡ Admin bypass for:', userEmail);
+    return <>{children}</>;
+  }
+
+  // Show loading state (but with timeout protection)
+  if (isLoading && !isAdminByEmail) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-black">
         <div className="flex flex-col items-center gap-4">
@@ -41,7 +54,7 @@ export const RequireAuth: React.FC<RequireAuthProps> = ({
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
-  // Admin always has access
+  // Admin (from profile) always has access
   if (isAdmin) {
     return <>{children}</>;
   }

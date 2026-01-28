@@ -463,9 +463,6 @@ export const SessionPage: React.FC = () => {
   }, [socket, isHost, showToast]);
 
   // Listen for playback sync (for participants to auto-play new tracks)
-  // Using a ref to store the audio element for direct manipulation
-  const participantAudioRef = useRef<HTMLAudioElement | null>(null);
-  
   useEffect(() => {
     if (isHost) return;
     

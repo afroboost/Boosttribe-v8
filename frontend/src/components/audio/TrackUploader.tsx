@@ -1,8 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Upload, Music, X, Loader2, AlertCircle, CheckCircle, Sparkles } from 'lucide-react';
+import { Upload, Music, X, Loader2, AlertCircle, CheckCircle, Sparkles, Lock, Crown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { uploadAudioFile, isSupabaseConfigured, UploadResult } from '@/lib/supabaseClient';
+import { useSubscription } from '@/context/SubscriptionContext';
 import { Track } from './PlaylistDnD';
+import { Link } from 'react-router-dom';
 
 interface TrackUploaderProps {
   sessionId: string;
@@ -12,7 +14,7 @@ interface TrackUploaderProps {
   disabled?: boolean;
 }
 
-type UploadStatus = 'idle' | 'selecting' | 'uploading' | 'success' | 'error';
+type UploadStatus = 'idle' | 'selecting' | 'uploading' | 'success' | 'error' | 'limit_reached';
 
 export const TrackUploader: React.FC<TrackUploaderProps> = ({
   sessionId,
@@ -27,8 +29,14 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  const canUpload = currentTrackCount < maxTracks && !disabled;
+  // Get subscription context
+  const { isAdmin, canUploadTrack, trackLimit, user } = useSubscription();
+
+  // Check upload limits - Admin bypasses all limits
+  const effectiveMaxTracks = isAdmin ? 999 : (trackLimit === -1 ? maxTracks : Math.min(maxTracks, trackLimit));
+  const canUpload = canUploadTrack(currentTrackCount) && currentTrackCount < effectiveMaxTracks && !disabled;
   const isDemoMode = !isSupabaseConfigured;
+  const isTrialLimitReached = !isAdmin && trackLimit > 0 && currentTrackCount >= trackLimit;
 
   // Handle file selection
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

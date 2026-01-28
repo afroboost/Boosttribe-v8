@@ -431,7 +431,7 @@ export const SessionPage: React.FC = () => {
       const newSelected = payload.tracks.find(t => t.id === payload.selectedTrackId);
       if (newSelected) {
         setSelectedTrack(newSelected as Track);
-        showToast(`Piste suivante : ${(newSelected as Track).title}`, 'info');
+        showToast(`Piste suivante : ${(newSelected as Track).title}`, 'default');
       }
     });
     

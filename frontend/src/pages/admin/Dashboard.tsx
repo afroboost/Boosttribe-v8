@@ -516,7 +516,7 @@ const Dashboard: React.FC = () => {
             )}
             <PrimaryButton 
               onClick={handleSave} 
-              disabled={!hasChanges || isSaving || dbStatus === 'error'} 
+              disabled={!hasChanges || isSaving} 
               size="sm"
             >
               {isSaving ? (

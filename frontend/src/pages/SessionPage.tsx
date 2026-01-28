@@ -321,6 +321,38 @@ export const SessionPage: React.FC = () => {
   const [audioState, setAudioState] = useState<AudioState | null>(null);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
+
+  // Handle track ended - autoplay next track
+  const handleTrackEnded = useCallback(() => {
+    if (!isHost) return; // Only host controls autoplay
+    
+    const currentIndex = tracks.findIndex(t => t.id === selectedTrack.id);
+    
+    if (repeatMode === 'all') {
+      // Loop playlist: go to next, or first if at end
+      const nextIndex = (currentIndex + 1) % tracks.length;
+      const nextTrack = tracks[nextIndex];
+      setSelectedTrack(nextTrack);
+      console.log('[AUTOPLAY] Next track (loop):', nextTrack.title);
+      
+      // Sync with participants
+      socket.syncPlaylist(tracks, nextTrack.id);
+    } else if (repeatMode === 'none') {
+      // No repeat: go to next if available
+      if (currentIndex < tracks.length - 1) {
+        const nextTrack = tracks[currentIndex + 1];
+        setSelectedTrack(nextTrack);
+        console.log('[AUTOPLAY] Next track:', nextTrack.title);
+        
+        // Sync with participants
+        socket.syncPlaylist(tracks, nextTrack.id);
+      } else {
+        console.log('[AUTOPLAY] Playlist ended');
+      }
+    }
+    // Note: 'one' mode is handled in useAudioSync hook directly
+  }, [isHost, tracks, selectedTrack.id, repeatMode, socket]);
 
   // Join socket session when session ID is available
   useEffect(() => {

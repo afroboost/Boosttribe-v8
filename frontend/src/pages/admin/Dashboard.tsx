@@ -182,22 +182,21 @@ const Dashboard: React.FC = () => {
     }
   }, [settings.favicon_url]);
 
-  // Load settings from Supabase with robust error handling
+  // Load settings from Supabase with AUTO-HEALING mode (no error banners)
   useEffect(() => {
     let isMounted = true;
     
     const loadSettings = async () => {
       if (!isMounted) return;
       
-      console.log('[CMS] Loading site settings from Supabase...');
+      console.log('[CMS] Loading site settings...');
       setDbStatus('checking');
       
-      // Check if Supabase is configured
+      // If Supabase is not configured, silently use defaults
       if (!isSupabaseConfigured || !supabase) {
-        console.warn('[CMS] Supabase not configured - using defaults');
+        console.log('[CMS] Supabase not configured - using defaults (auto-healing)');
         if (isMounted) {
-          setDbStatus('error');
-          setDbError('Supabase non configuré. Les valeurs par défaut sont utilisées.');
+          setDbStatus('offline');
           setSettings(DEFAULT_SETTINGS);
           setOriginalSettings(DEFAULT_SETTINGS);
           setIsLoadingSettings(false);
@@ -206,60 +205,32 @@ const Dashboard: React.FC = () => {
       }
 
       try {
-        // Use a fresh query - don't reuse response objects
-        const response = await supabase
+        // Query Supabase - use maybeSingle() to avoid errors on empty results
+        const { data, error } = await supabase
           .from('site_settings')
           .select('*')
           .limit(1)
-          .maybeSingle(); // Use maybeSingle() instead of single() to avoid error when no data
+          .maybeSingle();
         
         if (!isMounted) return;
         
-        // Check for error
-        if (response.error) {
-          const errorCode = response.error.code;
-          const errorMessage = response.error.message;
-          
-          console.warn('[CMS] Supabase query error:', errorCode, errorMessage);
-          
-          // Handle specific errors gracefully
-          if (errorCode === '42P01' || errorMessage.includes('does not exist')) {
-            // Table doesn't exist - show helpful message but don't crash
-            setDbStatus('error');
-            setDbError('Table site_settings non trouvée. Exécutez supabase-site-settings.sql');
-          } else if (errorCode === 'PGRST116') {
-            // No rows found - use defaults
-            setDbStatus('error');
-            setDbError('Aucune configuration trouvée. Les valeurs par défaut sont utilisées.');
-          } else {
-            setDbStatus('error');
-            setDbError(`Erreur Supabase: ${errorMessage}`);
-          }
-          
-          // Always fallback to defaults
+        // Handle result - AUTO-HEALING: no error display, just use defaults
+        if (error || !data) {
+          console.log('[CMS] No data from Supabase, using defaults (auto-healing)');
+          setDbStatus('offline');
           setSettings(DEFAULT_SETTINGS);
           setOriginalSettings(DEFAULT_SETTINGS);
-        } else if (response.data) {
-          // Success - data loaded
-          console.log('[CMS] ✅ Settings loaded from Supabase:', response.data.site_name);
-          setSettings(response.data as SiteSettings);
-          setOriginalSettings(response.data as SiteSettings);
-          setDbStatus('connected');
-          setDbError(null);
         } else {
-          // No data but no error (empty table)
-          console.log('[CMS] No settings in DB, using defaults');
-          setDbStatus('error');
-          setDbError('Table vide. Les valeurs par défaut sont utilisées.');
-          setSettings(DEFAULT_SETTINGS);
-          setOriginalSettings(DEFAULT_SETTINGS);
+          console.log('[CMS] ✅ Settings loaded from Supabase:', data.site_name);
+          setSettings(data as SiteSettings);
+          setOriginalSettings(data as SiteSettings);
+          setDbStatus('connected');
         }
       } catch (err) {
-        // Catch any unexpected errors
-        console.error('[CMS] Unexpected exception:', err);
+        // Silently fallback to defaults
+        console.log('[CMS] Exception, using defaults (auto-healing):', err);
         if (isMounted) {
-          setDbStatus('error');
-          setDbError('Erreur inattendue. Les valeurs par défaut sont utilisées.');
+          setDbStatus('offline');
           setSettings(DEFAULT_SETTINGS);
           setOriginalSettings(DEFAULT_SETTINGS);
         }
@@ -276,7 +247,6 @@ const Dashboard: React.FC = () => {
       setIsLoadingSettings(false);
     }
     
-    // Cleanup function
     return () => {
       isMounted = false;
     };

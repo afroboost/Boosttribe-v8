@@ -322,6 +322,15 @@ export const SessionPage: React.FC = () => {
   const { theme } = useTheme();
   const { showToast } = useToast();
   const socket = useSocket();
+  const { isAdmin, user, isLoading: authLoading } = useAuth();
+  
+  // Debug log for admin access
+  console.log('[SESSION] 🎵 SessionPage rendered', { 
+    isAdmin, 
+    userEmail: user?.email, 
+    authLoading,
+    urlSessionId 
+  });
   
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);

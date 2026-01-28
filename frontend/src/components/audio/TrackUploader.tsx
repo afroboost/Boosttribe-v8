@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { Upload, Music, X, Loader2, AlertCircle, CheckCircle, Sparkles, Lock, Crown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { uploadAudioFile, isSupabaseConfigured, UploadResult } from '@/lib/supabaseClient';
-import { useSubscription } from '@/context/SubscriptionContext';
+import { useAuth } from '@/context/AuthContext';
 import { Track } from './PlaylistDnD';
 import { Link } from 'react-router-dom';
 
@@ -29,8 +29,8 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
-  // Get subscription context
-  const { isAdmin, canUploadTrack, trackLimit, user } = useSubscription();
+  // Get auth context
+  const { isAdmin, canUploadTrack, trackLimit } = useAuth();
 
   // Check upload limits - Admin bypasses all limits
   const effectiveMaxTracks = isAdmin ? 999 : (trackLimit === -1 ? maxTracks : Math.min(maxTracks, trackLimit));

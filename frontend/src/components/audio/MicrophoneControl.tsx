@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Mic, MicOff, Volume2, AlertCircle, Lock, Monitor } from 'lucide-react';
+import { Mic, MicOff, Volume2, AlertCircle, Lock, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VuMeterSegmented } from './VuMeter';
 import { useMicrophone } from '@/hooks/useMicrophone';
@@ -9,13 +9,14 @@ interface MicrophoneControlProps {
   onMicActive?: (active: boolean) => void;
   onAudioLevel?: (level: number) => void;
   onDuckMusic?: (duck: boolean) => void;
-  onStreamReady?: (stream: MediaStream | null) => void; // For WebRTC broadcasting
+  onStreamReady?: (stream: MediaStream | null) => void;
   duckThreshold?: number;
   className?: string;
 }
 
 /**
- * Microphone control component with capture, VU meter, and duck effect
+ * Microphone control component
+ * Calls getUserMedia DIRECTLY on button click (user gesture required)
  */
 export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   isHost = false,
@@ -28,13 +29,11 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
 }) => {
   const [isDucking, setIsDucking] = useState(false);
   const [showDevices, setShowDevices] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
 
   // Handle audio level for duck effect
   const handleAudioLevel = useCallback((level: number) => {
     onAudioLevel?.(level);
     
-    // Duck effect: lower music when speaking
     if (isHost && onDuckMusic) {
       const shouldDuck = level > duckThreshold;
       if (shouldDuck !== isDucking) {
@@ -46,12 +45,12 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
 
   const {
     state,
-    checkDevices,
     startCapture,
     stopCapture,
     toggleMute,
     setDevice,
     refreshDevices,
+    retryCapture,
     audioStream,
   } = useMicrophone({
     echoCancellation: true,
@@ -67,70 +66,38 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   // Notify parent of stream changes for WebRTC
   useEffect(() => {
     if (state.isCapturing && !state.isMuted && audioStream) {
+      console.log('[MIC-UI] Stream ready, notifying parent');
       onStreamReady?.(audioStream);
     } else {
       onStreamReady?.(null);
     }
   }, [state.isCapturing, state.isMuted, audioStream, onStreamReady]);
 
-  // Toggle capture with device check
+  // Toggle capture - DIRECT getUserMedia call on click
   const handleToggleCapture = useCallback(async () => {
+    console.log('[MIC-UI] Toggle capture clicked, isCapturing:', state.isCapturing);
+    
     if (state.isCapturing) {
       stopCapture();
     } else {
-      // First check devices, then start capture
-      setIsChecking(true);
-      const { hasDevices } = await checkDevices();
-      setIsChecking(false);
-      
-      if (hasDevices) {
-        await startCapture();
-      }
-      // If no devices, error is already set by checkDevices
+      // This will trigger the browser permission dialog
+      await startCapture();
     }
-  }, [state.isCapturing, startCapture, stopCapture, checkDevices]);
+  }, [state.isCapturing, startCapture, stopCapture]);
 
-  // Refresh devices when expanding
+  // Retry permission
+  const handleRetry = useCallback(async () => {
+    console.log('[MIC-UI] Retry clicked');
+    await retryCapture();
+  }, [retryCapture]);
+
+  // Show device selector
   const handleShowDevices = useCallback(async () => {
     if (!showDevices) {
       await refreshDevices();
     }
     setShowDevices(!showDevices);
   }, [showDevices, refreshDevices]);
-
-  // Get error icon based on error type
-  const getErrorIcon = () => {
-    switch (state.errorType) {
-      case 'permission':
-        return <Lock size={14} className="text-red-400" />;
-      case 'https':
-        return <Lock size={14} className="text-yellow-400" />;
-      case 'device':
-        return <Monitor size={14} className="text-red-400" />;
-      default:
-        return <AlertCircle size={14} className="text-red-400" />;
-    }
-  };
-
-  // Get error background color based on type
-  const getErrorBgClass = () => {
-    switch (state.errorType) {
-      case 'https':
-        return 'bg-yellow-500/10 border-yellow-500/30';
-      default:
-        return 'bg-red-500/10 border-red-500/30';
-    }
-  };
-
-  // Get error text color
-  const getErrorTextClass = () => {
-    switch (state.errorType) {
-      case 'https':
-        return 'text-yellow-400';
-      default:
-        return 'text-red-400';
-    }
-  };
 
   return (
     <div className={`relative ${className}`}>
@@ -140,7 +107,6 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
           onClick={handleToggleCapture}
           variant="outline"
           size="sm"
-          disabled={isChecking}
           data-testid="mic-toggle-btn"
           className={`
             relative overflow-hidden transition-all
@@ -150,15 +116,9 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
                 : 'border-green-500/50 text-green-400 bg-green-500/10'
               : 'border-white/20 text-white/70 hover:bg-white/10'
             }
-            ${isChecking ? 'opacity-50 cursor-wait' : ''}
           `}
         >
-          {isChecking ? (
-            <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          ) : state.isCapturing ? (
+          {state.isCapturing ? (
             state.isMuted ? (
               <MicOff size={16} strokeWidth={1.5} />
             ) : (
@@ -168,7 +128,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
             <Mic size={16} strokeWidth={1.5} />
           )}
           <span className="ml-1.5 text-xs">
-            {isChecking ? '...' : state.isCapturing ? (state.isMuted ? 'Muet' : 'On') : 'Micro'}
+            {state.isCapturing ? (state.isMuted ? 'Muet' : 'On') : 'Micro'}
           </span>
           
           {/* Active indicator */}
@@ -199,7 +159,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
           </button>
         )}
 
-        {/* VU Meter (when capturing) */}
+        {/* VU Meter (when capturing and not muted) */}
         {state.isCapturing && !state.isMuted && (
           <VuMeterSegmented 
             level={state.audioLevel} 
@@ -216,22 +176,45 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
         )}
       </div>
 
-      {/* Error message with specific styling based on error type */}
+      {/* Error message with Retry button */}
       {state.error && (
-        <div className={`absolute top-full left-0 mt-2 p-3 rounded-lg border flex items-start gap-2 z-50 max-w-xs ${getErrorBgClass()}`}>
-          {getErrorIcon()}
-          <div>
-            <span className={`text-xs ${getErrorTextClass()}`}>{state.error}</span>
-            {state.errorType === 'permission' && (
-              <p className="text-[10px] text-white/50 mt-1">
-                💡 Cliquez sur l'icône 🔒 dans la barre d'adresse
-              </p>
+        <div className={`
+          absolute top-full left-0 mt-2 p-3 rounded-lg z-50 max-w-xs
+          ${state.errorType === 'https' 
+            ? 'bg-yellow-500/10 border border-yellow-500/30' 
+            : 'bg-red-500/10 border border-red-500/30'
+          }
+        `}>
+          <div className="flex items-start gap-2">
+            {state.errorType === 'permission' ? (
+              <Lock size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
+            ) : state.errorType === 'https' ? (
+              <Lock size={16} className="text-yellow-400 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle size={16} className="text-red-400 flex-shrink-0 mt-0.5" />
             )}
+            <div className="flex-1">
+              <span className={`text-xs ${state.errorType === 'https' ? 'text-yellow-400' : 'text-red-400'}`}>
+                {state.error}
+              </span>
+              
+              {/* Retry button */}
+              {state.canRetry && (
+                <button
+                  onClick={handleRetry}
+                  className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 text-xs transition-colors"
+                  data-testid="mic-retry-btn"
+                >
+                  <RefreshCw size={12} />
+                  Réessayer la permission
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
-      {/* Device selector (optional) */}
+      {/* Device selector */}
       {showDevices && state.devices.length > 0 && (
         <div className="absolute top-full left-0 mt-2 p-2 rounded-lg bg-black/90 border border-white/10 z-50 min-w-[200px]">
           <p className="text-xs text-white/50 mb-2">Sélectionner un micro :</p>

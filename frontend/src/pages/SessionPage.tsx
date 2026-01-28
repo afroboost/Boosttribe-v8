@@ -201,7 +201,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
 
 // Subscription Badge Component
 const SubscriptionBadge: React.FC = () => {
-  const { isAdmin, isSubscribed, user, trackLimit } = useSubscription();
+  const { isAdmin, isSubscribed, profile, trackLimit } = useAuth();
   
   if (isAdmin) {
     return (
@@ -214,7 +214,7 @@ const SubscriptionBadge: React.FC = () => {
   if (isSubscribed) {
     return (
       <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-        ✓ Abonné {user?.subscription_status}
+        ✓ Abonné {profile?.subscription_status}
       </Badge>
     );
   }

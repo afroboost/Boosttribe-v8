@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Mic, MicOff, Volume2, AlertCircle } from 'lucide-react';
+import { Mic, MicOff, Volume2, AlertCircle, Wifi, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { VuMeter, VuMeterSegmented } from './VuMeter';
+import { VuMeterSegmented } from './VuMeter';
 import { useMicrophone } from '@/hooks/useMicrophone';
 
 interface MicrophoneControlProps {
@@ -9,7 +9,8 @@ interface MicrophoneControlProps {
   onMicActive?: (active: boolean) => void;
   onAudioLevel?: (level: number) => void;
   onDuckMusic?: (duck: boolean) => void;
-  duckThreshold?: number; // Audio level to trigger duck (default 30)
+  onStreamReady?: (stream: MediaStream | null) => void; // For WebRTC broadcasting
+  duckThreshold?: number;
   className?: string;
 }
 
@@ -21,6 +22,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   onMicActive,
   onAudioLevel,
   onDuckMusic,
+  onStreamReady,
   duckThreshold = 30,
   className = '',
 }) => {
@@ -48,6 +50,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
     toggleMute,
     setDevice,
     refreshDevices,
+    audioStream,
   } = useMicrophone({
     echoCancellation: true,
     noiseSuppression: true,
@@ -58,6 +61,15 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   useEffect(() => {
     onMicActive?.(state.isCapturing && !state.isMuted);
   }, [state.isCapturing, state.isMuted, onMicActive]);
+
+  // Notify parent of stream changes for WebRTC
+  useEffect(() => {
+    if (state.isCapturing && !state.isMuted && audioStream) {
+      onStreamReady?.(audioStream);
+    } else {
+      onStreamReady?.(null);
+    }
+  }, [state.isCapturing, state.isMuted, audioStream, onStreamReady]);
 
   // Toggle capture
   const handleToggleCapture = useCallback(async () => {

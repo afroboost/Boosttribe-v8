@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
-import { HostMicControl } from '@/components/audio/HostMicControl';
+import { MicrophoneControl } from '@/components/audio/MicrophoneControl';
 import { TrackUploader } from '@/components/audio/TrackUploader';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

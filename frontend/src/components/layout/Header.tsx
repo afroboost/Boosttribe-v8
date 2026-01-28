@@ -85,8 +85,8 @@ export const Header: React.FC = () => {
           {/* Navigation - Dynamic from theme (without Communauté) */}
           <nav className="hidden md:flex items-center gap-8">
             {filteredNavLinks.map((link) => {
-              // Skip "Tarifs" as we add it separately with correct route
-              if (link.label.toLowerCase() === 'tarifs') return null;
+              // Skip "Tarifs" and "Fonctionnalités" as we add them with React Router
+              if (link.label.toLowerCase() === 'tarifs' || link.label.toLowerCase() === 'fonctionnalités') return null;
               return (
                 <a 
                   key={link.href}
@@ -98,6 +98,13 @@ export const Header: React.FC = () => {
                 </a>
               );
             })}
+            <Link 
+              to="/features"
+              className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
+              style={{ fontFamily: fonts.body }}
+            >
+              Fonctionnalités
+            </Link>
             <Link 
               to="/pricing"
               className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"

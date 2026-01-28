@@ -196,7 +196,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           dataConn.on('close', () => {
             dataConnectionsRef.current.delete(dataConn.peer);
             connectionsRef.current.delete(dataConn.peer);
-            updateState(prev => ({
+            setState(prev => ({
+              ...prev,
               connectedPeers: prev.connectedPeers.filter(id => id !== dataConn.peer),
             }));
             onPeerDisconnected?.(dataConn.peer);

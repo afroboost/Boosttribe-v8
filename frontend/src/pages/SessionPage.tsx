@@ -861,8 +861,23 @@ export const SessionPage: React.FC = () => {
                   isHost={true}
                   onMicActive={setHostMicActive}
                   onDuckMusic={handleDuckMusic}
+                  onStreamReady={setHostMicStream}
                   duckThreshold={35}
                 />
+              )}
+              
+              {/* WebRTC status indicator */}
+              {peerState.isConnected && (
+                <span 
+                  className={`text-xs px-2 py-0.5 rounded-full ${
+                    peerState.isBroadcasting 
+                      ? 'bg-green-500/20 text-green-400' 
+                      : 'bg-blue-500/20 text-blue-400'
+                  }`}
+                  title={`WebRTC: ${peerState.connectedPeers.length} pairs connectés`}
+                >
+                  {peerState.isBroadcasting ? '📡 Live' : '🔗 WebRTC'}
+                </span>
               )}
               
               {/* User nickname display */}

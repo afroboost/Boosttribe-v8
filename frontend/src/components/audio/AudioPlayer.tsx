@@ -249,12 +249,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
         {/* Controls */}
         <div className="flex items-center justify-between">
-          {/* Left: Volume */}
-          <div className="relative flex items-center">
+          {/* Left: Volume + Repeat */}
+          <div className="relative flex items-center gap-1">
+            {/* Volume Button */}
             <button
               onClick={toggleMute}
               onMouseEnter={() => setShowVolume(true)}
               className="p-2 text-white/60 hover:text-white transition-colors"
+              data-testid="volume-btn"
             >
               <VolumeIcon />
             </button>

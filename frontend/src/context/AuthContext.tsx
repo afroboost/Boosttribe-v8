@@ -141,16 +141,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [createLocalProfile]);
 
   // Create new profile for user in database
-  const createProfile = async (userId: string): Promise<UserProfile | null> => {
-    if (!supabase || !user) return createLocalProfile(userId);
+  const createProfile = async (userId: string, userEmail: string, userMetadata?: Record<string, unknown>): Promise<UserProfile | null> => {
+    if (!supabase) return createLocalProfile(userId, userEmail, userMetadata);
+
+    // Check if user should be admin
+    const adminEmails = ['contact.artboost@gmail.com'];
+    const isAdminUser = adminEmails.includes(userEmail.toLowerCase());
 
     const newProfile: Partial<UserProfile> = {
       id: userId,
-      email: user.email || '',
-      full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || '',
-      avatar_url: user.user_metadata?.avatar_url || '',
-      role: 'user',
-      subscription_status: 'trial',
+      email: userEmail,
+      full_name: (userMetadata?.full_name as string) || userEmail.split('@')[0] || '',
+      avatar_url: (userMetadata?.avatar_url as string) || '',
+      role: isAdminUser ? 'admin' : 'user',
+      subscription_status: isAdminUser ? 'enterprise' : 'trial',
       has_accepted_terms: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -165,13 +169,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) {
         console.error('[AUTH] Error creating profile:', error.message);
-        return createLocalProfile(userId);
+        return createLocalProfile(userId, userEmail, userMetadata);
       }
 
       return data as UserProfile;
     } catch (err) {
       console.error('[AUTH] Exception creating profile:', err);
-      return createLocalProfile(userId);
+      return createLocalProfile(userId, userEmail, userMetadata);
     }
   };
 

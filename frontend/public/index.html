@@ -19,6 +19,17 @@
         Learn how to configure a non-root public URL by running `npm run build`.
         -->
         <title>Beattribe</title>
+        <!-- HIDE EMERGENT BADGE VIA CSS -->
+        <style>
+            #emergent-badge,
+            [id*="emergent"],
+            a[href*="emergent.sh"] {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                pointer-events: none !important;
+            }
+        </style>
         <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
         <!--
         These two scripts have been added for the Visual Edits, please do not edit or remove them
@@ -42,6 +53,18 @@
                 tailwindScript.src = 'https://cdn.tailwindcss.com';
                 document.head.appendChild(tailwindScript);
             }
+            
+            // REMOVE EMERGENT BADGE FROM DOM
+            function removeEmergentBadge() {
+                var badge = document.getElementById('emergent-badge');
+                if (badge) badge.remove();
+                var allBadges = document.querySelectorAll('[id*="emergent"], a[href*="emergent.sh"]');
+                allBadges.forEach(function(el) { el.remove(); });
+            }
+            // Run on load and periodically
+            document.addEventListener('DOMContentLoaded', removeEmergentBadge);
+            window.addEventListener('load', removeEmergentBadge);
+            setInterval(removeEmergentBadge, 500);
         </script>
     </head>
     <body>

@@ -14,10 +14,14 @@
 [data-emergent],
 iframe[id*="emergent"],
 iframe[src*="emergent"],
+iframe[src*="emergentagent"],
 a[href*="emergent"],
+a[href*="emergentagent"],
 div[style*="emergent"],
 body > div:last-of-type:not([class]):not([id]),
-body > a:last-of-type[target="_blank"] {
+body > a:last-of-type[target="_blank"],
+body > div[style*="fixed"][style*="bottom"],
+body > a[style*="fixed"][style*="bottom"] {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;

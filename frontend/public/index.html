@@ -7,36 +7,73 @@
         <meta name="description" content="Beattribe - Unite Through Rhythm. La communauté des beatmakers et producteurs." />
         <title>Beattribe</title>
         
-        <!-- AGGRESSIVE BADGE REMOVAL - PRIORITY HIGHEST -->
-        <style id="emergent-killer-css">
-            /* Kill ALL emergent-related elements */
+        <!-- FORCE BRUTE: BADGE KILLER CSS - MAXIMUM PRIORITY -->
+        <style id="emergent-nuke">
+            /* Target ALL possible badge selectors with maximum specificity */
             #emergent-badge,
             .emergent-badge,
+            .emergent-indicator,
             [id*="emergent"],
             [class*="emergent"],
             [data-emergent],
             a[href*="emergent"],
             div[style*="Made with"],
-            *[style*="emergent"] {
+            *[style*="emergent"],
+            body > div:last-child,
+            body > a:last-child {
                 display: none !important;
                 visibility: hidden !important;
                 opacity: 0 !important;
                 pointer-events: none !important;
                 width: 0 !important;
                 height: 0 !important;
+                max-width: 0 !important;
+                max-height: 0 !important;
+                overflow: hidden !important;
                 position: absolute !important;
-                left: -9999px !important;
-                top: -9999px !important;
-                z-index: -9999 !important;
+                left: -99999px !important;
+                top: -99999px !important;
+                z-index: -99999 !important;
+                transform: scale(0) !important;
+                clip: rect(0, 0, 0, 0) !important;
             }
-            /* Kill fixed position badges at bottom */
-            body > div[style*="fixed"][style*="bottom"],
-            body > a[style*="fixed"][style*="bottom"] {
+            /* Kill ANY fixed position element at bottom right */
+            body > *[style*="fixed"],
+            body > *[style*="bottom"],
+            body > *[style*="right"] {
                 display: none !important;
             }
         </style>
         
         <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
+        
+        <!-- IMMEDIATE BADGE INTERCEPT - Runs before badge can render -->
+        <script>
+            (function() {
+                // Override appendChild to intercept badge injection
+                var originalAppendChild = Element.prototype.appendChild;
+                Element.prototype.appendChild = function(child) {
+                    if (child && child.id && child.id.toLowerCase().includes('emergent')) {
+                        console.log('[BLOCKED] Emergent element injection');
+                        return child;
+                    }
+                    if (child && child.textContent && child.textContent.includes('Made with') && child.textContent.includes('Emergent')) {
+                        console.log('[BLOCKED] Made with Emergent text');
+                        return child;
+                    }
+                    return originalAppendChild.call(this, child);
+                };
+                
+                // Override insertBefore too
+                var originalInsertBefore = Element.prototype.insertBefore;
+                Element.prototype.insertBefore = function(newNode, refNode) {
+                    if (newNode && newNode.id && newNode.id.toLowerCase().includes('emergent')) {
+                        return newNode;
+                    }
+                    return originalInsertBefore.call(this, newNode, refNode);
+                };
+            })();
+        </script>
         
         <script>
             // Only load visual edit scripts when inside an iframe

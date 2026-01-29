@@ -105,46 +105,50 @@ const HomePage: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ThemeProvider>
-      <ToastProvider>
-        <BrowserRouter>
-          <AuthProvider>
-            <SiteSettingsLoader>
-              <SocketProvider>
-                {/* 🛡️ Blocker iframe emergent */}
-                <EmergentBlocker />
-                <div className="App">
-                  <Routes>
-                    <Route path="/" element={<HomePage />} />
-                    <Route path="/login" element={<LoginPage />} />
-                    <Route path="/pricing" element={<PricingPage />} />
-                    <Route path="/features" element={<FeaturesPage />} />
-                    <Route 
-                      path="/session" 
-                      element={
-                        <RequireAuth>
-                          <SessionPage />
-                        </RequireAuth>
-                      } 
-                    />
-                    <Route 
-                      path="/session/:sessionId" 
-                      element={<SessionPage />} 
-                    />
-                    <Route 
-                      path="/admin" 
-                      element={
-                        <RequireAdmin>
-                          <AdminDashboard />
-                        </RequireAdmin>
-                      } 
-                    />
-                  </Routes>
-                </div>
-              </SocketProvider>
-            </SiteSettingsLoader>
-          </AuthProvider>
-        </BrowserRouter>
-      </ToastProvider>
+      <I18nProvider defaultLanguage="fr">
+        <ToastProvider>
+          <BrowserRouter>
+            <AuthProvider>
+              <SiteSettingsLoader>
+                <SocketProvider>
+                  {/* 🛡️ Blocker iframe emergent */}
+                  <EmergentBlocker />
+                  <div className="App">
+                    <Routes>
+                      <Route path="/" element={<HomePage />} />
+                      <Route path="/login" element={<LoginPage />} />
+                      <Route path="/pricing" element={<PricingPage />} />
+                      <Route path="/features" element={<FeaturesPage />} />
+                      <Route 
+                        path="/session" 
+                        element={
+                          <RequireAuth>
+                            <SessionPage />
+                          </RequireAuth>
+                        } 
+                      />
+                      <Route 
+                        path="/session/:sessionId" 
+                        element={<SessionPage />} 
+                      />
+                      <Route 
+                        path="/admin" 
+                        element={
+                          <RequireAdmin>
+                            <AdminDashboard />
+                          </RequireAdmin>
+                        } 
+                      />
+                    </Routes>
+                    {/* 🤖 Bot IA Pro - Flottant */}
+                    <ChatBot />
+                  </div>
+                </SocketProvider>
+              </SiteSettingsLoader>
+            </AuthProvider>
+          </BrowserRouter>
+        </ToastProvider>
+      </I18nProvider>
     </ThemeProvider>
   );
 };

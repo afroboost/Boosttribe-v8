@@ -152,12 +152,13 @@ const PricingPage: React.FC = () => {
       ? plan.stripeMonthlyLink 
       : plan.stripeYearlyLink;
 
-    // If Stripe link exists, redirect
+    // If Stripe link exists, redirect directly to Stripe
     if (stripeLink) {
-      window.open(stripeLink, '_blank');
+      // Redirect to Stripe Checkout
+      window.location.href = stripeLink;
     } else {
-      // Fallback: show message
-      alert('Les paiements Stripe seront bientôt disponibles. Contactez-nous pour un accès anticipé.');
+      // Fallback: inform admin needs to configure links
+      alert('⚠️ Lien Stripe non configuré.\n\nL\'administrateur doit configurer les liens de paiement dans le Dashboard Admin > Paramètres > Section Stripe.');
     }
   };
 

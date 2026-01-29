@@ -75,6 +75,7 @@ const BASE_PLANS: Plan[] = [
 const PricingPage: React.FC = () => {
   const { theme } = useTheme();
   const navigate = useNavigate();
+  const { settings } = useSiteSettings();
   const { 
     isAuthenticated,
     profile, 
@@ -88,6 +89,25 @@ const PricingPage: React.FC = () => {
   const [termsChecked, setTermsChecked] = useState(hasAcceptedTerms);
   const [isAccepting, setIsAccepting] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+
+  // Inject Stripe links from settings into plans
+  const PLANS: Plan[] = BASE_PLANS.map(plan => {
+    if (plan.id === 'pro') {
+      return {
+        ...plan,
+        stripeMonthlyLink: settings.stripe_pro_monthly || undefined,
+        stripeYearlyLink: settings.stripe_pro_yearly || undefined,
+      };
+    }
+    if (plan.id === 'enterprise') {
+      return {
+        ...plan,
+        stripeMonthlyLink: settings.stripe_enterprise_monthly || undefined,
+        stripeYearlyLink: settings.stripe_enterprise_yearly || undefined,
+      };
+    }
+    return plan;
+  });
 
   // Handle terms acceptance
   const handleAcceptTerms = async () => {

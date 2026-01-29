@@ -25,6 +25,14 @@ interface SiteSettings {
   stripe_pro_yearly: string;
   stripe_enterprise_monthly: string;
   stripe_enterprise_yearly: string;
+  // Plan visibility & pricing
+  plan_pro_visible: boolean;
+  plan_enterprise_visible: boolean;
+  plan_pro_price_monthly: string;
+  plan_pro_price_yearly: string;
+  plan_enterprise_price_monthly: string;
+  plan_enterprise_price_yearly: string;
+  default_language: string;
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
@@ -48,6 +56,14 @@ const DEFAULT_SETTINGS: SiteSettings = {
   stripe_pro_yearly: '',
   stripe_enterprise_monthly: '',
   stripe_enterprise_yearly: '',
+  // Plan visibility & pricing defaults
+  plan_pro_visible: true,
+  plan_enterprise_visible: true,
+  plan_pro_price_monthly: '9.99',
+  plan_pro_price_yearly: '99.99',
+  plan_enterprise_price_monthly: '29.99',
+  plan_enterprise_price_yearly: '299.99',
+  default_language: 'fr',
 };
 
 /**

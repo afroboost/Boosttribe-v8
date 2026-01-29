@@ -64,7 +64,7 @@ const ChatBot: React.FC = () => {
 
   // Vérifier si l'utilisateur a accès (Pro, Enterprise, ou Admin)
   const userPlan = profile?.subscription_status || 'free';
-  const hasAccess = isAdmin || isSubscribed || userPlan === 'pro' || userPlan === 'enterprise';
+  const hasAccess = isAdmin || isSubscribed || ['pro', 'enterprise'].includes(userPlan);
 
   // Scroll to bottom on new messages
   useEffect(() => {

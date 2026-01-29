@@ -1178,18 +1178,67 @@ export const SessionPage: React.FC = () => {
 
             {/* Audio Player - Only show if there's a track selected */}
             {selectedTrack ? (
-              <AudioPlayer
-                src={selectedTrack.src}
-                title={selectedTrack.title}
-                artist={selectedTrack.artist}
-                coverArt={selectedTrack.coverArt}
-                isHost={isHost}
-                sessionId={sessionId}
-                onStateChange={handleAudioStateChange}
-                onSyncUpdate={handleSyncStateChange}
-                onTrackEnded={handleTrackEnded}
-                onRepeatModeChange={setRepeatMode}
-              />
+              <>
+                {/* Free Trial Timer Indicator */}
+                {isFreeTrial && !trialLimitReached && (
+                  <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 rounded-lg p-3 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-purple-400 text-sm font-medium">⏱️ Essai Gratuit</span>
+                        <span className="text-white/70 text-sm">
+                          {Math.floor((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / 60)}:{String((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) % 60).padStart(2, '0')} restant
+                        </span>
+                      </div>
+                      <Link 
+                        to="/pricing" 
+                        className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded-full transition-colors"
+                      >
+                        Passer à Pro
+                      </Link>
+                    </div>
+                    <div className="mt-2 bg-white/10 rounded-full h-1.5 overflow-hidden">
+                      <div 
+                        className="bg-gradient-to-r from-purple-500 to-pink-500 h-full transition-all duration-1000"
+                        style={{ width: `${((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / FREE_TRIAL_LIMIT_SECONDS) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                
+                {/* Trial Limit Reached Message */}
+                {trialLimitReached && (
+                  <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-4 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-red-400 font-medium">⏱️ Limite d'essai atteinte</p>
+                        <p className="text-white/60 text-sm mt-1">
+                          Votre essai gratuit de 5 minutes est terminé. Passez à Pro pour une écoute illimitée.
+                        </p>
+                      </div>
+                      <Link 
+                        to="/pricing" 
+                        className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                      >
+                        Souscrire
+                      </Link>
+                    </div>
+                  </div>
+                )}
+                
+                <AudioPlayer
+                  src={selectedTrack.src}
+                  title={selectedTrack.title}
+                  artist={selectedTrack.artist}
+                  coverArt={selectedTrack.coverArt}
+                  isHost={isHost}
+                  sessionId={sessionId}
+                  onStateChange={handleAudioStateChange}
+                  onSyncUpdate={handleSyncStateChange}
+                  onTrackEnded={handleTrackEnded}
+                  onRepeatModeChange={setRepeatMode}
+                  disabled={trialLimitReached}
+                />
+              </>
             ) : (
               <Card className="border-white/10 bg-white/5">
                 <CardContent className="p-8 text-center">

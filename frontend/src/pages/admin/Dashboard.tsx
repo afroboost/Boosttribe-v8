@@ -298,7 +298,7 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // Save settings to Supabase - SIMPLIFIÉ pour éviter "body stream already read"
+  // Save settings to Supabase - UPSERT avec ID fixe = 1
   const handleSave = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       showToast('Supabase non configuré', 'error');
@@ -308,8 +308,9 @@ const Dashboard: React.FC = () => {
     setIsSaving(true);
     
     try {
-      // Données à sauvegarder (mappage direct vers colonnes Supabase)
-      const saveData = {
+      // Données à sauvegarder avec ID fixe = 1
+      const upsertData = {
+        id: 1, // ID FIXE pour garantir l'upsert
         site_name: settings.site_name,
         site_slogan: settings.site_slogan,
         site_description: settings.site_description,
@@ -325,108 +326,75 @@ const Dashboard: React.FC = () => {
         stat_creators: settings.stat_creators,
         stat_beats: settings.stat_beats,
         stat_countries: settings.stat_countries,
-        // STRIPE - Branchement direct sur colonnes DB
         stripe_pro_monthly: settings.stripe_pro_monthly || '',
         stripe_pro_yearly: settings.stripe_pro_yearly || '',
         stripe_enterprise_monthly: settings.stripe_enterprise_monthly || '',
         stripe_enterprise_yearly: settings.stripe_enterprise_yearly || '',
       };
 
-      console.log('[CMS] 📤 Sauvegarde vers Supabase...', { id: settings.id });
+      // LOG AVANT ENVOI
+      console.log('[CMS] DATA_SENT', upsertData);
 
-      // MÉTHODE SIMPLIFIÉE: Un seul appel, pas de chaînage complexe
-      // On utilise l'ID si disponible, sinon on récupère d'abord l'ID existant
-      let targetId = settings.id;
+      // UPSERT - Un seul appel, pas de .text() ou .json()
+      // On utilise uniquement { data, error } du client Supabase
+      const { error } = await supabase
+        .from('site_settings')
+        .upsert(upsertData, { onConflict: 'id' });
+
+      // Vérification erreur uniquement via la propriété error
+      if (error) {
+        console.error('[CMS] ❌ Supabase error:', error);
+        throw new Error(error.message);
+      }
+
+      console.log('[CMS] ✅ UPSERT réussi');
       
-      if (!targetId) {
-        // Récupérer l'ID de la première ligne existante
-        const { data: existingRow } = await supabase
-          .from('site_settings')
-          .select('id')
-          .limit(1)
-          .maybeSingle();
-        
-        targetId = existingRow?.id;
-      }
-
-      let success = false;
-      let savedId = targetId;
-
-      if (targetId) {
-        // UPDATE - Une seule requête, pas de .select() pour éviter double lecture
-        const { error } = await supabase
-          .from('site_settings')
-          .update(saveData)
-          .eq('id', targetId);
-
-        if (error) {
-          throw new Error(error.message);
-        }
-        success = true;
-        console.log('[CMS] ✅ UPDATE réussi (ID:', targetId, ')');
-      } else {
-        // INSERT - Première ligne
-        const { data: inserted, error } = await supabase
-          .from('site_settings')
-          .insert(saveData)
-          .select('id')
-          .single();
-
-        if (error) {
-          throw new Error(error.message);
-        }
-        savedId = inserted?.id;
-        success = true;
-        console.log('[CMS] ✅ INSERT réussi (ID:', savedId, ')');
-      }
-
-      if (success) {
-        // Mise à jour locale avec l'ID
-        const updatedSettings = { ...settings, ...saveData, id: savedId };
-        setSettings(updatedSettings);
-        setOriginalSettings(updatedSettings);
-        setHasChanges(false);
-        setDbStatus('connected');
-        
-        // Refresh global cache
-        refreshSiteSettings();
-        
-        // Update theme context
-        updateConfig({
-          name: saveData.site_name,
-          slogan: saveData.site_slogan,
-          description: saveData.site_description,
-          badge: saveData.site_badge,
-          colors: {
-            primary: saveData.color_primary,
-            secondary: saveData.color_secondary,
-            background: saveData.color_background,
-            gradient: {
-              primary: `linear-gradient(135deg, ${saveData.color_primary} 0%, ${saveData.color_secondary} 100%)`,
-            },
+      // Mise à jour locale
+      const updatedSettings = { ...settings, ...upsertData, id: '1' };
+      setSettings(updatedSettings);
+      setOriginalSettings(updatedSettings);
+      setHasChanges(false);
+      setDbStatus('connected');
+      
+      // Refresh global cache
+      refreshSiteSettings();
+      
+      // Update theme context
+      updateConfig({
+        name: upsertData.site_name,
+        slogan: upsertData.site_slogan,
+        description: upsertData.site_description,
+        badge: upsertData.site_badge,
+        colors: {
+          primary: upsertData.color_primary,
+          secondary: upsertData.color_secondary,
+          background: upsertData.color_background,
+          gradient: {
+            primary: `linear-gradient(135deg, ${upsertData.color_primary} 0%, ${upsertData.color_secondary} 100%)`,
           },
-          buttons: {
-            login: saveData.btn_login,
-            start: saveData.btn_start,
-            joinTribe: saveData.btn_join,
-            exploreBeats: saveData.btn_explore,
-          },
-          stats: [
-            { value: saveData.stat_creators, label: 'Créateurs' },
-            { value: saveData.stat_beats, label: 'Beats partagés' },
-            { value: saveData.stat_countries, label: 'Pays' },
-          ],
-        });
-        
-        showToast('✅ Paramètres sauvegardés !', 'success');
-      }
+        },
+        buttons: {
+          login: upsertData.btn_login,
+          start: upsertData.btn_start,
+          joinTribe: upsertData.btn_join,
+          exploreBeats: upsertData.btn_explore,
+        },
+        stats: [
+          { value: upsertData.stat_creators, label: 'Créateurs' },
+          { value: upsertData.stat_beats, label: 'Beats partagés' },
+          { value: upsertData.stat_countries, label: 'Pays' },
+        ],
+      });
+      
+      showToast('✅ Paramètres sauvegardés !', 'success');
     } catch (err) {
-      console.error('[CMS] ❌ Erreur sauvegarde:', err);
+      console.error('[CMS] ❌ Exception:', err);
       showToast(`Erreur: ${err instanceof Error ? err.message : 'Sauvegarde échouée'}`, 'error');
     } finally {
       setIsSaving(false);
     }
   }, [settings, updateConfig, showToast]);
+
 
   // Reset to original
   const handleReset = useCallback(() => {

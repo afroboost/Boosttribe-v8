@@ -276,6 +276,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
               <button
                 onClick={() => setIsEditMode(true)}
                 className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg text-xs transition-all"
+                style={{ backgroundColor: '#8A2EFF', color: 'white', fontWeight: 'bold' }}
                 data-testid="edit-mode-btn"
               >
                 Modifier

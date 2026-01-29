@@ -427,43 +427,6 @@ const Dashboard: React.FC = () => {
       setIsSaving(false);
     }
   }, [settings, updateConfig, showToast]);
-      
-      // Update theme context for live preview
-      updateConfig({
-        name: settings.site_name,
-        slogan: settings.site_slogan,
-        description: settings.site_description,
-        badge: settings.site_badge,
-        colors: {
-          primary: settings.color_primary,
-          secondary: settings.color_secondary,
-          background: settings.color_background,
-          gradient: {
-            primary: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
-          },
-        },
-        buttons: {
-          login: settings.btn_login,
-          start: settings.btn_start,
-          joinTribe: settings.btn_join,
-          exploreBeats: settings.btn_explore,
-        },
-        stats: [
-          { value: settings.stat_creators, label: 'Créateurs' },
-          { value: settings.stat_beats, label: 'Beats partagés' },
-          { value: settings.stat_countries, label: 'Pays' },
-        ],
-      });
-      
-      showToast('✅ Configuration sauvegardée dans Supabase !', 'success');
-    } catch (err) {
-      console.error('[CMS] Save exception:', err);
-      const errorMessage = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
-      showToast(`Erreur: ${errorMessage}`, 'error');
-    }
-    
-    setIsSaving(false);
-  }, [settings, updateConfig, showToast]);
 
   // Reset to original
   const handleReset = useCallback(() => {

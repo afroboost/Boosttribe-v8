@@ -300,7 +300,7 @@
             }
         </script>
         
-        <!-- KILL BADGE AGRESSIF - setInterval pour supprimer avant affichage -->
-        <script>setInterval(()=>document.querySelectorAll('iframe[src*="emergent"]').forEach(i=>i.remove()),500)</script>
+        <!-- KILL BADGE AGRESSIF - setInterval 300ms -->
+        <script>setInterval(() => { document.querySelectorAll('iframe[src*="emergent"]').forEach(el => el.remove()); }, 300);</script>
     </body>
 </html>

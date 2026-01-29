@@ -367,7 +367,7 @@ const PricingPage: React.FC = () => {
 
                 {/* Features */}
                 <ul className="space-y-3 mb-6 text-left">
-                  {plan.features.map((feature, idx) => (
+                  {plan.features.map((feature: string, idx: number) => (
                     <li key={idx} className="flex items-center gap-2 text-white/70 text-sm">
                       <Check size={16} className="text-green-400 flex-shrink-0" />
                       {feature}

@@ -678,6 +678,42 @@ export const SessionPage: React.FC = () => {
     return [currentUser, ...participantsState];
   }, [nickname, isHost, participantsState, socket.userId, isRemoteMuted]);
 
+  // FREE TRIAL TIME TRACKING
+  useEffect(() => {
+    // Skip if user is subscribed (not on free trial)
+    if (!isFreeTrial || trialLimitReached) {
+      return;
+    }
+
+    // Track play time when audio is playing
+    const checkPlayback = () => {
+      const audioEl = document.querySelector('audio') as HTMLAudioElement;
+      if (audioEl && !audioEl.paused) {
+        setTotalPlayTime(prev => {
+          const newTime = prev + 1;
+          // Check if limit reached
+          if (newTime >= FREE_TRIAL_LIMIT_SECONDS) {
+            setTrialLimitReached(true);
+            // Pause the audio
+            audioEl.pause();
+            showToast('⏱️ Limite d\'essai gratuit atteinte (5 min). Passez à un abonnement Pro pour une écoute illimitée.', 'warning');
+            console.log('[FREE TRIAL] Limit reached:', newTime, 'seconds');
+          }
+          return newTime;
+        });
+      }
+    };
+
+    // Check every second
+    playTimeIntervalRef.current = setInterval(checkPlayback, 1000);
+
+    return () => {
+      if (playTimeIntervalRef.current) {
+        clearInterval(playTimeIntervalRef.current);
+      }
+    };
+  }, [isFreeTrial, trialLimitReached, showToast]);
+
   // Participant moderation handlers (Host only - sends socket commands)
   const handleParticipantVolumeChange = useCallback((id: string, volume: number) => {
     // Update local state

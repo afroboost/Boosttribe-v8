@@ -762,6 +762,48 @@ export const SessionPage: React.FC = () => {
     console.log('[UPLOAD] Track added:', newTrack.title);
   }, [tracks, selectedTrack, socket, showToast]);
 
+  // Handle track deletion
+  const handleDeleteTracks = useCallback(async (tracksToDelete: Track[]) => {
+    if (!isHost || tracksToDelete.length === 0) return;
+    
+    // Get URLs for storage deletion
+    const trackUrls = tracksToDelete.map(t => t.src);
+    const trackIds = new Set(tracksToDelete.map(t => t.id));
+    
+    // Delete from Supabase storage
+    const result = await deleteTracks(trackUrls);
+    console.log('[DELETE] Storage result:', result);
+    
+    // Update local state (remove tracks)
+    const updatedTracks = tracks.filter(t => !trackIds.has(t.id));
+    setTracks(updatedTracks);
+    
+    // Handle selectedTrack if it was deleted
+    if (selectedTrack && trackIds.has(selectedTrack.id)) {
+      // Select next available track or null
+      const nextTrack = updatedTracks.length > 0 ? updatedTracks[0] : null;
+      setSelectedTrack(nextTrack);
+    }
+    
+    // Show feedback
+    if (tracksToDelete.length === 1) {
+      showToast(`🗑️ "${tracksToDelete[0].title}" supprimé`, 'success');
+    } else {
+      showToast(`🗑️ ${tracksToDelete.length} titres supprimés`, 'success');
+    }
+    
+    // Sync to participants
+    const trackIdToSync = selectedTrack && !trackIds.has(selectedTrack.id) 
+      ? selectedTrack.id 
+      : (updatedTracks[0]?.id || 0);
+    socket.syncPlaylist(updatedTracks, trackIdToSync);
+    
+    // Save to database if configured
+    socket.savePlaylistToDb(updatedTracks, trackIdToSync);
+    
+    console.log('[DELETE] Tracks removed:', tracksToDelete.map(t => t.title));
+  }, [isHost, tracks, selectedTrack, socket, showToast]);
+
   // Initialize - check for stored nickname
   useEffect(() => {
     const stored = getStoredNickname();

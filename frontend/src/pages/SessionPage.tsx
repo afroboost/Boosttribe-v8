@@ -1086,19 +1086,38 @@ export const SessionPage: React.FC = () => {
               </Card>
             )}
 
-            {/* Audio Player */}
-            <AudioPlayer
-              src={selectedTrack.src}
-              title={selectedTrack.title}
-              artist={selectedTrack.artist}
-              coverArt={selectedTrack.coverArt}
-              isHost={isHost}
-              sessionId={sessionId}
-              onStateChange={handleAudioStateChange}
-              onSyncUpdate={handleSyncStateChange}
-              onTrackEnded={handleTrackEnded}
-              onRepeatModeChange={setRepeatMode}
-            />
+            {/* Audio Player - Only show if there's a track selected */}
+            {selectedTrack ? (
+              <AudioPlayer
+                src={selectedTrack.src}
+                title={selectedTrack.title}
+                artist={selectedTrack.artist}
+                coverArt={selectedTrack.coverArt}
+                isHost={isHost}
+                sessionId={sessionId}
+                onStateChange={handleAudioStateChange}
+                onSyncUpdate={handleSyncStateChange}
+                onTrackEnded={handleTrackEnded}
+                onRepeatModeChange={setRepeatMode}
+              />
+            ) : (
+              <Card className="border-white/10 bg-white/5">
+                <CardContent className="p-8 text-center">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
+                    <svg className="w-8 h-8 text-white/30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                    </svg>
+                  </div>
+                  <h3 className="text-white/80 font-medium mb-2">Playlist vide</h3>
+                  <p className="text-white/50 text-sm">
+                    {isHost 
+                      ? "Uploadez votre premier morceau pour démarrer la session"
+                      : "En attente que l'hôte ajoute des morceaux..."
+                    }
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Track Selection (Host only) */}
             {isHost && (

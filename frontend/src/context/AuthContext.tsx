@@ -345,8 +345,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: { message: 'Supabase non configuré' } as AuthError };
     }
 
+    // Use production domain if on it
+    const origin = window.location.hostname.includes('boosttribe.pro')
+      ? 'https://www.boosttribe.pro'
+      : window.location.origin;
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: `${origin}/reset-password`,
     });
 
     return { error };

@@ -461,13 +461,13 @@ const PricingPage: React.FC = () => {
             <div className="p-6 overflow-y-auto max-h-[50vh] text-white/70 text-sm space-y-4">
               <h3 className="text-white font-semibold">1. Acceptation des conditions</h3>
               <p>
-                En utilisant Beattribe, vous acceptez les présentes conditions générales d'utilisation. 
+                En utilisant Boosttribe, vous acceptez les présentes conditions générales d'utilisation. 
                 Si vous n'acceptez pas ces conditions, veuillez ne pas utiliser le service.
               </p>
 
               <h3 className="text-white font-semibold">2. Description du service</h3>
               <p>
-                Beattribe est une plateforme d'écoute musicale synchronisée permettant à un hôte 
+                Boosttribe est une plateforme d'écoute musicale synchronisée permettant à un hôte 
                 de partager de la musique en temps réel avec des participants.
               </p>
 

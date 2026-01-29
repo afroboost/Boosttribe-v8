@@ -594,7 +594,7 @@ const Dashboard: React.FC = () => {
                   label="Nom du site"
                   value={settings.site_name}
                   onChange={(v) => handleUpdate('site_name', v)}
-                  placeholder="Beattribe"
+                  placeholder="Boosttribe"
                 />
                 <EditableField
                   label="Slogan"

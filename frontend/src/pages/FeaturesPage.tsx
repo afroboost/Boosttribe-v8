@@ -255,7 +255,7 @@ const FeaturesPage: React.FC = () => {
             Prêt à créer votre première session ?
           </h2>
           <p className="text-white/60 mb-8 text-lg">
-            Rejoignez des milliers d'animateurs qui utilisent Beattribe pour leurs événements.
+            Rejoignez des milliers d'animateurs qui utilisent Boosttribe pour leurs événements.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link to="/session">

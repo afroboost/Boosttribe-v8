@@ -1,4 +1,4 @@
-// Beattribe Theme Type Definitions
+// Boosttribe Theme Type Definitions
 
 export interface ThemeColors {
   background: string;

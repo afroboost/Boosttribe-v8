@@ -212,7 +212,7 @@ const LoginPage: React.FC = () => {
           </CardTitle>
           <CardDescription className="text-white/50">
             {mode === 'login' && 'Connectez-vous pour accéder à votre espace'}
-            {mode === 'signup' && 'Rejoignez la communauté Beattribe'}
+            {mode === 'signup' && 'Rejoignez la communauté Boosttribe'}
             {mode === 'forgot' && 'Entrez votre email pour réinitialiser'}
           </CardDescription>
         </CardHeader>

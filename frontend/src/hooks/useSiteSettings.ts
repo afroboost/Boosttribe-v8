@@ -36,7 +36,7 @@ interface SiteSettings {
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
-  site_name: 'Beattribe',
+  site_name: 'Boosttribe',
   site_slogan: 'Unite Through Rhythm',
   site_description: 'Rejoignez la communauté des beatmakers et producteurs.',
   site_badge: 'La communauté des créateurs',

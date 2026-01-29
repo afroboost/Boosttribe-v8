@@ -213,7 +213,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
             className="text-2xl text-white"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
           >
-            Beattribe Admin
+            Boosttribe Admin
           </CardTitle>
           <CardDescription className="text-white/50">
             Accès restreint - Veuillez entrer le mot de passe

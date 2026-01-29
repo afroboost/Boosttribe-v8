@@ -24,9 +24,12 @@ import {
   Building2,
   ArrowLeft,
   Eye,
+  EyeOff,
   Check,
   X,
-  Image
+  Image,
+  DollarSign,
+  Globe
 } from "lucide-react";
 
 // Site settings interface - matches Supabase table

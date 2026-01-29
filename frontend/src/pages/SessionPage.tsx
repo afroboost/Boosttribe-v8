@@ -1230,13 +1230,12 @@ export const SessionPage: React.FC = () => {
                   title={selectedTrack.title}
                   artist={selectedTrack.artist}
                   coverArt={selectedTrack.coverArt}
-                  isHost={isHost}
+                  isHost={isHost && !trialLimitReached}
                   sessionId={sessionId}
                   onStateChange={handleAudioStateChange}
                   onSyncUpdate={handleSyncStateChange}
                   onTrackEnded={handleTrackEnded}
                   onRepeatModeChange={setRepeatMode}
-                  disabled={trialLimitReached}
                 />
               </>
             ) : (

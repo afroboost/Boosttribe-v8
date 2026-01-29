@@ -1205,21 +1205,57 @@ export const SessionPage: React.FC = () => {
                   </div>
                 )}
                 
-                {/* Trial Limit Reached Message */}
+                {/* Trial Limit Reached - MODAL BLOQUANT */}
                 {trialLimitReached && (
-                  <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-4 mb-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-red-400 font-medium">⏱️ Limite d'essai atteinte</p>
-                        <p className="text-white/60 text-sm mt-1">
-                          Votre essai gratuit de 5 minutes est terminé. Passez à Pro pour une écoute illimitée.
-                        </p>
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+                    <div className="bg-gradient-to-br from-[#1a1a2e] to-[#0a0a15] border-2 border-red-500/50 rounded-2xl p-8 max-w-md w-full shadow-2xl shadow-red-500/20">
+                      {/* Icon */}
+                      <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-500/20 flex items-center justify-center">
+                        <svg className="w-10 h-10 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
                       </div>
+                      
+                      {/* Title */}
+                      <h2 className="text-2xl font-bold text-white text-center mb-3" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                        ⏱️ Limite d'essai atteinte
+                      </h2>
+                      
+                      {/* Description */}
+                      <p className="text-white/70 text-center mb-6">
+                        Votre essai gratuit de <strong className="text-red-400">5 minutes</strong> est terminé.<br />
+                        Passez à Pro pour une écoute <strong className="text-purple-400">illimitée</strong> !
+                      </p>
+                      
+                      {/* Features */}
+                      <div className="bg-white/5 rounded-lg p-4 mb-6 space-y-2">
+                        <div className="flex items-center gap-2 text-white/80 text-sm">
+                          <span className="text-green-400">✓</span> Écoute illimitée
+                        </div>
+                        <div className="flex items-center gap-2 text-white/80 text-sm">
+                          <span className="text-green-400">✓</span> 50 chansons par session
+                        </div>
+                        <div className="flex items-center gap-2 text-white/80 text-sm">
+                          <span className="text-green-400">✓</span> Voix en temps réel
+                        </div>
+                      </div>
+                      
+                      {/* CTA */}
                       <Link 
-                        to="/pricing" 
-                        className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                        to="/pricing"
+                        className="block w-full text-center py-4 rounded-xl text-white font-bold text-lg transition-all hover:scale-105"
+                        style={{ background: theme.colors.gradient.primary }}
+                        data-testid="trial-limit-upgrade-btn"
                       >
-                        Souscrire
+                        🚀 Passer à Pro
+                      </Link>
+                      
+                      {/* Secondary link */}
+                      <Link 
+                        to="/"
+                        className="block text-center mt-4 text-white/50 hover:text-white/70 text-sm transition-colors"
+                      >
+                        ← Retour à l'accueil
                       </Link>
                     </div>
                   </div>

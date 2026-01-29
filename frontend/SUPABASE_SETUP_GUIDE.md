@@ -29,7 +29,7 @@
    - **Authorized JavaScript origins** :
      ```
      https://tfghpbgbtpgrjlhomlvz.supabase.co
-     https://beattribe-sync.preview.emergentagent.com
+     https://sync-squad.preview.emergentagent.com
      ```
    - **Authorized redirect URIs** :
      ```

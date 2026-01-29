@@ -320,7 +320,7 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // Save settings to Supabase - CODE DIRECT ULTRA-SIMPLE
+  // Save settings to Supabase - FORCE BRUTE ULTRA-SIMPLE
   const handleSave = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       alert('❌ Supabase non configuré');
@@ -329,8 +329,8 @@ const Dashboard: React.FC = () => {
 
     setIsSaving(true);
     
-    // Données à sauvegarder avec ID fixe = 1
-    const upsertData = {
+    // APPEL DIRECT - Pas de variable intermédiaire complexe
+    const { error } = await supabase.from('site_settings').upsert({
       id: 1,
       site_name: settings.site_name,
       site_slogan: settings.site_slogan,
@@ -358,60 +358,23 @@ const Dashboard: React.FC = () => {
       plan_enterprise_price_monthly: settings.plan_enterprise_price_monthly || '29.99',
       plan_enterprise_price_yearly: settings.plan_enterprise_price_yearly || '299.99',
       default_language: settings.default_language || 'fr',
-    };
+    });
 
-    console.log('[CMS] DATA_SENT', upsertData);
-
-    // CODE DIRECT SUPABASE - INTERDICTION de .json() ou .text()
-    const { data, error } = await supabase
-      .from('site_settings')
-      .upsert(upsertData, { onConflict: 'id' });
+    setIsSaving(false);
 
     if (error) {
-      console.error('[CMS] Supabase error:', error);
       alert('❌ Erreur DB: ' + error.message);
-      setIsSaving(false);
       return;
     }
 
-    console.log('[CMS] ✅ UPSERT OK', data);
-    
-    // Mise à jour locale
+    // Succès - mise à jour locale
     setSettings({ ...settings, id: '1' });
     setOriginalSettings({ ...settings, id: '1' });
     setHasChanges(false);
     setDbStatus('connected');
     
-    // Update theme context
-    updateConfig({
-      name: settings.site_name,
-      slogan: settings.site_slogan,
-      description: settings.site_description,
-      badge: settings.site_badge,
-      colors: {
-        primary: settings.color_primary,
-        secondary: settings.color_secondary,
-        background: settings.color_background,
-        gradient: {
-          primary: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
-        },
-      },
-      buttons: {
-        login: settings.btn_login,
-        start: settings.btn_start,
-        joinTribe: settings.btn_join,
-        exploreBeats: settings.btn_explore,
-      },
-      stats: [
-        { value: settings.stat_creators, label: 'Créateurs' },
-        { value: settings.stat_beats, label: 'Beats partagés' },
-        { value: settings.stat_countries, label: 'Pays' },
-      ],
-    });
-    
-    setIsSaving(false);
-    alert('✅ Configuration sauvegardée !');
-  }, [settings, updateConfig]);
+    alert('✅ Configuration enregistrée !');
+  }, [settings]);
 
 
   // Reset to original

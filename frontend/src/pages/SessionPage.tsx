@@ -602,11 +602,18 @@ export const SessionPage: React.FC = () => {
     
     const unsubPlaylist = socket.onPlaylistSync((payload) => {
       console.log('[SOCKET] Received playlist sync:', payload);
-      setTracks(payload.tracks as Track[]);
-      const newSelected = payload.tracks.find(t => t.id === payload.selectedTrackId);
-      if (newSelected) {
-        setSelectedTrack(newSelected as Track);
-        showToast(`Piste suivante : ${(newSelected as Track).title}`, 'default');
+      // Protection anti-undefined: ensure tracks is always an array
+      const safeTracks = Array.isArray(payload.tracks) ? payload.tracks : [];
+      setTracks(safeTracks as Track[]);
+      
+      if (safeTracks.length > 0) {
+        const newSelected = safeTracks.find(t => t.id === payload.selectedTrackId);
+        if (newSelected) {
+          setSelectedTrack(newSelected as Track);
+          showToast(`Piste suivante : ${(newSelected as Track).title}`, 'default');
+        }
+      } else {
+        setSelectedTrack(null);
       }
     });
     

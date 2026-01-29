@@ -128,15 +128,16 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         </div>
       </button>
 
-      {/* Delete Button - Only visible on hover when not in edit mode */}
+      {/* Delete Button - Subtle but visible, more prominent on hover */}
       {isHost && !isEditMode && (
         <button
           onClick={(e) => {
             e.stopPropagation();
             onDeleteSingle(track);
           }}
-          className="p-1.5 text-zinc-500 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all"
+          className="p-1.5 text-zinc-600 opacity-40 group-hover:opacity-100 hover:text-red-400 transition-all flex-shrink-0"
           title="Supprimer"
+          data-testid={`delete-track-${track.id}`}
         >
           <Trash2 size={16} strokeWidth={1.5} />
         </button>

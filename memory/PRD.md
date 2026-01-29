@@ -5,21 +5,43 @@
 
 ---
 
-## Dernières Corrections - 29 Jan 2026 ✅
+## Dernières Corrections - 29 Jan 2026 (Session 2) ✅
+
+### 🟢 CORRECTIONS AUTO-HEALING BASE DE DONNÉES
+
+#### 1. Auto-insertion dans useSiteSettings.ts ✅
+- **Fichier**: `/app/frontend/src/hooks/useSiteSettings.ts`
+- Si la table `site_settings` existe mais est vide, insertion automatique d'une ligne par défaut
+- Évite les erreurs `TypeError` lors du chargement des paramètres
+
+#### 2. Auto-insertion dans Admin Dashboard ✅
+- **Fichier**: `/app/frontend/src/pages/admin/Dashboard.tsx`
+- Si la table `site_settings` est vide, insertion automatique lors du chargement du CMS
+- Mode "auto-healing" : pas d'erreur affichée, fallback silencieux vers les défauts
+
+#### 3. Modal Bloquant pour Limite 5 Minutes ✅
+- **Fichier**: `/app/frontend/src/pages/SessionPage.tsx`
+- Remplacé le simple message par un **modal en plein écran** (`fixed inset-0 z-50`)
+- Bloque toute interaction jusqu'à ce que l'utilisateur passe à Pro
+- Design avec icône, description des avantages Pro, et CTA visible
+
+---
+
+## Corrections Précédentes - 29 Jan 2026 (Session 1) ✅
 
 ### 🟢 STRIPE & ESSAI GRATUIT - IMPLÉMENTÉ
 
 #### 5. Intégration Stripe - CONFIGURÉ ✅
 - **Fichier**: `/app/frontend/src/pages/PricingPage.tsx`
 - Les liens Stripe sont maintenant chargés depuis `site_settings` (Admin Dashboard)
-- Redirection directe vers Stripe (`window.location.href`) au lieu de `window.open`
-- Si liens non configurés, message d'alerte informatif pour l'admin
+- Redirection directe vers Stripe (`window.open`) - **PAS D'ALERT**
+- Si liens non configurés, redirection vers URL par défaut
 
 #### 6. Essai Gratuit 5 Minutes - IMPLÉMENTÉ ✅
 - **Fichier**: `/app/frontend/src/pages/SessionPage.tsx`
 - Timer visible avec barre de progression pour utilisateurs non abonnés
 - Lecture automatiquement mise en pause après 300 secondes
-- Message "Limite d'essai atteinte" avec CTA vers /pricing
+- Modal bloquant "Limite d'essai atteinte" avec CTA vers /pricing
 - Les utilisateurs abonnés ne voient pas le timer
 
 #### 7. Hook useSiteSettings - ÉTENDU ✅

@@ -221,7 +221,7 @@ interface I18nProviderProps {
 export const I18nProvider: React.FC<I18nProviderProps> = ({ children, defaultLanguage = 'fr' }) => {
   const [language, setLanguageState] = useState<Language>(() => {
     // Check localStorage first
-    const saved = localStorage.getItem('beattribe_language');
+    const saved = localStorage.getItem('boosttribe_language');
     if (saved && ['fr', 'en', 'de'].includes(saved)) {
       return saved as Language;
     }
@@ -230,7 +230,7 @@ export const I18nProvider: React.FC<I18nProviderProps> = ({ children, defaultLan
 
   const setLanguage = useCallback((lang: Language) => {
     setLanguageState(lang);
-    localStorage.setItem('beattribe_language', lang);
+    localStorage.setItem('boosttribe_language', lang);
   }, []);
 
   const t = useCallback((key: string): string => {

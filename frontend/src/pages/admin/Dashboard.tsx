@@ -68,7 +68,7 @@ interface SiteSettings {
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
-  site_name: 'Beattribe',
+  site_name: 'Boosttribe',
   site_slogan: 'Unite Through Rhythm',
   site_description: 'Rejoignez la communauté des beatmakers et producteurs.',
   site_badge: 'La communauté des créateurs',
@@ -320,19 +320,22 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // Save settings - APPEL DIRECT SUPABASE UNIQUEMENT
+  // Save settings - APPEL DIRECT SUPABASE UNIQUEMENT (SANS .json() ou .text())
   const handleSave = useCallback(async () => {
     if (!supabase) { alert('Supabase non configuré'); return; }
     
     setIsSaving(true);
-    const { error } = await supabase.from('site_settings').upsert({ id: 1, ...settings });
+    const { error } = await supabase.from('site_settings').upsert({ 
+      id: 1, 
+      ...settings,
+      site_name: settings.site_name || 'Boosttribe'
+    });
     setIsSaving(false);
     
-    if (error) alert('Erreur : ' + error.message);
-    else {
-      setHasChanges(false);
-      setDbStatus('connected');
-      alert('✅ Enregistré avec succès !');
+    if (error) { alert('Erreur : ' + error.message); }
+    else { 
+      alert('✅ Boosttribe synchronisé !'); 
+      window.location.reload(); 
     }
   }, [settings]);
 

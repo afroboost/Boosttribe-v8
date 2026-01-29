@@ -10,11 +10,11 @@ interface Message {
   timestamp: Date;
 }
 
-// Réponses prédéfinies du bot (contexte Beattribe)
+// Réponses prédéfinies du bot (contexte Boosttribe)
 const BOT_RESPONSES: Record<string, string[]> = {
   default: [
-    "Bonjour ! Je suis l'assistant Beattribe. Comment puis-je vous aider ?",
-    "Je peux vous aider avec les sessions d'écoute, les abonnements, ou toute question sur Beattribe.",
+    "Bonjour ! Je suis l'assistant Boosttribe. Comment puis-je vous aider ?",
+    "Je peux vous aider avec les sessions d'écoute, les abonnements, ou toute question sur Boosttribe.",
   ],
   session: [
     "Pour créer une session d'écoute : cliquez sur 'Créer ma session' puis uploadez vos fichiers MP3.",
@@ -77,7 +77,7 @@ const ChatBot: React.FC = () => {
       setMessages([{
         id: '1',
         role: 'assistant',
-        content: "👋 Bonjour ! Je suis l'assistant Beattribe. Comment puis-je vous aider aujourd'hui ?",
+        content: "👋 Bonjour ! Je suis l'assistant Boosttribe. Comment puis-je vous aider aujourd'hui ?",
         timestamp: new Date(),
       }]);
     }
@@ -149,7 +149,7 @@ const ChatBot: React.FC = () => {
               <Bot className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1">
-              <h3 className="text-white font-semibold text-sm">Assistant Beattribe</h3>
+              <h3 className="text-white font-semibold text-sm">Assistant Boosttribe</h3>
               <p className="text-white/70 text-xs">
                 {hasAccess ? '🟢 En ligne' : '🔒 Pro requis'}
               </p>
@@ -163,7 +163,25 @@ const ChatBot: React.FC = () => {
           </div>
 
           {/* Content */}
-          {hasAccess ? (
+          {!hasAccess ? (
+            /* Message pour utilisateurs non-Pro */
+            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-4">
+                <Lock className="w-8 h-8 text-white/50" />
+              </div>
+              <h3 className="text-white font-semibold mb-2">Assistant Boosttribe réservé aux membres PRO.</h3>
+              <p className="text-white/60 text-sm mb-4">
+                Passez à Pro ou Enterprise pour accéder à l'assistant.
+              </p>
+              <a
+                href="/pricing"
+                className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
+                style={{ background: theme.colors.gradient.primary }}
+              >
+                Passer à Pro
+              </a>
+            </div>
+          ) : (
             <>
               {/* Messages */}
               <div className="flex-1 p-4 overflow-y-auto space-y-4">
@@ -221,24 +239,6 @@ const ChatBot: React.FC = () => {
                 </div>
               </div>
             </>
-          ) : (
-            /* Locked State */
-            <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-4">
-                <Lock className="w-8 h-8 text-white/50" />
-              </div>
-              <h3 className="text-white font-semibold mb-2">Assistant Pro</h3>
-              <p className="text-white/60 text-sm mb-4">
-                Le Bot Assistant est réservé aux membres Pro et Enterprise.
-              </p>
-              <a
-                href="/pricing"
-                className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
-                style={{ background: theme.colors.gradient.primary }}
-              >
-                Passer à Pro
-              </a>
-            </div>
           )}
         </div>
       )}

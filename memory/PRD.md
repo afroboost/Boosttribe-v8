@@ -3,6 +3,37 @@
 ## Vision
 **"Unite Through Rhythm"** - Application d'écoute musicale synchronisée en temps réel.
 
+---
+
+## Dernières Corrections - 29 Jan 2026 ✅
+
+### 🔴 CORRECTIONS CRITIQUES APPLIQUÉES
+
+#### 1. Badge "Made with Emergent" - SUPPRIMÉ ✅
+- **Fichier**: `/app/frontend/public/index.html`
+- **Solution**: CSS agressif + JavaScript avec MutationObserver pour éliminer le badge injecté dynamiquement par le script externe
+- **Méthodes appliquées**:
+  - CSS `display: none !important` sur tous sélecteurs possibles
+  - JavaScript qui s'exécute toutes les 100ms pendant 10s, puis toutes les 500ms
+  - MutationObserver pour intercepter les insertions dynamiques
+
+#### 2. Playlist Vide par Défaut - CONFIRMÉ ✅
+- **Fichier**: `/app/frontend/src/pages/SessionPage.tsx`
+- `DEMO_TRACKS` est un tableau vide `[]`
+- Les pistes "Midnight Groove", "Urban Pulse", "Summer Vibes" vues dans la vidéo proviennent de la **base Supabase de l'utilisateur**, pas du code
+
+#### 3. UI de Suppression de Pistes - AMÉLIORÉE ✅
+- **Fichier**: `/app/frontend/src/components/audio/PlaylistDnD.tsx`
+- Icône Trash2 **toujours visible** quand l'hôte a des pistes (pas juste au hover)
+- Bouton "Modifier" avec style visible (fond blanc/10, bordure)
+- `data-testid` ajoutés pour les tests
+
+#### 4. Domaine de Production - CONFIGURÉ ✅
+- **Fichier**: `/app/frontend/src/context/AuthContext.tsx`
+- Redirections OAuth et reset password vers `https://www.boosttribe.pro`
+
+---
+
 ## État Actuel - AUTHENTIFICATION COMPLÈTE ✅
 
 ### ✅ Implémentation Auth (28 Jan 2026)

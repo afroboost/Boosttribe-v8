@@ -29,7 +29,7 @@
    - **Authorized JavaScript origins** :
      ```
      https://tfghpbgbtpgrjlhomlvz.supabase.co
-     https://musicvibe-6.preview.emergentagent.com
+     https://beattribe-sync.preview.emergentagent.com
      ```
    - **Authorized redirect URIs** :
      ```

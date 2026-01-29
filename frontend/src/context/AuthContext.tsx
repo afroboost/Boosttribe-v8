@@ -279,14 +279,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: { message: 'Supabase non configuré' } as AuthError };
     }
 
-    // Production domain for OAuth redirects
-    const PRODUCTION_DOMAIN = 'https://www.boosttribe.pro';
-    
-    // Use production domain if we're on it, otherwise use current origin
-    const currentOrigin = window.location.hostname.includes('boosttribe.pro') 
-      ? PRODUCTION_DOMAIN 
-      : window.location.origin;
-    const redirectUrl = `${currentOrigin}/session`;
+    // Use dynamic origin for OAuth redirects (compatible with any domain)
+    const redirectUrl = `${window.location.origin}/session`;
     
     console.log('[AUTH] Google OAuth redirect URL:', redirectUrl);
 
@@ -345,13 +339,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: { message: 'Supabase non configuré' } as AuthError };
     }
 
-    // Use production domain if on it
-    const origin = window.location.hostname.includes('boosttribe.pro')
-      ? 'https://www.boosttribe.pro'
-      : window.location.origin;
-
+    // Use dynamic origin for password reset (compatible with any domain)
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${origin}/reset-password`,
+      redirectTo: `${window.location.origin}/reset-password`,
     });
 
     return { error };

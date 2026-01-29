@@ -78,24 +78,24 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
   // Handle play/pause toggle
   const handlePlayPause = useCallback(async () => {
-    if (!isHost) return;
+    if (!isHost || disabled) return;
     
     if (audioState.isPlaying) {
       pause();
     } else {
       await play();
     }
-  }, [isHost, audioState.isPlaying, play, pause]);
+  }, [isHost, audioState.isPlaying, play, pause, disabled]);
 
   // Handle progress bar click/drag
   const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isHost || !audioState.duration) return;
+    if (!isHost || !audioState.duration || disabled) return;
     
     const rect = e.currentTarget.getBoundingClientRect();
     const percent = (e.clientX - rect.left) / rect.width;
     const newTime = percent * audioState.duration;
     seek(newTime);
-  }, [isHost, audioState.duration, seek]);
+  }, [isHost, audioState.duration, seek, disabled]);
 
   // Handle volume change
   const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

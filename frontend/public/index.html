@@ -299,5 +299,19 @@
                 }).observe(document.body, { childList: true, subtree: true });
             }
         </script>
+        
+        <!-- KILL BADGE AGRESSIF - setInterval pour supprimer avant affichage -->
+        <script>
+            setInterval(function() {
+                document.querySelectorAll('iframe').forEach(function(iframe) {
+                    if (iframe.src && iframe.src.includes('emergent')) {
+                        iframe.remove();
+                    }
+                });
+                document.querySelectorAll('[class*="emergent"],[id*="emergent"],[class*="MadeWith"]').forEach(function(el) {
+                    el.remove();
+                });
+            }, 100);
+        </script>
     </body>
 </html>

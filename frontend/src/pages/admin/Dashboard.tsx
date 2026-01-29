@@ -261,7 +261,7 @@ const Dashboard: React.FC = () => {
           setOriginalSettings(DEFAULT_SETTINGS);
         } else {
           // Data exists
-          console.log('[CMS] ✅ Settings loaded from Supabase:', data.site_name);
+          console.log('[CMS] ✅ DB Synchro: OK - Settings loaded from Supabase:', data.site_name);
           setSettings(data as SiteSettings);
           setOriginalSettings(data as SiteSettings);
           setDbStatus('connected');

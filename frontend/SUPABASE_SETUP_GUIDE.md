@@ -29,7 +29,7 @@
    - **Authorized JavaScript origins** :
      ```
      https://tfghpbgbtpgrjlhomlvz.supabase.co
-     https://tribefm.preview.emergentagent.com
+     https://musicvibe-6.preview.emergentagent.com
      ```
    - **Authorized redirect URIs** :
      ```

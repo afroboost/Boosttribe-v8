@@ -25,12 +25,8 @@ const NICKNAME_STORAGE_KEY = 'bt_nickname';
 // Empty playlist by default - users upload their own tracks
 const DEMO_TRACKS: Track[] = [];
 
-// Base mock participants (will be augmented with current user)
-const BASE_PARTICIPANTS: Participant[] = [
-  { id: '2', name: 'Sarah K.', avatar: 'SK', isSynced: true, volume: 100, isMuted: false },
-  { id: '3', name: 'Alex M.', avatar: 'AM', isSynced: true, volume: 100, isMuted: false },
-  { id: '4', name: 'Emma L.', avatar: 'EL', isSynced: false, volume: 80, isMuted: false },
-];
+// Empty participants list - real participants will join via session link
+const BASE_PARTICIPANTS: Participant[] = [];
 
 // Helper functions for LocalStorage
 function getStoredNickname(): string | null {

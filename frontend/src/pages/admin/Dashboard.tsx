@@ -320,20 +320,53 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // Save settings - CONNEXION RÉELLE SUPABASE (SDK Direct)
+  // Save settings - SDK SUPABASE UNIQUEMENT (SANS FETCH)
   const handleSave = useCallback(async () => {
-    if (!supabase) { alert('Supabase non configuré'); return; }
+    if (!supabase) { 
+      alert('Supabase non configuré'); 
+      return; 
+    }
     
     setIsSaving(true);
-    const { error } = await supabase.from('site_settings').upsert({ 
-      id: 1, 
-      site_name: 'Boosttribe',
-      ...settings 
-    });
-    setIsSaving(false);
     
-    if (error) { alert("ERREUR RÉELLE DB : " + error.message); }
-    else { alert("✅ RÉUSSITE : Les données sont maintenant dans Supabase !"); window.location.reload(); }
+    try {
+      // Construire l'objet de données MANUELLEMENT (pas de spread)
+      const dataToSave = {
+        id: 1,
+        site_name: 'Boosttribe',
+        site_slogan: settings.site_slogan,
+        site_description: settings.site_description,
+        site_badge: settings.site_badge,
+        favicon_url: settings.favicon_url || '',
+        color_primary: settings.color_primary,
+        color_secondary: settings.color_secondary,
+        color_background: settings.color_background,
+        btn_login: settings.btn_login,
+        btn_start: settings.btn_start,
+        btn_join: settings.btn_join,
+        btn_explore: settings.btn_explore,
+        stat_creators: settings.stat_creators,
+        stat_beats: settings.stat_beats,
+        stat_countries: settings.stat_countries,
+        stripe_pro_monthly: settings.stripe_pro_monthly || '',
+        stripe_pro_yearly: settings.stripe_pro_yearly || '',
+        stripe_enterprise_monthly: settings.stripe_enterprise_monthly || '',
+        stripe_enterprise_yearly: settings.stripe_enterprise_yearly || '',
+      };
+      
+      const { error } = await supabase.from('site_settings').upsert(dataToSave);
+      
+      if (error) { 
+        alert("ERREUR DB : " + error.message); 
+      } else { 
+        alert("✅ SYNCHRO RÉUSSIE : Données écrites dans Supabase !"); 
+        window.location.reload(); 
+      }
+    } catch (err) {
+      alert("EXCEPTION : " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setIsSaving(false);
+    }
   }, [settings]);
 
 

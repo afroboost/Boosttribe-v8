@@ -320,23 +320,20 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // Save settings - APPEL DIRECT SUPABASE UNIQUEMENT (SANS .json() ou .text())
+  // Save settings - CONNEXION RÉELLE SUPABASE (SDK Direct)
   const handleSave = useCallback(async () => {
     if (!supabase) { alert('Supabase non configuré'); return; }
     
     setIsSaving(true);
     const { error } = await supabase.from('site_settings').upsert({ 
       id: 1, 
-      ...settings,
-      site_name: settings.site_name || 'Boosttribe'
+      site_name: 'Boosttribe',
+      ...settings 
     });
     setIsSaving(false);
     
-    if (error) { alert('Erreur : ' + error.message); }
-    else { 
-      alert('✅ Boosttribe synchronisé !'); 
-      window.location.reload(); 
-    }
+    if (error) { alert("ERREUR RÉELLE DB : " + error.message); }
+    else { alert("✅ RÉUSSITE : Les données sont maintenant dans Supabase !"); window.location.reload(); }
   }, [settings]);
 
 

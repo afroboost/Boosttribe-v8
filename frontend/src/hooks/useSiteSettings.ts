@@ -43,6 +43,11 @@ const DEFAULT_SETTINGS: SiteSettings = {
   stat_creators: '50K+',
   stat_beats: '1M+',
   stat_countries: '120+',
+  // Stripe defaults (empty - to be configured by admin)
+  stripe_pro_monthly: '',
+  stripe_pro_yearly: '',
+  stripe_enterprise_monthly: '',
+  stripe_enterprise_yearly: '',
 };
 
 // Global cache for settings

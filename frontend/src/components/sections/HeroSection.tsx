@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Input } from "@/components/ui/input";
 import { useTheme } from "@/context/ThemeContext";
+import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/components/ui/Toast";
 
 // Interface for particle configuration

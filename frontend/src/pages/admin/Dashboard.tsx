@@ -298,7 +298,7 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
-  // Save settings to Supabase - UPSERT avec ID fixe = 1
+  // Save settings to Supabase - UPSERT SIMPLE sans refresh automatique
   const handleSave = useCallback(async () => {
     if (!isSupabaseConfigured || !supabase) {
       showToast('Supabase non configuré', 'error');
@@ -310,7 +310,7 @@ const Dashboard: React.FC = () => {
     try {
       // Données à sauvegarder avec ID fixe = 1
       const upsertData = {
-        id: 1, // ID FIXE pour garantir l'upsert
+        id: 1,
         site_name: settings.site_name,
         site_slogan: settings.site_slogan,
         site_description: settings.site_description,
@@ -332,64 +332,62 @@ const Dashboard: React.FC = () => {
         stripe_enterprise_yearly: settings.stripe_enterprise_yearly || '',
       };
 
-      // LOG AVANT ENVOI
       console.log('[CMS] DATA_SENT', upsertData);
 
-      // UPSERT - Un seul appel, pas de .text() ou .json()
-      // On utilise uniquement { data, error } du client Supabase
-      const { error } = await supabase
+      // UPSERT DIRECT - Client Supabase uniquement, pas de fetch manuel
+      const result = await supabase
         .from('site_settings')
         .upsert(upsertData, { onConflict: 'id' });
 
-      // Vérification erreur uniquement via la propriété error
-      if (error) {
-        console.error('[CMS] ❌ Supabase error:', error);
-        throw new Error(error.message);
+      // Vérifier l'erreur SANS lire le body
+      if (result.error) {
+        console.error('[CMS] Supabase error:', result.error.message);
+        showToast(`Erreur DB: ${result.error.message}`, 'error');
+        setIsSaving(false);
+        return;
       }
 
-      console.log('[CMS] ✅ UPSERT réussi');
+      console.log('[CMS] ✅ UPSERT OK');
       
-      // Mise à jour locale
-      const updatedSettings = { ...settings, ...upsertData, id: '1' };
-      setSettings(updatedSettings);
-      setOriginalSettings(updatedSettings);
+      // Mise à jour locale SANS appeler refreshSiteSettings
+      setSettings({ ...settings, id: '1' });
+      setOriginalSettings({ ...settings, id: '1' });
       setHasChanges(false);
       setDbStatus('connected');
       
-      // Refresh global cache
-      refreshSiteSettings();
-      
-      // Update theme context
+      // Update theme context pour preview live
       updateConfig({
-        name: upsertData.site_name,
-        slogan: upsertData.site_slogan,
-        description: upsertData.site_description,
-        badge: upsertData.site_badge,
+        name: settings.site_name,
+        slogan: settings.site_slogan,
+        description: settings.site_description,
+        badge: settings.site_badge,
         colors: {
-          primary: upsertData.color_primary,
-          secondary: upsertData.color_secondary,
-          background: upsertData.color_background,
+          primary: settings.color_primary,
+          secondary: settings.color_secondary,
+          background: settings.color_background,
           gradient: {
-            primary: `linear-gradient(135deg, ${upsertData.color_primary} 0%, ${upsertData.color_secondary} 100%)`,
+            primary: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
           },
         },
         buttons: {
-          login: upsertData.btn_login,
-          start: upsertData.btn_start,
-          joinTribe: upsertData.btn_join,
-          exploreBeats: upsertData.btn_explore,
+          login: settings.btn_login,
+          start: settings.btn_start,
+          joinTribe: settings.btn_join,
+          exploreBeats: settings.btn_explore,
         },
         stats: [
-          { value: upsertData.stat_creators, label: 'Créateurs' },
-          { value: upsertData.stat_beats, label: 'Beats partagés' },
-          { value: upsertData.stat_countries, label: 'Pays' },
+          { value: settings.stat_creators, label: 'Créateurs' },
+          { value: settings.stat_beats, label: 'Beats partagés' },
+          { value: settings.stat_countries, label: 'Pays' },
         ],
       });
       
-      showToast('✅ Paramètres sauvegardés !', 'success');
+      showToast('✅ Sauvegarde réussie !', 'success');
+      
     } catch (err) {
-      console.error('[CMS] ❌ Exception:', err);
-      showToast(`Erreur: ${err instanceof Error ? err.message : 'Sauvegarde échouée'}`, 'error');
+      console.error('[CMS] Exception:', err);
+      // Ne pas afficher l'erreur détaillée pour éviter de lire le body
+      showToast('Erreur lors de la sauvegarde', 'error');
     } finally {
       setIsSaving(false);
     }

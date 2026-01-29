@@ -12,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import supabase, { isSupabaseConfigured } from "@/lib/supabaseClient";
-import { refreshSiteSettings } from "@/hooks/useSiteSettings";
 import { 
   Settings, 
   CreditCard, 

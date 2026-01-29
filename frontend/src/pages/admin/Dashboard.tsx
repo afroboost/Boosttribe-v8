@@ -325,45 +325,94 @@ const Dashboard: React.FC = () => {
         stat_creators: settings.stat_creators,
         stat_beats: settings.stat_beats,
         stat_countries: settings.stat_countries,
-        stripe_pro_monthly: settings.stripe_pro_monthly,
-        stripe_pro_yearly: settings.stripe_pro_yearly,
-        stripe_enterprise_monthly: settings.stripe_enterprise_monthly,
-        stripe_enterprise_yearly: settings.stripe_enterprise_yearly,
-        updated_by: user?.id,
+        stripe_pro_monthly: settings.stripe_pro_monthly || '',
+        stripe_pro_yearly: settings.stripe_pro_yearly || '',
+        stripe_enterprise_monthly: settings.stripe_enterprise_monthly || '',
+        stripe_enterprise_yearly: settings.stripe_enterprise_yearly || '',
       };
 
-      let result;
+      console.log('[CMS] 📤 Saving settings to Supabase...', { id: settings.id });
+
+      // STRATÉGIE: UPSERT pour éviter les problèmes ID manquant
+      // Si ID existe, on fait UPDATE. Sinon, on fait INSERT.
       
       if (settings.id) {
-        // Update existing
-        result = await supabase
+        // UPDATE avec l'ID existant
+        const { data, error } = await supabase
           .from('site_settings')
           .update(updateData)
           .eq('id', settings.id)
           .select()
           .single();
+
+        if (error) {
+          console.error('[CMS] ❌ Update error:', error.message);
+          showToast(`Erreur: ${error.message}`, 'error');
+          setIsSaving(false);
+          return;
+        }
+
+        console.log('[CMS] ✅ DB Synchro: OK (UPDATE)', data?.site_name);
+        
+        // Mise à jour locale
+        if (data) {
+          setSettings(data as SiteSettings);
+          setOriginalSettings(data as SiteSettings);
+        }
       } else {
-        // Insert new (shouldn't happen normally)
-        result = await supabase
+        // INSERT si pas d'ID (première sauvegarde)
+        const { data, error } = await supabase
           .from('site_settings')
           .insert(updateData)
           .select()
           .single();
+
+        if (error) {
+          // Si doublon, essayer UPDATE sur la première ligne
+          if (error.code === '23505') {
+            console.log('[CMS] Row exists, trying update on first row...');
+            const { data: existingData } = await supabase
+              .from('site_settings')
+              .select('id')
+              .limit(1)
+              .single();
+            
+            if (existingData?.id) {
+              const { data: updatedData, error: updateError } = await supabase
+                .from('site_settings')
+                .update(updateData)
+                .eq('id', existingData.id)
+                .select()
+                .single();
+              
+              if (updateError) {
+                console.error('[CMS] ❌ Fallback update error:', updateError.message);
+                showToast(`Erreur: ${updateError.message}`, 'error');
+                setIsSaving(false);
+                return;
+              }
+              
+              console.log('[CMS] ✅ DB Synchro: OK (FALLBACK UPDATE)');
+              if (updatedData) {
+                setSettings(updatedData as SiteSettings);
+                setOriginalSettings(updatedData as SiteSettings);
+              }
+            }
+          } else {
+            console.error('[CMS] ❌ Insert error:', error.message);
+            showToast(`Erreur: ${error.message}`, 'error');
+            setIsSaving(false);
+            return;
+          }
+        } else {
+          console.log('[CMS] ✅ DB Synchro: OK (INSERT)', data?.site_name);
+          if (data) {
+            setSettings(data as SiteSettings);
+            setOriginalSettings(data as SiteSettings);
+          }
+        }
       }
 
-      if (result.error) {
-        console.error('[CMS] Save error:', result.error);
-        showToast(`Erreur: ${result.error.message}`, 'error');
-        setIsSaving(false);
-        return;
-      }
-
-      console.log('[CMS] ✅ Settings saved to Supabase');
-      
-      // Update local state
-      const savedData = result.data as SiteSettings;
-      setSettings(savedData);
-      setOriginalSettings(savedData);
       setHasChanges(false);
       setDbStatus('connected');
       
@@ -400,11 +449,12 @@ const Dashboard: React.FC = () => {
       showToast('✅ Configuration sauvegardée dans Supabase !', 'success');
     } catch (err) {
       console.error('[CMS] Save exception:', err);
-      showToast('Erreur lors de la sauvegarde', 'error');
+      const errorMessage = err instanceof Error ? err.message : 'Erreur lors de la sauvegarde';
+      showToast(`Erreur: ${errorMessage}`, 'error');
     }
     
     setIsSaving(false);
-  }, [settings, user?.id, updateConfig, showToast]);
+  }, [settings, updateConfig, showToast]);
 
   // Reset to original
   const handleReset = useCallback(() => {

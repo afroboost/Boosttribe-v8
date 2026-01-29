@@ -23,30 +23,55 @@ const SiteSettingsLoader: React.FC<{ children: React.ReactNode }> = ({ children 
   return <>{children}</>;
 };
 
-// 🛡️ IFRAME EMERGENT KILLER - Masque toute iframe contenant 'emergent' dans l'URL
+// 🛡️ KILL BADGE - Injection CSS globale pour supprimer tout élément Emergent
 const EmergentBlocker: React.FC = () => {
   useEffect(() => {
-    const hideEmergentIframes = () => {
+    // 1. Injection CSS dans HEAD
+    const style = document.createElement('style');
+    style.id = 'emergent-killer-css';
+    style.innerHTML = `
+      iframe[src*="emergent"] { 
+        display: none !important; 
+        pointer-events: none !important; 
+        visibility: hidden !important;
+        opacity: 0 !important;
+        width: 0 !important;
+        height: 0 !important;
+        position: absolute !important;
+        left: -99999px !important;
+        z-index: -99999 !important;
+      }
+      [class*="emergent"], [id*="emergent"], [data-emergent] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+      .made-with-emergent, #made-with-emergent, [class*="MadeWith"] {
+        display: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 2. Suppression DOM agressive
+    const killEmergent = () => {
+      // Supprimer les iframes
       document.querySelectorAll('iframe').forEach((iframe) => {
-        const src = iframe.src || '';
-        if (src.toLowerCase().includes('emergent')) {
-          iframe.style.cssText = 'display:none!important;visibility:hidden!important;opacity:0!important;width:0!important;height:0!important;position:absolute!important;left:-99999px!important;z-index:-99999!important;';
+        const src = (iframe.src || '').toLowerCase();
+        if (src.includes('emergent')) {
+          iframe.remove();
         }
       });
-      // Also hide any element with emergent in class/id
-      document.querySelectorAll('[class*="emergent"],[id*="emergent"]').forEach((el) => {
-        (el as HTMLElement).style.cssText = 'display:none!important;';
+      // Supprimer les éléments avec emergent
+      document.querySelectorAll('[class*="emergent"],[id*="emergent"],[class*="MadeWith"]').forEach((el) => {
+        el.remove();
       });
     };
 
-    // Run immediately
-    hideEmergentIframes();
+    // Exécuter immédiatement et périodiquement
+    killEmergent();
+    const interval = setInterval(killEmergent, 200);
 
-    // Run periodically
-    const interval = setInterval(hideEmergentIframes, 500);
-
-    // MutationObserver for dynamic content
-    const observer = new MutationObserver(hideEmergentIframes);
+    // MutationObserver pour le contenu dynamique
+    const observer = new MutationObserver(killEmergent);
     observer.observe(document.body, { childList: true, subtree: true });
 
     return () => {

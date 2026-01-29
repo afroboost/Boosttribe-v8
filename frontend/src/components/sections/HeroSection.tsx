@@ -125,7 +125,7 @@ export const HeroSection: React.FC = () => {
 
       {/* Main Content */}
       <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        {/* Badge - Dynamic from theme */}
+        {/* Badge - Dynamic from theme or translation */}
         <div 
           className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8 opacity-0"
           style={{
@@ -142,7 +142,7 @@ export const HeroSection: React.FC = () => {
             className="text-sm text-white/80"
             style={{ fontFamily: fonts.body }}
           >
-            {badge}
+            {t('hero.badge')}
           </span>
         </div>
 

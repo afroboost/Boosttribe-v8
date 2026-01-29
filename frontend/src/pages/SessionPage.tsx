@@ -363,6 +363,15 @@ export const SessionPage: React.FC = () => {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [autoPlayPending, setAutoPlayPending] = useState<string | null>(null);
 
+  // FREE TRIAL LIMIT: 5 minutes (300 seconds)
+  const FREE_TRIAL_LIMIT_SECONDS = 300;
+  const [totalPlayTime, setTotalPlayTime] = useState(0);
+  const [trialLimitReached, setTrialLimitReached] = useState(false);
+  const playTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Check if user is on free trial (not subscribed)
+  const isFreeTrial = !isSubscribed;
+
   // PeerJS for WebRTC voice broadcast
   const {
     state: peerState,

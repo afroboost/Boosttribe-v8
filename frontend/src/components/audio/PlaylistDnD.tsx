@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Music, Play } from 'lucide-react';
+import { GripVertical, Music, Play, Trash2, Check } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 export interface Track {
@@ -32,6 +32,10 @@ interface SortableTrackItemProps {
   isSelected: boolean;
   onSelect: (track: Track) => void;
   isHost: boolean;
+  isEditMode: boolean;
+  isChecked: boolean;
+  onToggleCheck: (trackId: number) => void;
+  onDeleteSingle: (track: Track) => void;
 }
 
 const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
@@ -39,6 +43,10 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   isSelected,
   onSelect,
   isHost,
+  isEditMode,
+  isChecked,
+  onToggleCheck,
+  onDeleteSingle,
 }) => {
   const {
     attributes,
@@ -47,7 +55,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: track.id });
+  } = useSortable({ id: track.id, disabled: isEditMode });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -68,8 +76,24 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         ${isDragging ? 'shadow-lg shadow-[#8A2EFF]/20 z-50' : ''}
       `}
     >
-      {/* Drag Handle */}
-      {isHost && (
+      {/* Edit Mode: Checkbox */}
+      {isEditMode && isHost && (
+        <button
+          onClick={() => onToggleCheck(track.id)}
+          className={`
+            w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all
+            ${isChecked 
+              ? 'bg-[#8A2EFF] border-[#8A2EFF]' 
+              : 'border-white/30 hover:border-white/50'
+            }
+          `}
+        >
+          {isChecked && <Check size={12} strokeWidth={3} className="text-white" />}
+        </button>
+      )}
+
+      {/* Drag Handle - hidden in edit mode */}
+      {isHost && !isEditMode && (
         <button
           {...attributes}
           {...listeners}
@@ -81,9 +105,9 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
 
       {/* Track Info */}
       <button
-        onClick={() => isHost && onSelect(track)}
-        disabled={!isHost}
-        className={`flex-1 flex items-center gap-3 text-left ${!isHost ? 'cursor-default' : 'cursor-pointer'}`}
+        onClick={() => !isEditMode && isHost && onSelect(track)}
+        disabled={!isHost || isEditMode}
+        className={`flex-1 flex items-center gap-3 text-left ${!isHost || isEditMode ? 'cursor-default' : 'cursor-pointer'}`}
       >
         {/* Cover Art */}
         <div 
@@ -104,8 +128,22 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         </div>
       </button>
 
-      {/* Selected Indicator */}
-      {isSelected && (
+      {/* Delete Button - Only visible on hover when not in edit mode */}
+      {isHost && !isEditMode && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteSingle(track);
+          }}
+          className="p-1.5 text-zinc-500 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all"
+          title="Supprimer"
+        >
+          <Trash2 size={16} strokeWidth={1.5} />
+        </button>
+      )}
+
+      {/* Selected Indicator - hidden in edit mode */}
+      {isSelected && !isEditMode && (
         <div 
           className="w-2 h-2 rounded-full flex-shrink-0"
           style={{ background: '#8A2EFF' }}
@@ -120,6 +158,7 @@ interface PlaylistDnDProps {
   selectedTrack: Track | null;
   onTrackSelect: (track: Track) => void;
   onReorder: (tracks: Track[]) => void;
+  onDeleteTracks: (tracks: Track[]) => void;
   isHost: boolean;
   maxTracks?: number;
 }
@@ -129,9 +168,13 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   selectedTrack,
   onTrackSelect,
   onReorder,
+  onDeleteTracks,
   isHost,
   maxTracks = 10,
 }) => {
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -154,8 +197,47 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
     }
   };
 
+  const handleToggleCheck = useCallback((trackId: number) => {
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(trackId)) {
+        next.delete(trackId);
+      } else {
+        next.add(trackId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleDeleteSingle = useCallback((track: Track) => {
+    if (window.confirm(`Supprimer "${track.title}" ?`)) {
+      onDeleteTracks([track]);
+    }
+  }, [onDeleteTracks]);
+
+  const handleDeleteSelected = useCallback(() => {
+    const selectedTracks = tracks.filter(t => checkedIds.has(t.id));
+    if (selectedTracks.length === 0) return;
+
+    const message = selectedTracks.length === 1
+      ? `Supprimer "${selectedTracks[0].title}" ?`
+      : `Supprimer ${selectedTracks.length} titres ?`;
+
+    if (window.confirm(message)) {
+      onDeleteTracks(selectedTracks);
+      setCheckedIds(new Set());
+      setIsEditMode(false);
+    }
+  }, [tracks, checkedIds, onDeleteTracks]);
+
+  const handleExitEditMode = useCallback(() => {
+    setIsEditMode(false);
+    setCheckedIds(new Set());
+  }, []);
+
   // Limit tracks display
   const displayTracks = tracks.slice(0, maxTracks);
+  const hasChecked = checkedIds.size > 0;
 
   return (
     <div className="space-y-3">
@@ -164,10 +246,37 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
         <p className="text-white/50 text-xs">
           {displayTracks.length} / {maxTracks} titres
         </p>
-        {isHost && (
-          <p className="text-white/30 text-xs">
-            Glisser pour réorganiser
-          </p>
+        
+        {/* Edit Mode Controls */}
+        {isHost && displayTracks.length > 0 && (
+          <div className="flex items-center gap-2">
+            {isEditMode ? (
+              <>
+                {/* Delete Selected Button - Only when items checked */}
+                {hasChecked && (
+                  <button
+                    onClick={handleDeleteSelected}
+                    className="text-xs px-2 py-1 text-red-400 hover:text-red-300 transition-colors"
+                  >
+                    Supprimer ({checkedIds.size})
+                  </button>
+                )}
+                <button
+                  onClick={handleExitEditMode}
+                  className="text-xs text-white/40 hover:text-white/60 transition-colors"
+                >
+                  Annuler
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setIsEditMode(true)}
+                className="text-xs text-white/40 hover:text-white/60 transition-colors"
+              >
+                Modifier
+              </button>
+            )}
+          </div>
         )}
       </div>
 
@@ -190,6 +299,10 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                   isSelected={selectedTrack?.id === track.id}
                   onSelect={onTrackSelect}
                   isHost={isHost}
+                  isEditMode={isEditMode}
+                  isChecked={checkedIds.has(track.id)}
+                  onToggleCheck={handleToggleCheck}
+                  onDeleteSingle={handleDeleteSingle}
                 />
               ))}
             </div>

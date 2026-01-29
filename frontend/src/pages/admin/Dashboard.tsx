@@ -502,6 +502,8 @@ const Dashboard: React.FC = () => {
                   ⚠️ Non sauvegardé
                 </Badge>
               )}
+              {/* Language Selector - Visible en mode Admin */}
+              <LanguageSelector className="flex" />
               <Link to="/" target="_blank">
                 <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10">
                   <Eye size={16} className="mr-2" />

@@ -3,23 +3,43 @@
 @tailwind utilities;
 
 /* ============================================
-   EMERGENT BADGE SUPPRESSION - CSS ONLY
+   EMERGENT BADGE SUPPRESSION - FORCE BRUTE CSS
+   Maximum priority - Cannot be overridden
    ============================================ */
 #emergent-badge,
 .emergent-badge,
 .emergent-indicator,
 [id*="emergent"],
 [class*="emergent"],
+[data-emergent],
 iframe[id*="emergent"],
-a[href*="emergent"] {
+iframe[src*="emergent"],
+a[href*="emergent"],
+div[style*="emergent"],
+body > div:last-of-type:not([class]):not([id]),
+body > a:last-of-type[target="_blank"] {
     display: none !important;
     visibility: hidden !important;
     opacity: 0 !important;
     pointer-events: none !important;
     width: 0 !important;
     height: 0 !important;
+    max-width: 0 !important;
+    max-height: 0 !important;
+    overflow: hidden !important;
     position: absolute !important;
-    left: -9999px !important;
+    left: -99999px !important;
+    top: -99999px !important;
+    z-index: -99999 !important;
+    transform: scale(0) !important;
+    clip: rect(0, 0, 0, 0) !important;
+    clip-path: inset(100%) !important;
+}
+
+/* Hide ANY fixed element at bottom of page */
+body > *[style*="fixed"][style*="bottom"],
+body > *[style*="position: fixed"] {
+    display: none !important;
 }
 
 /* Beattribe Font Imports */

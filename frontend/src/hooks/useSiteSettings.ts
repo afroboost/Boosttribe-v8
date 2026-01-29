@@ -66,6 +66,7 @@ export function useSiteSettings() {
   const { updateConfig } = useTheme();
 
   // Load settings from Supabase (singleton pattern)
+  // IMPORTANT: If table is empty, insert default row automatically
   const loadSettings = useCallback(async (): Promise<SiteSettings> => {
     // Return cached if available
     if (cachedSettings) {
@@ -88,14 +89,55 @@ export function useSiteSettings() {
       }
 
       try {
+        // Step 1: Try to fetch existing settings
         const { data, error } = await supabase
           .from('site_settings')
           .select('*')
           .limit(1)
           .maybeSingle();
 
-        if (error || !data) {
-          console.log('[SiteSettings] No data in DB, using defaults');
+        // Step 2: If no data exists, INSERT default row
+        if (!data && !error) {
+          console.log('[SiteSettings] Table empty, inserting default row...');
+          const { data: insertedData, error: insertError } = await supabase
+            .from('site_settings')
+            .insert([{
+              site_name: DEFAULT_SETTINGS.site_name,
+              site_slogan: DEFAULT_SETTINGS.site_slogan,
+              site_description: DEFAULT_SETTINGS.site_description,
+              site_badge: DEFAULT_SETTINGS.site_badge,
+              favicon_url: DEFAULT_SETTINGS.favicon_url,
+              color_primary: DEFAULT_SETTINGS.color_primary,
+              color_secondary: DEFAULT_SETTINGS.color_secondary,
+              color_background: DEFAULT_SETTINGS.color_background,
+              btn_login: DEFAULT_SETTINGS.btn_login,
+              btn_start: DEFAULT_SETTINGS.btn_start,
+              btn_join: DEFAULT_SETTINGS.btn_join,
+              btn_explore: DEFAULT_SETTINGS.btn_explore,
+              stat_creators: DEFAULT_SETTINGS.stat_creators,
+              stat_beats: DEFAULT_SETTINGS.stat_beats,
+              stat_countries: DEFAULT_SETTINGS.stat_countries,
+              stripe_pro_monthly: DEFAULT_SETTINGS.stripe_pro_monthly,
+              stripe_pro_yearly: DEFAULT_SETTINGS.stripe_pro_yearly,
+              stripe_enterprise_monthly: DEFAULT_SETTINGS.stripe_enterprise_monthly,
+              stripe_enterprise_yearly: DEFAULT_SETTINGS.stripe_enterprise_yearly,
+            }])
+            .select()
+            .single();
+
+          if (insertError) {
+            console.warn('[SiteSettings] Failed to insert default row:', insertError);
+            cachedSettings = DEFAULT_SETTINGS;
+            return DEFAULT_SETTINGS;
+          }
+
+          console.log('[SiteSettings] ✅ Default row inserted successfully');
+          cachedSettings = insertedData as SiteSettings;
+          return cachedSettings;
+        }
+
+        if (error) {
+          console.warn('[SiteSettings] Query error:', error.message);
           cachedSettings = DEFAULT_SETTINGS;
           return DEFAULT_SETTINGS;
         }

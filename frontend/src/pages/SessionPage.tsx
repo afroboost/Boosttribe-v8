@@ -1007,23 +1007,20 @@ export const SessionPage: React.FC = () => {
   const handleAudioStateChange = useCallback((state: AudioState) => {
     setAudioState(state);
     
-    // 🔄 SYNC PLAY/PAUSE: L'hôte synchronise son état de lecture vers Supabase
+    // 🔄 SYNC PLAY/PAUSE: L'hôte diffuse son état via Supabase Broadcast
     if (isHost && sessionId && supabase && isSupabaseConfigured) {
-      // Mettre à jour is_playing et current_time dans la table playlists
-      supabase
-        .from('playlists')
-        .update({ 
-          is_playing: state.isPlaying,
-          current_time: state.currentTime 
-        })
-        .eq('session_id', sessionId)
-        .then(({ error }) => {
-          if (error) {
-            // Silencieux - l'erreur peut être due à une session non existante
-          }
-        });
+      // Utiliser Broadcast pour une synchronisation instantanée (pas de DB)
+      supabase.channel(`playback:${sessionId}`).send({
+        type: 'broadcast',
+        event: 'playback_sync',
+        payload: {
+          isPlaying: state.isPlaying,
+          currentTime: state.currentTime,
+          trackId: selectedTrack?.id || null,
+        },
+      });
     }
-  }, [isHost, sessionId]);
+  }, [isHost, sessionId, selectedTrack?.id]);
 
   // Handle sync state changes
   const handleSyncStateChange = useCallback((state: SyncState) => {

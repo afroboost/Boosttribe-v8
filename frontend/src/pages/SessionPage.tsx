@@ -726,6 +726,8 @@ export const SessionPage: React.FC = () => {
     // 📡 FETCH INITIAL IMMÉDIAT: Charger la playlist existante AVANT d'écouter les changements
     // Critère de réussite: Le participant voit la playlist en < 1 seconde
     async function fetchInitialPlaylist() {
+      if (!supabase) return;
+      
       try {
         const startTime = performance.now();
         console.log('📡 [DATA] ⚡ Fetching playlist for session:', sessionId);
@@ -865,7 +867,9 @@ export const SessionPage: React.FC = () => {
     return () => {
       console.log('📡 [REALTIME] Unsubscribing from session:', sessionId);
       setIsSyncActive(false);
-      supabase.removeChannel(channel);
+      if (supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [sessionId, isHost, showToast, selectedTrack, user?.id]);
 

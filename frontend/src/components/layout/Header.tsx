@@ -4,6 +4,7 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { LanguageSelector } from "@/context/I18nContext";
+import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { LogOut, User, Settings } from "lucide-react";
 
 export const Header: React.FC = () => {

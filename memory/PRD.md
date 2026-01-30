@@ -95,6 +95,11 @@ Build "Boosttribe," a web application for synchronized music listening sessions 
 
 ## Changelog
 
+### 2025-01-30 (Master/Slave Broadcast)
+- [FIX] Explicit HOST_COMMAND broadcast (PLAY/PAUSE/SEEK actions)
+- [FIX] All audio processing disabled (echoCancellation, noiseSuppression, autoGainControl)
+- [FIX] Participants fully exempt from trial timer
+
 ### 2025-01-30 (Broadcast Sync)
 - [FIX] Play/Pause sync via Supabase Broadcast channel (< 500ms latency)
 - [FIX] Participant trial limit removed - unlimited listening

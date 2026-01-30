@@ -189,7 +189,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       
       return destination.stream;
     } catch (err) {
-      console.warn('🎧 [AUDIO] Mic source connection error:', err);
+      // Silencieux - retourner le stream original
       return stream;
     }
   }, [initialize]);
@@ -200,7 +200,6 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const connectHostVoice = useCallback((audioElement: HTMLAudioElement) => {
     const ctx = audioContextRef.current;
     if (!ctx || !hostVoiceGainRef.current) {
-      console.warn('🎧 [AUDIO] Mixer not initialized for host voice');
       initialize();
       setTimeout(() => connectHostVoice(audioElement), 100);
       return;
@@ -224,10 +223,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       
       hostVoiceSourceRef.current = source;
       connectedHostVoiceElement.current = audioElement;
-      
-      console.log('🎧 [AUDIO] Host voice connected to GainNode D');
     } catch (err) {
-      console.warn('🎧 [AUDIO] Host voice connection error:', err);
+      // Silencieux
     }
   }, [initialize]);
 

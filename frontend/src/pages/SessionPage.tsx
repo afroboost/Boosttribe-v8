@@ -666,6 +666,13 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     
+    // Log du mode actif
+    if (isHost) {
+      console.log('📡 [SYNC] Mode Hôte : Contrôle total activé');
+    } else {
+      console.log('📡 [SYNC] Mode Participant : Lecture seule activée');
+    }
+    
     console.log('📡 [SYSTEM] Boosttribe Sync Active');
     setIsSyncActive(true);
     
@@ -687,7 +694,7 @@ export const SessionPage: React.FC = () => {
         }
         
         if (data && data.tracks && Array.isArray(data.tracks)) {
-          console.log('📡 [DATA] Playlist chargée pour le participant :', data.tracks.length);
+          console.log('📡 [DATA] Playlist chargée pour le participant :', data.tracks.length, 'morceaux');
           setTracks(data.tracks as Track[]);
           
           // Sélectionner la première piste si aucune n'est sélectionnée
@@ -695,7 +702,7 @@ export const SessionPage: React.FC = () => {
             setSelectedTrack(data.tracks[0] as Track);
           }
         } else {
-          console.log('📡 [DATA] Aucune playlist trouvée pour cette session');
+          console.log('📡 [DATA] Aucune playlist trouvée pour cette session (en attente de l\'hôte)');
         }
       } catch (err) {
         console.error('📡 [ERROR] Exception fetching playlist:', err);
@@ -705,45 +712,32 @@ export const SessionPage: React.FC = () => {
     // Exécuter le fetch initial
     fetchInitialPlaylist();
     
-    // Subscribe to playlist changes - écoute INSERT et UPDATE explicitement
+    // Subscribe to ALL playlist changes (INSERT, UPDATE, DELETE)
     const channel = supabase
       .channel(`playlist:${sessionId}`)
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*', // Écoute tous les événements
           schema: 'public',
           table: 'playlists',
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
-          console.log('📡 [REALTIME] INSERT detected:', payload);
-          handlePlaylistUpdate(payload);
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'playlists',
-          filter: `session_id=eq.${sessionId}`,
-        },
-        (payload) => {
-          console.log('📡 [REALTIME] UPDATE detected:', payload);
+          console.log('📡 [REALTIME] Event:', payload.eventType, payload);
           handlePlaylistUpdate(payload);
         }
       )
       .subscribe((status) => {
         console.log('📡 [REALTIME] Channel status:', status);
         if (status === 'SUBSCRIBED') {
-          console.log('📡 [SYSTEM] Boosttribe Sync Ready - Listening on session:', sessionId);
+          console.log('📡 [SYSTEM] Boosttribe Sync Ready - Session:', sessionId);
         }
       });
     
-    // Handler commun pour INSERT et UPDATE
+    // Handler pour tous les événements
     function handlePlaylistUpdate(payload: unknown) {
-      const data = payload as { new?: { tracks?: Track[] } };
+      const data = payload as { new?: { tracks?: Track[] }, eventType?: string };
       if (data.new && 'tracks' in data.new) {
         const newTracks = data.new.tracks || [];
         console.log('📡 [REALTIME] Syncing', newTracks.length, 'tracks to participant');
@@ -752,6 +746,11 @@ export const SessionPage: React.FC = () => {
         if (!isHost) {
           setTracks(newTracks);
           showToast('🎵 Playlist mise à jour', 'default');
+          
+          // Auto-select first track if none selected
+          if (newTracks.length > 0 && !selectedTrack) {
+            setSelectedTrack(newTracks[0]);
+          }
         }
       }
     }

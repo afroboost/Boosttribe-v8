@@ -156,13 +156,6 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
             className="ml-1"
           />
         )}
-
-        {/* Duck indicator */}
-        {isDucking && (
-          <span className="text-xs text-yellow-400 animate-pulse">
-            🔉
-          </span>
-        )}
       </div>
 
       {/* Error message with Retry button */}

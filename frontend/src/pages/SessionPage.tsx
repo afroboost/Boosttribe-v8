@@ -808,64 +808,46 @@ export const SessionPage: React.FC = () => {
     
     setTracks(prev => [...prev, newTrack]);
     
-    // Auto-select first track if playlist was empty
     if (!selectedTrack) {
       setSelectedTrack(newTrack);
     }
     
     showToast(`🎵 "${newTrack.title}" ajouté à la playlist`, 'success');
     
-    // Sync to participants
     const updatedTracks = [...tracks, newTrack];
     const trackIdToSync = selectedTrack?.id || newTrack.id;
     socket.syncPlaylist(updatedTracks, trackIdToSync);
-    
-    // Save to database if configured
     socket.savePlaylistToDb(updatedTracks, trackIdToSync);
-    
-    console.log('[UPLOAD] Track added:', newTrack.title);
   }, [tracks, selectedTrack, socket, showToast]);
 
   // Handle track deletion
   const handleDeleteTracks = useCallback(async (tracksToDelete: Track[]) => {
     if (!isHost || tracksToDelete.length === 0) return;
     
-    // Get URLs for storage deletion
     const trackUrls = tracksToDelete.map(t => t.src);
     const trackIds = new Set(tracksToDelete.map(t => t.id));
     
-    // Delete from Supabase storage
-    const result = await deleteTracks(trackUrls);
-    console.log('[DELETE] Storage result:', result);
+    await deleteTracks(trackUrls);
     
-    // Update local state (remove tracks)
     const updatedTracks = tracks.filter(t => !trackIds.has(t.id));
     setTracks(updatedTracks);
     
-    // Handle selectedTrack if it was deleted
     if (selectedTrack && trackIds.has(selectedTrack.id)) {
-      // Select next available track or null
       const nextTrack = updatedTracks.length > 0 ? updatedTracks[0] : null;
       setSelectedTrack(nextTrack);
     }
     
-    // Show feedback
     if (tracksToDelete.length === 1) {
       showToast(`🗑️ "${tracksToDelete[0].title}" supprimé`, 'success');
     } else {
       showToast(`🗑️ ${tracksToDelete.length} titres supprimés`, 'success');
     }
     
-    // Sync to participants
     const trackIdToSync = selectedTrack && !trackIds.has(selectedTrack.id) 
       ? selectedTrack.id 
       : (updatedTracks[0]?.id || 0);
     socket.syncPlaylist(updatedTracks, trackIdToSync);
-    
-    // Save to database if configured
     socket.savePlaylistToDb(updatedTracks, trackIdToSync);
-    
-    console.log('[DELETE] Tracks removed:', tracksToDelete.map(t => t.title));
   }, [isHost, tracks, selectedTrack, socket, showToast]);
 
   // Initialize - check for stored nickname
@@ -894,16 +876,12 @@ export const SessionPage: React.FC = () => {
 
   // Generate session ID when creating new session
   const handleCreateSession = useCallback(() => {
-    console.log('[SESSION] 🎵 Tentative de création de session...');
-    
     const newSessionId = generateSessionId();
-    console.log('[SESSION] Generated session ID:', newSessionId);
     
     setSessionId(newSessionId);
     setIsHost(true);
     navigate(`/session/${newSessionId}`, { replace: true });
     
-    // Check nickname after creating session
     const stored = getStoredNickname();
     if (!stored) {
       setShowNicknameModal(true);
@@ -911,8 +889,6 @@ export const SessionPage: React.FC = () => {
       setNickname(stored);
       showToast('Session créée ! Partagez le lien avec vos amis.', 'success');
     }
-    
-    console.log('[SESSION] ✅ Session créée avec succès');
   }, [navigate, showToast]);
 
   // Get shareable session URL

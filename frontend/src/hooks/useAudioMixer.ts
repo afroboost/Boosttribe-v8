@@ -126,9 +126,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const connectMusicSource = useCallback((audioElement: HTMLAudioElement) => {
     const ctx = audioContextRef.current;
     if (!ctx || !musicGainRef.current) {
-      console.warn('🎧 [AUDIO] Mixer not initialized, initializing now...');
       initialize();
-      // Retry after init
       setTimeout(() => connectMusicSource(audioElement), 100);
       return;
     }
@@ -154,11 +152,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       
       musicSourceRef.current = source;
       connectedMusicElement.current = audioElement;
-      
-      console.log('🎧 [AUDIO] Music source connected to GainNode A');
     } catch (err) {
-      // L'élément est peut-être déjà connecté
-      console.warn('🎧 [AUDIO] Music source already connected or error:', err);
+      // L'élément est peut-être déjà connecté - silencieux
     }
   }, [initialize]);
 
@@ -169,7 +164,6 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const connectMicSource = useCallback((stream: MediaStream): MediaStream => {
     const ctx = audioContextRef.current;
     if (!ctx || !micGainRef.current) {
-      console.warn('🎧 [AUDIO] Mixer not initialized for mic');
       initialize();
       return stream; // Retourner le stream original si pas initialisé
     }
@@ -192,8 +186,6 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       // Créer un nouveau stream avec le gain appliqué pour WebRTC
       const destination = ctx.createMediaStreamDestination();
       micGainRef.current.connect(destination);
-      
-      console.log('🎧 [AUDIO] Mic source connected to GainNode B');
       
       return destination.stream;
     } catch (err) {

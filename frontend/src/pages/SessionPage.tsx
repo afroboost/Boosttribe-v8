@@ -1483,6 +1483,20 @@ export const SessionPage: React.FC = () => {
               </CardContent>
             </Card>
 
+            {/* 🎧 Audio Mixer Panel */}
+            <AudioMixerPanel
+              isHost={isHost}
+              musicVolume={mixerState.musicVolume}
+              micVolume={mixerState.micVolume}
+              tribeVolume={mixerState.tribeVolume}
+              hostVoiceVolume={mixerState.hostVoiceVolume}
+              onMusicVolumeChange={setMusicVolume}
+              onMicVolumeChange={setMicVolume}
+              onTribeVolumeChange={setTribeVolume}
+              onHostVoiceVolumeChange={setHostVoiceVolume}
+              isMicActive={hostMicActive}
+            />
+
             {/* Participants */}
             <Card className="border-white/10 bg-white/5">
               <CardHeader className="pb-3">

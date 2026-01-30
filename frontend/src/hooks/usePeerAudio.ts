@@ -378,7 +378,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           // Auto-reconnect
           if (reconnectAttempts.current < maxReconnectAttempts) {
             reconnectAttempts.current++;
-            console.log(`[PEER] 🔄 Reconnect attempt ${reconnectAttempts.current}/${maxReconnectAttempts}`);
+            // Production: log removed
             setTimeout(() => {
               if (peerRef.current && !peerRef.current.destroyed) {
                 peerRef.current.reconnect();

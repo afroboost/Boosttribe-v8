@@ -1620,7 +1620,7 @@ export const SessionPage: React.FC = () => {
               </CardContent>
             </Card>
 
-            {/* 🎧 Audio Mixer Panel */}
+            {/* 🎧 Audio Mixer Panel - Escamotable sur mobile */}
             <AudioMixerPanel
               isHost={isHost}
               musicVolume={mixerState.musicVolume}
@@ -1632,6 +1632,7 @@ export const SessionPage: React.FC = () => {
               onTribeVolumeChange={setTribeVolume}
               onHostVoiceVolumeChange={setHostVoiceVolume}
               isMicActive={hostMicActive}
+              defaultCollapsed={false}
             />
 
             {/* Participants */}

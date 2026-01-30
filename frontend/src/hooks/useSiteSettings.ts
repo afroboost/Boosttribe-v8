@@ -300,13 +300,27 @@ export function useSiteSettings() {
     settings,
     isLoaded,
     isLoading: isLoading,
+    reload: loadSettings, // Expose reload function
   };
 }
 
-// Force refresh cached settings (call after CMS save)
+// Event emitter for global refresh
+type RefreshListener = () => void;
+const refreshListeners: Set<RefreshListener> = new Set();
+
+// Subscribe to refresh events
+export function onSettingsRefresh(listener: RefreshListener): () => void {
+  refreshListeners.add(listener);
+  return () => refreshListeners.delete(listener);
+}
+
+// Force refresh cached settings AND notify all subscribers
 export function refreshSiteSettings() {
+  console.log('[SiteSettings] Force refresh triggered');
   cachedSettings = null;
   loadPromise = null;
+  // Notify all subscribers to reload
+  refreshListeners.forEach(listener => listener());
 }
 
 export default useSiteSettings;

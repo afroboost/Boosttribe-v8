@@ -40,10 +40,11 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
     retryCapture,
     audioStream,
   } = useMicrophone({
-    // 🎧 DÉSACTIVER l'annulation d'écho agressive pour permettre la superposition musique + voix
-    echoCancellation: false,  // Désactivé pour ne pas étouffer la musique
-    noiseSuppression: true,   // Garder la suppression du bruit
-    autoGainControl: false,   // Désactiver le gain auto qui peut couper la musique
+    // 🎧 MIXAGE MANUEL STRICT: Désactiver TOUS les traitements audio automatiques
+    // L'hôte contrôle tout manuellement via les sliders du mixeur
+    echoCancellation: false,   // Désactivé - la musique ne doit pas être étouffée
+    noiseSuppression: false,   // Désactivé - mixage manuel uniquement
+    autoGainControl: false,    // Désactivé - le niveau est contrôlé par le slider
     onAudioLevel: handleAudioLevel,
   });
 

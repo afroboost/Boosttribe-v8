@@ -383,13 +383,14 @@ export const SessionPage: React.FC = () => {
   }, [mixerState.isInitialized, initializeMixer]);
 
   // FREE TRIAL LIMIT: 5 minutes (300 seconds)
+  // ⚠️ UNIQUEMENT pour l'hôte - Les participants ont une écoute illimitée
   const FREE_TRIAL_LIMIT_SECONDS = 300;
   const [totalPlayTime, setTotalPlayTime] = useState(0);
   const [trialLimitReached, setTrialLimitReached] = useState(false);
   const playTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check if user is on free trial (not subscribed)
-  const isFreeTrial = !isSubscribed;
+  // Check if HOST is on free trial (participants are always unlimited)
+  const isFreeTrial = isHost && !isSubscribed;
 
   // PeerJS for WebRTC voice broadcast
   const {

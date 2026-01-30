@@ -465,12 +465,6 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 🎧 MIXER: Plus de duck effect - les canaux sont maintenant indépendants
-  // La musique ne se coupe plus quand le micro est activé
-  const handleDuckMusic = useCallback(() => {
-    // Fonction désactivée - utiliser le mixer pour contrôler les volumes séparément
-  }, []);
-
   // Auto-play effect: when a new track is set via autoplay, force play
   useEffect(() => {
     if (autoPlayPending && selectedTrack && selectedTrack.src === autoPlayPending) {

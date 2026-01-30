@@ -1443,14 +1443,14 @@ export const SessionPage: React.FC = () => {
                     </svg>
                   </div>
                   <h3 className="text-white/80 font-medium mb-2">
-                    {!isHost && isSyncActive ? "Synchronisation de la playlist en cours..." : "Playlist vide"}
+                    {isHost ? "Playlist vide" : (isSyncActive ? "En attente de l'hôte" : "Connexion...")}
                   </h3>
                   <p className="text-white/50 text-sm">
                     {isHost 
                       ? "Uploadez votre premier morceau pour démarrer la session"
                       : isSyncActive 
-                        ? "📡 Cloud-Sync actif - Connexion à la session de l'hôte..."
-                        : "En attente que l'hôte ajoute des morceaux..."
+                        ? "📡 Sync Cloud actif - La playlist s'affichera dès que l'hôte ajoutera des morceaux"
+                        : "Connexion au serveur..."
                     }
                   </p>
                 </CardContent>

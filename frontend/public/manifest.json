@@ -4,21 +4,27 @@
   "description": "La plateforme d'écoute musicale synchronisée pour les beatmakers et producteurs",
   "icons": [
     {
-      "src": "favicon.ico",
+      "src": "/favicon.ico",
       "sizes": "64x64 32x32 24x24 16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "icon-192x192.svg",
+      "src": "/icon-192x192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icon-192x192.svg",
+      "src": "/icon-512x512.png",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/icon-512x512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ],
   "start_url": "/",
@@ -30,14 +36,13 @@
   "lang": "fr",
   "orientation": "portrait-primary",
   "categories": ["music", "social"],
-  "screenshots": [],
   "shortcuts": [
     {
       "name": "Nouvelle Session",
       "short_name": "Session",
       "description": "Créer une nouvelle session d'écoute",
       "url": "/session",
-      "icons": [{ "src": "icon-192x192.png", "sizes": "192x192" }]
+      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
     }
   ],
   "related_applications": [],

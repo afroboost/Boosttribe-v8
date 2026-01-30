@@ -983,23 +983,44 @@ export const SessionPage: React.FC = () => {
 
   // Ref to track if "Go Live" toast has been shown (prevent infinite loop)
   const hasShownLiveToast = useRef(false);
+  // Ref pour tracker le dernier état de lecture (éviter les envois redondants)
+  const lastPlayingState = useRef<boolean | null>(null);
 
-  // Handle audio state changes
+  // Handle audio state changes - L'HÔTE envoie des COMMANDES aux ESCLAVES
   const handleAudioStateChange = useCallback((state: AudioState) => {
     setAudioState(state);
     
-    // 🔄 SYNC PLAY/PAUSE: L'hôte diffuse son état via Supabase Broadcast
+    // 🔄 MAÎTRE: L'hôte envoie des commandes PLAY/PAUSE explicites
     if (isHost && sessionId && supabase && isSupabaseConfigured) {
-      // Utiliser Broadcast pour une synchronisation instantanée (pas de DB)
-      supabase.channel(`playback:${sessionId}`).send({
-        type: 'broadcast',
-        event: 'playback_sync',
-        payload: {
-          isPlaying: state.isPlaying,
-          currentTime: state.currentTime,
-          trackId: selectedTrack?.id || null,
-        },
-      });
+      // Détecter le changement d'état play/pause
+      const playStateChanged = lastPlayingState.current !== state.isPlaying;
+      
+      if (playStateChanged) {
+        lastPlayingState.current = state.isPlaying;
+        
+        // Envoyer la commande appropriée
+        supabase.channel(`playback:${sessionId}`).send({
+          type: 'broadcast',
+          event: 'HOST_COMMAND',
+          payload: {
+            action: state.isPlaying ? 'PLAY' : 'PAUSE',
+            currentTime: state.currentTime,
+            trackId: selectedTrack?.id || null,
+          },
+        });
+      }
+      // Sync position toutes les 5 secondes pendant la lecture
+      else if (state.isPlaying && Math.floor(state.currentTime) % 5 === 0) {
+        supabase.channel(`playback:${sessionId}`).send({
+          type: 'broadcast',
+          event: 'HOST_COMMAND',
+          payload: {
+            action: 'SEEK',
+            currentTime: state.currentTime,
+            trackId: selectedTrack?.id || null,
+          },
+        });
+      }
     }
   }, [isHost, sessionId, selectedTrack?.id]);
 

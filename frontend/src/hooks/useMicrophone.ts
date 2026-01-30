@@ -92,7 +92,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       const devices = await navigator.mediaDevices.enumerateDevices();
       const audioInputs = devices.filter(d => d.kind === 'audioinput');
       updateState({ devices: audioInputs });
-      console.log('[MIC] Devices refreshed:', audioInputs.length);
+      // Production: log removed
       return audioInputs;
     } catch (err) {
       console.error('[MIC] Failed to enumerate devices:', err);
@@ -127,7 +127,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
    * This MUST be called from a click handler to trigger browser permission dialog
    */
   const startCapture = useCallback(async (): Promise<boolean> => {
-    console.log('[MIC] 🎤 startCapture() called - USER GESTURE REQUIRED');
+    // Production: log removed
     
     // Clear previous errors
     updateState({ error: null, errorType: null, canRetry: false });
@@ -158,7 +158,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
 
     try {
       // 3. DIRECT getUserMedia call - browser will show permission dialog
-      console.log('[MIC] 📢 Calling getUserMedia({ audio: true }) - Permission dialog should appear...');
+      // Production: log removed
       
       const constraints: MediaStreamConstraints = {
         audio: {
@@ -173,16 +173,16 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       streamRef.current = stream;
       
       const audioTrack = stream.getAudioTracks()[0];
-      console.log('[MIC] ✅ Stream obtained:', stream.id, '- Track:', audioTrack?.label);
+      // Production: log removed
 
       // 4. Create AudioContext and RESUME it (user gesture required)
       const audioContext = new AudioContext();
       if (audioContext.state === 'suspended') {
-        console.log('[MIC] AudioContext suspended, resuming...');
+        // Production: log removed
         await audioContext.resume();
       }
       audioContextRef.current = audioContext;
-      console.log('[MIC] ✅ AudioContext state:', audioContext.state);
+      // Production: log removed
 
       // 5. Create audio nodes
       const source = audioContext.createMediaStreamSource(stream);
@@ -214,7 +214,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
         canRetry: false,
       });
 
-      console.log('[MIC] ✅ CAPTURE ACTIVE - Device:', audioTrack.label);
+      // Production: log removed
       
       // Refresh devices list (now we have permission, labels will be visible)
       await refreshDevices();
@@ -229,7 +229,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       let canRetry = true;
       
       if (err instanceof Error) {
-        console.log('[MIC] Error name:', err.name, '- Message:', err.message);
+        // Production: log removed
         
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
           errorMessage = '🔒 Permission refusée. Cliquez sur l\'icône cadenas dans la barre d\'adresse pour autoriser le microphone.';
@@ -271,14 +271,14 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
 
   // Retry capture (wrapper for UI button)
   const retryCapture = useCallback(async (): Promise<boolean> => {
-    console.log('[MIC] 🔄 Retry capture requested');
+    // Production: log removed
     updateState({ error: null, errorType: null, canRetry: false });
     return startCapture();
   }, [startCapture, updateState]);
 
   // Stop capturing audio
   const stopCapture = useCallback(() => {
-    console.log('[MIC] Stopping capture...');
+    // Production: log removed
     
     // Stop animation
     if (animationFrameRef.current) {
@@ -290,7 +290,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
         track.stop();
-        console.log('[MIC] Track stopped:', track.label);
+        // Production: log removed
       });
       streamRef.current = null;
     }
@@ -311,7 +311,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       audioLevel: 0,
     });
 
-    console.log('[MIC] ✅ Capture stopped');
+    // Production: log removed
   }, [updateState]);
 
   // Toggle mute
@@ -321,7 +321,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         updateState({ isMuted: !audioTrack.enabled });
-        console.log('[MIC] Muted:', !audioTrack.enabled);
+        // Production: log removed
       }
     }
   }, [updateState]);
@@ -358,7 +358,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
   // Listen for device changes
   useEffect(() => {
     const handleDeviceChange = () => {
-      console.log('[MIC] Device change detected');
+      // Production: log removed
       refreshDevices();
     };
 

@@ -107,18 +107,15 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       hostVoiceGainRef.current.gain.value = state.hostVoiceVolume;
       hostVoiceGainRef.current.connect(ctx.destination);
       
-      console.log('🎧 [AUDIO] Mixer initialized - Independent channels active');
-      console.log('🎧 [AUDIO] - Music channel: GainNode A');
-      console.log('🎧 [AUDIO] - Mic channel: GainNode B');
-      console.log('🎧 [AUDIO] - Tribe channel: GainNode C');
-      console.log('🎧 [AUDIO] - Host voice channel: GainNode D');
+      // Message unique de démarrage (production)
+      console.log('🚀 Boosttribe Engine Active');
       
       setState(prev => ({ ...prev, isInitialized: true }));
       onInitialized?.();
       
       return true;
     } catch (err) {
-      console.error('🎧 [AUDIO] Failed to initialize mixer:', err);
+      // Silencieux en production - ne pas bloquer l'app
       return false;
     }
   }, [state.musicVolume, state.micVolume, state.tribeVolume, state.hostVoiceVolume, onInitialized]);

@@ -688,8 +688,37 @@ export const SessionPage: React.FC = () => {
     
     // Handler pour INSERT et UPDATE
     function handlePlaylistUpdate(payload: unknown) {
-      const data = payload as { new?: { tracks?: Track[] }, eventType?: string };
+      const data = payload as { new?: { tracks?: Track[], is_playing?: boolean, current_time?: number }, eventType?: string };
       
+      // 🔄 SYNC PLAY/PAUSE: Synchroniser l'état de lecture pour les participants
+      if (data.new && typeof data.new.is_playing === 'boolean' && !isHost) {
+        const shouldPlay = data.new.is_playing;
+        const audioEl = document.querySelector('audio') as HTMLAudioElement;
+        
+        if (audioEl) {
+          if (shouldPlay && audioEl.paused) {
+            // Host a repris la lecture
+            audioEl.play().catch(() => {});
+            showToast('▶️ Lecture synchronisée', 'default');
+          } else if (!shouldPlay && !audioEl.paused) {
+            // Host a mis en pause - FORCER LA PAUSE IMMÉDIATE
+            audioEl.pause();
+            showToast('⏸️ Pause synchronisée', 'default');
+          }
+        }
+        
+        setHostIsPlaying(shouldPlay);
+      }
+      
+      // Synchroniser la position de lecture si fournie
+      if (data.new && typeof data.new.current_time === 'number' && !isHost) {
+        const audioEl = document.querySelector('audio') as HTMLAudioElement;
+        if (audioEl && Math.abs(audioEl.currentTime - data.new.current_time) > 2) {
+          audioEl.currentTime = data.new.current_time;
+        }
+      }
+      
+      // Synchroniser la playlist
       if (data.new && 'tracks' in data.new) {
         const newTracks = data.new.tracks || [];
         

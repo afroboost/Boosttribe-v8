@@ -122,6 +122,25 @@ let cachedSettings: SiteSettings | null = null;
 let isLoading = false;
 let loadPromise: Promise<SiteSettings> | null = null;
 
+// Event emitter for global refresh (declared before hook uses it)
+type RefreshListener = () => void;
+const refreshListeners: Set<RefreshListener> = new Set();
+
+// Subscribe to refresh events
+export function onSettingsRefresh(listener: RefreshListener): () => void {
+  refreshListeners.add(listener);
+  return () => refreshListeners.delete(listener);
+}
+
+// Force refresh cached settings AND notify all subscribers
+export function refreshSiteSettings() {
+  console.log('[SiteSettings] Force refresh triggered');
+  cachedSettings = null;
+  loadPromise = null;
+  // Notify all subscribers to reload
+  refreshListeners.forEach(listener => listener());
+}
+
 /**
  * Hook to load and apply site settings globally
  * Loads from Supabase once and caches the result

@@ -661,6 +661,45 @@ export const SessionPage: React.FC = () => {
     return unsubPlayback;
   }, [socket, isHost, tracks, showToast]);
 
+  // 🔄 SUPABASE REALTIME: Sync playlist changes for participants
+  useEffect(() => {
+    if (!sessionId || !supabase || !isSupabaseConfigured) return;
+    
+    // Subscribe to playlist changes in real-time
+    const channel = supabase
+      .channel(`playlist:${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'playlists',
+          filter: `session_id=eq.${sessionId}`,
+        },
+        (payload) => {
+          console.log('📡 [SUPABASE REALTIME] Playlist update:', payload);
+          
+          if (payload.new && typeof payload.new === 'object' && 'tracks' in payload.new) {
+            const newTracks = (payload.new as { tracks: Track[] }).tracks || [];
+            console.log('📡 [SUPABASE REALTIME] Syncing', newTracks.length, 'tracks');
+            
+            // Update local state only for participants (not host)
+            if (!isHost) {
+              setTracks(newTracks);
+              showToast('🎵 Playlist mise à jour', 'default');
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        console.log('📡 [SUPABASE REALTIME] Channel status:', status);
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [sessionId, isHost, showToast]);
+
   // Build participants list with current user
   const participants = useMemo<Participant[]>(() => {
     if (!nickname) return participantsState;

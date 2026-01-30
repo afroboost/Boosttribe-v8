@@ -367,7 +367,7 @@ export const SessionPage: React.FC = () => {
     setHostVoiceVolume,
   } = useAudioMixer({
     onInitialized: () => {
-      console.log('🎧 [MIXER] Audio mixer ready with independent channels');
+      // Silencieux - démarrage réussi
     },
   });
 

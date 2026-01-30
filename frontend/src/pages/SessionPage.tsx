@@ -342,6 +342,7 @@ export const SessionPage: React.FC = () => {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
   const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
+  const [hostIsPlaying, setHostIsPlaying] = useState(false); // 🔄 Sync Play/Pause
   
   // Participants state with volume/mute controls
   const [participantsState, setParticipantsState] = useState<Participant[]>(BASE_PARTICIPANTS);

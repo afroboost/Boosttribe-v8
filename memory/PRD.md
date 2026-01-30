@@ -101,6 +101,12 @@ const DEFAULT_MIXER_VOLUMES = {
 
 ## Changelog
 
+### 2025-01-30 (PWA Support)
+- [FEAT] Service Worker with cache strategy (sw.js)
+- [FEAT] PWA manifest with shortcuts
+- [FEAT] iOS meta tags for standalone mode
+- [FEAT] PWAInstallPrompt component with beforeinstallprompt
+
 ### 2025-01-30 (V8 Stable Gold)
 - [FEAT] Mobile-optimized mixer panel (collapsible, touch-friendly)
 - [FEAT] TypeScript interfaces for Session, HostCommand

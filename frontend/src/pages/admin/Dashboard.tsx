@@ -360,6 +360,9 @@ const Dashboard: React.FC = () => {
         alert("ERREUR DB : " + error.message); 
       } else { 
         alert("✅ SYNCHRO RÉUSSIE : Données écrites dans Supabase !"); 
+        // Rafraîchir le cache global des settings pour tous les composants
+        refreshSiteSettings();
+        // Recharger la page pour appliquer les changements visuels
         window.location.reload(); 
       }
     } catch (err) {

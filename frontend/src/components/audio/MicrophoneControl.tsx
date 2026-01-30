@@ -8,9 +8,7 @@ interface MicrophoneControlProps {
   isHost?: boolean;
   onMicActive?: (active: boolean) => void;
   onAudioLevel?: (level: number) => void;
-  onDuckMusic?: (duck: boolean) => void;
   onStreamReady?: (stream: MediaStream | null) => void;
-  duckThreshold?: number;
   className?: string;
 }
 
@@ -22,26 +20,14 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   isHost = false,
   onMicActive,
   onAudioLevel,
-  onDuckMusic,
   onStreamReady,
-  duckThreshold = 30,
   className = '',
 }) => {
-  const [isDucking, setIsDucking] = useState(false);
-  const [showDevices, setShowDevices] = useState(false);
 
-  // Handle audio level for duck effect
+  // Handle audio level (no ducking - independent mixer channels)
   const handleAudioLevel = useCallback((level: number) => {
     onAudioLevel?.(level);
-    
-    if (isHost && onDuckMusic) {
-      const shouldDuck = level > duckThreshold;
-      if (shouldDuck !== isDucking) {
-        setIsDucking(shouldDuck);
-        onDuckMusic(shouldDuck);
-      }
-    }
-  }, [isHost, onDuckMusic, duckThreshold, isDucking, onAudioLevel]);
+  }, [onAudioLevel]);
 
   const {
     state,

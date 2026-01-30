@@ -29,7 +29,7 @@
    - **Authorized JavaScript origins** :
      ```
      https://tfghpbgbtpgrjlhomlvz.supabase.co
-     https://sync-squad.preview.emergentagent.com
+     https://booststage.preview.emergentagent.com
      ```
    - **Authorized redirect URIs** :
      ```

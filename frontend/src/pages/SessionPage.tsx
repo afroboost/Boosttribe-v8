@@ -544,8 +544,6 @@ export const SessionPage: React.FC = () => {
     if (isHost) return;
     
     const unsubPlaylist = socket.onPlaylistSync((payload) => {
-      console.log('[SOCKET] Received playlist sync:', payload);
-      // Protection anti-undefined: ensure tracks is always an array
       const safeTracks = Array.isArray(payload.tracks) ? payload.tracks : [];
       setTracks(safeTracks as Track[]);
       
@@ -568,23 +566,16 @@ export const SessionPage: React.FC = () => {
     if (isHost) return;
     
     const unsubPlayback = socket.onPlaybackSync((payload) => {
-      console.log('[SOCKET] Received playback sync:', payload);
-      
-      // Find the target track
       const targetTrack = tracks.find(t => t.id === payload.trackId);
       if (targetTrack) {
-        console.log('[AUTOPLAY PARTICIPANT] Switching to:', targetTrack.title);
         setSelectedTrack(targetTrack);
         showToast(`Enchaînement : ${targetTrack.title}`, 'default');
         
-        // Force auto-play after state update
         setTimeout(() => {
           const audioEl = document.querySelector('audio');
           if (audioEl && payload.isPlaying) {
             audioEl.currentTime = payload.currentTime || 0;
-            audioEl.play().catch(err => {
-              console.warn('[AUTOPLAY] Play blocked:', err);
-            });
+            audioEl.play().catch(() => {});
           }
         }, 100);
       }

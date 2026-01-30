@@ -101,6 +101,12 @@ const DEFAULT_MIXER_VOLUMES = {
 
 ## Changelog
 
+### 2025-01-30 (PWA Final)
+- [FEAT] PNG icons generated (192x192, 512x512, maskable)
+- [FEAT] iOS splash screens for all iPhone sizes
+- [FIX] Service Worker excludes audio files and Supabase APIs
+- [FIX] Network First strategy for /session pages
+
 ### 2025-01-30 (PWA Support)
 - [FEAT] Service Worker with cache strategy (sw.js)
 - [FEAT] PWA manifest with shortcuts

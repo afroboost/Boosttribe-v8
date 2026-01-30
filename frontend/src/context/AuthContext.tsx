@@ -77,7 +77,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   // Derived state
   const isAuthenticated = !!user;
-  const isSubscribed = isAdmin || (profile?.subscription_status !== 'none' && profile?.subscription_status !== 'trial');
+  // 🔒 FIX: Un utilisateur non connecté ou sans profil n'est PAS abonné
+  const isSubscribed = isAdmin || (profile !== null && profile.subscription_status !== 'none' && profile.subscription_status !== 'trial');
   const hasAcceptedTerms = isAdmin || (profile?.has_accepted_terms ?? false);
   const trackLimit = isAdmin ? -1 : TRACK_LIMITS[profile?.subscription_status || 'none'];
 

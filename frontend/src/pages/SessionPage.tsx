@@ -714,31 +714,23 @@ export const SessionPage: React.FC = () => {
 
   // FREE TRIAL TIME TRACKING
   useEffect(() => {
-    // Skip if user is subscribed (not on free trial)
-    if (!isFreeTrial || trialLimitReached) {
-      return;
-    }
+    if (!isFreeTrial || trialLimitReached) return;
 
-    // Track play time when audio is playing
     const checkPlayback = () => {
       const audioEl = document.querySelector('audio') as HTMLAudioElement;
       if (audioEl && !audioEl.paused) {
         setTotalPlayTime(prev => {
           const newTime = prev + 1;
-          // Check if limit reached
           if (newTime >= FREE_TRIAL_LIMIT_SECONDS) {
             setTrialLimitReached(true);
-            // Pause the audio
             audioEl.pause();
             showToast('⏱️ Limite d\'essai gratuit atteinte (5 min). Passez à un abonnement Pro pour une écoute illimitée.', 'warning');
-            console.log('[FREE TRIAL] Limit reached:', newTime, 'seconds');
           }
           return newTime;
         });
       }
     };
 
-    // Check every second
     playTimeIntervalRef.current = setInterval(checkPlayback, 1000);
 
     return () => {
@@ -750,15 +742,12 @@ export const SessionPage: React.FC = () => {
 
   // Participant moderation handlers (Host only - sends socket commands)
   const handleParticipantVolumeChange = useCallback((id: string, volume: number) => {
-    // Update local state
     setParticipantsState(prev => 
       prev.map(p => p.id === id ? { ...p, volume, isMuted: volume === 0 } : p)
     );
     
-    // Send socket command
     if (isHost) {
       socket.setUserVolume(id, volume);
-      console.log('[SOCKET OUT] Volume change:', { targetId: id, volume });
     }
   }, [isHost, socket]);
 
@@ -766,12 +755,10 @@ export const SessionPage: React.FC = () => {
     const participant = participantsState.find(p => p.id === id);
     const newMuted = !participant?.isMuted;
     
-    // Update local state
     setParticipantsState(prev =>
       prev.map(p => p.id === id ? { ...p, isMuted: newMuted } : p)
     );
     
-    // Send socket command
     if (isHost) {
       if (newMuted) {
         socket.muteUser(id);
@@ -780,21 +767,17 @@ export const SessionPage: React.FC = () => {
         socket.unmuteUser(id);
         showToast(`🔊 ${participant?.name} réactivé`, 'success');
       }
-      console.log('[SOCKET OUT] Mute toggle:', { targetId: id, muted: newMuted });
     }
   }, [isHost, participantsState, socket, showToast]);
 
   const handleParticipantEject = useCallback((id: string) => {
     const participant = participantsState.find(p => p.id === id);
     
-    // Update local state
     setParticipantsState(prev => prev.filter(p => p.id !== id));
     
-    // Send socket command
     if (isHost) {
       socket.ejectUser(id);
       showToast(`❌ ${participant?.name || 'Participant'} a été éjecté`, 'success');
-      console.log('[SOCKET OUT] Eject user:', { targetId: id });
     }
   }, [isHost, participantsState, socket, showToast]);
 
@@ -803,10 +786,8 @@ export const SessionPage: React.FC = () => {
     setTracks(newTracks);
     showToast('Playlist réorganisée', 'success');
     
-    // Sync playlist to all participants
     if (isHost && selectedTrack) {
       socket.syncPlaylist(newTracks, selectedTrack.id);
-      console.log('[SOCKET OUT] Playlist sync:', { trackCount: newTracks.length });
     }
   }, [showToast, isHost, socket, selectedTrack]);
 
@@ -815,10 +796,7 @@ export const SessionPage: React.FC = () => {
     if (!isHost) return;
     setSelectedTrack(track);
     showToast(`Piste sélectionnée: ${track.title}`, 'success');
-    
-    // Sync to participants
     socket.syncPlaylist(tracks, track.id);
-    console.log('[SOCKET OUT] Track selected:', { trackId: track.id });
   }, [showToast, isHost, socket, tracks]);
 
   // Handle track upload

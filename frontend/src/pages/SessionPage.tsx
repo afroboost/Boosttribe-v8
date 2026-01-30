@@ -680,15 +680,16 @@ export const SessionPage: React.FC = () => {
         }
       });
 
-    // 🔄 CANAL BROADCAST SÉPARÉ pour la synchronisation Play/Pause
-    // Ce canal utilise Broadcast (pas postgres_changes) pour une latence minimale
+    // 🔄 CANAL BROADCAST MAÎTRE/ESCLAVE pour la synchronisation Play/Pause
+    // L'hôte est le MAÎTRE : il envoie les commandes
+    // Les participants sont ESCLAVES : ils obéissent instantanément
     const playbackChannel = supabase
       .channel(`playback:${sessionId}`)
-      .on('broadcast', { event: 'playback_sync' }, (payload) => {
-        // Participant uniquement : écouter les commandes de l'hôte
+      .on('broadcast', { event: 'HOST_COMMAND' }, (payload) => {
+        // ⚠️ PARTICIPANT ESCLAVE : écouter et obéir aux commandes de l'hôte
         if (!isHost && payload.payload) {
-          const { isPlaying, currentTime, trackId } = payload.payload as { 
-            isPlaying: boolean; 
+          const command = payload.payload as { 
+            action: 'PLAY' | 'PAUSE' | 'SEEK';
             currentTime: number;
             trackId?: number;
           };
@@ -697,30 +698,38 @@ export const SessionPage: React.FC = () => {
           if (!audioEl) return;
           
           // Synchroniser la piste si fournie
-          if (trackId && tracks.length > 0) {
-            const targetTrack = tracks.find(t => t.id === trackId);
-            if (targetTrack && selectedTrack?.id !== trackId) {
+          if (command.trackId && tracks.length > 0) {
+            const targetTrack = tracks.find(t => t.id === command.trackId);
+            if (targetTrack && selectedTrack?.id !== command.trackId) {
               setSelectedTrack(targetTrack);
             }
           }
           
-          // ⏸️ PAUSE IMMÉDIATE si l'hôte a mis en pause
-          if (!isPlaying && !audioEl.paused) {
-            audioEl.pause();
-            showToast('⏸️ Pause synchronisée', 'default');
+          switch (command.action) {
+            case 'PAUSE':
+              // ⏸️ PAUSE IMMÉDIATE - L'esclave obéit
+              if (!audioEl.paused) {
+                audioEl.pause();
+                showToast('⏸️ Pause (commande hôte)', 'default');
+              }
+              setHostIsPlaying(false);
+              break;
+              
+            case 'PLAY':
+              // ▶️ LECTURE - L'esclave reprend à la position exacte
+              audioEl.currentTime = command.currentTime || 0;
+              audioEl.play().catch(() => {});
+              showToast('▶️ Lecture (commande hôte)', 'default');
+              setHostIsPlaying(true);
+              break;
+              
+            case 'SEEK':
+              // 🔄 SYNCHRONISATION DE POSITION
+              if (Math.abs(audioEl.currentTime - command.currentTime) > 1) {
+                audioEl.currentTime = command.currentTime;
+              }
+              break;
           }
-          // ▶️ LECTURE si l'hôte a repris
-          else if (isPlaying && audioEl.paused) {
-            audioEl.currentTime = currentTime || 0;
-            audioEl.play().catch(() => {});
-            showToast('▶️ Lecture synchronisée', 'default');
-          }
-          // Synchroniser la position si écart > 3 secondes
-          else if (isPlaying && Math.abs(audioEl.currentTime - currentTime) > 3) {
-            audioEl.currentTime = currentTime;
-          }
-          
-          setHostIsPlaying(isPlaying);
         }
       })
       .subscribe();

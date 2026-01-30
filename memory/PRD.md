@@ -95,6 +95,11 @@ Build "Boosttribe," a web application for synchronized music listening sessions 
 
 ## Changelog
 
+### 2025-01-30 (Production Cleanup v2)
+- [CLEAN] Removed all debug logs ([MIC], [PEER], [AUDIO], [MIC-UI], [TRACK UPLOADER])
+- [FIX] Single startup message: "🚀 Boosttribe Engine Active"
+- [FIX] Try/catch on all audio mixer initializations
+
 ### 2025-01-30 (Master/Slave Broadcast)
 - [FIX] Explicit HOST_COMMAND broadcast (PLAY/PAUSE/SEEK actions)
 - [FIX] All audio processing disabled (echoCancellation, noiseSuppression, autoGainControl)

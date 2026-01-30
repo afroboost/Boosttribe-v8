@@ -443,16 +443,12 @@ export const SessionPage: React.FC = () => {
     if (!audioEl) return;
     
     if (shouldDuck && !musicDucked) {
-      // Save original volume and duck
       originalVolumeRef.current = audioEl.volume;
-      audioEl.volume = Math.max(0.1, audioEl.volume * 0.3); // Duck to 30%
+      audioEl.volume = Math.max(0.1, audioEl.volume * 0.3);
       setMusicDucked(true);
-      console.log('[DUCK] Music ducked to', audioEl.volume);
     } else if (!shouldDuck && musicDucked) {
-      // Restore original volume
       audioEl.volume = originalVolumeRef.current;
       setMusicDucked(false);
-      console.log('[DUCK] Music restored to', audioEl.volume);
     }
   }, [musicDucked]);
 
@@ -474,62 +470,33 @@ export const SessionPage: React.FC = () => {
 
   // Handle track ended - autoplay next track with sync
   const handleTrackEnded = useCallback(() => {
-    if (!isHost || !selectedTrack) return; // Only host controls autoplay
+    if (!isHost || !selectedTrack) return;
     
-    // Safety check: playlist not empty
-    if (tracks.length === 0) {
-      console.warn('[AUTOPLAY] Empty playlist, nothing to do');
-      return;
-    }
+    if (tracks.length === 0) return;
     
     const currentIndex = tracks.findIndex(t => t.id === selectedTrack.id);
-    
-    // Safety check: ensure index is valid
-    if (currentIndex === -1) {
-      console.warn('[AUTOPLAY] Current track not found in playlist');
-      return;
-    }
+    if (currentIndex === -1) return;
     
     let nextTrack: Track | null = null;
-    let shouldLoop = false;
     
     if (repeatMode === 'all') {
-      // Loop playlist: go to next, or first if at end
       const nextIndex = (currentIndex + 1) % tracks.length;
       nextTrack = tracks[nextIndex];
-      shouldLoop = nextIndex === 0;
-      console.log('[AUTOPLAY] Mode ALL - Next track:', nextTrack.title, shouldLoop ? '(loop)' : '');
     } else if (repeatMode === 'none') {
-      // No repeat: go to next if available
       if (currentIndex < tracks.length - 1) {
         nextTrack = tracks[currentIndex + 1];
-        console.log('[AUTOPLAY] Mode NONE - Next track:', nextTrack.title);
       } else {
-        console.log('[AUTOPLAY] Playlist ended');
         showToast('Fin de la playlist', 'default');
         return;
       }
     }
-    // Note: 'one' mode is handled directly in useAudioSync hook
     
     if (nextTrack) {
-      // Update local state
       setSelectedTrack(nextTrack);
-      
-      // Mark for auto-play
       setAutoPlayPending(nextTrack.src);
-      
-      // Show feedback toast
       showToast(`Enchaînement : ${nextTrack.title}`, 'success');
-      
-      // Broadcast to participants via Supabase
       socket.syncPlaylist(tracks, nextTrack.id);
       socket.syncPlayback(true, 0, nextTrack.id);
-      
-      console.log('[AUTOPLAY] Broadcasted:', {
-        trackId: nextTrack.id,
-        title: nextTrack.title
-      });
     }
   }, [isHost, tracks, selectedTrack, repeatMode, socket, showToast]);
 

@@ -1,122 +1,115 @@
-# Boosttribe - PRD (Product Requirements Document)
+# Boosttribe - Product Requirements Document
 
-## Vue d'ensemble
-Application web de sessions d'écoute musicale synchronisée. Permet à un hôte de créer une session, d'uploader de la musique, et d'inviter des participants pour une écoute en temps réel.
+## Original Problem Statement
+Build "Boosttribe," a web application for synchronized music listening sessions where hosts can share playlists with participants in real-time.
 
-## Stack Technique
-- **Frontend**: React 18 + TypeScript
-- **Backend**: Supabase (Auth, Database, Storage)
-- **WebRTC**: PeerJS pour la voix en temps réel
-- **UI Components**: Shadcn/UI + Tailwind CSS
+## Core Features Implemented
 
-## Fonctionnalités Implémentées
+### ✅ Session Management
+- Create/join sessions via unique IDs
+- Role-based access (Host vs Participant)
+- Real-time playlist synchronization via Supabase Realtime
 
-### 1. Système d'Authentification
-- Connexion via Google (Supabase Auth)
-- Système admin (email: contact.artboost@gmail.com)
-- Protection des routes admin
+### ✅ Role-Based UI (Implemented 2025-01-30)
+**Host Mode:**
+- Full control: upload, delete, reorder tracks
+- Play/Pause/Seek controls active
+- "Go Live" toggle
+- Share link button
 
-### 2. Sessions d'Écoute
-- Création de sessions avec code unique
-- Upload de fichiers audio (MP3, WAV, AAC)
-- Lecture synchronisée pour tous les participants
-- Playlist drag-and-drop
+**Participant Mode:**
+- Read-only playlist view
+- Disabled playback controls (greyed out)
+- No upload/delete/drag buttons (removed from DOM)
+- Banner: "🎧 Mode écoute seule - Synchronisé avec l'hôte"
+- Instant playlist sync (<1s on join)
 
-### 3. CMS Admin (/admin)
-- Gestion de l'identité du site (nom, slogan, description)
-- Palette de couleurs personnalisable
-- Configuration des liens Stripe
-- Gestion de la visibilité et prix des plans (Pro/Enterprise)
+### ✅ Audio Features
+- MP3 upload to Supabase Storage
+- Drag-and-drop playlist reordering
+- Repeat modes (none, one, all)
+- Free trial limit (5 minutes)
 
-### 4. Internationalisation (i18n)
-- Sélecteur de langue (🇫🇷 🇬🇧 🇩🇪)
-- Traductions pour FR, EN, DE
-- Visible sur toutes les pages
+### ✅ Admin CMS
+- Site settings management at `/admin`
+- Dynamic pricing display
+- Supabase upsert for settings persistence
 
-### 5. ChatBot IA
-- Assistant flottant
-- Réservé aux membres PRO/Enterprise
-- Message de verrouillage pour utilisateurs gratuits
+### ✅ UI/UX
+- Global language selector (FR/EN/DE)
+- Dark theme with purple gradient accents
+- Responsive design
+- Toast notifications
 
-## Changements - Session du 30/01/2025
+## Technical Architecture
 
-### Synchronisation Temps Réel Supabase
-- ✅ Ajouté souscription `postgres_changes` sur table `playlists` dans SessionPage.tsx
-- ✅ Les participants voient les musiques de l'hôte instantanément (sans F5)
-- ✅ Console.log "📡 [SUPABASE REALTIME] Playlist update:" pour debug
-
-### Verrouillage Domaine
-- ✅ Auth redirects utilisent `window.location.origin` (compatible boosttribe.pro)
-- ✅ Pas de domaine hardcodé dans le code
-
-### Nettoyage Interface
-- ✅ Supprimé témoins visuels (●) de PricingPage.tsx
-- ✅ Supprimé propriété `isFromSupabase` de l'interface Plan
-- ✅ LanguageSelector avec z-index=50 pour visibilité garantie
-
-### Dynamisation Composants
-- ✅ PricingPage.tsx : Prix récupérés depuis `site_settings`
-- ✅ HeroSection.tsx : Nom du site vient de `theme.name`
-- ✅ Système de rafraîchissement global après save CMS
-
-## Base de Données (Supabase)
-
-### Table: site_settings
-```sql
-id: integer (PK, default: 1)
-site_name: text
-site_slogan: text
-site_description: text
-site_badge: text
-favicon_url: text
-color_primary: text
-color_secondary: text
-color_background: text
-btn_login, btn_start, btn_join, btn_explore: text
-stat_creators, stat_beats, stat_countries: text
-stripe_pro_monthly, stripe_pro_yearly: text
-stripe_enterprise_monthly, stripe_enterprise_yearly: text
-plan_pro_visible, plan_enterprise_visible: boolean
-plan_pro_price_monthly, plan_pro_price_yearly: text
-plan_enterprise_price_monthly, plan_enterprise_price_yearly: text
-default_language: text
-updated_at: timestamp
+```
+/app/frontend/src/
+├── pages/
+│   ├── SessionPage.tsx      # Main session with role logic
+│   ├── PricingPage.tsx      # Dynamic pricing
+│   └── admin/Dashboard.tsx  # Admin CMS
+├── components/audio/
+│   ├── AudioPlayer.tsx      # Player with host/participant modes
+│   ├── PlaylistDnD.tsx      # Drag-drop with role restrictions
+│   └── TrackUploader.tsx    # Upload component
+├── context/
+│   ├── AuthContext.tsx      # Auth & subscription logic
+│   └── useSiteSettings.ts   # Settings with auto-refresh
+└── lib/
+    └── supabaseClient.ts    # Supabase configuration
 ```
 
-### Table: profiles
-```sql
-id: uuid (FK → auth.users)
-full_name: text
-avatar_url: text
-subscription_status: text ('free', 'pro', 'enterprise')
-is_admin: boolean
-```
+## Database Schema (Supabase)
 
-### Bucket: audio-tracks
-- Stockage des fichiers audio uploadés
-- Accès public pour la lecture
+**playlists:**
+- `id`: UUID
+- `session_id`: TEXT (unique)
+- `tracks`: JSONB (array of track objects)
+- `created_at`: TIMESTAMP
 
-## Tâches Restantes (Backlog)
+**site_settings:**
+- `id`: 1 (singleton)
+- `site_name`: TEXT
+- `plan_pro_price_monthly`: TEXT
+- ... (other settings)
 
-### P1 - Priorité Haute
-- [ ] Vérification utilisateur du fix CMS
-- [ ] Mise à jour des données Supabase pour refléter "Boosttribe"
+**profiles:**
+- `id`: UUID (user ID)
+- `subscription_status`: TEXT
+- `role`: TEXT
 
-### P2 - Fonctionnalités
-- [ ] Convertir composants UI restants en TypeScript
-- [ ] Implémenter "Request to Speak" pour participants
-- [ ] Gestion des pseudos par l'hôte
-- [ ] Persister le thème via Supabase
+## Changelog
 
-### P3 - Refactoring
-- [ ] Découper SessionPage.tsx en composants plus petits
-- [ ] Nettoyer les imports non utilisés
+### 2025-01-30
+- [FIX] Implemented strict role-based UI for participants
+- [FIX] Disabled playback controls for non-hosts
+- [FIX] Removed edit buttons from DOM for participants
+- [FIX] Added immediate playlist fetch on participant join
+- [FIX] Fixed AuthContext bug: non-logged users incorrectly marked as subscribed
+- [FIX] Added separate Realtime listeners for INSERT/UPDATE/DELETE
 
-## Credentials Test
-- Admin: contact.artboost@gmail.com (Google Auth)
-- Supabase: Configuré via .env
+## Pending Verification (P0)
+1. Admin CMS: Test settings save at `/admin`
+2. Dynamic pricing: Verify auto-update after save
+3. Realtime session: Test host-to-participant sync
+4. Participant UI lock: Verify controls are disabled
 
-## Notes Importantes
-- ⚠️ Ne pas toucher la logique d'upload audio (bucket 'audio-tracks')
-- ⚠️ Ne pas toucher le système d'authentification
-- ⚠️ Le nom "Boosttribe" dans l'UI dépend des données Supabase
+## Roadmap
+
+### P1 - Short Term
+- Convert UI components to TypeScript
+
+### P2 - Medium Term
+- Host nickname management
+- "Request to Speak" feature
+- Theme persistence via Supabase
+
+### P3 - Long Term
+- Refactor SessionPage.tsx (component extraction)
+- Add og:image for social sharing
+- Analytics dashboard
+
+## Credentials
+- Admin: `contact.artboost@gmail.com` (Google Auth)
+- Production URL: `https://boosttribe.pro`

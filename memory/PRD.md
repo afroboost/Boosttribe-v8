@@ -81,6 +81,12 @@ Build "Boosttribe," a web application for synchronized music listening sessions 
 
 ## Changelog
 
+### 2025-01-30 (SRE Optimization)
+- [PERF] Fetch initial et connexion Realtime en parallèle (490-636ms)
+- [UX] Message "Synchronisation en cours..." remplacé par "En attente de l'hôte"
+- [VERIFY] Prix dynamiques confirmés sur PricingPage (9.99€/29.99€)
+- [VERIFY] CSS badge Emergent déjà optimal en haut du <head>
+
 ### 2025-01-30
 - [FIX] Implemented strict role-based UI for participants
 - [FIX] Disabled playback controls for non-hosts

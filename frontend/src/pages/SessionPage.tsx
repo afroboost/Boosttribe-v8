@@ -692,7 +692,7 @@ export const SessionPage: React.FC = () => {
         
         const { data, error } = await supabase
           .from('playlists')
-          .select('tracks, host_id')
+          .select('tracks')
           .eq('session_id', sessionId)
           .maybeSingle();
         

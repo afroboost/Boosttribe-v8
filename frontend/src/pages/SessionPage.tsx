@@ -966,7 +966,24 @@ export const SessionPage: React.FC = () => {
   // Handle audio state changes
   const handleAudioStateChange = useCallback((state: AudioState) => {
     setAudioState(state);
-  }, []);
+    
+    // 🔄 SYNC PLAY/PAUSE: L'hôte synchronise son état de lecture vers Supabase
+    if (isHost && sessionId && supabase && isSupabaseConfigured) {
+      // Mettre à jour is_playing et current_time dans la table playlists
+      supabase
+        .from('playlists')
+        .update({ 
+          is_playing: state.isPlaying,
+          current_time: state.currentTime 
+        })
+        .eq('session_id', sessionId)
+        .then(({ error }) => {
+          if (error) {
+            // Silencieux - l'erreur peut être due à une session non existante
+          }
+        });
+    }
+  }, [isHost, sessionId]);
 
   // Handle sync state changes
   const handleSyncStateChange = useCallback((state: SyncState) => {

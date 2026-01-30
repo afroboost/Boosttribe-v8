@@ -348,9 +348,7 @@ export const SessionPage: React.FC = () => {
   
   // Host mic state
   const [hostMicActive, setHostMicActive] = useState(false);
-  const [musicDucked, setMusicDucked] = useState(false);
   const [hostMicStream, setHostMicStream] = useState<MediaStream | null>(null);
-  const originalVolumeRef = useRef<number>(100);
   
   const [audioState, setAudioState] = useState<AudioState | null>(null);
   const [syncState, setSyncState] = useState<SyncState | null>(null);

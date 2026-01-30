@@ -318,9 +318,6 @@ export const SessionPage: React.FC = () => {
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   
-  // 🔒 SESSION HOST_ID: Stocke le host_id réel de la session (depuis Supabase)
-  const [sessionHostId, setSessionHostId] = useState<string | null>(null);
-  
   // 🔒 CALCUL ROBUSTE DE isHost: 
   // 1. Création de session (pas d'URL) = toujours host
   // 2. Admin/Abonné = host par défaut

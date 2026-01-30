@@ -1110,9 +1110,7 @@ export const SessionPage: React.FC = () => {
                 <MicrophoneControl
                   isHost={true}
                   onMicActive={setHostMicActive}
-                  onDuckMusic={handleDuckMusic}
                   onStreamReady={setHostMicStream}
-                  duckThreshold={35}
                 />
               )}
               

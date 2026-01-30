@@ -676,11 +676,12 @@ export const SessionPage: React.FC = () => {
     }
     
     console.log('📡 [SYSTEM] Boosttribe Sync Active - Session:', sessionId);
-    setIsSyncActive(true);
     
-    // 📡 FETCH INITIAL IMMÉDIAT: Charger la playlist existante AVANT d'écouter les changements
-    // Critère de réussite: Le participant voit la playlist en < 1 seconde
-    async function fetchInitialPlaylist() {
+    // ⚡ OPTIMISATION SRE: Exécuter fetch initial ET connexion Realtime EN PARALLÈLE
+    // Objectif: Participant voit la playlist en < 1 seconde
+    
+    // 📡 FETCH INITIAL (non-bloquant)
+    const fetchPromise = (async () => {
       if (!supabase) return;
       
       try {
@@ -694,38 +695,33 @@ export const SessionPage: React.FC = () => {
           .maybeSingle();
         
         const fetchTime = performance.now() - startTime;
-        console.log(`📡 [PERF] Fetch completed in ${fetchTime.toFixed(0)}ms`);
+        console.log(`📡 [PERF] ✅ Fetch completed in ${fetchTime.toFixed(0)}ms`);
         
         if (error) {
           console.error('📡 [ERROR] Failed to fetch playlist:', error.message);
           return;
         }
         
-        if (data) {
-          // Charger les tracks pour TOUS (host peut récupérer sa playlist si refresh)
-          if (data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
-            console.log('📡 [DATA] ✅ Playlist chargée:', data.tracks.length, 'morceaux en', fetchTime.toFixed(0), 'ms');
-            setTracks(data.tracks as Track[]);
-            
-            // Sélectionner la première piste si aucune n'est sélectionnée
-            if (!selectedTrack) {
-              setSelectedTrack(data.tracks[0] as Track);
-            }
-          } else {
-            console.log('📡 [DATA] Playlist vide pour cette session');
+        if (data && data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
+          console.log('📡 [DATA] ✅ Playlist chargée:', data.tracks.length, 'morceaux en', fetchTime.toFixed(0), 'ms');
+          setTracks(data.tracks as Track[]);
+          setIsSyncActive(true); // ⚡ Activer immédiatement dès réception des données
+          
+          // Sélectionner la première piste si aucune n'est sélectionnée
+          if (!selectedTrack) {
+            setSelectedTrack(data.tracks[0] as Track);
           }
         } else {
-          console.log('📡 [DATA] Aucune session trouvée - En attente de création par l\'hôte');
+          console.log('📡 [DATA] Playlist vide - En attente de l\'hôte');
+          setIsSyncActive(true); // Sync actif même si playlist vide
         }
       } catch (err) {
         console.error('📡 [ERROR] Exception fetching playlist:', err);
+        setIsSyncActive(true); // Continuer même en cas d'erreur
       }
-    }
+    })();
     
-    // Exécuter le fetch initial IMMÉDIATEMENT
-    fetchInitialPlaylist();
-    
-    // Subscribe to ALL playlist changes (INSERT, UPDATE, DELETE)
+    // 📡 REALTIME CHANNEL (connexion en parallèle)
     const channel = supabase
       .channel(`playlist:${sessionId}`)
       .on(
@@ -776,6 +772,7 @@ export const SessionPage: React.FC = () => {
         console.log('📡 [REALTIME] Channel status:', status);
         if (status === 'SUBSCRIBED') {
           console.log('📡 [SYSTEM] ✅ Boosttribe Realtime Ready - Session:', sessionId);
+          setIsSyncActive(true);
         }
       });
     

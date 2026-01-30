@@ -59,7 +59,7 @@ function getOrCreateRemoteAudioElement(): HTMLAudioElement {
   let audioEl = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement;
   
   if (!audioEl) {
-    console.log('[PEER] 🔊 Creating remote audio element');
+    // Production: log removed
     audioEl = document.createElement('audio');
     audioEl.id = REMOTE_AUDIO_ID;
     audioEl.autoplay = true;        // Auto-play when stream is attached
@@ -131,7 +131,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
    * Handles autoplay restrictions
    */
   const forcePlayRemoteAudio = useCallback(async (audioEl: HTMLAudioElement, stream: MediaStream) => {
-    console.log('[PEER] 🔊 Attaching stream to audio element...');
+    // Production: log removed
     
     // Attach stream
     audioEl.srcObject = stream;
@@ -141,7 +141,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // Force play
     try {
       await audioEl.play();
-      console.log('[PEER] ✅ Remote audio playing!');
+      // Production: log removed
       updateState({ isReceivingVoice: true });
       onVoiceStart?.();
       return true;
@@ -152,7 +152,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       const playOnClick = async () => {
         try {
           await audioEl.play();
-          console.log('[PEER] ✅ Remote audio playing after user interaction');
+          // Production: log removed
           updateState({ isReceivingVoice: true });
           onVoiceStart?.();
           document.removeEventListener('click', playOnClick);
@@ -162,7 +162,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       };
       
       document.addEventListener('click', playOnClick, { once: true });
-      console.log('[PEER] ℹ️ Click anywhere to enable voice playback');
+      // Production: log removed
       return false;
     }
   }, [updateState, onVoiceStart]);
@@ -172,24 +172,24 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
    * @param stream - Optional MediaStream for host broadcasting
    */
   const connect = useCallback(async (stream?: MediaStream | null): Promise<boolean> => {
-    console.log('[PEER] 🔌 connect() called');
-    console.log('[PEER] DEBUG: isHost =', isHost);
-    console.log('[PEER] DEBUG: Tentative PeerJS avec Stream:', !!stream);
+    // Production: log removed
+    // Production: log removed
+    // Production: log removed
 
     // For HOST: Require stream
     if (isHost && !stream) {
-      console.log('[PEER] ⏳ Host: No stream provided, waiting...');
+      // Production: log removed
       return false;
     }
 
     if (peerRef.current?.open) {
-      console.log('[PEER] Already connected, peer ID:', peerRef.current.id);
+      // Production: log removed
       return true;
     }
 
     // Destroy existing peer if not open
     if (peerRef.current) {
-      console.log('[PEER] Destroying stale peer connection');
+      // Production: log removed
       peerRef.current.destroy();
       peerRef.current = null;
     }
@@ -199,10 +199,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         const peerId = generatePeerId(isHost);
         const hostPeerId = getHostPeerId();
 
-        console.log('[PEER] 📡 Creating PeerJS connection...');
-        console.log('[PEER] - Peer ID:', peerId);
-        console.log('[PEER] - Host Peer ID:', hostPeerId);
-        console.log('[PEER] - Role:', isHost ? 'HOST' : 'PARTICIPANT');
+        // Production: log removed
+        // Production: log removed
+        // Production: log removed
+        // Production: log removed
 
         // Create peer with robust STUN servers
         const peer = new Peer(peerId, {
@@ -223,7 +223,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
         // Handle peer open
         peer.on('open', (id) => {
-          console.log('[PEER] ✅ PeerJS CONNECTED - ID:', id);
+          // Production: log removed
           reconnectAttempts.current = 0;
 
           updateState({
@@ -236,18 +236,18 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
           // Host: Store stream and signal ready
           if (isHost && stream) {
-            console.log('[PEER] 🎤 Host ready with stream');
+            // Production: log removed
             currentStreamRef.current = stream;
             onReady?.();
           }
 
           // Participant: Connect to host for data channel
           if (!isHost) {
-            console.log('[PEER] 👤 Participant connecting to host:', hostPeerId);
+            // Production: log removed
             const dataConn = peer.connect(hostPeerId);
             
             dataConn.on('open', () => {
-              console.log('[PEER] ✅ Data connection to host established');
+              // Production: log removed
               dataConnectionsRef.current.set(hostPeerId, dataConn);
             });
 
@@ -263,23 +263,23 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         // PARTICIPANT: Handle incoming voice calls
         // ========================================
         peer.on('call', (call) => {
-          console.log('[PEER] 📞 INCOMING CALL from:', call.peer);
-          console.log('[PEER] 📞 This is the host voice stream!');
+          // Production: log removed
+          // Production: log removed
           
           // Store the call reference
           activeCallRef.current = call;
           
           // FORCE ANSWER - participants receive only, no stream to send
-          console.log('[PEER] 📞 Answering call...');
+          // Production: log removed
           call.answer();
 
           // Handle incoming stream (host's voice)
           call.on('stream', async (remoteStream) => {
-            console.log('[PEER] 🔊 ==============================');
-            console.log('[PEER] 🔊 RECEIVING VOICE STREAM FROM HOST');
-            console.log('[PEER] 🔊 Stream ID:', remoteStream.id);
-            console.log('[PEER] 🔊 Audio tracks:', remoteStream.getAudioTracks().length);
-            console.log('[PEER] 🔊 ==============================');
+            // Production: log removed
+            // Production: log removed
+            // Production: log removed
+            // Production: log removed
+            // Production: log removed
             
             // Get or create the audio element
             const audioEl = getOrCreateRemoteAudioElement();
@@ -292,7 +292,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           });
 
           call.on('close', () => {
-            console.log('[PEER] 📞 Call ended - voice stream stopped');
+            // Production: log removed
             updateState({ isReceivingVoice: false });
             onVoiceEnd?.();
             
@@ -313,7 +313,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         // HOST: Handle incoming participant connections
         // ========================================
         peer.on('connection', (dataConn) => {
-          console.log('[PEER] 📡 New participant connected:', dataConn.peer);
+          // Production: log removed
           
           dataConn.on('open', () => {
             dataConnectionsRef.current.set(dataConn.peer, dataConn);
@@ -325,17 +325,17 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
             // If broadcasting, call the new peer immediately
             if (currentStreamRef.current && isHost) {
-              console.log('[PEER] 📢 Calling new participant with voice stream:', dataConn.peer);
+              // Production: log removed
               const call = peerRef.current?.call(dataConn.peer, currentStreamRef.current);
               if (call) {
                 connectionsRef.current.set(dataConn.peer, call);
-                console.log('[PEER] ✅ Call initiated to:', dataConn.peer);
+                // Production: log removed
               }
             }
           });
 
           dataConn.on('close', () => {
-            console.log('[PEER] Participant disconnected:', dataConn.peer);
+            // Production: log removed
             dataConnectionsRef.current.delete(dataConn.peer);
             connectionsRef.current.delete(dataConn.peer);
             setState(prev => ({
@@ -372,7 +372,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
         // Handle disconnection - attempt reconnect
         peer.on('disconnected', () => {
-          console.log('[PEER] ⚠️ Disconnected from signaling server');
+          // Production: log removed
           updateState({ isConnected: false });
 
           // Auto-reconnect
@@ -388,7 +388,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         });
 
         peer.on('close', () => {
-          console.log('[PEER] Connection closed');
+          // Production: log removed
           updateState({ isConnected: false, peerId: null, isReady: false, isReceivingVoice: false });
         });
 
@@ -412,11 +412,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
    * HOST: Broadcast audio to all connected peers
    */
   const broadcastAudio = useCallback((stream: MediaStream) => {
-    console.log('[PEER] 📢 broadcastAudio() called');
-    console.log('[PEER] DEBUG: isHost =', isHost);
-    console.log('[PEER] DEBUG: peerRef.current =', !!peerRef.current);
-    console.log('[PEER] DEBUG: stream =', !!stream);
-    console.log('[PEER] DEBUG: stream tracks =', stream.getAudioTracks().length);
+    // Production: log removed
+    // Production: log removed
+    // Production: log removed
+    // Production: log removed
+    // Production: log removed
 
     if (!isHost) {
       console.warn('[PEER] Not host, cannot broadcast');
@@ -430,20 +430,20 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
     currentStreamRef.current = stream;
     const peerCount = dataConnectionsRef.current.size;
-    console.log('[PEER] 📢 Broadcasting voice to', peerCount, 'participants');
+    // Production: log removed
 
     // Call all connected participants
     dataConnectionsRef.current.forEach((_, peerId) => {
       if (!connectionsRef.current.has(peerId)) {
-        console.log('[PEER] 📞 Calling participant:', peerId);
+        // Production: log removed
         const call = peerRef.current!.call(peerId, stream);
         
         call.on('stream', () => {
-          console.log('[PEER] Participant', peerId, 'received stream');
+          // Production: log removed
         });
 
         call.on('close', () => {
-          console.log('[PEER] Call to', peerId, 'closed');
+          // Production: log removed
           connectionsRef.current.delete(peerId);
         });
 
@@ -456,18 +456,18 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     });
 
     updateState({ isBroadcasting: true });
-    console.log('[PEER] ✅ Broadcasting active - Voice should be heard by participants');
+    // Production: log removed
   }, [isHost, updateState]);
 
   // Stop broadcasting
   const stopBroadcast = useCallback(() => {
     if (!isHost) return;
 
-    console.log('[PEER] ⏹️ Stopping broadcast');
+    // Production: log removed
 
     connectionsRef.current.forEach((call, peerId) => {
       call.close();
-      console.log('[PEER] Closed call to:', peerId);
+      // Production: log removed
     });
     connectionsRef.current.clear();
 
@@ -477,7 +477,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
   // Disconnect
   const disconnect = useCallback(() => {
-    console.log('[PEER] 🔌 Disconnecting...');
+    // Production: log removed
     stopBroadcast();
 
     // Close active call (participant)
@@ -513,12 +513,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       isReceivingVoice: false,
     });
 
-    console.log('[PEER] ✅ Disconnected');
+    // Production: log removed
   }, [stopBroadcast, updateState]);
 
   // Manual reconnect
   const reconnect = useCallback(async (): Promise<boolean> => {
-    console.log('[PEER] 🔄 Manual reconnect requested');
+    // Production: log removed
     disconnect();
     await new Promise(r => setTimeout(r, 500));
     return connect(currentStreamRef.current);

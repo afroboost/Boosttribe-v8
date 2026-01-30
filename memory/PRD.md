@@ -95,6 +95,12 @@ Build "Boosttribe," a web application for synchronized music listening sessions 
 
 ## Changelog
 
+### 2025-01-30 (Audio Mixer Feature)
+- [FEAT] Created independent audio mixer with 4 GainNodes (Music, Mic, Tribe, Host Voice)
+- [FEAT] Added AudioMixerPanel UI component with volume sliders
+- [FIX] Disabled aggressive echo cancellation to allow music+voice overlay
+- [FIX] Removed "duck" effect - channels now fully independent
+
 ### 2025-01-30 (v8 - Production Cleanup)
 - [CLEAN] Suppression de tous les logs de debug `📡 [SYSTEM]`, `📡 [DATA]`
 - [CLEAN] Code production-ready sans traces de développement

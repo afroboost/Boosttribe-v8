@@ -631,7 +631,7 @@ export const SessionPage: React.FC = () => {
       }
     })();
     
-    // 📡 REALTIME CHANNEL (connexion en parallèle)
+    // 📡 REALTIME CHANNEL pour la playlist (connexion en parallèle)
     const channel = supabase
       .channel(`playlist:${sessionId}`)
       .on(
@@ -679,8 +679,53 @@ export const SessionPage: React.FC = () => {
           setIsSyncActive(true);
         }
       });
+
+    // 🔄 CANAL BROADCAST SÉPARÉ pour la synchronisation Play/Pause
+    // Ce canal utilise Broadcast (pas postgres_changes) pour une latence minimale
+    const playbackChannel = supabase
+      .channel(`playback:${sessionId}`)
+      .on('broadcast', { event: 'playback_sync' }, (payload) => {
+        // Participant uniquement : écouter les commandes de l'hôte
+        if (!isHost && payload.payload) {
+          const { isPlaying, currentTime, trackId } = payload.payload as { 
+            isPlaying: boolean; 
+            currentTime: number;
+            trackId?: number;
+          };
+          
+          const audioEl = document.querySelector('audio') as HTMLAudioElement;
+          if (!audioEl) return;
+          
+          // Synchroniser la piste si fournie
+          if (trackId && tracks.length > 0) {
+            const targetTrack = tracks.find(t => t.id === trackId);
+            if (targetTrack && selectedTrack?.id !== trackId) {
+              setSelectedTrack(targetTrack);
+            }
+          }
+          
+          // ⏸️ PAUSE IMMÉDIATE si l'hôte a mis en pause
+          if (!isPlaying && !audioEl.paused) {
+            audioEl.pause();
+            showToast('⏸️ Pause synchronisée', 'default');
+          }
+          // ▶️ LECTURE si l'hôte a repris
+          else if (isPlaying && audioEl.paused) {
+            audioEl.currentTime = currentTime || 0;
+            audioEl.play().catch(() => {});
+            showToast('▶️ Lecture synchronisée', 'default');
+          }
+          // Synchroniser la position si écart > 3 secondes
+          else if (isPlaying && Math.abs(audioEl.currentTime - currentTime) > 3) {
+            audioEl.currentTime = currentTime;
+          }
+          
+          setHostIsPlaying(isPlaying);
+        }
+      })
+      .subscribe();
     
-    // Handler pour INSERT et UPDATE
+    // Handler pour INSERT et UPDATE (playlist seulement)
     function handlePlaylistUpdate(payload: unknown) {
       const data = payload as { new?: { tracks?: Track[], is_playing?: boolean, current_time?: number }, eventType?: string };
       

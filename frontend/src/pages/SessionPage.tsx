@@ -776,9 +776,10 @@ export const SessionPage: React.FC = () => {
       setIsSyncActive(false);
       if (supabase) {
         supabase.removeChannel(channel);
+        supabase.removeChannel(playbackChannel);
       }
     };
-  }, [sessionId, isHost, showToast, selectedTrack, user?.id]);
+  }, [sessionId, isHost, showToast, selectedTrack, user?.id, tracks]);
 
   // Build participants list with current user
   const participants = useMemo<Participant[]>(() => {

@@ -56,7 +56,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   // Notify parent of stream changes for WebRTC
   useEffect(() => {
     if (state.isCapturing && !state.isMuted && audioStream) {
-      console.log('[MIC-UI] Stream ready, notifying parent');
+      // Production: log removed
       onStreamReady?.(audioStream);
     } else {
       onStreamReady?.(null);
@@ -65,7 +65,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
 
   // Toggle capture - DIRECT getUserMedia call on click
   const handleToggleCapture = useCallback(async () => {
-    console.log('[MIC-UI] Toggle capture clicked, isCapturing:', state.isCapturing);
+    // Production: log removed
     
     if (state.isCapturing) {
       stopCapture();
@@ -77,7 +77,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
 
   // Retry permission
   const handleRetry = useCallback(async () => {
-    console.log('[MIC-UI] Retry clicked');
+    // Production: log removed
     await retryCapture();
   }, [retryCapture]);
 

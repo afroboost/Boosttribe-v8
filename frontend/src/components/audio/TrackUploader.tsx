@@ -86,7 +86,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
 
       if (isSupabaseConfigured) {
         // Real Supabase upload
-        console.log('[TRACK UPLOADER] Démarrage upload Supabase...');
+        // Production: log removed
         result = await uploadAudioFile(selectedFile, sessionId);
       } else {
         // Demo mode - local file simulation
@@ -117,7 +117,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
           src: result.url,
         };
 
-        console.log('[TRACK UPLOADER] ✅ Ajout à la playlist:', newTrack.title);
+        // Production: log removed
 
         // Short delay to show 100% before success state
         setTimeout(() => {

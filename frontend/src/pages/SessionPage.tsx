@@ -504,7 +504,6 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (sessionId && socket.userId && nickname) {
       socket.joinSession(sessionId, socket.userId, isHost);
-      console.log('[SESSION] Joined via socket:', { sessionId, isHost, userId: socket.userId });
     }
     
     return () => {
@@ -517,13 +516,10 @@ export const SessionPage: React.FC = () => {
 
   // Listen for remote mute commands (for participants)
   useEffect(() => {
-    if (isHost) return; // Host doesn't receive mute commands
+    if (isHost) return;
     
     const unsubMute = socket.onMuted((muted) => {
-      console.log('[SOCKET] Received mute command:', muted);
       setIsRemoteMuted(muted);
-      
-      // Directly mute the audio element
       if (audioElementRef.current) {
         audioElementRef.current.muted = muted;
       }
@@ -537,7 +533,6 @@ export const SessionPage: React.FC = () => {
     if (isHost) return;
     
     const unsubEject = socket.onEjected(() => {
-      console.log('[SOCKET] Received eject command');
       // Navigation and toast are handled in SocketContext
     });
     

@@ -358,6 +358,32 @@ export const SessionPage: React.FC = () => {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [autoPlayPending, setAutoPlayPending] = useState<string | null>(null);
 
+  // 🎧 AUDIO MIXER: Canaux indépendants pour musique et voix
+  const {
+    state: mixerState,
+    initialize: initializeMixer,
+    setMusicVolume,
+    setMicVolume,
+    setTribeVolume,
+    setHostVoiceVolume,
+  } = useAudioMixer({
+    onInitialized: () => {
+      console.log('🎧 [MIXER] Audio mixer ready with independent channels');
+    },
+  });
+
+  // Initialiser le mixeur au premier clic (user gesture required)
+  useEffect(() => {
+    const handleFirstInteraction = () => {
+      if (!mixerState.isInitialized) {
+        initializeMixer();
+      }
+      document.removeEventListener('click', handleFirstInteraction);
+    };
+    document.addEventListener('click', handleFirstInteraction);
+    return () => document.removeEventListener('click', handleFirstInteraction);
+  }, [mixerState.isInitialized, initializeMixer]);
+
   // FREE TRIAL LIMIT: 5 minutes (300 seconds)
   const FREE_TRIAL_LIMIT_SECONDS = 300;
   const [totalPlayTime, setTotalPlayTime] = useState(0);

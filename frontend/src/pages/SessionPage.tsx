@@ -705,20 +705,6 @@ export const SessionPage: React.FC = () => {
         }
         
         if (data) {
-          // Mettre à jour le host_id si trouvé
-          if (data.host_id) {
-            setSessionHostId(data.host_id);
-            
-            // 🔒 Vérification isHost basée sur host_id
-            if (user?.id) {
-              const isUserHost = user.id === data.host_id;
-              if (isUserHost !== isHost) {
-                console.log('🔒 [HOST] Statut mis à jour via fetch:', isUserHost ? 'HOST' : 'PARTICIPANT');
-                setIsHost(isUserHost);
-              }
-            }
-          }
-          
           // Charger les tracks pour TOUS (host peut récupérer sa playlist si refresh)
           if (data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
             console.log('📡 [DATA] ✅ Playlist chargée:', data.tracks.length, 'morceaux en', fetchTime.toFixed(0), 'ms');

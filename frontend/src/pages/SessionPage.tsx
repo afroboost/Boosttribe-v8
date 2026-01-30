@@ -784,12 +784,7 @@ export const SessionPage: React.FC = () => {
     
     // Handler pour INSERT et UPDATE
     function handlePlaylistUpdate(payload: unknown) {
-      const data = payload as { new?: { tracks?: Track[], host_id?: string }, eventType?: string };
-      
-      // Mise à jour du host_id si présent
-      if (data.new?.host_id) {
-        setSessionHostId(data.new.host_id);
-      }
+      const data = payload as { new?: { tracks?: Track[] }, eventType?: string };
       
       if (data.new && 'tracks' in data.new) {
         const newTracks = data.new.tracks || [];

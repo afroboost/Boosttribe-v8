@@ -1441,6 +1441,33 @@ export const SessionPage: React.FC = () => {
                 </CardContent>
               </Card>
             )}
+
+            {/* Playlist View (Participant - Read Only) */}
+            {!isHost && tracks.length > 0 && (
+              <Card className="border-white/10 bg-white/5">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-white text-lg flex items-center gap-2">
+                    <span className="text-green-400">📡</span>
+                    Playlist de l'hôte
+                  </CardTitle>
+                  <CardDescription className="text-white/50">
+                    Mode lecture seule • {tracks.length} titre{tracks.length > 1 ? 's' : ''}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  {/* Read-only playlist for participants */}
+                  <PlaylistDnD
+                    tracks={tracks}
+                    selectedTrack={selectedTrack}
+                    onTrackSelect={() => {}} // Disabled for participants
+                    onReorder={() => {}} // Disabled for participants
+                    onDeleteTracks={() => {}} // Disabled for participants
+                    isHost={false}
+                    maxTracks={10}
+                  />
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Sidebar */}

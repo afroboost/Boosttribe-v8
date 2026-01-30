@@ -305,16 +305,6 @@ export const SessionPage: React.FC = () => {
   const isAdminByEmail = userEmail === 'contact.artboost@gmail.com';
   const hasHostPrivileges = isAdminByEmail || isAdmin || isSubscribed;
   
-  // Debug log for admin access
-  console.log('[SESSION] 🎵 SessionPage rendered', { 
-    isAdmin, 
-    isAdminByEmail,
-    hasHostPrivileges,
-    userEmail, 
-    authLoading,
-    urlSessionId 
-  });
-  
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   
@@ -334,7 +324,6 @@ export const SessionPage: React.FC = () => {
   // Admin/Subscriber bypass
   useEffect(() => {
     if (hasHostPrivileges && !isHost) {
-      console.log('[SESSION] ⚡ ADMIN/SUBSCRIBER BYPASS - Forcing host mode');
       setIsHost(true);
     }
   }, [hasHostPrivileges, isHost]);
@@ -387,28 +376,16 @@ export const SessionPage: React.FC = () => {
   } = usePeerAudio({
     sessionId: sessionId || 'default',
     isHost,
-    onPeerConnected: (peerId) => {
-      console.log('[SESSION] Participant connected:', peerId);
-    },
-    onPeerDisconnected: (peerId) => {
-      console.log('[SESSION] Participant disconnected:', peerId);
-    },
-    onReceiveAudio: (stream) => {
-      console.log('[SESSION] 🔊 Receiving host audio stream');
-    },
-    onVoiceStart: () => {
-      console.log('[SESSION] 🔉 Voice playback started!');
-    },
-    onVoiceEnd: () => {
-      console.log('[SESSION] Voice playback ended');
-    },
+    onPeerConnected: () => {},
+    onPeerDisconnected: () => {},
+    onReceiveAudio: () => {},
+    onVoiceStart: () => {},
+    onVoiceEnd: () => {},
     onError: (error) => {
-      console.error('[SESSION] WebRTC Error:', error);
+      console.error('[WebRTC] Error:', error);
     },
     onReady: () => {
-      // Broadcast HOST_MIC_READY via Supabase when PeerJS is ready
       if (isHost && socket.isSupabaseMode) {
-        console.log('[SESSION] Broadcasting HOST_MIC_READY');
         socket.broadcast('HOST_MIC_READY', { hostPeerId: `beattribe-host-${sessionId?.replace(/[^a-zA-Z0-9]/g, '')}` });
       }
     },

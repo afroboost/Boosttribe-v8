@@ -95,6 +95,11 @@ Build "Boosttribe," a web application for synchronized music listening sessions 
 
 ## Changelog
 
+### 2025-01-30 (Broadcast Sync)
+- [FIX] Play/Pause sync via Supabase Broadcast channel (< 500ms latency)
+- [FIX] Participant trial limit removed - unlimited listening
+- [CLEAN] Removed all auto-ducking references
+
 ### 2025-01-30 (Sync & Trial Fix)
 - [FIX] Play/Pause sync via Supabase Realtime (is_playing, current_time)
 - [FIX] Trial limit removed for participants (isFreeTrial = isHost && !isSubscribed)

@@ -95,6 +95,11 @@ Build "Boosttribe," a web application for synchronized music listening sessions 
 
 ## Changelog
 
+### 2025-01-30 (Sync & Trial Fix)
+- [FIX] Play/Pause sync via Supabase Realtime (is_playing, current_time)
+- [FIX] Trial limit removed for participants (isFreeTrial = isHost && !isSubscribed)
+- [CLEAN] Removed ducking logic from MicrophoneControl.tsx
+
 ### 2025-01-30 (Audio Mixer Feature)
 - [FEAT] Created independent audio mixer with 4 GainNodes (Music, Mic, Tribe, Host Voice)
 - [FEAT] Added AudioMixerPanel UI component with volume sliders

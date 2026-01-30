@@ -48,6 +48,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   onToggleCheck,
   onDeleteSingle,
 }) => {
+  // 🔒 PARTICIPANT: Désactive complètement le drag-and-drop
   const {
     attributes,
     listeners,
@@ -55,7 +56,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: track.id, disabled: isEditMode });
+  } = useSortable({ id: track.id, disabled: !isHost || isEditMode });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -75,8 +76,9 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         }
         ${isDragging ? 'shadow-lg shadow-[#8A2EFF]/20 z-50' : ''}
       `}
+      data-testid={`track-item-${track.id}`}
     >
-      {/* Edit Mode: Checkbox */}
+      {/* 🔒 Edit Mode: Checkbox - HOST ONLY */}
       {isEditMode && isHost && (
         <button
           onClick={() => onToggleCheck(track.id)}
@@ -87,27 +89,28 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
               : 'border-white/30 hover:border-white/50'
             }
           `}
+          data-testid={`checkbox-track-${track.id}`}
         >
           {isChecked && <Check size={12} strokeWidth={3} className="text-white" />}
         </button>
       )}
 
-      {/* Drag Handle - hidden in edit mode */}
+      {/* 🔒 Drag Handle - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
       {isHost && !isEditMode && (
         <button
           {...attributes}
           {...listeners}
           className="p-1 text-white/30 hover:text-white/60 cursor-grab active:cursor-grabbing touch-none"
+          data-testid={`drag-handle-${track.id}`}
         >
           <GripVertical size={16} strokeWidth={1.5} />
         </button>
       )}
 
-      {/* Track Info */}
-      <button
-        onClick={() => !isEditMode && isHost && onSelect(track)}
-        disabled={!isHost || isEditMode}
-        className={`flex-1 flex items-center gap-3 text-left ${!isHost || isEditMode ? 'cursor-default' : 'cursor-pointer'}`}
+      {/* Track Info - Cliquable pour l'hôte seulement */}
+      <div
+        onClick={() => isHost && !isEditMode && onSelect(track)}
+        className={`flex-1 flex items-center gap-3 text-left ${isHost && !isEditMode ? 'cursor-pointer' : 'cursor-default'}`}
       >
         {/* Cover Art */}
         <div 
@@ -126,9 +129,9 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
           <p className="text-white font-medium truncate text-sm">{track.title}</p>
           <p className="text-white/50 text-xs truncate">{track.artist}</p>
         </div>
-      </button>
+      </div>
 
-      {/* Delete Button - ALWAYS VISIBLE in RED for host (not in edit mode) */}
+      {/* 🔒 Delete Button - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
       {isHost && !isEditMode && (
         <button
           onClick={(e) => {
@@ -248,9 +251,13 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
       <div className="flex items-center justify-between px-1">
         <p className="text-white/50 text-xs">
           {displayTracks.length} / {maxTracks} titres
+          {/* 🔒 Indicateur pour les participants */}
+          {!isHost && displayTracks.length > 0 && (
+            <span className="ml-2 text-purple-400">(lecture seule)</span>
+          )}
         </p>
         
-        {/* Edit Mode Controls - ALWAYS show Modifier button when host has tracks */}
+        {/* 🔒 Edit Mode Controls - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
         {isHost && displayTracks.length > 0 && (
           <div className="flex items-center gap-2">
             {isEditMode ? (

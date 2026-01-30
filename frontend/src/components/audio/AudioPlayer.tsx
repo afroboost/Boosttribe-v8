@@ -211,12 +211,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           </div>
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress Bar - BLOQUÉ pour les participants */}
         <div className="mb-4">
           <div 
-            className={`relative h-2 rounded-full overflow-hidden ${isHost ? 'cursor-pointer' : 'cursor-default'}`}
+            className={`relative h-2 rounded-full overflow-hidden ${isHost && !disabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}
             style={{ background: 'rgba(255,255,255,0.1)' }}
-            onClick={handleProgressClick}
+            onClick={isHost && !disabled ? handleProgressClick : undefined}
+            data-testid="progress-bar"
           >
             {/* Buffered */}
             <div 
@@ -234,8 +235,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 background: 'linear-gradient(90deg, #8A2EFF 0%, #FF2FB3 100%)',
               }}
             />
-            {/* Thumb */}
-            {isHost && (
+            {/* Thumb - UNIQUEMENT pour l'hôte */}
+            {isHost && !disabled && (
               <div 
                 className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full shadow-lg transition-transform hover:scale-110"
                 style={{ 
@@ -254,11 +255,11 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           </div>
         </div>
 
-        {/* Controls */}
+        {/* Controls - DÉSACTIVÉS pour les participants */}
         <div className="flex items-center justify-between">
-          {/* Left: Volume + Repeat */}
+          {/* Left: Volume (toujours accessible) + Repeat (Host only) */}
           <div className="relative flex items-center gap-1">
-            {/* Volume Button */}
+            {/* Volume Button - Toujours accessible pour ajuster le volume local */}
             <button
               onClick={toggleMute}
               onMouseEnter={() => setShowVolume(true)}
@@ -291,7 +292,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             </div>
             
             {/* Repeat Button (Host only) */}
-            {isHost && (
+            {isHost && !disabled && (
               <button
                 onClick={cycleRepeatMode}
                 className={`p-2 transition-colors ${
@@ -315,19 +316,22 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             )}
           </div>
 
-          {/* Center: Play/Pause */}
+          {/* Center: Play/Pause - DÉSACTIVÉ pour participants */}
           <button
             onClick={handlePlayPause}
-            disabled={!isHost || audioState.isLoading}
+            disabled={!isHost || audioState.isLoading || disabled}
             className={`
               w-14 h-14 rounded-full flex items-center justify-center
               transition-all duration-200 
-              ${isHost ? 'hover:scale-105 active:scale-95' : 'opacity-50 cursor-not-allowed'}
+              ${isHost && !disabled ? 'hover:scale-105 active:scale-95' : 'opacity-40 cursor-not-allowed grayscale'}
             `}
             style={{
-              background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)',
-              boxShadow: '0 4px 24px rgba(138, 46, 255, 0.4)',
+              background: isHost && !disabled 
+                ? 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' 
+                : 'linear-gradient(135deg, #666 0%, #888 100%)',
+              boxShadow: isHost && !disabled ? '0 4px 24px rgba(138, 46, 255, 0.4)' : 'none',
             }}
+            data-testid="play-pause-btn"
           >
             {audioState.isLoading || audioState.isBuffering ? (
               <svg className="w-6 h-6 text-white animate-spin" viewBox="0 0 24 24">
@@ -345,9 +349,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             )}
           </button>
 
-          {/* Right: Live Toggle (Host) or Timestamp (Participant) */}
+          {/* Right: Live Toggle (Host) or Sync Status (Participant) */}
           <div className="flex items-center gap-2">
-            {isHost ? (
+            {isHost && !disabled ? (
               <button
                 onClick={syncState.isLive ? endLiveSession : startLiveSession}
                 className={`
@@ -357,12 +361,14 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                     : 'bg-white/10 text-white/70 border border-white/20 hover:bg-white/20'
                   }
                 `}
+                data-testid="live-toggle-btn"
               >
                 {syncState.isLive ? 'Arrêter' : 'Go Live'}
               </button>
             ) : (
-              <div className="text-xs text-white/40">
-                <span className="font-mono">{getTimestamp()}ms</span>
+              <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 px-3 py-2 rounded-full" data-testid="sync-status">
+                <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>
+                <span>Synchronisé</span>
               </div>
             )}
           </div>

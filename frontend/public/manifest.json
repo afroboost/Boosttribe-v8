@@ -1,0 +1,19 @@
+{
+  "short_name": "Boosttribe",
+  "name": "Boosttribe - Unite Through Rhythm",
+  "description": "La plateforme d'écoute musicale synchronisée pour les beatmakers et producteurs",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#8A2EFF",
+  "background_color": "#000000",
+  "lang": "fr",
+  "orientation": "portrait-primary",
+  "categories": ["music", "entertainment", "social"]
+}

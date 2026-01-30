@@ -20,6 +20,7 @@ interface Plan {
   stripeMonthlyLink?: string;
   stripeYearlyLink?: string;
   isPopular?: boolean;
+  isFromSupabase?: boolean; // Témoin : true si le prix vient de Supabase
 }
 
 // Base plans (Stripe links will be injected from settings)

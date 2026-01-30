@@ -394,7 +394,6 @@ export const SessionPage: React.FC = () => {
   // Host: Broadcast VOICE_START when mic is active
   useEffect(() => {
     if (isHost && hostMicStream && peerState.isBroadcasting && socket.isSupabaseMode) {
-      console.log('[SESSION] Broadcasting VOICE_START');
       socket.broadcast('VOICE_START', { timestamp: Date.now() });
     }
   }, [isHost, hostMicStream, peerState.isBroadcasting, socket]);
@@ -404,13 +403,9 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId || !nickname || isHost) return;
     
-    // Participant: connect immediately to receive audio
     if (!peerConnectedRef.current) {
       peerConnectedRef.current = true;
-      console.log('[SESSION] Participant connecting to PeerJS...');
-      connectPeer().then(success => {
-        console.log('[SESSION] Participant PeerJS connected:', success);
-      });
+      connectPeer();
     }
   }, [sessionId, nickname, isHost, connectPeer]);
 
@@ -420,18 +415,14 @@ export const SessionPage: React.FC = () => {
     
     if (hostMicStream && !peerConnectedRef.current) {
       peerConnectedRef.current = true;
-      console.log('[SESSION] Host connecting to PeerJS with stream...');
       connectPeer(hostMicStream).then(success => {
         if (success) {
-          console.log('[SESSION] Host PeerJS connected, starting broadcast');
           broadcastAudio(hostMicStream);
         }
       });
     }
     
-    // Host lost mic stream - disconnect
     if (!hostMicStream && peerConnectedRef.current && isHost) {
-      console.log('[SESSION] Host lost mic stream, disconnecting PeerJS');
       peerConnectedRef.current = false;
       stopBroadcast();
       disconnectPeer();

@@ -25,6 +25,58 @@ import supabase from '@/lib/supabaseClient';
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
 
+// ============================================
+// 🛡️ INTERFACES TYPESCRIPT - Boosttribe V8 Stable Gold
+// ============================================
+
+/**
+ * Session Supabase - Structure de la table 'playlists'
+ */
+export interface Session {
+  id: string;
+  session_id: string;
+  tracks: Track[];
+  host_id?: string;
+  is_playing?: boolean;
+  current_time?: number;
+  created_at?: string;
+}
+
+/**
+ * Track - Structure d'une piste audio
+ * Import depuis PlaylistDnD.tsx pour cohérence
+ */
+// Track est importé depuis @/components/audio/PlaylistDnD
+
+/**
+ * Participant - Structure d'un participant à la session
+ * Import depuis ParticipantControls.tsx pour cohérence
+ */
+// Participant est importé depuis @/components/audio/ParticipantControls
+
+/**
+ * HostCommand - Commandes Broadcast du Maître vers les Esclaves
+ */
+export interface HostCommand {
+  action: 'PLAY' | 'PAUSE' | 'SEEK';
+  currentTime: number;
+  trackId?: number;
+}
+
+/**
+ * MixerVolumes - Volumes par défaut du mixeur
+ * Musique: 80% pour éviter saturation
+ * Micro: 100% pour être bien entendu
+ */
+export const DEFAULT_MIXER_VOLUMES = {
+  music: 0.8,     // 80% - évite saturation
+  mic: 1.0,       // 100% - voix claire
+  tribe: 1.0,     // 100% - participants audibles
+  hostVoice: 1.0, // 100% - hôte audible pour participants
+} as const;
+
+// ============================================
+
 // ⚠️ SUPPRESSION DÉFINITIVE DES DÉMOS
 // La playlist démarre TOUJOURS vide - pas de fallback, pas de données de test
 // Les pistes ne peuvent être ajoutées que par upload utilisateur

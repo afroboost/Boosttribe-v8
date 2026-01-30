@@ -233,19 +233,36 @@ export function useSiteSettings() {
     return loadPromise;
   }, []);
 
-  // Load settings on mount
+  // Load settings on mount AND subscribe to refresh events
   useEffect(() => {
     let isMounted = true;
 
-    loadSettings().then(loadedSettings => {
+    const doLoad = async () => {
+      const loadedSettings = await loadSettings(false);
       if (isMounted) {
         setSettings(loadedSettings);
         setIsLoaded(true);
+      }
+    };
+
+    doLoad();
+
+    // Subscribe to global refresh events
+    const unsubscribe = onSettingsRefresh(() => {
+      if (isMounted) {
+        console.log('[SiteSettings] Refresh event received, reloading...');
+        setRefreshKey(k => k + 1);
+        loadSettings(true).then(loadedSettings => {
+          if (isMounted) {
+            setSettings(loadedSettings);
+          }
+        });
       }
     });
 
     return () => {
       isMounted = false;
+      unsubscribe();
     };
   }, [loadSettings]);
 

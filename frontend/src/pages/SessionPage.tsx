@@ -667,57 +667,33 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     
-    // Log du mode actif avec message clair
-    if (isHost) {
-      console.log('📡 [SYNC] Mode Hôte : Contrôle total activé (upload, suppression, réorganisation)');
-    } else {
-      console.log('📡 [SYNC] Mode Participant activé : Lecture seule');
-      console.log('📡 [INFO] Les boutons de suppression et d\'upload sont masqués');
-    }
-    
-    console.log('📡 [SYSTEM] Boosttribe Sync Active - Session:', sessionId);
-    
     // ⚡ OPTIMISATION SRE: Exécuter fetch initial ET connexion Realtime EN PARALLÈLE
-    // Objectif: Participant voit la playlist en < 1 seconde
     
     // 📡 FETCH INITIAL (non-bloquant)
     const fetchPromise = (async () => {
       if (!supabase) return;
       
       try {
-        const startTime = performance.now();
-        console.log('📡 [DATA] ⚡ Fetching playlist for session:', sessionId);
-        
         const { data, error } = await supabase
           .from('playlists')
           .select('tracks')
           .eq('session_id', sessionId)
           .maybeSingle();
         
-        const fetchTime = performance.now() - startTime;
-        console.log(`📡 [PERF] ✅ Fetch completed in ${fetchTime.toFixed(0)}ms`);
-        
-        if (error) {
-          console.error('📡 [ERROR] Failed to fetch playlist:', error.message);
-          return;
-        }
+        if (error) return;
         
         if (data && data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
-          console.log('📡 [DATA] ✅ Playlist chargée:', data.tracks.length, 'morceaux en', fetchTime.toFixed(0), 'ms');
           setTracks(data.tracks as Track[]);
-          setIsSyncActive(true); // ⚡ Activer immédiatement dès réception des données
+          setIsSyncActive(true);
           
-          // Sélectionner la première piste si aucune n'est sélectionnée
           if (!selectedTrack) {
             setSelectedTrack(data.tracks[0] as Track);
           }
         } else {
-          console.log('📡 [DATA] Playlist vide - En attente de l\'hôte');
-          setIsSyncActive(true); // Sync actif même si playlist vide
+          setIsSyncActive(true);
         }
       } catch (err) {
-        console.error('📡 [ERROR] Exception fetching playlist:', err);
-        setIsSyncActive(true); // Continuer même en cas d'erreur
+        setIsSyncActive(true);
       }
     })();
     
@@ -733,7 +709,6 @@ export const SessionPage: React.FC = () => {
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
-          console.log('📡 [REALTIME] INSERT:', payload);
           handlePlaylistUpdate(payload);
         }
       )
@@ -746,7 +721,6 @@ export const SessionPage: React.FC = () => {
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
-          console.log('📡 [REALTIME] UPDATE:', payload);
           handlePlaylistUpdate(payload);
         }
       )
@@ -759,8 +733,6 @@ export const SessionPage: React.FC = () => {
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
-          console.log('📡 [REALTIME] DELETE:', payload);
-          // En cas de suppression, vider la playlist
           if (!isHost) {
             setTracks([]);
             setSelectedTrack(null);
@@ -769,9 +741,7 @@ export const SessionPage: React.FC = () => {
         }
       )
       .subscribe((status) => {
-        console.log('📡 [REALTIME] Channel status:', status);
         if (status === 'SUBSCRIBED') {
-          console.log('📡 [SYSTEM] ✅ Boosttribe Realtime Ready - Session:', sessionId);
           setIsSyncActive(true);
         }
       });
@@ -782,14 +752,11 @@ export const SessionPage: React.FC = () => {
       
       if (data.new && 'tracks' in data.new) {
         const newTracks = data.new.tracks || [];
-        console.log('📡 [REALTIME] Syncing', newTracks.length, 'tracks');
         
-        // Update local state only for participants (not host - they manage their own state)
         if (!isHost) {
           setTracks(newTracks);
           showToast('🎵 Playlist synchronisée', 'default');
           
-          // Auto-select first track if none selected
           if (newTracks.length > 0 && !selectedTrack) {
             setSelectedTrack(newTracks[0]);
           }
@@ -798,7 +765,6 @@ export const SessionPage: React.FC = () => {
     }
 
     return () => {
-      console.log('📡 [REALTIME] Unsubscribing from session:', sessionId);
       setIsSyncActive(false);
       if (supabase) {
         supabase.removeChannel(channel);

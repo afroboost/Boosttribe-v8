@@ -23,6 +23,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   onStreamReady,
   className = '',
 }) => {
+  const [showDevices, setShowDevices] = useState(false);
 
   // Handle audio level (no ducking - independent mixer channels)
   const handleAudioLevel = useCallback((level: number) => {

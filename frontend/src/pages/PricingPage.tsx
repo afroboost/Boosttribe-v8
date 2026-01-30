@@ -75,7 +75,7 @@ const BASE_PLANS: Plan[] = [
 const PricingPage: React.FC = () => {
   const { theme } = useTheme();
   const navigate = useNavigate();
-  const { settings } = useSiteSettings();
+  const { settings, isLoaded } = useSiteSettings();
   const { 
     isAuthenticated,
     profile, 

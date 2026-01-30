@@ -349,6 +349,7 @@ export const SessionPage: React.FC = () => {
   // Playlist state - TOUJOURS vide au démarrage, jamais de fallback
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
+  const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
   
   // Participants state with volume/mute controls
   const [participantsState, setParticipantsState] = useState<Participant[]>(BASE_PARTICIPANTS);

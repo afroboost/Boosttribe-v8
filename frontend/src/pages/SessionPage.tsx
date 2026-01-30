@@ -318,25 +318,71 @@ export const SessionPage: React.FC = () => {
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   
-  // Track if user created this session (host) or joined via URL (participant)
-  // Initial state: true if creating session OR if user has privileges
+  // 🔒 SESSION HOST_ID: Stocke le host_id réel de la session (depuis Supabase)
+  const [sessionHostId, setSessionHostId] = useState<string | null>(null);
+  
+  // 🔒 CALCUL ROBUSTE DE isHost: Basé sur user?.id === session?.host_id
+  // Priorité: 1. Création de session (pas d'URL) = toujours host
+  //           2. Vérification via host_id stocké dans la DB
+  //           3. Fallback: Admin bypass
   const [isHost, setIsHost] = useState<boolean>(() => {
-    // If creating new session (no URL ID), always host
+    // Si création de session (pas d'URL ID), toujours host
     if (!urlSessionId) return true;
-    // Check sessionStorage for admin flag (set during auth)
+    // Fallback initial: check admin flag
     const isAdminStored = sessionStorage.getItem('bt_is_admin') === 'true';
     return isAdminStored;
   });
   const [sessionId, setSessionId] = useState<string | null>(urlSessionId || null);
   
-  // Force host mode for admin/subscribers when joining via URL
-  // This handles the case where auth loads after component mount
+  // 🔒 VÉRIFICATION HOST_ID: Détermine si l'utilisateur est l'hôte de la session
   useEffect(() => {
-    if (hasHostPrivileges && !isHost) {
+    async function verifyHostStatus() {
+      if (!sessionId || !supabase || !isSupabaseConfigured || !user?.id) return;
+      
+      try {
+        console.log('🔒 [HOST] Vérification du statut Host pour session:', sessionId, 'user:', user.id);
+        
+        const { data, error } = await supabase
+          .from('playlists')
+          .select('host_id')
+          .eq('session_id', sessionId)
+          .maybeSingle();
+        
+        if (error) {
+          console.error('🔒 [HOST] Erreur de vérification:', error.message);
+          return;
+        }
+        
+        if (data?.host_id) {
+          setSessionHostId(data.host_id);
+          const isUserHost = user.id === data.host_id;
+          console.log('🔒 [HOST] host_id trouvé:', data.host_id, '| isUserHost:', isUserHost);
+          
+          // Met à jour isHost basé sur la comparaison robuste
+          if (isUserHost !== isHost) {
+            console.log('🔒 [HOST] Mise à jour du statut:', isUserHost ? 'HOST' : 'PARTICIPANT');
+            setIsHost(isUserHost);
+          }
+        } else {
+          // Pas de session existante - si on a un sessionId via URL, on est un nouveau participant
+          // L'hôte sera défini lors de la création de la playlist
+          console.log('🔒 [HOST] Aucune session existante - statut conservé:', isHost ? 'HOST' : 'PARTICIPANT');
+        }
+      } catch (err) {
+        console.error('🔒 [HOST] Exception:', err);
+      }
+    }
+    
+    verifyHostStatus();
+  }, [sessionId, user?.id, isHost]);
+  
+  // Admin/Subscriber bypass (si host_id non défini)
+  useEffect(() => {
+    if (hasHostPrivileges && !isHost && !sessionHostId) {
       console.log('[SESSION] ⚡ ADMIN/SUBSCRIBER BYPASS - Forcing host mode');
       setIsHost(true);
     }
-  }, [hasHostPrivileges, isHost]);
+  }, [hasHostPrivileges, isHost, sessionHostId]);
   
   // Nickname state
   const [nickname, setNickname] = useState<string | null>(null);

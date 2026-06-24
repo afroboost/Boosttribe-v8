@@ -38,6 +38,8 @@ export interface UsePeerAudioReturn {
   // 🎤 POINT 5: participant envoie son micro à l'hôte / arrête
   talkToHost: (stream: MediaStream) => void;
   stopTalkToHost: () => void;
+  // 🔊 POINT 1.6: volume des voix participants (tribu) côté hôte
+  setTribeVolume: (volume: number) => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
 }
@@ -82,6 +84,37 @@ function buildIceServers(): RTCIceServer[] {
   }
 
   return iceServers;
+}
+
+// Classe commune des éléments audio "tribu" (voix montante des participants chez l'hôte)
+const TRIBE_AUDIO_CLASS = 'bt-tribe-audio';
+
+/**
+ * POINT 1.3 : crée/récupère un <audio autoplay playsinline> DÉDIÉ par participant qui parle.
+ * La voix distante est jouée en direct (aucun Web Audio, aucun buffer) → latence minimale.
+ */
+function getOrCreateTribeAudioElement(peerId: string): HTMLAudioElement {
+  const id = `tribe-audio-${peerId}`;
+  let el = document.getElementById(id) as HTMLAudioElement;
+  if (!el) {
+    el = document.createElement('audio');
+    el.id = id;
+    el.className = TRIBE_AUDIO_CLASS;
+    el.autoplay = true;
+    el.setAttribute('playsinline', 'true');
+    el.controls = false;
+    el.style.display = 'none';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function removeTribeAudioElement(peerId: string): void {
+  const el = document.getElementById(`tribe-audio-${peerId}`);
+  if (el) {
+    (el as HTMLAudioElement).srcObject = null;
+    el.remove();
+  }
 }
 
 /**
@@ -144,6 +177,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const upstreamCallRef = useRef<MediaConnection | null>(null);
   // 👥 POINT 5: appels tribu entrants reçus par l'hôte (un par participant qui parle)
   const tribeCallsRef = useRef<Map<string, MediaConnection>>(new Map());
+  // 🔊 POINT 1.6: volume "Volume Tribu" appliqué directement aux <audio> tribu (zéro latence)
+  const tribeVolumeRef = useRef<number>(1);
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
@@ -290,23 +325,30 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         // Handle incoming media calls (rôle-dépendant)
         // ========================================
         peer.on('call', (call) => {
-          // 👥 HÔTE: appel entrant = un participant "prend la parole" → mixer via tribeGain
+          // 👥 HÔTE: appel entrant = un participant "prend la parole".
+          // POINT 1.3 : on joue le flux en DIRECT via un <audio> dédié (pas de Web Audio).
           if (isHost) {
             call.answer(); // l'hôte ne renvoie pas de flux sur cet appel
             tribeCallsRef.current.set(call.peer, call);
 
             call.on('stream', (tribeStream) => {
+              const el = getOrCreateTribeAudioElement(call.peer);
+              el.srcObject = tribeStream;
+              el.volume = tribeVolumeRef.current;
+              el.play().catch((e) => console.warn('[PEER] tribe autoplay blocked:', e));
               onReceiveTribeAudio?.(tribeStream, call.peer);
             });
 
             call.on('close', () => {
               tribeCallsRef.current.delete(call.peer);
+              removeTribeAudioElement(call.peer);
               onTribeAudioEnd?.(call.peer);
             });
 
             call.on('error', (err) => {
               console.error('[PEER] ❌ Tribe call error:', err);
               tribeCallsRef.current.delete(call.peer);
+              removeTribeAudioElement(call.peer);
               onTribeAudioEnd?.(call.peer);
             });
             return;
@@ -541,6 +583,17 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   }, [isHost, getHostPeerId]);
 
   /**
+   * 🔊 POINT 1.6: règle le volume des voix participants (tribu) — direct sur les <audio>.
+   */
+  const setTribeVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    tribeVolumeRef.current = clamped;
+    document.querySelectorAll<HTMLAudioElement>(`.${TRIBE_AUDIO_CLASS}`).forEach((el) => {
+      el.volume = clamped;
+    });
+  }, []);
+
+  /**
    * 🎤 POINT 5: PARTICIPANT — rend la parole (ferme l'appel montant).
    */
   const stopTalkToHost = useCallback(() => {
@@ -566,8 +619,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       try { upstreamCallRef.current.close(); } catch (e) { /* ignore */ }
       upstreamCallRef.current = null;
     }
-    tribeCallsRef.current.forEach((call) => {
+    tribeCallsRef.current.forEach((call, peerId) => {
       try { call.close(); } catch (e) { /* ignore */ }
+      removeTribeAudioElement(peerId);
     });
     tribeCallsRef.current.clear();
 
@@ -629,6 +683,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     stopBroadcast,
     talkToHost,
     stopTalkToHost,
+    setTribeVolume,
     reconnect,
     remoteAudioRef,
   };

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw } from 'lucide-react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
@@ -100,6 +100,45 @@ function setStoredNickname(nickname: string): void {
     localStorage.setItem(NICKNAME_STORAGE_KEY, nickname);
   } catch (error) {
     console.warn('Failed to store nickname:', error);
+  }
+}
+
+// POINT 2 : marqueur de "session active" par utilisateur (heartbeat localStorage).
+// Une session est considérée active si son heartbeat date de moins de 90 s.
+const ACTIVE_SESSION_TTL_MS = 90 * 1000;
+
+function activeSessionKey(userId: string): string {
+  return `bt_active_session_${userId}`;
+}
+
+function markActiveSession(userId: string, sessionId: string): void {
+  try {
+    localStorage.setItem(activeSessionKey(userId), JSON.stringify({ sessionId, ts: Date.now() }));
+  } catch { /* ignore */ }
+}
+
+function clearActiveSession(userId: string, sessionId: string): void {
+  try {
+    const raw = localStorage.getItem(activeSessionKey(userId));
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed?.sessionId === sessionId) localStorage.removeItem(activeSessionKey(userId));
+    }
+  } catch { /* ignore */ }
+}
+
+// Renvoie le nombre de sessions actives appartenant à l'utilisateur (0 ou 1 via le heartbeat),
+// en ignorant éventuellement une session courante.
+function countActiveSessions(userId: string, ignoreSessionId?: string): number {
+  try {
+    const raw = localStorage.getItem(activeSessionKey(userId));
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.sessionId || !parsed?.ts) return 0;
+    if (parsed.sessionId === ignoreSessionId) return 0;
+    return Date.now() - parsed.ts < ACTIVE_SESSION_TTL_MS ? 1 : 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -359,7 +398,7 @@ export const SessionPage: React.FC = () => {
   const { theme } = useTheme();
   const { showToast } = useToast();
   const socket = useSocket();
-  const { isAdmin, user, isLoading: authLoading, isSubscribed } = useAuth();
+  const { isAdmin, user, isLoading: authLoading, isSubscribed, sessionLimit } = useAuth();
   
   // ADMIN BYPASS: Check email directly for instant host access
   const userEmail = user?.email?.toLowerCase() || '';
@@ -446,8 +485,6 @@ export const SessionPage: React.FC = () => {
     setTribeVolume,
     setHostVoiceVolume,
     connectMicSource,
-    connectTribeStream,
-    disconnectTribeStream,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -462,6 +499,7 @@ export const SessionPage: React.FC = () => {
       audioEl.volume = Math.max(0, Math.min(1, volume));
     }
   }, [setMusicVolume]);
+
 
   // Initialiser le mixeur au premier clic (user gesture required)
   useEffect(() => {
@@ -494,6 +532,7 @@ export const SessionPage: React.FC = () => {
     stopBroadcast,
     talkToHost,
     stopTalkToHost,
+    setTribeVolume: setTribeAudioVolume,
     remoteAudioRef,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
@@ -503,13 +542,10 @@ export const SessionPage: React.FC = () => {
     onReceiveAudio: () => {},
     onVoiceStart: () => {},
     onVoiceEnd: () => {},
-    // 👥 POINT 5: l'hôte reçoit le micro montant d'un participant → mixe via "Volume Tribu"
-    onReceiveTribeAudio: (stream, peerId) => {
-      connectTribeStream(stream, peerId);
-    },
-    onTribeAudioEnd: (peerId) => {
-      disconnectTribeStream(peerId);
-    },
+    // 👥 POINT 1.3 : la voix participant est jouée en direct via <audio> dédié (dans usePeerAudio).
+    // Plus de routage Web Audio ici → latence minimale, pas d'écho/interférences.
+    onReceiveTribeAudio: () => {},
+    onTribeAudioEnd: () => {},
     onError: (error) => {
       console.error('[WebRTC] Error:', error);
     },
@@ -519,6 +555,12 @@ export const SessionPage: React.FC = () => {
       }
     },
   });
+
+  // 🔊 POINT 1.6 : "Volume Tribu" met à jour l'affichage ET le volume des <audio> participants
+  const handleTribeVolumeChange = useCallback((volume: number) => {
+    setTribeVolume(volume);       // état du slider
+    setTribeAudioVolume(volume);  // volume direct des <audio> tribu (zéro latence)
+  }, [setTribeVolume, setTribeAudioVolume]);
 
   // Host: Broadcast VOICE_START when mic is active
   useEffect(() => {
@@ -1221,12 +1263,23 @@ export const SessionPage: React.FC = () => {
 
   // Generate session ID when creating new session
   const handleCreateSession = useCallback(() => {
+    // POINT 2 : respect du nombre de sessions par plan (gratuit = 1 session active à la fois)
+    if (sessionLimit !== Infinity && user?.id) {
+      const active = countActiveSessions(user.id);
+      if (active >= sessionLimit) {
+        showToast('Limite de sessions atteinte — passez à un plan supérieur', 'warning');
+        navigate('/pricing');
+        return;
+      }
+    }
+
     const newSessionId = generateSessionId();
-    
+
     setSessionId(newSessionId);
     setIsHost(true);
+    if (user?.id) markActiveSession(user.id, newSessionId);
     navigate(`/session/${newSessionId}`, { replace: true });
-    
+
     const stored = getStoredNickname();
     if (!stored) {
       setShowNicknameModal(true);
@@ -1234,7 +1287,19 @@ export const SessionPage: React.FC = () => {
       setNickname(stored);
       showToast('Session créée ! Partagez le lien avec vos amis.', 'success');
     }
-  }, [navigate, showToast]);
+  }, [navigate, showToast, sessionLimit, user?.id]);
+
+  // POINT 2 : heartbeat de la session active de l'hôte (garde le marqueur frais, libère à la sortie)
+  useEffect(() => {
+    if (!isHost || !sessionId || !user?.id) return;
+    const uid = user.id;
+    markActiveSession(uid, sessionId);
+    const interval = setInterval(() => markActiveSession(uid, sessionId), 30 * 1000);
+    return () => {
+      clearInterval(interval);
+      clearActiveSession(uid, sessionId);
+    };
+  }, [isHost, sessionId, user?.id]);
 
   // Get shareable session URL
   const sessionUrl = useMemo(() => {
@@ -1269,6 +1334,34 @@ export const SessionPage: React.FC = () => {
       showToast('Erreur lors de la copie', 'error');
     }
   }, [sessionId, showToast]);
+
+  // 🔁 POINT 3 : l'hôte renouvelle le code de session (l'ancien cesse de fonctionner)
+  const handleRenewCode = useCallback(() => {
+    if (!isHost || !sessionId) return;
+    if (!window.confirm('Générer un nouveau code ? Les participants devront utiliser le nouveau code pour rejoindre.')) {
+      return;
+    }
+
+    const newSessionId = generateSessionId();
+
+    // Réinitialiser le peer WebRTC pour qu'il se reconnecte avec le nouvel id d'hôte
+    disconnectPeer();
+    peerConnectedRef.current = false;
+
+    // Reporter la playlist courante sur la nouvelle session (les participants la retrouvent)
+    if (tracks.length > 0 && isSupabaseConfigured) {
+      const sel = selectedTrack?.id ?? tracks[0].id;
+      savePlaylist({ session_id: newSessionId, tracks, selected_track_id: sel });
+    }
+
+    if (user?.id) markActiveSession(user.id, newSessionId);
+
+    setSessionId(newSessionId);
+    navigate(`/session/${newSessionId}`, { replace: true });
+    setCodeCopied(false);
+    setLinkCopied(false);
+    showToast('Nouveau code généré. Partagez-le avec vos participants.', 'success');
+  }, [isHost, sessionId, tracks, selectedTrack, user?.id, navigate, showToast, disconnectPeer]);
 
   // 🔊 BUG 1: Le participant active le son via un geste utilisateur explicite
   const handleActivateSound = useCallback(() => {
@@ -1613,6 +1706,18 @@ export const SessionPage: React.FC = () => {
                       >
                         {codeCopied && <Check className="w-4 h-4" />}
                         {codeCopied ? 'Copié' : 'Copier le code'}
+                      </Button>
+                      {/* POINT 3 : renouveler le code (hôte uniquement) */}
+                      <Button
+                        onClick={handleRenewCode}
+                        size="sm"
+                        variant="outline"
+                        className="flex items-center gap-1 bg-white/10 text-white border-white/20"
+                        data-testid="renew-code-btn"
+                        title="Générer un nouveau code"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Nouveau code
                       </Button>
                     </div>
                     <p className="text-white/60 text-xs mt-3 leading-relaxed">
@@ -1997,7 +2102,7 @@ export const SessionPage: React.FC = () => {
               hostVoiceVolume={mixerState.hostVoiceVolume}
               onMusicVolumeChange={handleMusicVolumeChange}
               onMicVolumeChange={setMicVolume}
-              onTribeVolumeChange={setTribeVolume}
+              onTribeVolumeChange={handleTribeVolumeChange}
               onHostVoiceVolumeChange={setHostVoiceVolume}
               isMicActive={hostMicActive}
               defaultCollapsed={false}

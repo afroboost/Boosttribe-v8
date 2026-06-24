@@ -14,6 +14,9 @@ export interface UserProfile {
   role: UserRole;
   subscription_status: SubscriptionStatus;
   has_accepted_terms: boolean;
+  // POINT 6 : accès offert par l'admin (colonnes déjà créées côté serveur)
+  comp_access_until?: string | null;
+  comp_access_plan?: SubscriptionStatus | string | null;
   created_at: string;
   updated_at: string;
 }
@@ -33,6 +36,7 @@ export interface AuthContextValue {
   
   // Limits
   trackLimit: number;
+  sessionLimit: number; // POINT 2 : nombre de sessions simultanées autorisées (Infinity = illimité)
   canUploadTrack: (currentCount: number) => boolean;
   
   // Auth actions
@@ -59,6 +63,16 @@ const TRACK_LIMITS: Record<SubscriptionStatus, number> = {
   enterprise: -1, // illimité
 };
 
+// POINT 2 : nombre de sessions simultanées par plan (gratuit = 1, payant = illimité)
+const SESSION_LIMITS: Record<SubscriptionStatus, number> = {
+  none: 1,
+  trial: 1,
+  monthly: Infinity,
+  yearly: Infinity,
+  pro: Infinity,
+  enterprise: Infinity,
+};
+
 // Context
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -78,10 +92,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   // Derived state
   const isAuthenticated = !!user;
-  // 🔒 FIX: Un utilisateur non connecté ou sans profil n'est PAS abonné
-  const isSubscribed = isAdmin || (profile !== null && profile.subscription_status !== 'none' && profile.subscription_status !== 'trial');
+
+  // POINT 6 : accès offert actif (comp_access_until dans le futur) → plan = comp_access_plan
+  const compActive = !!profile?.comp_access_until && new Date(profile.comp_access_until).getTime() > Date.now();
+  const effectivePlan: SubscriptionStatus = (
+    compActive && profile?.comp_access_plan
+      ? profile.comp_access_plan
+      : profile?.subscription_status || 'none'
+  ) as SubscriptionStatus;
+
+  // 🔒 FIX: Un utilisateur non connecté ou sans profil n'est PAS abonné.
+  // Abonné si : admin, OU accès offert actif, OU plan effectif payant (≠ none/trial).
+  const isSubscribed = isAdmin || compActive || (profile !== null && effectivePlan !== 'none' && effectivePlan !== 'trial');
   const hasAcceptedTerms = isAdmin || (profile?.has_accepted_terms ?? false);
-  const trackLimit = isAdmin ? -1 : TRACK_LIMITS[profile?.subscription_status || 'none'];
+  const trackLimit = isAdmin ? -1 : (TRACK_LIMITS[effectivePlan] ?? TRACK_LIMITS.none);
+  const sessionLimit = isAdmin ? Infinity : (SESSION_LIMITS[effectivePlan] ?? SESSION_LIMITS.none);
 
   // Check upload limit
   const canUploadTrack = useCallback((currentCount: number): boolean => {
@@ -588,6 +613,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isSubscribed,
     hasAcceptedTerms,
     trackLimit,
+    sessionLimit,
     canUploadTrack,
     signInWithEmail,
     signUpWithEmail,

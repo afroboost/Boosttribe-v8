@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
-import { syncPlan } from "@/lib/paymentApi";
+import { syncPlan, grantAccess, revokeAccess, listGranted, GrantedRow } from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -31,7 +31,10 @@ import {
   X,
   Image,
   DollarSign,
-  Globe
+  Globe,
+  Gift,
+  Trash2,
+  Crown
 } from "lucide-react";
 
 // Site settings interface - matches Supabase table
@@ -171,7 +174,73 @@ const Dashboard: React.FC = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
-  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'access'>('identity');
+
+  // POINT 6 : état de la section "Accès offerts"
+  const [grantEmail, setGrantEmail] = useState('');
+  const [grantPlan, setGrantPlan] = useState<'pro' | 'enterprise'>('pro');
+  const [grantDuration, setGrantDuration] = useState<'1m' | '3m' | '6m' | '1y' | 'custom'>('1m');
+  const [grantCustomDate, setGrantCustomDate] = useState('');
+  const [granting, setGranting] = useState(false);
+  const [grantedList, setGrantedList] = useState<GrantedRow[]>([]);
+
+  const computeUntil = useCallback((): string | null => {
+    if (grantDuration === 'custom') {
+      if (!grantCustomDate) return null;
+      const d = new Date(grantCustomDate);
+      return isNaN(d.getTime()) ? null : d.toISOString();
+    }
+    const now = new Date();
+    const monthsMap: Record<string, number> = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 };
+    now.setMonth(now.getMonth() + (monthsMap[grantDuration] || 1));
+    return now.toISOString();
+  }, [grantDuration, grantCustomDate]);
+
+  const refreshGranted = useCallback(async () => {
+    const { granted, error } = await listGranted();
+    if (error) {
+      showToast(`Liste des accès : ${error}`, 'error');
+      return;
+    }
+    setGrantedList(granted);
+  }, [showToast]);
+
+  const handleGrantAccess = useCallback(async () => {
+    const email = grantEmail.trim().toLowerCase();
+    if (!email) { showToast('Renseignez un email', 'warning'); return; }
+    const until = computeUntil();
+    if (!until) { showToast('Date de validité invalide', 'warning'); return; }
+
+    setGranting(true);
+    try {
+      const { ok, error } = await grantAccess({ email, plan: grantPlan, until });
+      if (ok) {
+        showToast(`Accès ${grantPlan} accordé à ${email}`, 'success');
+        setGrantEmail('');
+        await refreshGranted();
+      } else {
+        showToast(error || 'Échec de l\'attribution', 'error');
+      }
+    } finally {
+      setGranting(false);
+    }
+  }, [grantEmail, grantPlan, computeUntil, refreshGranted, showToast]);
+
+  const handleRevokeAccess = useCallback(async (userId: string, email: string) => {
+    if (!window.confirm(`Révoquer l'accès offert de ${email} ?`)) return;
+    const { ok, error } = await revokeAccess(userId);
+    if (ok) {
+      showToast(`Accès révoqué pour ${email}`, 'success');
+      await refreshGranted();
+    } else {
+      showToast(error || 'Échec de la révocation', 'error');
+    }
+  }, [refreshGranted, showToast]);
+
+  // Charger la liste quand on ouvre l'onglet
+  useEffect(() => {
+    if (activeTab === 'access') refreshGranted();
+  }, [activeTab, refreshGranted]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -612,6 +681,7 @@ const Dashboard: React.FC = () => {
             { id: 'buttons', label: 'Boutons & Stats', icon: <Settings size={16} /> },
             { id: 'stripe', label: 'Liens Stripe', icon: <CreditCard size={16} /> },
             { id: 'plans', label: 'Plans & Prix', icon: <DollarSign size={16} /> },
+            { id: 'access', label: 'Accès offerts', icon: <Gift size={16} /> },
           ].map(tab => (
             <Button
               key={tab.id}
@@ -1030,6 +1100,131 @@ const Dashboard: React.FC = () => {
                     </Button>
                   ))}
                 </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* POINT 6 : Accès offerts Tab */}
+        {activeTab === 'access' && (
+          <Card className="bg-white/5 border-white/10">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Gift size={20} className="text-purple-400" />
+                Accès offerts
+              </CardTitle>
+              <CardDescription className="text-white/50">
+                Offrez un accès Pro ou Enterprise à un compte, pour une durée définie.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Formulaire d'attribution */}
+              <div className="p-4 rounded-lg bg-white/5 border border-white/10 space-y-4">
+                <div>
+                  <Label className="text-white/70">Email du compte</Label>
+                  <Input
+                    value={grantEmail}
+                    onChange={(e) => setGrantEmail(e.target.value)}
+                    placeholder="utilisateur@email.com"
+                    type="email"
+                    className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-white/70">Plan</Label>
+                    <div className="flex gap-2 mt-1">
+                      {(['pro', 'enterprise'] as const).map((p) => (
+                        <Button
+                          key={p}
+                          variant={grantPlan === p ? 'default' : 'outline'}
+                          onClick={() => setGrantPlan(p)}
+                          className={grantPlan === p ? 'bg-purple-500 text-white' : 'border-white/20 text-white/70'}
+                        >
+                          {p === 'pro' ? <Crown size={14} className="mr-1" /> : <Building2 size={14} className="mr-1" />}
+                          {p === 'pro' ? 'Pro' : 'Enterprise'}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-white/70">Durée de validité</Label>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {([
+                        { id: '1m', label: '1 mois' },
+                        { id: '3m', label: '3 mois' },
+                        { id: '6m', label: '6 mois' },
+                        { id: '1y', label: '1 an' },
+                        { id: 'custom', label: 'Date…' },
+                      ] as const).map((d) => (
+                        <Button
+                          key={d.id}
+                          size="sm"
+                          variant={grantDuration === d.id ? 'default' : 'outline'}
+                          onClick={() => setGrantDuration(d.id)}
+                          className={grantDuration === d.id ? 'bg-purple-500 text-white' : 'border-white/20 text-white/70'}
+                        >
+                          {d.label}
+                        </Button>
+                      ))}
+                    </div>
+                    {grantDuration === 'custom' && (
+                      <Input
+                        value={grantCustomDate}
+                        onChange={(e) => setGrantCustomDate(e.target.value)}
+                        type="date"
+                        className="mt-2 bg-white/5 border-white/10 text-white"
+                      />
+                    )}
+                  </div>
+                </div>
+
+                <Button
+                  onClick={handleGrantAccess}
+                  disabled={granting}
+                  className="w-full text-white border-none"
+                  style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+                >
+                  <Gift size={16} className="mr-2" />
+                  {granting ? 'Attribution…' : 'Accorder l\'accès'}
+                </Button>
+              </div>
+
+              {/* Liste des accès offerts actifs */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-white font-medium">Accès actifs ({grantedList.length})</h3>
+                  <Button size="sm" variant="outline" onClick={refreshGranted} className="border-white/20 text-white/70">
+                    <RefreshCw size={14} className="mr-1" /> Actualiser
+                  </Button>
+                </div>
+                {grantedList.length === 0 ? (
+                  <p className="text-white/40 text-sm py-4 text-center">Aucun accès offert actif.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {grantedList.map((g) => (
+                      <div key={g.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
+                        <div className="min-w-0">
+                          <p className="text-white text-sm truncate">{g.email}</p>
+                          <p className="text-white/50 text-xs">
+                            {g.comp_access_plan === 'enterprise' ? 'Enterprise' : 'Pro'}
+                            {g.comp_access_until ? ` · expire le ${new Date(g.comp_access_until).toLocaleDateString()}` : ''}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleRevokeAccess(g.id, g.email)}
+                          className="border-red-500/30 text-red-400 hover:bg-red-500/10 flex-shrink-0"
+                        >
+                          <Trash2 size={14} className="mr-1" /> Révoquer
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

@@ -92,9 +92,9 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     }
 
     try {
-      // Créer l'AudioContext
+      // Créer l'AudioContext en mode faible latence (POINT 1 : voix temps réel)
       const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioContextClass();
+      const ctx = new AudioContextClass({ latencyHint: 'interactive' });
       audioContextRef.current = ctx;
       // S'assurer que le contexte tourne (politique autoplay → parfois 'suspended')
       if (ctx.state === 'suspended') {

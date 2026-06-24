@@ -30,6 +30,9 @@ Déploiement Nixpacks (Coolify) : `nixpacks.toml` ou `Procfile` lancent la comma
 - `POST /stripe/sync-plan` (admin, Bearer token Supabase) → crée/maj les Stripe Price, archive les anciens.
 - `POST /stripe/create-checkout` (user, Bearer token Supabase) → `{ url }` vers Stripe Checkout.
 - `POST /stripe/webhook` (Stripe) → met à jour `profiles.subscription_status`.
+- `POST /admin/grant-access` (admin) → `{ email|user_id, plan, until }` → `comp_access_plan` + `comp_access_until`.
+- `POST /admin/revoke-access` (admin) → `{ user_id }` → remet `comp_access_*` à null.
+- `GET  /admin/granted` (admin) → liste les profils dont `comp_access_until > now()`.
 
 Configurez le webhook Stripe vers `https://pay.boosttribe.pro/stripe/webhook` avec les événements :
 `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,

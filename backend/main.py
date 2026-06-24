@@ -13,6 +13,7 @@ Endpoints :
 
 import os
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 import httpx
@@ -132,6 +133,27 @@ async def update_profile(user_id: str, patch: Dict[str, Any]) -> None:
         logger.error("update_profile failed: %s %s", resp.status_code, resp.text)
 
 
+async def require_admin(authorization: Optional[str]) -> Dict[str, Any]:
+    """Vérifie le token Supabase ET que l'email est admin (comme /stripe/sync-plan)."""
+    user = await get_user_from_token(authorization)
+    email = (user.get("email") or "").lower()
+    if email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Accès réservé à l'administrateur")
+    return user
+
+
+async def get_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=_service_headers(),
+            params={"email": f"eq.{email}", "select": "id,email"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+
 async def find_profile_by_subscription(subscription_id: str) -> Optional[Dict[str, Any]]:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
@@ -157,6 +179,17 @@ class SyncPlanBody(BaseModel):
 class CheckoutBody(BaseModel):
     plan: str  # "pro" | "enterprise"
     interval: str  # "month" | "year"
+
+
+class GrantAccessBody(BaseModel):
+    email: Optional[str] = None
+    user_id: Optional[str] = None
+    plan: str  # "pro" | "enterprise"
+    until: str  # date ISO (timestamptz)
+
+
+class RevokeAccessBody(BaseModel):
+    user_id: str
 
 
 # --------------------------------------------------------------------------- #
@@ -269,6 +302,53 @@ async def create_checkout(body: CheckoutBody, authorization: Optional[str] = Hea
         subscription_data={"metadata": {"user_id": user_id, "plan": body.plan}},
     )
     return {"url": session.url}
+
+
+# --------------------------------------------------------------------------- #
+# POINT 6 : accès offerts (admin)
+# --------------------------------------------------------------------------- #
+@app.post("/admin/grant-access")
+async def grant_access(body: GrantAccessBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    if body.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Plan invalide")
+
+    user_id = body.user_id
+    if not user_id:
+        if not body.email:
+            raise HTTPException(status_code=400, detail="email ou user_id requis")
+        prof = await get_profile_by_email(body.email.strip().lower())
+        if not prof:
+            raise HTTPException(status_code=404, detail="Compte introuvable pour cet email")
+        user_id = prof["id"]
+
+    await update_profile(user_id, {"comp_access_plan": body.plan, "comp_access_until": body.until})
+    return {"ok": True, "user_id": user_id, "plan": body.plan, "until": body.until}
+
+
+@app.post("/admin/revoke-access")
+async def revoke_access(body: RevokeAccessBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    await update_profile(body.user_id, {"comp_access_plan": None, "comp_access_until": None})
+    return {"ok": True}
+
+
+@app.get("/admin/granted")
+async def list_granted(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=_service_headers(),
+            params={
+                "comp_access_until": f"gt.{now_iso}",
+                "select": "id,email,comp_access_plan,comp_access_until",
+                "order": "comp_access_until.asc",
+            },
+        )
+    rows = resp.json() if resp.status_code == 200 else []
+    return {"granted": rows}
 
 
 def _plan_from_price_id(price_id: Optional[str], settings: Dict[str, Any]) -> Optional[str]:

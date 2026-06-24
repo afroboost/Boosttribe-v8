@@ -69,3 +69,57 @@ export async function createCheckout(
     return { error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
 }
+
+// ---------------------------------------------------------------------------
+// POINT 6 : accès offerts (admin)
+// ---------------------------------------------------------------------------
+export interface GrantedRow {
+  id: string;
+  email: string;
+  comp_access_plan: string | null;
+  comp_access_until: string | null;
+}
+
+async function adminFetch(path: string, init?: RequestInit): Promise<{ data?: any; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée (REACT_APP_API_URL)' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Session expirée, reconnectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+export async function grantAccess(payload: {
+  email?: string;
+  user_id?: string;
+  plan: StripePlan;
+  until: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch('/admin/grant-access', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return error ? { ok: false, error } : { ok: !!data?.ok };
+}
+
+export async function revokeAccess(userId: string): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch('/admin/revoke-access', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId }),
+  });
+  return error ? { ok: false, error } : { ok: !!data?.ok };
+}
+
+export async function listGranted(): Promise<{ granted: GrantedRow[]; error?: string }> {
+  const { data, error } = await adminFetch('/admin/granted', { method: 'GET' });
+  if (error) return { granted: [], error };
+  return { granted: (data?.granted || []) as GrantedRow[] };
+}

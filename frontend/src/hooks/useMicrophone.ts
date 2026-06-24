@@ -160,11 +160,13 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       // 3. DIRECT getUserMedia call - browser will show permission dialog
       // Production: log removed
       
+      // POINT 1.1: contraintes anti-écho / anti-bruit + mono (1 canal) pour TOUTE capture
       const constraints: MediaStreamConstraints = {
         audio: {
           autoGainControl,
           echoCancellation,
           noiseSuppression,
+          channelCount: 1,
           deviceId: state.deviceId ? { exact: state.deviceId } : undefined,
         },
       };

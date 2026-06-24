@@ -277,12 +277,7 @@ const PricingPage: React.FC = () => {
             </button>
           </div>
 
-          {/* Admin badge */}
-          {isAdmin && (
-            <Badge className="mt-6 bg-purple-500/20 text-purple-400 border-purple-500/30 px-4 py-2">
-              👑 Mode Admin - Accès illimité gratuit
-            </Badge>
-          )}
+          {/* POINT 5 : badge "Mode Admin – Accès illimité gratuit" retiré de l'UI */}
 
           {/* Current subscription */}
           {profile && !isAdmin && (

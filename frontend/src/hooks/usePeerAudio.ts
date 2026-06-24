@@ -184,15 +184,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
    * @param stream - Optional MediaStream for host broadcasting
    */
   const connect = useCallback(async (stream?: MediaStream | null): Promise<boolean> => {
-    // Production: log removed
-    // Production: log removed
-    // Production: log removed
-
-    // For HOST: Require stream
-    if (isHost && !stream) {
-      // Production: log removed
-      return false;
-    }
+    // ⚠️ OBJECTIF A: l'hôte se connecte au peer dès l'entrée en session, SANS exiger de flux micro.
+    // Son peer doit pouvoir RÉPONDRE aux appels entrants (prise de parole participant) même micro coupé.
+    // Le flux micro hôte est ajouté/retiré ensuite via broadcastAudio/stopBroadcast.
 
     if (peerRef.current?.open) {
       // Production: log removed
@@ -246,10 +240,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             isReady: true,
           });
 
-          // Host: Store stream and signal ready
-          if (isHost && stream) {
-            // Production: log removed
-            currentStreamRef.current = stream;
+          // Host: peer prêt (avec ou sans flux). Le flux éventuel est mémorisé pour diffusion.
+          if (isHost) {
+            if (stream) {
+              currentStreamRef.current = stream;
+            }
             onReady?.();
           }
 
@@ -445,14 +440,15 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       return;
     }
 
+    // Mémoriser le flux quoi qu'il arrive : les participants qui se connectent ensuite
+    // seront appelés via peer.on('connection') avec currentStreamRef.
+    currentStreamRef.current = stream;
+    updateState({ isBroadcasting: true });
+
     if (!peerRef.current?.open) {
-      console.warn('[PEER] Peer not connected, cannot broadcast');
+      // Peer pas encore ouvert : la diffusion se fera à la connexion des participants
       return;
     }
-
-    currentStreamRef.current = stream;
-    const peerCount = dataConnectionsRef.current.size;
-    // Production: log removed
 
     // Call all connected participants
     dataConnectionsRef.current.forEach((_, peerId) => {
@@ -476,9 +472,6 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         connectionsRef.current.set(peerId, call);
       }
     });
-
-    updateState({ isBroadcasting: true });
-    // Production: log removed
   }, [isHost, updateState]);
 
   // Stop broadcasting

@@ -21,7 +21,7 @@ import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
-import { isSupabaseConfigured, deleteTracks } from '@/lib/supabaseClient';
+import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 
 // LocalStorage key for nickname
@@ -521,41 +521,44 @@ export const SessionPage: React.FC = () => {
     }
   }, [isHost, hostMicStream, peerState.isBroadcasting, socket]);
 
-  // Connect Participant to PeerJS immediately
+  // 🔌 OBJECTIF A: Connexion du peer liée à la SESSION (hôte ET participant), pas au micro.
+  // L'hôte se connecte dès l'entrée → prêt à RÉPONDRE aux prises de parole, micro ON ou OFF.
+  // Garde anti-churn : connexion UNE seule fois (les callbacks inline de usePeerAudio
+  // changent d'identité à chaque render, on ne dépend donc pas de connectPeer ici).
   const peerConnectedRef = useRef(false);
   useEffect(() => {
-    if (!sessionId || !nickname || isHost) return;
-    
-    if (!peerConnectedRef.current) {
-      peerConnectedRef.current = true;
-      connectPeer();
-    }
-  }, [sessionId, nickname, isHost, connectPeer]);
+    if (!sessionId || !nickname || peerConnectedRef.current) return;
+    peerConnectedRef.current = true;
+    connectPeer(); // sans flux : l'hôte répond aux appels, le participant rejoint l'hôte
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, nickname]);
 
-  // Host: Connect to PeerJS when mic stream is ready
+  // Nettoyage propre du peer à la sortie de la session
   useEffect(() => {
-    if (!sessionId || !nickname || !isHost) return;
-    
-    if (hostMicStream && !peerConnectedRef.current) {
-      peerConnectedRef.current = true;
-      // 🎤 POINT 5: router le micro hôte via le GainNode "Mon Micro" (anti-larsen).
-      // connectMicSource initialise le mixeur si besoin et renvoie le flux au gain appliqué
-      // (ou le flux brut en fallback si le mixeur n'est pas prêt → aucune régression).
+    return () => {
+      disconnectPeer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 🎤 OBJECTIF A + POINT 5: l'activation du micro hôte ne fait qu'AJOUTER/RETIRER le flux
+  // sortant via le GainNode "Mon Micro" (anti-larsen). Le peer reste connecté indépendamment.
+  // On n'agit que sur un VRAI changement de flux (on/off) → pas de churn de source audio.
+  const broadcastedStreamRef = useRef<MediaStream | null>(null);
+  useEffect(() => {
+    if (!isHost) return;
+    if (hostMicStream === broadcastedStreamRef.current) return;
+    broadcastedStreamRef.current = hostMicStream;
+
+    if (hostMicStream) {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
-      connectPeer(micBroadcastStream).then(success => {
-        if (success) {
-          broadcastAudio(micBroadcastStream);
-        }
-      });
+      broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
+    } else {
+      stopBroadcast(); // retire le flux sortant, garde le peer actif
     }
-    
-    if (!hostMicStream && peerConnectedRef.current && isHost) {
-      peerConnectedRef.current = false;
-      stopBroadcast();
-      disconnectPeer();
-    }
-  }, [sessionId, nickname, isHost, hostMicStream, connectPeer, broadcastAudio, stopBroadcast, disconnectPeer, initializeMixer, connectMicSource]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, hostMicStream]);
 
   // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
   const [isTalking, setIsTalking] = useState(false);
@@ -587,14 +590,6 @@ export const SessionPage: React.FC = () => {
       }
     }
   }, [isTalking, participantMic, stopTalkToHost, showToast]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disconnectPeer();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Auto-play effect: when a new track is set via autoplay, force play
   useEffect(() => {
@@ -1041,15 +1036,33 @@ export const SessionPage: React.FC = () => {
     }
   }, [isHost, participantsState, socket, showToast]);
 
+  // 💾 OBJECTIF B: Sauvegarde STABLE de la playlist du coach, liée à son COMPTE.
+  // Clé dérivée de l'utilisateur (indépendante du session_id aléatoire) → retrouvée à la reconnexion.
+  const ownerPlaylistKey = useMemo(
+    () => (user?.id ? `owner-${user.id}` : null),
+    [user?.id]
+  );
+
+  const persistOwnerPlaylist = useCallback((newTracks: Track[], selectedId: number) => {
+    if (!isHost || !ownerPlaylistKey || !isSupabaseConfigured) return;
+    // Ligne dédiée au compte (séparée de la ligne de session live → ne casse pas la synchro participant)
+    savePlaylist({
+      session_id: ownerPlaylistKey,
+      tracks: newTracks,
+      selected_track_id: selectedId,
+    });
+  }, [isHost, ownerPlaylistKey]);
+
   // Playlist reorder handler (syncs via socket for participants)
   const handlePlaylistReorder = useCallback((newTracks: Track[]) => {
     setTracks(newTracks);
     showToast('Playlist réorganisée', 'success');
-    
+
     if (isHost && selectedTrack) {
       socket.syncPlaylist(newTracks, selectedTrack.id);
+      persistOwnerPlaylist(newTracks, selectedTrack.id);
     }
-  }, [showToast, isHost, socket, selectedTrack]);
+  }, [showToast, isHost, socket, selectedTrack, persistOwnerPlaylist]);
 
   // Track selection handler (syncs via socket)
   const handleTrackSelectWithSync = useCallback((track: Track) => {
@@ -1057,7 +1070,8 @@ export const SessionPage: React.FC = () => {
     setSelectedTrack(track);
     showToast(`Piste sélectionnée: ${track.title}`, 'success');
     socket.syncPlaylist(tracks, track.id);
-  }, [showToast, isHost, socket, tracks]);
+    persistOwnerPlaylist(tracks, track.id);
+  }, [showToast, isHost, socket, tracks, persistOwnerPlaylist]);
 
   // POINT 4b: non-abonné à la limite → notification puis redirection vers le paiement
   const handleUpgradeRequest = useCallback(() => {
@@ -1084,7 +1098,8 @@ export const SessionPage: React.FC = () => {
     const trackIdToSync = selectedTrack?.id || newTrack.id;
     socket.syncPlaylist(updatedTracks, trackIdToSync);
     socket.savePlaylistToDb(updatedTracks, trackIdToSync);
-  }, [tracks, selectedTrack, socket, showToast]);
+    persistOwnerPlaylist(updatedTracks, trackIdToSync);
+  }, [tracks, selectedTrack, socket, showToast, persistOwnerPlaylist]);
 
   // Handle track deletion
   const handleDeleteTracks = useCallback(async (tracksToDelete: Track[]) => {
@@ -1109,12 +1124,50 @@ export const SessionPage: React.FC = () => {
       showToast(`${tracksToDelete.length} titres supprimés`, 'success');
     }
     
-    const trackIdToSync = selectedTrack && !trackIds.has(selectedTrack.id) 
-      ? selectedTrack.id 
+    const trackIdToSync = selectedTrack && !trackIds.has(selectedTrack.id)
+      ? selectedTrack.id
       : (updatedTracks[0]?.id || 0);
     socket.syncPlaylist(updatedTracks, trackIdToSync);
     socket.savePlaylistToDb(updatedTracks, trackIdToSync);
-  }, [isHost, tracks, selectedTrack, socket, showToast]);
+    persistOwnerPlaylist(updatedTracks, trackIdToSync);
+  }, [isHost, tracks, selectedTrack, socket, showToast, persistOwnerPlaylist]);
+
+  // Ref vers les tracks courants (lecture dans l'async de restauration sans dépendance instable)
+  const tracksRef = useRef<Track[]>(tracks);
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+
+  // 💾 OBJECTIF B: Restauration auto de la playlist du coach à l'ouverture/création de session.
+  // Une seule fois par sessionId ; uniquement si la session n'a pas déjà sa propre playlist
+  // (on ne veut pas écraser une session existante ni la synchro participant).
+  const restoredForSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isHost || !ownerPlaylistKey || !sessionId || !isSupabaseConfigured) return;
+    if (restoredForSessionRef.current === sessionId) return;
+    restoredForSessionRef.current = sessionId;
+
+    let cancelled = false;
+    (async () => {
+      // Laisser d'abord le fetch de la session live se faire (évite d'écraser une playlist existante)
+      await new Promise(r => setTimeout(r, 1000));
+      if (cancelled || tracksRef.current.length > 0) return;
+
+      const saved = await loadPlaylist(ownerPlaylistKey);
+      if (cancelled || tracksRef.current.length > 0) return;
+
+      const restored = (saved?.tracks || []) as Track[];
+      if (restored.length === 0) return;
+
+      setTracks(restored);
+      const sel = restored.find(t => t.id === saved?.selected_track_id) || restored[0];
+      setSelectedTrack(sel);
+      // Pousser vers la session live pour les participants (réutilise la synchro existante)
+      socket.syncPlaylist(restored, sel.id);
+      socket.savePlaylistToDb(restored, sel.id);
+      showToast('Votre playlist a été restaurée', 'success');
+    })();
+
+    return () => { cancelled = true; };
+  }, [isHost, ownerPlaylistKey, sessionId, socket, showToast]);
 
   // Initialize - check for stored nickname
   useEffect(() => {

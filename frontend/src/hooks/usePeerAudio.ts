@@ -22,6 +22,9 @@ export interface UsePeerAudioOptions {
   onReceiveAudio?: (stream: MediaStream) => void;
   onVoiceStart?: () => void; // NEW: Called when voice reception starts
   onVoiceEnd?: () => void;   // NEW: Called when voice reception ends
+  // 👥 POINT 5: l'hôte reçoit le micro montant d'un participant ("Prendre la parole")
+  onReceiveTribeAudio?: (stream: MediaStream, peerId: string) => void;
+  onTribeAudioEnd?: (peerId: string) => void;
   onError?: (error: string) => void;
   onReady?: () => void;
 }
@@ -32,6 +35,9 @@ export interface UsePeerAudioReturn {
   disconnect: () => void;
   broadcastAudio: (stream: MediaStream) => void;
   stopBroadcast: () => void;
+  // 🎤 POINT 5: participant envoie son micro à l'hôte / arrête
+  talkToHost: (stream: MediaStream) => void;
+  stopTalkToHost: () => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
 }
@@ -87,6 +93,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     onReceiveAudio,
     onVoiceStart,
     onVoiceEnd,
+    onReceiveTribeAudio,
+    onTribeAudioEnd,
     onError,
     onReady,
   } = options;
@@ -105,6 +113,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
   const activeCallRef = useRef<MediaConnection | null>(null);
+  // 🎤 POINT 5: appel montant du participant vers l'hôte ("Prendre la parole")
+  const upstreamCallRef = useRef<MediaConnection | null>(null);
+  // 👥 POINT 5: appels tribu entrants reçus par l'hôte (un par participant qui parle)
+  const tribeCallsRef = useRef<Map<string, MediaConnection>>(new Map());
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
@@ -260,42 +272,51 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         });
 
         // ========================================
-        // PARTICIPANT: Handle incoming voice calls
+        // Handle incoming media calls (rôle-dépendant)
         // ========================================
         peer.on('call', (call) => {
-          // Production: log removed
-          // Production: log removed
-          
-          // Store the call reference
+          // 👥 HÔTE: appel entrant = un participant "prend la parole" → mixer via tribeGain
+          if (isHost) {
+            call.answer(); // l'hôte ne renvoie pas de flux sur cet appel
+            tribeCallsRef.current.set(call.peer, call);
+
+            call.on('stream', (tribeStream) => {
+              onReceiveTribeAudio?.(tribeStream, call.peer);
+            });
+
+            call.on('close', () => {
+              tribeCallsRef.current.delete(call.peer);
+              onTribeAudioEnd?.(call.peer);
+            });
+
+            call.on('error', (err) => {
+              console.error('[PEER] ❌ Tribe call error:', err);
+              tribeCallsRef.current.delete(call.peer);
+              onTribeAudioEnd?.(call.peer);
+            });
+            return;
+          }
+
+          // PARTICIPANT: appel entrant = voix de l'hôte
           activeCallRef.current = call;
-          
-          // FORCE ANSWER - participants receive only, no stream to send
-          // Production: log removed
-          call.answer();
+          call.answer(); // participant reçoit uniquement, pas de flux à envoyer ici
 
           // Handle incoming stream (host's voice)
           call.on('stream', async (remoteStream) => {
-            // Production: log removed
-            // Production: log removed
-            // Production: log removed
-            // Production: log removed
-            // Production: log removed
-            
             // Get or create the audio element
             const audioEl = getOrCreateRemoteAudioElement();
-            
+
             // Force play
             await forcePlayRemoteAudio(audioEl, remoteStream);
-            
+
             // Notify parent component
             onReceiveAudio?.(remoteStream);
           });
 
           call.on('close', () => {
-            // Production: log removed
             updateState({ isReceivingVoice: false });
             onVoiceEnd?.();
-            
+
             // Clear the audio element
             const audioEl = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement;
             if (audioEl) {
@@ -407,7 +428,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       }
     });
     // onVoiceStart est consommé via forcePlayRemoteAudio ; sessionId via generatePeerId/getHostPeerId
-  }, [isHost, generatePeerId, getHostPeerId, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceEnd, onError, onReady, forcePlayRemoteAudio]);
+  }, [isHost, generatePeerId, getHostPeerId, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceEnd, onReceiveTribeAudio, onTribeAudioEnd, onError, onReady, forcePlayRemoteAudio]);
 
   /**
    * HOST: Broadcast audio to all connected peers
@@ -476,6 +497,46 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     updateState({ isBroadcasting: false });
   }, [isHost, updateState]);
 
+  /**
+   * 🎤 POINT 5: PARTICIPANT — envoie son micro à l'hôte ("Prendre la parole").
+   * Appelle le peer de l'hôte avec le flux micro ; l'hôte le mixe via "Volume Tribu".
+   */
+  const talkToHost = useCallback((stream: MediaStream) => {
+    if (isHost) {
+      console.warn('[PEER] talkToHost ignoré côté hôte');
+      return;
+    }
+    if (!peerRef.current?.open) {
+      console.warn('[PEER] Peer non connecté, impossible de prendre la parole');
+      return;
+    }
+
+    // Fermer un éventuel appel montant précédent
+    if (upstreamCallRef.current) {
+      try { upstreamCallRef.current.close(); } catch (e) { /* ignore */ }
+      upstreamCallRef.current = null;
+    }
+
+    const hostPeerId = getHostPeerId();
+    const call = peerRef.current.call(hostPeerId, stream);
+    if (call) {
+      upstreamCallRef.current = call;
+      call.on('error', (err) => {
+        console.error('[PEER] ❌ Upstream call error:', err);
+      });
+    }
+  }, [isHost, getHostPeerId]);
+
+  /**
+   * 🎤 POINT 5: PARTICIPANT — rend la parole (ferme l'appel montant).
+   */
+  const stopTalkToHost = useCallback(() => {
+    if (upstreamCallRef.current) {
+      try { upstreamCallRef.current.close(); } catch (e) { /* ignore */ }
+      upstreamCallRef.current = null;
+    }
+  }, []);
+
   // Disconnect
   const disconnect = useCallback(() => {
     // Production: log removed
@@ -486,6 +547,16 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       activeCallRef.current.close();
       activeCallRef.current = null;
     }
+
+    // 🎤 POINT 5: fermer l'appel montant (participant) et les appels tribu (hôte)
+    if (upstreamCallRef.current) {
+      try { upstreamCallRef.current.close(); } catch (e) { /* ignore */ }
+      upstreamCallRef.current = null;
+    }
+    tribeCallsRef.current.forEach((call) => {
+      try { call.close(); } catch (e) { /* ignore */ }
+    });
+    tribeCallsRef.current.clear();
 
     dataConnectionsRef.current.forEach((conn) => conn.close());
     dataConnectionsRef.current.clear();
@@ -543,6 +614,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     disconnect,
     broadcastAudio,
     stopBroadcast,
+    talkToHost,
+    stopTalkToHost,
     reconnect,
     remoteAudioRef,
   };

@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff } from 'lucide-react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
@@ -19,6 +19,7 @@ import { useToast } from '@/components/ui/Toast';
 import { generateSessionId } from '@/hooks/useAudioSync';
 import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
+import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
 import { isSupabaseConfigured, deleteTracks } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
@@ -438,6 +439,9 @@ export const SessionPage: React.FC = () => {
     setMicVolume,
     setTribeVolume,
     setHostVoiceVolume,
+    connectMicSource,
+    connectTribeStream,
+    disconnectTribeStream,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -482,6 +486,8 @@ export const SessionPage: React.FC = () => {
     disconnect: disconnectPeer,
     broadcastAudio,
     stopBroadcast,
+    talkToHost,
+    stopTalkToHost,
     remoteAudioRef,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
@@ -491,6 +497,13 @@ export const SessionPage: React.FC = () => {
     onReceiveAudio: () => {},
     onVoiceStart: () => {},
     onVoiceEnd: () => {},
+    // 👥 POINT 5: l'hôte reçoit le micro montant d'un participant → mixe via "Volume Tribu"
+    onReceiveTribeAudio: (stream, peerId) => {
+      connectTribeStream(stream, peerId);
+    },
+    onTribeAudioEnd: (peerId) => {
+      disconnectTribeStream(peerId);
+    },
     onError: (error) => {
       console.error('[WebRTC] Error:', error);
     },
@@ -525,9 +538,14 @@ export const SessionPage: React.FC = () => {
     
     if (hostMicStream && !peerConnectedRef.current) {
       peerConnectedRef.current = true;
-      connectPeer(hostMicStream).then(success => {
+      // 🎤 POINT 5: router le micro hôte via le GainNode "Mon Micro" (anti-larsen).
+      // connectMicSource initialise le mixeur si besoin et renvoie le flux au gain appliqué
+      // (ou le flux brut en fallback si le mixeur n'est pas prêt → aucune régression).
+      initializeMixer();
+      const micBroadcastStream = connectMicSource(hostMicStream);
+      connectPeer(micBroadcastStream).then(success => {
         if (success) {
-          broadcastAudio(hostMicStream);
+          broadcastAudio(micBroadcastStream);
         }
       });
     }
@@ -537,7 +555,38 @@ export const SessionPage: React.FC = () => {
       stopBroadcast();
       disconnectPeer();
     }
-  }, [sessionId, nickname, isHost, hostMicStream, connectPeer, broadcastAudio, stopBroadcast, disconnectPeer]);
+  }, [sessionId, nickname, isHost, hostMicStream, connectPeer, broadcastAudio, stopBroadcast, disconnectPeer, initializeMixer, connectMicSource]);
+
+  // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
+  const [isTalking, setIsTalking] = useState(false);
+  const participantMic = useMicrophone({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  });
+
+  // Quand le micro participant est prêt et qu'il a pris la parole → envoyer à l'hôte
+  useEffect(() => {
+    if (isHost || !isTalking) return;
+    if (participantMic.state.isCapturing && participantMic.audioStream) {
+      talkToHost(participantMic.audioStream);
+    }
+  }, [isHost, isTalking, participantMic.state.isCapturing, participantMic.audioStream, talkToHost]);
+
+  const handleToggleTalk = useCallback(async () => {
+    if (isTalking) {
+      stopTalkToHost();
+      participantMic.stopCapture();
+      setIsTalking(false);
+      showToast('Vous avez rendu la parole', 'default');
+    } else {
+      const ok = await participantMic.startCapture();
+      if (ok) {
+        setIsTalking(true);
+        showToast('Vous avez la parole', 'success');
+      }
+    }
+  }, [isTalking, participantMic, stopTalkToHost, showToast]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -1635,13 +1684,36 @@ export const SessionPage: React.FC = () => {
                 {/* Bandeau Mode Participant */}
                 {!isHost && (
                   <div className="mb-4 px-4 py-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
-                    <div className="flex items-center gap-3">
-                      <Headphones className="w-6 h-6 text-purple-300 flex-shrink-0" />
-                      <div>
-                        <p className="text-purple-300 font-medium text-sm">Mode écoute seule - Synchronisé avec l'hôte</p>
-                        <p className="text-white/50 text-xs">La lecture est contrôlée par l'hôte de la session</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Headphones className="w-6 h-6 text-purple-300 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-purple-300 font-medium text-sm truncate">Mode écoute seule - Synchronisé avec l'hôte</p>
+                          <p className="text-white/50 text-xs truncate">La lecture est contrôlée par l'hôte de la session</p>
+                        </div>
                       </div>
+
+                      {/* 🎤 POINT 5: Prendre la parole (micro participant → hôte) */}
+                      <button
+                        onClick={handleToggleTalk}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all flex-shrink-0 ${
+                          isTalking
+                            ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
+                            : 'bg-white/10 text-white/80 border border-white/20 hover:bg-white/20'
+                        }`}
+                        data-testid="talk-toggle-btn"
+                      >
+                        {isTalking ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                        <span className="hidden sm:inline">{isTalking ? 'Rendre la parole' : 'Prendre la parole'}</span>
+                      </button>
                     </div>
+
+                    {participantMic.state.error && (
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-red-400">
+                        <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                        {participantMic.state.error}
+                      </p>
+                    )}
                   </div>
                 )}
                 

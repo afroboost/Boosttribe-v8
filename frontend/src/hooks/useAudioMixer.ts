@@ -31,6 +31,8 @@ export interface UseAudioMixerReturn {
   setHostVoiceVolume: (volume: number) => void;
   connectMusicSource: (audioElement: HTMLAudioElement) => void;
   connectMicSource: (stream: MediaStream) => MediaStream;
+  connectTribeStream: (stream: MediaStream, peerId: string) => void;
+  disconnectTribeStream: (peerId: string) => void;
   connectHostVoice: (audioElement: HTMLAudioElement) => void;
   disconnectMusic: () => void;
   disconnectMic: () => void;
@@ -67,7 +69,12 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const musicSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const micSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const hostVoiceSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-  
+
+  // 🎤 POINT 5: destination de flux pour le micro hôte (sortie WebRTC, JAMAIS les HP de l'hôte)
+  const micStreamDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  // 👥 POINT 5: sources des micros participants entrants (mixés via tribeGain → HP hôte)
+  const tribeSourcesRef = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map());
+
   // Track connected elements
   const connectedMusicElement = useRef<HTMLAudioElement | null>(null);
   const connectedHostVoiceElement = useRef<HTMLAudioElement | null>(null);
@@ -77,14 +84,22 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    */
   const initialize = useCallback((): boolean => {
     if (audioContextRef.current) {
-      return true; // Déjà initialisé
+      // Déjà initialisé — s'assurer qu'il tourne (évite une diffusion muette si suspendu)
+      if (audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume().catch(() => { /* ignore */ });
+      }
+      return true;
     }
-    
+
     try {
       // Créer l'AudioContext
       const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioContextClass();
       audioContextRef.current = ctx;
+      // S'assurer que le contexte tourne (politique autoplay → parfois 'suspended')
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => { /* ignore */ });
+      }
       
       // Créer les GainNodes indépendants
       // 🎵 Canal A: Musique
@@ -92,12 +107,14 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       musicGainRef.current.gain.value = state.musicVolume;
       musicGainRef.current.connect(ctx.destination);
       
-      // 🎤 Canal B: Micro Hôte
+      // 🎤 Canal B: Micro Hôte → destination de flux UNIQUEMENT (anti-larsen).
+      // ⚠️ POINT 5: micGain n'est PAS connecté à ctx.destination → l'hôte ne s'entend jamais.
       micGainRef.current = ctx.createGain();
       micGainRef.current.gain.value = state.micVolume;
-      micGainRef.current.connect(ctx.destination);
-      
-      // 👥 Canal C: Volume Tribu (participants entrants)
+      micStreamDestRef.current = ctx.createMediaStreamDestination();
+      micGainRef.current.connect(micStreamDestRef.current);
+
+      // 👥 Canal C: Volume Tribu (participants entrants) → HP de l'hôte
       tribeGainRef.current = ctx.createGain();
       tribeGainRef.current.gain.value = state.tribeVolume;
       tribeGainRef.current.connect(ctx.destination);
@@ -158,17 +175,18 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   }, [initialize]);
 
   /**
-   * Connecte un stream micro au canal micro
-   * Retourne un nouveau stream avec le gain appliqué (pour WebRTC)
+   * 🎤 POINT 5: Connecte le micro hôte au GainNode "Mon Micro" et retourne le flux
+   * traité (gain appliqué) destiné à la diffusion WebRTC. Ce flux ne passe JAMAIS
+   * par les haut-parleurs de l'hôte (micGain → micStreamDest uniquement) → anti-larsen.
    */
   const connectMicSource = useCallback((stream: MediaStream): MediaStream => {
     const ctx = audioContextRef.current;
-    if (!ctx || !micGainRef.current) {
+    if (!ctx || !micGainRef.current || !micStreamDestRef.current) {
       initialize();
-      return stream; // Retourner le stream original si pas initialisé
+      return stream; // Fallback: stream original si le mixeur n'est pas prêt
     }
-    
-    // Déconnecter l'ancienne source
+
+    // Déconnecter l'ancienne source micro
     if (micSourceRef.current) {
       try {
         micSourceRef.current.disconnect();
@@ -176,23 +194,60 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
         // Ignore
       }
     }
-    
+
+    // S'assurer que le contexte tourne, sinon le flux diffusé serait muet
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => { /* ignore */ });
+    }
+
     try {
-      // Créer la source à partir du stream
       const source = ctx.createMediaStreamSource(stream);
-      source.connect(micGainRef.current);
+      source.connect(micGainRef.current); // source → micGain → micStreamDest (déjà câblé à l'init)
       micSourceRef.current = source;
-      
-      // Créer un nouveau stream avec le gain appliqué pour WebRTC
-      const destination = ctx.createMediaStreamDestination();
-      micGainRef.current.connect(destination);
-      
-      return destination.stream;
+      return micStreamDestRef.current.stream;
     } catch (err) {
       // Silencieux - retourner le stream original
       return stream;
     }
   }, [initialize]);
+
+  /**
+   * 👥 POINT 5: Mixe un flux micro participant entrant via le GainNode "Volume Tribu".
+   * source(participant) → tribeGain → HP de l'hôte. Piloté par le slider Volume Tribu.
+   */
+  const connectTribeStream = useCallback((stream: MediaStream, peerId: string) => {
+    const ctx = audioContextRef.current;
+    if (!ctx || !tribeGainRef.current) {
+      initialize();
+      setTimeout(() => connectTribeStream(stream, peerId), 100);
+      return;
+    }
+
+    // Remplacer une éventuelle source existante pour ce participant
+    const existing = tribeSourcesRef.current.get(peerId);
+    if (existing) {
+      try { existing.disconnect(); } catch (e) { /* ignore */ }
+    }
+
+    try {
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(tribeGainRef.current);
+      tribeSourcesRef.current.set(peerId, source);
+    } catch (err) {
+      // Silencieux
+    }
+  }, [initialize]);
+
+  /**
+   * 👥 POINT 5: Retire un flux participant (quand il rend la parole / se déconnecte)
+   */
+  const disconnectTribeStream = useCallback((peerId: string) => {
+    const source = tribeSourcesRef.current.get(peerId);
+    if (source) {
+      try { source.disconnect(); } catch (e) { /* ignore */ }
+      tribeSourcesRef.current.delete(peerId);
+    }
+  }, []);
 
   /**
    * Connecte l'audio de la voix hôte pour les participants
@@ -336,6 +391,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     setHostVoiceVolume,
     connectMusicSource,
     connectMicSource,
+    connectTribeStream,
+    disconnectTribeStream,
     connectHostVoice,
     disconnectMusic,
     disconnectMic,

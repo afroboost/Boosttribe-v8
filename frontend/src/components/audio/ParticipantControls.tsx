@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, X, MoreHorizontal, Mic } from 'lucide-react';
+import { Volume2, VolumeX, X, MoreHorizontal, Mic, Crown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 
@@ -74,7 +74,9 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
       >
         {participant.avatar}
         {participant.isHost && (
-          <span className="absolute -top-1 -right-1 text-xs">👑</span>
+          <span className="absolute -top-1 -right-1 text-yellow-400">
+            <Crown size={10} strokeWidth={2} fill="currentColor" />
+          </span>
         )}
         {/* Mic active indicator */}
         {participant.isMicActive && (

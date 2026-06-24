@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { Repeat, Repeat1 } from 'lucide-react';
+import { Repeat, Repeat1, AlertCircle } from 'lucide-react';
 import { useAudioSync, AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
 
 // Format time helper - formats seconds into mm:ss
@@ -424,8 +424,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
         {/* Error Display */}
         {audioState.error && (
-          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-            ⚠️ {audioState.error}
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{audioState.error}</span>
           </div>
         )}
       </div>

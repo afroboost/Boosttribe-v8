@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button';
 import { uploadAudioFile, isSupabaseConfigured, UploadResult } from '@/lib/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
 import { Track } from './PlaylistDnD';
-import { Link } from 'react-router-dom';
 
 interface TrackUploaderProps {
   sessionId: string;
@@ -12,9 +11,14 @@ interface TrackUploaderProps {
   currentTrackCount: number;
   maxTracks?: number;
   disabled?: boolean;
+  // POINT 4b: appelé quand un non-abonné atteint sa limite et tente d'ajouter un titre
+  onUpgradeRequest?: () => void;
 }
 
 type UploadStatus = 'idle' | 'selecting' | 'uploading' | 'success' | 'error' | 'limit_reached';
+
+// POINT 4a: durée max d'un titre en version gratuite (secondes)
+const FREE_MAX_DURATION_SEC = 30;
 
 export const TrackUploader: React.FC<TrackUploaderProps> = ({
   sessionId,
@@ -22,6 +26,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   currentTrackCount,
   maxTracks = 10,
   disabled = false,
+  onUpgradeRequest,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<UploadStatus>('idle');
@@ -30,7 +35,10 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Get auth context
-  const { isAdmin, canUploadTrack, trackLimit } = useAuth();
+  const { isAdmin, isSubscribed, canUploadTrack, trackLimit } = useAuth();
+
+  // Version gratuite = ni admin ni abonné (1 titre, 30s max)
+  const isFreeTier = !isAdmin && !isSubscribed;
 
   // Check upload limits - Admin bypasses all limits
   const effectiveMaxTracks = isAdmin ? 999 : (trackLimit === -1 ? maxTracks : Math.min(maxTracks, trackLimit));
@@ -57,10 +65,38 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
       return;
     }
 
+    // POINT 4a: version gratuite → durée max 30s (vérifie la durée réelle du fichier)
+    if (isFreeTier) {
+      const objectUrl = URL.createObjectURL(file);
+      const probe = document.createElement('audio');
+      probe.preload = 'metadata';
+      probe.onloadedmetadata = () => {
+        const duration = probe.duration;
+        URL.revokeObjectURL(objectUrl);
+        if (isFinite(duration) && duration > FREE_MAX_DURATION_SEC + 0.5) {
+          setError(`Version gratuite limitée à ${FREE_MAX_DURATION_SEC}s par titre. Passez Premium pour des morceaux complets.`);
+          setStatus('error');
+          return;
+        }
+        setSelectedFile(file);
+        setStatus('selecting');
+        setError(null);
+      };
+      probe.onerror = () => {
+        // Durée illisible → on ne bloque pas un fichier valide (fail-open)
+        URL.revokeObjectURL(objectUrl);
+        setSelectedFile(file);
+        setStatus('selecting');
+        setError(null);
+      };
+      probe.src = objectUrl;
+      return;
+    }
+
     setSelectedFile(file);
     setStatus('selecting');
     setError(null);
-  }, []);
+  }, [isFreeTier]);
 
   // Handle upload
   const handleUpload = useCallback(async () => {
@@ -192,16 +228,16 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
               </p>
             </div>
           </div>
-          <Link to="/pricing">
-            <Button
-              size="sm"
-              className="w-full text-white border-none"
-              style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
-            >
-              <Crown size={14} className="mr-2" />
-              Voir les offres
-            </Button>
-          </Link>
+          <Button
+            size="sm"
+            onClick={() => onUpgradeRequest?.()}
+            className="w-full text-white border-none"
+            style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+            data-testid="upgrade-cta-btn"
+          >
+            <Crown size={14} className="mr-2" />
+            Passer Premium
+          </Button>
         </div>
       )}
 

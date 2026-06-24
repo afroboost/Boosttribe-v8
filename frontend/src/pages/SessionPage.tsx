@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2 } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft } from 'lucide-react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
@@ -211,13 +211,14 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
 
             <Button
               type="submit"
-              className="w-full h-12 text-white border-none font-medium"
+              className="w-full h-12 text-white border-none font-medium flex items-center justify-center gap-2"
               style={{
                 background: theme.colors.gradient.primary,
                 boxShadow: '0 4px 24px rgba(138, 46, 255, 0.35)',
               }}
             >
-              {isHost ? '🎵 Démarrer la session' : '🎧 Rejoindre l\'écoute'}
+              {isHost ? <Music className="w-4 h-4" /> : <Headphones className="w-4 h-4" />}
+              {isHost ? 'Démarrer la session' : "Rejoindre l'écoute"}
             </Button>
           </form>
 
@@ -236,16 +237,18 @@ const SubscriptionBadge: React.FC = () => {
   
   if (isAdmin) {
     return (
-      <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">
-        👑 Mode Admin
+      <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 flex items-center gap-1">
+        <Crown className="w-3.5 h-3.5" />
+        Mode Admin
       </Badge>
     );
   }
-  
+
   if (isSubscribed) {
     return (
-      <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-        ✓ Abonné {profile?.subscription_status}
+      <Badge className="bg-green-500/20 text-green-400 border-green-500/30 flex items-center gap-1">
+        <Check className="w-3.5 h-3.5" />
+        Abonné {profile?.subscription_status}
       </Badge>
     );
   }
@@ -308,13 +311,14 @@ const CreateSessionView: React.FC<CreateSessionViewProps> = ({ onCreateSession, 
       <CardContent className="space-y-4">
         <Button
           onClick={onCreateSession}
-          className="w-full h-12 text-white border-none font-medium"
+          className="w-full h-12 text-white border-none font-medium flex items-center justify-center gap-2"
           style={{
             background: theme.colors.gradient.primary,
             boxShadow: '0 4px 24px rgba(138, 46, 255, 0.35)',
           }}
         >
-          🎵 Créer une nouvelle session
+          <Music className="w-4 h-4" />
+          Créer une nouvelle session
         </Button>
         
         <div className="relative">
@@ -340,7 +344,7 @@ const CreateSessionView: React.FC<CreateSessionViewProps> = ({ onCreateSession, 
             variant="outline" 
             className="w-full border-white/20 text-white/70 hover:bg-white/10"
           >
-            ← Retour à l'accueil
+            <span className="inline-flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Retour à l'accueil</span>
           </Button>
         </Link>
       </CardContent>
@@ -759,7 +763,7 @@ export const SessionPage: React.FC = () => {
           if (!isHost) {
             setTracks([]);
             setSelectedTrack(null);
-            showToast('🗑️ La playlist a été supprimée par l\'hôte', 'warning');
+            showToast('La playlist a été supprimée par l\'hôte', 'warning');
           }
         }
       )
@@ -860,7 +864,7 @@ export const SessionPage: React.FC = () => {
         
         if (!isHost) {
           setTracks(newTracks);
-          showToast('🎵 Playlist synchronisée', 'default');
+          showToast('Playlist synchronisée', 'default');
           
           if (newTracks.length > 0 && !selectedTrack) {
             setSelectedTrack(newTracks[0]);
@@ -928,7 +932,7 @@ export const SessionPage: React.FC = () => {
           if (newTime >= FREE_TRIAL_LIMIT_SECONDS) {
             setTrialLimitReached(true);
             audioEl.pause();
-            showToast('⏱️ Limite d\'essai gratuit atteinte (5 min). Passez à un abonnement Pro pour une écoute illimitée.', 'warning');
+            showToast('Limite d\'essai gratuit atteinte (5 min). Passez à un abonnement Pro pour une écoute illimitée.', 'warning');
           }
           return newTime;
         });
@@ -968,10 +972,10 @@ export const SessionPage: React.FC = () => {
     if (isHost) {
       if (newMuted) {
         socket.muteUser(id);
-        showToast(`🔇 ${participant?.name || 'Participant'} mis en sourdine`, 'warning');
+        showToast(`${participant?.name || 'Participant'} mis en sourdine`, 'warning');
       } else {
         socket.unmuteUser(id);
-        showToast(`🔊 ${participant?.name || 'Participant'} réactivé`, 'success');
+        showToast(`${participant?.name || 'Participant'} réactivé`, 'success');
       }
     }
   }, [isHost, participantsState, mutedUserIds, socket, showToast]);
@@ -984,7 +988,7 @@ export const SessionPage: React.FC = () => {
 
     if (isHost) {
       socket.ejectUser(id);
-      showToast(`❌ ${participant?.name || 'Participant'} a été éjecté`, 'success');
+      showToast(`${participant?.name || 'Participant'} a été éjecté`, 'success');
     }
   }, [isHost, participantsState, socket, showToast]);
 
@@ -1006,6 +1010,12 @@ export const SessionPage: React.FC = () => {
     socket.syncPlaylist(tracks, track.id);
   }, [showToast, isHost, socket, tracks]);
 
+  // POINT 4b: non-abonné à la limite → notification puis redirection vers le paiement
+  const handleUpgradeRequest = useCallback(() => {
+    showToast('Passez Premium pour ajouter plusieurs titres', 'warning');
+    navigate('/pricing');
+  }, [showToast, navigate]);
+
   // Handle track upload
   const handleTrackUploaded = useCallback((newTrack: Track) => {
     if (tracks.length >= 10) {
@@ -1019,7 +1029,7 @@ export const SessionPage: React.FC = () => {
       setSelectedTrack(newTrack);
     }
     
-    showToast(`🎵 "${newTrack.title}" ajouté à la playlist`, 'success');
+    showToast(`"${newTrack.title}" ajouté à la playlist`, 'success');
     
     const updatedTracks = [...tracks, newTrack];
     const trackIdToSync = selectedTrack?.id || newTrack.id;
@@ -1045,9 +1055,9 @@ export const SessionPage: React.FC = () => {
     }
     
     if (tracksToDelete.length === 1) {
-      showToast(`🗑️ "${tracksToDelete[0].title}" supprimé`, 'success');
+      showToast(`"${tracksToDelete[0].title}" supprimé`, 'success');
     } else {
-      showToast(`🗑️ ${tracksToDelete.length} titres supprimés`, 'success');
+      showToast(`${tracksToDelete.length} titres supprimés`, 'success');
     }
     
     const trackIdToSync = selectedTrack && !trackIds.has(selectedTrack.id) 
@@ -1078,7 +1088,7 @@ export const SessionPage: React.FC = () => {
     setStoredNickname(newNickname);
     setNickname(newNickname);
     setShowNicknameModal(false);
-    showToast(`Bienvenue ${newNickname} ! 🎵`, 'success');
+    showToast(`Bienvenue ${newNickname} !`, 'success');
   }, [showToast]);
 
   // Generate session ID when creating new session
@@ -1374,8 +1384,8 @@ export const SessionPage: React.FC = () => {
                 {isHost ? 'Hôte' : 'Participant'}
               </Badge>
 
-              {/* Subscription Badge */}
-              <SubscriptionBadge />
+              {/* Subscription Badge — POINT 1: réservé à l'hôte/admin, masqué pour les participants */}
+              {isHost && <SubscriptionBadge />}
             </div>
             
             <div className="flex items-center gap-3">
@@ -1388,28 +1398,30 @@ export const SessionPage: React.FC = () => {
                 />
               )}
               
-              {/* WebRTC status indicator */}
-              {peerState.isConnected && (
-                <span 
-                  className={`text-xs px-2 py-0.5 rounded-full ${
-                    peerState.isBroadcasting 
-                      ? 'bg-green-500/20 text-green-400' 
+              {/* WebRTC status indicator — POINT 1: réservé à l'hôte (info technique masquée aux participants) */}
+              {isHost && peerState.isConnected && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+                    peerState.isBroadcasting
+                      ? 'bg-green-500/20 text-green-400'
                       : 'bg-blue-500/20 text-blue-400'
                   }`}
                   title={`WebRTC: ${peerState.connectedPeers.length} pairs connectés`}
                 >
-                  {peerState.isBroadcasting ? '📡 Live' : '🔗 WebRTC'}
+                  <Radio className="w-3 h-3" />
+                  {peerState.isBroadcasting ? 'Live' : 'WebRTC'}
                 </span>
               )}
 
               {/* PARTICIPANT: Voice receiving indicator */}
               {!isHost && peerState.isReceivingVoice && (
-                <span 
+                <span
                   className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 animate-pulse flex items-center gap-1"
                   data-testid="voice-receiving-indicator"
                 >
                   <span className="inline-block w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-                  🔉 Voix reçue
+                  <Volume2 className="w-3 h-3" />
+                  Voix reçue
                 </span>
               )}
               
@@ -1429,8 +1441,8 @@ export const SessionPage: React.FC = () => {
                 </button>
               )}
               <Link to="/">
-                <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10">
-                  ← Retour
+                <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10 inline-flex items-center gap-1">
+                  <ArrowLeft className="w-4 h-4" /> Retour
                 </Button>
               </Link>
             </div>
@@ -1452,9 +1464,9 @@ export const SessionPage: React.FC = () => {
                 Session d'écoute
               </h1>
               <p className="text-white/60 text-sm sm:text-base">
-                {isHost 
-                  ? (hasHostPrivileges 
-                      ? '👑 Mode Admin - Contrôle total de la session.'
+                {isHost
+                  ? (hasHostPrivileges
+                      ? 'Mode Admin - Contrôle total de la session.'
                       : 'Vous êtes l\'hôte. Contrôlez la lecture pour tous les participants.')
                   : 'Mode écoute seule. La lecture est synchronisée avec l\'hôte.'
                 }
@@ -1481,18 +1493,19 @@ export const SessionPage: React.FC = () => {
                         onClick={handleCopyCode}
                         size="sm"
                         variant="outline"
-                        className={codeCopied
+                        className={`flex items-center gap-1 ${codeCopied
                           ? 'bg-green-500/20 text-green-400 border-green-500/30'
                           : 'bg-white/10 text-white border-white/20'
-                        }
+                        }`}
                       >
-                        {codeCopied ? '✓ Copié' : 'Copier le code'}
+                        {codeCopied && <Check className="w-4 h-4" />}
+                        {codeCopied ? 'Copié' : 'Copier le code'}
                       </Button>
                     </div>
                     <p className="text-white/60 text-xs mt-3 leading-relaxed">
                       Partagez ce code avec vos amis, ou envoyez-leur directement le lien
                       ci-dessous. En ouvrant le lien, ils rejoignent automatiquement votre
-                      session en écoute synchronisée. 🎧
+                      session en écoute synchronisée.
                     </p>
                   </div>
 
@@ -1517,14 +1530,14 @@ export const SessionPage: React.FC = () => {
                       variant="outline"
                     >
                       {linkCopied ? (
-                        <>✓ Copié</>
+                        <span className="flex items-center gap-1"><Check className="w-4 h-4" /> Copié</span>
                       ) : (
-                        <>
-                          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <span className="flex items-center gap-1">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
                           </svg>
                           Copier le lien
-                        </>
+                        </span>
                       )}
                     </Button>
                   </div>
@@ -1540,7 +1553,7 @@ export const SessionPage: React.FC = () => {
                   <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 rounded-lg p-3 mb-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="text-purple-400 text-sm font-medium">⏱️ Essai Gratuit</span>
+                        <span className="flex items-center gap-1 text-purple-400 text-sm font-medium"><Clock className="w-3.5 h-3.5" /> Essai Gratuit</span>
                         <span className="text-white/70 text-sm">
                           {Math.floor((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / 60)}:{String((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) % 60).padStart(2, '0')} restant
                         </span>
@@ -1573,8 +1586,9 @@ export const SessionPage: React.FC = () => {
                       </div>
                       
                       {/* Title */}
-                      <h2 className="text-2xl font-bold text-white text-center mb-3" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-                        ⏱️ Limite d'essai atteinte
+                      <h2 className="flex items-center justify-center gap-2 text-2xl font-bold text-white text-center mb-3" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+                        <Clock className="w-6 h-6 text-red-400" />
+                        Limite d'essai atteinte
                       </h2>
                       
                       {/* Description */}
@@ -1586,24 +1600,25 @@ export const SessionPage: React.FC = () => {
                       {/* Features */}
                       <div className="bg-white/5 rounded-lg p-4 mb-6 space-y-2">
                         <div className="flex items-center gap-2 text-white/80 text-sm">
-                          <span className="text-green-400">✓</span> Écoute illimitée
+                          <Check className="w-4 h-4 text-green-400 flex-shrink-0" /> Écoute illimitée
                         </div>
                         <div className="flex items-center gap-2 text-white/80 text-sm">
-                          <span className="text-green-400">✓</span> 50 chansons par session
+                          <Check className="w-4 h-4 text-green-400 flex-shrink-0" /> 50 chansons par session
                         </div>
                         <div className="flex items-center gap-2 text-white/80 text-sm">
-                          <span className="text-green-400">✓</span> Voix en temps réel
+                          <Check className="w-4 h-4 text-green-400 flex-shrink-0" /> Voix en temps réel
                         </div>
                       </div>
-                      
+
                       {/* CTA */}
-                      <Link 
+                      <Link
                         to="/pricing"
-                        className="block w-full text-center py-4 rounded-xl text-white font-bold text-lg transition-all hover:scale-105"
+                        className="flex items-center justify-center gap-2 w-full text-center py-4 rounded-xl text-white font-bold text-lg transition-all hover:scale-105"
                         style={{ background: theme.colors.gradient.primary }}
                         data-testid="trial-limit-upgrade-btn"
                       >
-                        🚀 Passer à Pro
+                        <Rocket className="w-5 h-5" />
+                        Passer à Pro
                       </Link>
                       
                       {/* Secondary link */}
@@ -1611,17 +1626,17 @@ export const SessionPage: React.FC = () => {
                         to="/"
                         className="block text-center mt-4 text-white/50 hover:text-white/70 text-sm transition-colors"
                       >
-                        ← Retour à l'accueil
+                        <span className="inline-flex items-center gap-1"><ArrowLeft className="w-4 h-4" /> Retour à l'accueil</span>
                       </Link>
                     </div>
                   </div>
                 )}
                 
-                {/* 🎧 Bandeau Mode Participant */}
+                {/* Bandeau Mode Participant */}
                 {!isHost && (
                   <div className="mb-4 px-4 py-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
                     <div className="flex items-center gap-3">
-                      <span className="text-2xl">🎧</span>
+                      <Headphones className="w-6 h-6 text-purple-300 flex-shrink-0" />
                       <div>
                         <p className="text-purple-300 font-medium text-sm">Mode écoute seule - Synchronisé avec l'hôte</p>
                         <p className="text-white/50 text-xs">La lecture est contrôlée par l'hôte de la session</p>
@@ -1655,10 +1670,10 @@ export const SessionPage: React.FC = () => {
                     {isHost ? "Playlist vide" : (isSyncActive ? "En attente de l'hôte" : "Connexion...")}
                   </h3>
                   <p className="text-white/50 text-sm">
-                    {isHost 
+                    {isHost
                       ? "Uploadez votre premier morceau pour démarrer la session"
-                      : isSyncActive 
-                        ? "📡 Sync Cloud actif - La playlist s'affichera dès que l'hôte ajoutera des morceaux"
+                      : isSyncActive
+                        ? "Sync Cloud actif - La playlist s'affichera dès que l'hôte ajoutera des morceaux"
                         : "Connexion au serveur..."
                     }
                   </p>
@@ -1685,6 +1700,7 @@ export const SessionPage: React.FC = () => {
                     currentTrackCount={tracks.length}
                     maxTracks={10}
                     disabled={!isHost}
+                    onUpgradeRequest={handleUpgradeRequest}
                   />
                   
                   {/* Playlist with DnD */}
@@ -1700,8 +1716,9 @@ export const SessionPage: React.FC = () => {
                   
                   {/* Supabase status */}
                   {!isSupabaseConfigured && (
-                    <p className="text-xs text-yellow-400/60 text-center pt-2 border-t border-white/10">
-                      ⚠️ Mode démo (Supabase non configuré)
+                    <p className="flex items-center justify-center gap-1.5 text-xs text-yellow-400/60 text-center pt-2 border-t border-white/10">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      Mode démo (Supabase non configuré)
                     </p>
                   )}
                 </CardContent>
@@ -1713,7 +1730,7 @@ export const SessionPage: React.FC = () => {
               <Card className="border-white/10 bg-white/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-white text-lg flex items-center gap-2">
-                    <span className="text-green-400">📡</span>
+                    <Radio className="w-4 h-4 text-green-400" />
                     Playlist de l'hôte
                   </CardTitle>
                   <CardDescription className="text-white/50">
@@ -1806,14 +1823,15 @@ export const SessionPage: React.FC = () => {
                 )}
                 <div className="flex justify-between items-center">
                   <span className="text-white/60 text-sm">Sync</span>
-                  <Badge 
-                    className={socket.isSupabaseMode
+                  <Badge
+                    className={`flex items-center gap-1 ${socket.isSupabaseMode
                       ? 'bg-green-500/20 text-green-400 border-green-500/30'
                       : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                    }
+                    }`}
                     data-testid="sync-status-badge"
                   >
-                    {socket.isSupabaseMode ? '✓ Cloud' : '⚡ Démo'}
+                    {socket.isSupabaseMode ? <Cloud className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                    {socket.isSupabaseMode ? 'Cloud' : 'Démo'}
                   </Badge>
                 </div>
                 
@@ -1821,7 +1839,7 @@ export const SessionPage: React.FC = () => {
                 {!socket.isSupabaseMode && (
                   <div className="pt-3 mt-3 border-t border-white/5">
                     <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/20">
-                      <span className="text-amber-400 text-base">✨</span>
+                      <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0" />
                       <div className="flex-1">
                         <p className="text-amber-400/90 text-xs font-medium">Mode Démo</p>
                         <p className="text-amber-400/60 text-[10px] leading-tight">
@@ -1876,8 +1894,9 @@ export const SessionPage: React.FC = () => {
             {/* Instructions */}
             <Card className="border-white/10 bg-white/5">
               <CardHeader>
-                <CardTitle className="text-white text-lg">
-                  💡 Instructions
+                <CardTitle className="flex items-center gap-2 text-white text-lg">
+                  <Lightbulb className="w-5 h-5 text-purple-400" />
+                  Instructions
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-white/60 text-sm space-y-2">

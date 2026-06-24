@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, Mic, Users, Headphones, ChevronDown, ChevronUp } from 'lucide-react';
+import { Volume2, Mic, Users, Headphones, ChevronDown, ChevronUp, Music } from 'lucide-react';
 
 /**
  * 🎚️ AUDIO MIXER PANEL - Boosttribe V8 Stable Gold
@@ -136,8 +136,9 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
         <div className="flex items-center gap-2">
           {/* Quick volume indicator when collapsed */}
           {isCollapsed && (
-            <span className="text-[10px] text-white/40 font-mono hidden sm:block">
-              🎵 {Math.round(musicVolume * 100)}%
+            <span className="flex items-center gap-1 text-[10px] text-white/40 font-mono hidden sm:flex">
+              <Music className="w-3 h-3" />
+              {Math.round(musicVolume * 100)}%
             </span>
           )}
           {isCollapsed ? (
@@ -201,10 +202,11 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
       {/* Info footer - Compact on mobile */}
       {!isCollapsed && (
         <div className="px-3 sm:px-4 pb-2 sm:pb-3">
-          <p className="text-[9px] sm:text-[10px] text-white/40 text-center">
-            {isHost 
-              ? '🎧 Canaux indépendants'
-              : '🎧 Ajustez selon vos préférences'
+          <p className="flex items-center justify-center gap-1.5 text-[9px] sm:text-[10px] text-white/40 text-center">
+            <Headphones className="w-3 h-3" />
+            {isHost
+              ? 'Canaux indépendants'
+              : 'Ajustez selon vos préférences'
             }
           </p>
         </div>

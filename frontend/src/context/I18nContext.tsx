@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from 'react';
+import { Globe, Check } from 'lucide-react';
 
 // Types
 export type Language = 'fr' | 'en' | 'de';
@@ -258,33 +259,71 @@ export const useI18n = (): I18nContextType => {
   return context;
 };
 
-// Language Selector Component
+// Language Selector Component — bouton icône Globe + menu déroulant (FR/EN/DE)
 export const LanguageSelector: React.FC<{ className?: string }> = ({ className = '' }) => {
   const { language, setLanguage } = useI18n();
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  const languages: { code: Language; flag: string; label: string }[] = [
-    { code: 'fr', flag: '🇫🇷', label: 'FR' },
-    { code: 'en', flag: '🇬🇧', label: 'EN' },
-    { code: 'de', flag: '🇩🇪', label: 'DE' },
+  const languages: { code: Language; label: string }[] = [
+    { code: 'fr', label: 'Français' },
+    { code: 'en', label: 'English' },
+    { code: 'de', label: 'Deutsch' },
   ];
 
+  // Fermeture au clic extérieur
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  const handleSelect = (code: Language) => {
+    setLanguage(code); // persistance localStorage gérée dans setLanguage
+    setIsOpen(false);
+  };
+
   return (
-    <div className={`flex items-center gap-1 ${className}`}>
-      {languages.map((lang) => (
-        <button
-          key={lang.code}
-          onClick={() => setLanguage(lang.code)}
-          className={`px-2 py-1 rounded text-xs font-medium transition-all ${
-            language === lang.code
-              ? 'bg-purple-500 text-white'
-              : 'bg-white/10 text-white/70 hover:bg-white/20'
-          }`}
-          title={lang.label}
-          data-testid={`lang-${lang.code}`}
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        onClick={() => setIsOpen((v) => !v)}
+        className="flex items-center justify-center w-9 h-9 rounded-lg bg-white/10 text-white/80 hover:bg-white/20 transition-all"
+        title="Langue"
+        aria-haspopup="true"
+        aria-expanded={isOpen}
+        data-testid="lang-switcher"
+      >
+        <Globe className="w-4 h-4" />
+      </button>
+
+      {isOpen && (
+        <div
+          className="absolute right-0 mt-2 w-40 rounded-xl border border-white/10 bg-[#15151b] shadow-xl backdrop-blur-xl overflow-hidden z-50"
+          role="menu"
         >
-          {lang.flag}
-        </button>
-      ))}
+          {languages.map((lang) => (
+            <button
+              key={lang.code}
+              onClick={() => handleSelect(lang.code)}
+              className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                language === lang.code
+                  ? 'bg-purple-500/20 text-white'
+                  : 'text-white/70 hover:bg-white/10'
+              }`}
+              role="menuitem"
+              data-testid={`lang-${lang.code}`}
+            >
+              <span>{lang.label}</span>
+              {language === lang.code && <Check className="w-4 h-4 text-purple-400" />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

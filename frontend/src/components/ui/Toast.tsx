@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import { CheckCircle2, XCircle, AlertTriangle, Info, X } from "lucide-react";
 
 // Toast types
 type ToastVariant = "default" | "success" | "error" | "warning";
@@ -90,26 +91,26 @@ interface ToastItemProps {
   onDismiss: (id: string) => void;
 }
 
-const variantStyles: Record<ToastVariant, { bg: string; border: string; icon: string }> = {
+const variantStyles: Record<ToastVariant, { bg: string; border: string; Icon: React.ComponentType<{ className?: string }> }> = {
   default: {
     bg: "bg-white/10",
     border: "border-white/20",
-    icon: "ℹ️",
+    Icon: Info,
   },
   success: {
     bg: "bg-green-500/10",
     border: "border-green-500/30",
-    icon: "✓",
+    Icon: CheckCircle2,
   },
   error: {
     bg: "bg-red-500/10",
     border: "border-red-500/30",
-    icon: "✗",
+    Icon: XCircle,
   },
   warning: {
     bg: "bg-yellow-500/10",
     border: "border-yellow-500/30",
-    icon: "⚠",
+    Icon: AlertTriangle,
   },
 };
 
@@ -123,6 +124,7 @@ const variantTextColors: Record<ToastVariant, string> = {
 const ToastItem: React.FC<ToastItemProps> = ({ toast, onDismiss }) => {
   const styles = variantStyles[toast.variant];
   const textColor = variantTextColors[toast.variant];
+  const Icon = styles.Icon;
 
   return (
     <div
@@ -135,18 +137,16 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onDismiss }) => {
       style={{ fontFamily: "var(--bt-font-body)" }}
     >
       <div className="flex items-start gap-3">
-        <span className="text-lg">{styles.icon}</span>
+        <Icon className="w-5 h-5 flex-shrink-0 mt-0.5" />
         <p className="text-sm">{toast.message}</p>
       </div>
-      
+
       <button
         onClick={() => onDismiss(toast.id)}
         className="absolute top-2 right-2 p-1 text-white/50 hover:text-white transition-colors"
         aria-label="Fermer"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
+        <X className="w-4 h-4" />
       </button>
     </div>
   );

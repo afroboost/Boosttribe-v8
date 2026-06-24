@@ -414,6 +414,18 @@ export const SessionPage: React.FC = () => {
   // 🔊 BUG 1: autoplay bloqué côté participant (NotAllowedError) → bouton geste utilisateur
   const [audioBlocked, setAudioBlocked] = useState(false);
 
+  // 🔇 Décisions de mute de l'hôte (persistées localement, indépendantes de la presence)
+  const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set());
+  // 🔊 Volumes par participant (overlay local, la presence ne transporte pas le volume)
+  const [userVolumes, setUserVolumes] = useState<Record<string, number>>({});
+
+  // 💓 POINT 3a: dernier état de lecture de l'hôte (pour heartbeat de resynchro)
+  const heartbeatStateRef = useRef<{ isPlaying: boolean; currentTime: number; trackId: number | null }>({
+    isPlaying: false,
+    currentTime: 0,
+    trackId: null,
+  });
+
   // 🎧 AUDIO MIXER: Canaux indépendants pour musique et voix
   const {
     state: mixerState,
@@ -427,6 +439,15 @@ export const SessionPage: React.FC = () => {
       // Silencieux - démarrage réussi
     },
   });
+
+  // 🎚️ POINT 4: "Volume Musique" du mixeur contrôle réellement le gain de l'élément <audio>
+  const handleMusicVolumeChange = useCallback((volume: number) => {
+    setMusicVolume(volume);
+    const audioEl = document.querySelector('audio') as HTMLAudioElement | null;
+    if (audioEl) {
+      audioEl.volume = Math.max(0, Math.min(1, volume));
+    }
+  }, [setMusicVolume]);
 
   // Initialiser le mixeur au premier clic (user gesture required)
   useEffect(() => {
@@ -580,7 +601,7 @@ export const SessionPage: React.FC = () => {
   // Join socket session when session ID is available
   useEffect(() => {
     if (sessionId && socket.userId && nickname) {
-      socket.joinSession(sessionId, socket.userId, isHost);
+      socket.joinSession(sessionId, socket.userId, isHost, nickname);
     }
     
     return () => {
@@ -645,9 +666,9 @@ export const SessionPage: React.FC = () => {
     const unsubPlayback = socket.onPlaybackSync((payload) => {
       const targetTrack = tracks.find(t => t.id === payload.trackId);
       if (targetTrack) {
+        // POINT 1: synchro silencieuse (plus de toast "Enchaînement" qui spamme, surtout en repeat)
         setSelectedTrack(targetTrack);
-        showToast(`Enchaînement : ${targetTrack.title}`, 'default');
-        
+
         setTimeout(() => {
           const audioEl = document.querySelector('audio');
           if (audioEl && payload.isPlaying) {
@@ -756,15 +777,16 @@ export const SessionPage: React.FC = () => {
       .on('broadcast', { event: 'HOST_COMMAND' }, (payload) => {
         // ⚠️ PARTICIPANT ESCLAVE : écouter et obéir aux commandes de l'hôte
         if (!isHost && payload.payload) {
-          const command = payload.payload as { 
-            action: 'PLAY' | 'PAUSE' | 'SEEK';
+          const command = payload.payload as {
+            action: 'PLAY' | 'PAUSE' | 'SEEK' | 'STATE';
             currentTime: number;
             trackId?: number;
+            isPlaying?: boolean;
           };
-          
+
           const audioEl = document.querySelector('audio') as HTMLAudioElement;
           if (!audioEl) return;
-          
+
           // Synchroniser la piste si fournie
           if (command.trackId && tracks.length > 0) {
             const targetTrack = tracks.find(t => t.id === command.trackId);
@@ -772,33 +794,55 @@ export const SessionPage: React.FC = () => {
               setSelectedTrack(targetTrack);
             }
           }
-          
+
+          // 🔊 Lance la lecture côté participant ; ouvre l'overlay si autoplay bloqué
+          const tryPlay = () => {
+            audioEl.play().catch((err) => {
+              console.warn('[PARTICIPANT] Autoplay bloqué (commande hôte):', err);
+              setAudioBlocked(true);
+            });
+          };
+
           switch (command.action) {
             case 'PAUSE':
-              // ⏸️ PAUSE IMMÉDIATE - L'esclave obéit
+              // ⏸️ PAUSE IMMÉDIATE - L'esclave obéit (POINT 1: synchro silencieuse, plus de toast)
               if (!audioEl.paused) {
                 audioEl.pause();
-                showToast('⏸️ Pause (commande hôte)', 'default');
               }
               setHostIsPlaying(false);
               break;
-              
+
             case 'PLAY':
-              // ▶️ LECTURE - L'esclave reprend à la position exacte
+              // ▶️ LECTURE - L'esclave reprend à la position exacte (POINT 1: silencieux)
               audioEl.currentTime = command.currentTime || 0;
-              audioEl.play().catch((err) => {
-                // 🔊 BUG 1: autoplay bloqué (NotAllowedError) → demander un geste utilisateur
-                console.warn('[PARTICIPANT] Autoplay bloqué (commande hôte):', err);
-                setAudioBlocked(true);
-              });
-              showToast('▶️ Lecture (commande hôte)', 'default');
+              tryPlay();
               setHostIsPlaying(true);
               break;
-              
+
             case 'SEEK':
               // 🔄 SYNCHRONISATION DE POSITION
               if (Math.abs(audioEl.currentTime - command.currentTime) > 1) {
                 audioEl.currentTime = command.currentTime;
+              }
+              break;
+
+            case 'STATE':
+              // 💓 POINT 3a: heartbeat de l'hôte → resynchro complète (reconnexion / arrière-plan)
+              if (command.isPlaying) {
+                if (audioEl.paused) {
+                  // Le participant avait raté le PLAY (join tardif) → on relance à la bonne position
+                  audioEl.currentTime = command.currentTime || 0;
+                  tryPlay();
+                } else if (Math.abs(audioEl.currentTime - command.currentTime) > 1.5) {
+                  // Dérive trop importante → on recale
+                  audioEl.currentTime = command.currentTime;
+                }
+                setHostIsPlaying(true);
+              } else {
+                if (!audioEl.paused) {
+                  audioEl.pause();
+                }
+                setHostIsPlaying(false);
               }
               break;
           }
@@ -833,6 +877,25 @@ export const SessionPage: React.FC = () => {
       }
     };
   }, [sessionId, isHost, showToast, selectedTrack, user?.id, tracks]);
+
+  // 👥 POINT 2: Peupler la liste des participants depuis la Presence Realtime (temps réel).
+  // On exclut soi-même (ajouté séparément dans le useMemo ci-dessous) et on applique
+  // les overlays locaux (mute décidé par l'hôte, volume par participant).
+  useEffect(() => {
+    const others: Participant[] = socket.presentUsers
+      .filter(u => u.userId !== socket.userId)
+      .map(u => ({
+        id: u.userId,
+        name: u.nickname || 'Invité',
+        avatar: generateAvatar(u.nickname || 'Invité'),
+        isSynced: true,
+        isCurrentUser: false,
+        isHost: u.isHost,
+        volume: userVolumes[u.userId] ?? 100,
+        isMuted: mutedUserIds.has(u.userId),
+      }));
+    setParticipantsState(others);
+  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes]);
 
   // Build participants list with current user
   const participants = useMemo<Participant[]>(() => {
@@ -882,11 +945,11 @@ export const SessionPage: React.FC = () => {
   }, [isFreeTrial, trialLimitReached, showToast]);
 
   // Participant moderation handlers (Host only - sends socket commands)
+  // ⚠️ Les id ciblés sont les userId issus de la Presence → cohérents avec
+  //    muteUser/ejectUser → CMD_MUTE_USER/CMD_EJECT_USER (targetUserId === userId du participant).
   const handleParticipantVolumeChange = useCallback((id: string, volume: number) => {
-    setParticipantsState(prev => 
-      prev.map(p => p.id === id ? { ...p, volume, isMuted: volume === 0 } : p)
-    );
-    
+    setUserVolumes(prev => ({ ...prev, [id]: volume }));
+
     if (isHost) {
       socket.setUserVolume(id, volume);
     }
@@ -894,28 +957,31 @@ export const SessionPage: React.FC = () => {
 
   const handleParticipantMuteToggle = useCallback((id: string) => {
     const participant = participantsState.find(p => p.id === id);
-    const newMuted = !participant?.isMuted;
-    
-    setParticipantsState(prev =>
-      prev.map(p => p.id === id ? { ...p, isMuted: newMuted } : p)
-    );
-    
+    const newMuted = !mutedUserIds.has(id);
+
+    setMutedUserIds(prev => {
+      const next = new Set(prev);
+      if (newMuted) next.add(id); else next.delete(id);
+      return next;
+    });
+
     if (isHost) {
       if (newMuted) {
         socket.muteUser(id);
-        showToast(`🔇 ${participant?.name} mis en sourdine`, 'warning');
+        showToast(`🔇 ${participant?.name || 'Participant'} mis en sourdine`, 'warning');
       } else {
         socket.unmuteUser(id);
-        showToast(`🔊 ${participant?.name} réactivé`, 'success');
+        showToast(`🔊 ${participant?.name || 'Participant'} réactivé`, 'success');
       }
     }
-  }, [isHost, participantsState, socket, showToast]);
+  }, [isHost, participantsState, mutedUserIds, socket, showToast]);
 
   const handleParticipantEject = useCallback((id: string) => {
     const participant = participantsState.find(p => p.id === id);
-    
+
+    // Retrait optimiste ; la Presence (leave) réconciliera quand le client se déconnecte
     setParticipantsState(prev => prev.filter(p => p.id !== id));
-    
+
     if (isHost) {
       socket.ejectUser(id);
       showToast(`❌ ${participant?.name || 'Participant'} a été éjecté`, 'success');
@@ -1090,7 +1156,14 @@ export const SessionPage: React.FC = () => {
   // Handle audio state changes - L'HÔTE envoie des COMMANDES aux ESCLAVES
   const handleAudioStateChange = useCallback((state: AudioState) => {
     setAudioState(state);
-    
+
+    // 💓 POINT 3a: mémoriser le dernier état pour le heartbeat de resynchro
+    heartbeatStateRef.current = {
+      isPlaying: state.isPlaying,
+      currentTime: state.currentTime,
+      trackId: selectedTrack?.id ?? null,
+    };
+
     // 🔄 MAÎTRE: L'hôte envoie des commandes PLAY/PAUSE explicites
     if (isHost && sessionId && supabase && isSupabaseConfigured) {
       // Détecter le changement d'état play/pause
@@ -1124,6 +1197,30 @@ export const SessionPage: React.FC = () => {
       }
     }
   }, [isHost, sessionId, selectedTrack?.id]);
+
+  // 💓 POINT 3a: Heartbeat d'état de l'hôte toutes les 4s sur le canal playback.
+  // Permet à un participant qui (re)rejoint ou revient d'arrière-plan de retrouver
+  // immédiatement la lecture synchronisée (piste + position + play/pause).
+  useEffect(() => {
+    if (!isHost || !sessionId || !supabase || !isSupabaseConfigured) return;
+
+    const interval = setInterval(() => {
+      const st = heartbeatStateRef.current;
+      if (!st.trackId) return; // rien à diffuser tant qu'aucune piste n'est jouée
+      supabase!.channel(`playback:${sessionId}`).send({
+        type: 'broadcast',
+        event: 'HOST_COMMAND',
+        payload: {
+          action: 'STATE',
+          currentTime: st.currentTime,
+          trackId: st.trackId,
+          isPlaying: st.isPlaying,
+        },
+      });
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [isHost, sessionId]);
 
   // Handle sync state changes
   const handleSyncStateChange = useCallback((state: SyncState) => {
@@ -1744,7 +1841,7 @@ export const SessionPage: React.FC = () => {
               micVolume={mixerState.micVolume}
               tribeVolume={mixerState.tribeVolume}
               hostVoiceVolume={mixerState.hostVoiceVolume}
-              onMusicVolumeChange={setMusicVolume}
+              onMusicVolumeChange={handleMusicVolumeChange}
               onMicVolumeChange={setMicVolume}
               onTribeVolumeChange={setTribeVolume}
               onHostVoiceVolumeChange={setHostVoiceVolume}

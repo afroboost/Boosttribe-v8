@@ -2,21 +2,22 @@ import React, { createContext, useContext, useEffect, useRef, useCallback, useSt
 import { useNavigate } from 'react-router-dom';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import { useToast } from '@/components/ui/Toast';
-import { 
-  supabase, 
-  isSupabaseConfigured, 
-  createSessionChannel, 
-  broadcastToSession, 
+import {
+  supabase,
+  isSupabaseConfigured,
+  createSessionChannel,
+  broadcastToSession,
   unsubscribeChannel,
   RealtimePayload,
   RealtimeEventType,
+  PresenceMeta,
   savePlaylist,
   loadPlaylist,
   PlaylistRecord,
 } from '@/lib/supabaseClient';
 
 // Re-export types for consumers
-export type { RealtimeEventType, RealtimePayload };
+export type { RealtimeEventType, RealtimePayload, PresenceMeta };
 
 // Connection status types
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -47,9 +48,12 @@ interface SocketContextValue {
   connectionError: string | null;
   userId: string;
   sessionId: string | null;
-  
+
+  // Présence (Realtime) : liste des clients connectés à la session
+  presentUsers: PresenceMeta[];
+
   // Join/Leave
-  joinSession: (sessionId: string, userId: string, isHost: boolean) => void;
+  joinSession: (sessionId: string, userId: string, isHost: boolean, nickname: string) => void;
   leaveSession: () => void;
   
   // Host Commands
@@ -102,6 +106,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [userId] = useState(generateUserId);
+  const [presentUsers, setPresentUsers] = useState<PresenceMeta[]>([]);
   const isHostRef = useRef(false);
   
   // Determine connection mode
@@ -196,22 +201,26 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [userId, isDev]);
 
   // Join session
-  const joinSession = useCallback((newSessionId: string, newUserId: string, isHost: boolean) => {
+  const joinSession = useCallback((newSessionId: string, newUserId: string, isHost: boolean, nickname: string) => {
     // Close existing channel
     if (supabaseChannelRef.current && supabase) {
       unsubscribeChannel(supabaseChannelRef.current);
       supabaseChannelRef.current = null;
     }
-    
+
     setSessionId(newSessionId);
     isHostRef.current = isHost;
+    setPresentUsers([]);
     setConnectionStatus('connecting');
     setConnectionError(null);
 
     // Create Supabase Realtime channel if configured
     if (isSupabaseConfigured) {
       try {
-        supabaseChannelRef.current = createSessionChannel(newSessionId, handleMessage);
+        supabaseChannelRef.current = createSessionChannel(newSessionId, handleMessage, {
+          meta: { userId: newUserId, nickname, isHost },
+          onSync: (users) => setPresentUsers(users),
+        });
         setConnectionStatus('connected');
         setIsConnected(true);
         if (isDev) console.log('[REALTIME] Connected via Supabase');
@@ -253,6 +262,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsConnected(false);
     setConnectionStatus('disconnected');
     setConnectionError(null);
+    setPresentUsers([]);
     isHostRef.current = false;
   }, [sessionId, sendMessage]);
 
@@ -360,6 +370,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     connectionError,
     userId,
     sessionId,
+    presentUsers,
     joinSession,
     leaveSession,
     muteUser,

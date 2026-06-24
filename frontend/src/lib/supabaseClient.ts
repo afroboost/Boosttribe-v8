@@ -268,12 +268,26 @@ export interface RealtimePayload {
   timestamp: number;
 }
 
+// Métadonnées de présence trackées par chaque client sur le canal de session
+export interface PresenceMeta {
+  userId: string;
+  nickname: string;
+  isHost: boolean;
+}
+
+export interface SessionPresence {
+  meta: PresenceMeta;
+  onSync: (users: PresenceMeta[]) => void;
+}
+
 /**
  * Create a Supabase Realtime channel for a session
+ * Si `presence` est fourni : track la présence du client et notifie la liste à jour.
  */
 export function createSessionChannel(
   sessionId: string,
-  onMessage: (payload: RealtimePayload) => void
+  onMessage: (payload: RealtimePayload) => void,
+  presence?: SessionPresence
 ): RealtimeChannel | null {
   if (!supabase) {
     console.warn('[SUPABASE] Not configured, using fallback');
@@ -281,22 +295,46 @@ export function createSessionChannel(
   }
 
   const channelName = `session:${sessionId}`;
-  
+
   const channel = supabase.channel(channelName, {
     config: {
       broadcast: { self: false }, // Don't receive own messages
+      presence: { key: presence?.meta.userId || '' },
     },
   });
 
   // Listen for broadcast messages
   channel.on('broadcast', { event: 'session_event' }, ({ payload }) => {
-    console.log('[SUPABASE REALTIME] Received:', payload);
     onMessage(payload as RealtimePayload);
   });
 
-  // Subscribe to channel
+  // Présence : agréger l'état et notifier sur sync/join/leave
+  if (presence) {
+    const emitPresence = () => {
+      const stateMap = channel.presenceState<PresenceMeta>();
+      const users: PresenceMeta[] = [];
+      Object.values(stateMap).forEach((entries) => {
+        entries.forEach((entry) => {
+          users.push({
+            userId: entry.userId,
+            nickname: entry.nickname,
+            isHost: entry.isHost,
+          });
+        });
+      });
+      presence.onSync(users);
+    };
+
+    channel.on('presence', { event: 'sync' }, emitPresence);
+    channel.on('presence', { event: 'join' }, emitPresence);
+    channel.on('presence', { event: 'leave' }, emitPresence);
+  }
+
+  // Subscribe to channel, puis track la présence une fois connecté
   channel.subscribe((status) => {
-    console.log('[SUPABASE REALTIME] Channel status:', status);
+    if (status === 'SUBSCRIBED' && presence) {
+      channel.track(presence.meta);
+    }
   });
 
   return channel;

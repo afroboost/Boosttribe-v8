@@ -76,6 +76,54 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     }
   }, [src, loadAudio]);
 
+  // 🔒 MediaSession API : métadonnées + contrôles écran verrouillé / onglet en arrière-plan.
+  // Ne détruit jamais l'élément <audio> ; agit directement dessus.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: title || 'BoostTribe',
+        artist: artist || 'Session live',
+        album: 'BoostTribe',
+        artwork: coverArt
+          ? [{ src: coverArt, sizes: '512x512', type: 'image/png' }]
+          : [],
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        audioRef.current?.play().catch(() => {});
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        audioRef.current?.pause();
+      });
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (audioRef.current && typeof details.seekTime === 'number') {
+          audioRef.current.currentTime = details.seekTime;
+        }
+      });
+    } catch {
+      // Certains navigateurs ne supportent pas tous les handlers - non bloquant
+    }
+
+    return () => {
+      if (!('mediaSession' in navigator)) return;
+      try {
+        navigator.mediaSession.setActionHandler('play', null);
+        navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('seekto', null);
+      } catch {
+        // Ignore
+      }
+    };
+  }, [title, artist, coverArt, audioRef]);
+
+  // Refléter l'état de lecture dans la MediaSession (icône play/pause de l'OS)
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    navigator.mediaSession.playbackState = audioState.isPlaying ? 'playing' : 'paused';
+  }, [audioState.isPlaying]);
+
   // Handle play/pause toggle
   const handlePlayPause = useCallback(async () => {
     if (!isHost || disabled) return;

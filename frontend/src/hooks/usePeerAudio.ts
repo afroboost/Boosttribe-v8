@@ -406,7 +406,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         resolve(false);
       }
     });
-  }, [sessionId, isHost, generatePeerId, getHostPeerId, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceStart, onVoiceEnd, onError, onReady, forcePlayRemoteAudio]);
+    // onVoiceStart est consommé via forcePlayRemoteAudio ; sessionId via generatePeerId/getHostPeerId
+  }, [isHost, generatePeerId, getHostPeerId, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceEnd, onError, onReady, forcePlayRemoteAudio]);
 
   /**
    * HOST: Broadcast audio to all connected peers

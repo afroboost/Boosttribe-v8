@@ -364,20 +364,25 @@ export const SessionPage: React.FC = () => {
   // ADMIN BYPASS: Check email directly for instant host access
   const userEmail = user?.email?.toLowerCase() || '';
   const isAdminByEmail = userEmail === 'contact.artboost@gmail.com';
-  const hasHostPrivileges = isAdminByEmail || isAdmin || isSubscribed;
+  const isAdminUser = isAdminByEmail || isAdmin;
+
+  // 🎤 DROIT D'HÉBERGER = être AUTHENTIFIÉ (pas l'abonnement).
+  // L'offre gratuite autorise 1 session active (1 titre/30s) : tout utilisateur connecté
+  // peut donc créer et contrôler SA session en tant qu'hôte. L'abonnement ne fait que
+  // lever la limite de titres (gérée par trackLimit/canUploadTrack dans TrackUploader).
+  const hasHostPrivileges = !!user;
   
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   
   // 🔒 CALCUL ROBUSTE DE isHost:
   // 1. Création de session (pas d'URL) = toujours host
-  // 2. Admin OU Abonné (hasHostPrivileges) = host par défaut
-  // 3. Sinon = participant (lecture seule)
+  // 2. Tout utilisateur AUTHENTIFIÉ (hasHostPrivileges = !!user) = host de sa session
+  // 3. Visiteur non connecté ouvrant un lien = participant (lecture seule)
   const [isHost, setIsHost] = useState<boolean>(() => {
     // Si création de session (pas d'URL ID), toujours host
     if (!urlSessionId) return true;
-    // POINT 2: hôte si privilèges (admin OU abonné), pas seulement l'admin.
-    // bt_is_admin couvre l'admin instantané ; hasHostPrivileges couvre aussi les abonnés.
+    // Hôte si connecté (gratuit/abonné/admin). bt_is_admin = bypass admin instantané.
     const isAdminStored = sessionStorage.getItem('bt_is_admin') === 'true';
     return isAdminStored || hasHostPrivileges;
   });
@@ -1573,7 +1578,7 @@ export const SessionPage: React.FC = () => {
               </h1>
               <p className="text-white/60 text-sm sm:text-base">
                 {isHost
-                  ? (hasHostPrivileges
+                  ? (isAdminUser
                       ? 'Mode Admin - Contrôle total de la session.'
                       : 'Vous êtes l\'hôte. Contrôlez la lecture pour tous les participants.')
                   : 'Mode écoute seule. La lecture est synchronisée avec l\'hôte.'

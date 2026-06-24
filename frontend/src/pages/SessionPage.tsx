@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Music, Users, Radio, Volume2 } from 'lucide-react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
@@ -251,8 +252,9 @@ const SubscriptionBadge: React.FC = () => {
   
   return (
     <Link to="/pricing">
-      <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 cursor-pointer hover:bg-yellow-500/30">
-        🎵 Essai ({trackLimit} titre)
+      <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 cursor-pointer hover:bg-yellow-500/30 flex items-center gap-1">
+        <Music className="w-3.5 h-3.5" />
+        Essai ({trackLimit} titre)
       </Badge>
     </Link>
   );
@@ -406,8 +408,11 @@ export const SessionPage: React.FC = () => {
   const [audioState, setAudioState] = useState<AudioState | null>(null);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('none');
   const [autoPlayPending, setAutoPlayPending] = useState<string | null>(null);
+  // 🔊 BUG 1: autoplay bloqué côté participant (NotAllowedError) → bouton geste utilisateur
+  const [audioBlocked, setAudioBlocked] = useState(false);
 
   // 🎧 AUDIO MIXER: Canaux indépendants pour musique et voix
   const {
@@ -541,9 +546,16 @@ export const SessionPage: React.FC = () => {
     
     const currentIndex = tracks.findIndex(t => t.id === selectedTrack.id);
     if (currentIndex === -1) return;
-    
+
+    // 🔁 BUG 2: repeat 'one' → le titre vient d'être relancé localement (useAudioSync).
+    // On re-broadcaste pour que les participants relancent le même titre depuis 0.
+    if (repeatMode === 'one') {
+      socket.syncPlayback(true, 0, selectedTrack.id);
+      return;
+    }
+
     let nextTrack: Track | null = null;
-    
+
     if (repeatMode === 'all') {
       const nextIndex = (currentIndex + 1) % tracks.length;
       nextTrack = tracks[nextIndex];
@@ -640,7 +652,11 @@ export const SessionPage: React.FC = () => {
           const audioEl = document.querySelector('audio');
           if (audioEl && payload.isPlaying) {
             audioEl.currentTime = payload.currentTime || 0;
-            audioEl.play().catch(() => {});
+            audioEl.play().catch((err) => {
+              // 🔊 BUG 1: autoplay bloqué (NotAllowedError) → demander un geste utilisateur
+              console.warn('[PARTICIPANT] Autoplay bloqué:', err);
+              setAudioBlocked(true);
+            });
           }
         }, 100);
       }
@@ -770,7 +786,11 @@ export const SessionPage: React.FC = () => {
             case 'PLAY':
               // ▶️ LECTURE - L'esclave reprend à la position exacte
               audioEl.currentTime = command.currentTime || 0;
-              audioEl.play().catch(() => {});
+              audioEl.play().catch((err) => {
+                // 🔊 BUG 1: autoplay bloqué (NotAllowedError) → demander un geste utilisateur
+                console.warn('[PARTICIPANT] Autoplay bloqué (commande hôte):', err);
+                setAudioBlocked(true);
+              });
               showToast('▶️ Lecture (commande hôte)', 'default');
               setHostIsPlaying(true);
               break;
@@ -1033,6 +1053,35 @@ export const SessionPage: React.FC = () => {
     }
   }, [sessionUrl, showToast]);
 
+  // 🔢 BUG 5: Copier le CODE de session
+  const handleCopyCode = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      await navigator.clipboard.writeText(sessionId);
+      setCodeCopied(true);
+      showToast('Code de session copié !', 'success');
+      setTimeout(() => setCodeCopied(false), 3000);
+    } catch (error) {
+      showToast('Erreur lors de la copie', 'error');
+    }
+  }, [sessionId, showToast]);
+
+  // 🔊 BUG 1: Le participant active le son via un geste utilisateur explicite
+  const handleActivateSound = useCallback(() => {
+    const audioEl = document.querySelector('audio') as HTMLAudioElement | null;
+    if (!audioEl) {
+      setAudioBlocked(false);
+      return;
+    }
+    audioEl
+      .play()
+      .then(() => setAudioBlocked(false))
+      .catch((err) => {
+        console.warn('[PARTICIPANT] Lecture toujours bloquée:', err);
+        showToast('Impossible d\'activer le son, réessayez', 'error');
+      });
+  }, [showToast]);
+
   // Ref to track if "Go Live" toast has been shown (prevent infinite loop)
   const hasShownLiveToast = useRef(false);
   // Ref pour tracker le dernier état de lecture (éviter les envois redondants)
@@ -1136,6 +1185,42 @@ export const SessionPage: React.FC = () => {
         theme={theme}
       />
 
+      {/* 🔊 BUG 1: Overlay d'activation du son (autoplay bloqué côté participant) */}
+      {audioBlocked && !isHost && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 bg-black/90 backdrop-blur-sm">
+          <div className="text-center max-w-sm">
+            <div
+              className="w-24 h-24 mx-auto mb-6 rounded-full flex items-center justify-center animate-pulse"
+              style={{ background: theme.colors.gradient.primary }}
+            >
+              <Volume2 className="w-12 h-12 text-white" />
+            </div>
+            <h2
+              className="text-2xl font-bold text-white mb-3"
+              style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+            >
+              Le son est en attente
+            </h2>
+            <p className="text-white/60 text-sm mb-6">
+              Votre navigateur bloque la lecture automatique. Appuyez sur le bouton
+              ci-dessous pour rejoindre l'écoute synchronisée.
+            </p>
+            <button
+              onClick={handleActivateSound}
+              className="w-full h-14 rounded-xl text-white font-bold text-lg flex items-center justify-center gap-3 transition-transform hover:scale-105 active:scale-95"
+              style={{
+                background: theme.colors.gradient.primary,
+                boxShadow: '0 4px 24px rgba(138, 46, 255, 0.4)',
+              }}
+              data-testid="activate-sound-btn"
+            >
+              <Volume2 className="w-6 h-6" />
+              Activer le son
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Background Effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         <div 
@@ -1182,13 +1267,14 @@ export const SessionPage: React.FC = () => {
               </Link>
               
               {/* Role Badge */}
-              <Badge 
-                className={isHost 
+              <Badge
+                className={`flex items-center gap-1 ${isHost
                   ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
                   : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                }
+                }`}
               >
-                {isHost ? '👑 Hôte' : '👤 Participant'}
+                {isHost ? <Radio className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
+                {isHost ? 'Hôte' : 'Participant'}
               </Badge>
 
               {/* Subscription Badge */}
@@ -1281,7 +1367,38 @@ export const SessionPage: React.FC = () => {
             {/* Share Link Card (Host only) */}
             {isHost && sessionId && (
               <Card className="border-white/10 bg-white/5">
-                <CardContent className="p-4">
+                <CardContent className="p-4 space-y-4">
+                  {/* 🔢 BUG 5: CODE de session bien visible + explication pour rejoindre */}
+                  <div className="rounded-xl border border-[#8A2EFF]/30 bg-[#8A2EFF]/10 p-4 text-center">
+                    <p className="text-white/50 text-xs mb-2 uppercase tracking-wider">
+                      Code de la session
+                    </p>
+                    <div className="flex items-center justify-center gap-3">
+                      <span
+                        className="text-2xl sm:text-3xl font-bold text-white tracking-[0.2em] font-mono select-all"
+                        data-testid="session-code"
+                      >
+                        {sessionId}
+                      </span>
+                      <Button
+                        onClick={handleCopyCode}
+                        size="sm"
+                        variant="outline"
+                        className={codeCopied
+                          ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                          : 'bg-white/10 text-white border-white/20'
+                        }
+                      >
+                        {codeCopied ? '✓ Copié' : 'Copier le code'}
+                      </Button>
+                    </div>
+                    <p className="text-white/60 text-xs mt-3 leading-relaxed">
+                      Partagez ce code avec vos amis, ou envoyez-leur directement le lien
+                      ci-dessous. En ouvrant le lien, ils rejoignent automatiquement votre
+                      session en écoute synchronisée. 🎧
+                    </p>
+                  </div>
+
                   <div className="flex flex-col sm:flex-row gap-3">
                     <div className="flex-1">
                       <label className="text-white/50 text-xs mb-1 block">

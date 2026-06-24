@@ -141,7 +141,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
       }}
     >
       {/* Hidden audio element */}
-      <audio ref={audioRef} preload="metadata" />
+      <audio ref={audioRef} preload="metadata" crossOrigin="anonymous" />
 
       {/* Live/Sync Badge */}
       {syncState.isLive && (
@@ -269,10 +269,10 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               <VolumeIcon />
             </button>
             
-            {/* Volume Slider */}
-            <div 
-              className={`absolute left-10 flex items-center transition-all duration-200 ${
-                showVolume ? 'opacity-100 visible' : 'opacity-0 invisible'
+            {/* Volume Slider - inline : pousse les voisins au lieu de chevaucher le bouton repeat (BUG 3) */}
+            <div
+              className={`flex items-center overflow-hidden transition-all duration-200 ${
+                showVolume ? 'w-24 opacity-100 ml-1 mr-1' : 'w-0 opacity-0'
               }`}
               onMouseEnter={() => setShowVolume(true)}
               onMouseLeave={() => setShowVolume(false)}
@@ -284,7 +284,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 step="0.01"
                 value={audioState.isMuted ? 0 : audioState.volume}
                 onChange={handleVolumeChange}
-                className="w-20 h-1 rounded-full appearance-none cursor-pointer"
+                className="w-20 h-1 rounded-full appearance-none cursor-pointer flex-shrink-0"
                 style={{
                   background: `linear-gradient(to right, #8A2EFF ${audioState.volume * 100}%, rgba(255,255,255,0.2) ${audioState.volume * 100}%)`,
                 }}

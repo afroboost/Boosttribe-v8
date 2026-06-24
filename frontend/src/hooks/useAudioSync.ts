@@ -462,9 +462,11 @@ export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn
       console.log('[AUDIO] Track ended. RepeatMode:', repeatMode);
       
       if (repeatMode === 'one') {
-        // Repeat current track: reset to 0 and play
+        // Repeat current track: reset to 0 and play locally...
         audio.currentTime = 0;
         audio.play().catch(console.error);
+        // ...puis notifier le parent pour re-broadcaster aux participants (BUG 2)
+        onTrackEnded?.();
       } else {
         // For 'all' or 'none': notify parent to handle next track
         updateAudioState({ isPlaying: false, currentTime: 0 });

@@ -369,16 +369,17 @@ export const SessionPage: React.FC = () => {
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
   
-  // 🔒 CALCUL ROBUSTE DE isHost: 
+  // 🔒 CALCUL ROBUSTE DE isHost:
   // 1. Création de session (pas d'URL) = toujours host
-  // 2. Admin/Abonné = host par défaut
+  // 2. Admin OU Abonné (hasHostPrivileges) = host par défaut
   // 3. Sinon = participant (lecture seule)
   const [isHost, setIsHost] = useState<boolean>(() => {
     // Si création de session (pas d'URL ID), toujours host
     if (!urlSessionId) return true;
-    // Fallback initial: check admin flag
+    // POINT 2: hôte si privilèges (admin OU abonné), pas seulement l'admin.
+    // bt_is_admin couvre l'admin instantané ; hasHostPrivileges couvre aussi les abonnés.
     const isAdminStored = sessionStorage.getItem('bt_is_admin') === 'true';
-    return isAdminStored;
+    return isAdminStored || hasHostPrivileges;
   });
   const [sessionId, setSessionId] = useState<string | null>(urlSessionId || null);
   
@@ -1044,13 +1045,17 @@ export const SessionPage: React.FC = () => {
   );
 
   const persistOwnerPlaylist = useCallback((newTracks: Track[], selectedId: number) => {
-    if (!isHost || !ownerPlaylistKey || !isSupabaseConfigured) return;
+    if (!isHost || !ownerPlaylistKey || !isSupabaseConfigured) {
+      console.log('[PLAYLIST] save owner skipped', { isHost, ownerPlaylistKey, isSupabaseConfigured });
+      return;
+    }
     // Ligne dédiée au compte (séparée de la ligne de session live → ne casse pas la synchro participant)
+    console.log('[PLAYLIST] save owner', ownerPlaylistKey, '→', newTracks.length, 'tracks');
     savePlaylist({
       session_id: ownerPlaylistKey,
       tracks: newTracks,
       selected_track_id: selectedId,
-    });
+    }).then((ok) => console.log('[PLAYLIST] save owner result:', ok));
   }, [isHost, ownerPlaylistKey]);
 
   // Playlist reorder handler (syncs via socket for participants)
@@ -1132,9 +1137,13 @@ export const SessionPage: React.FC = () => {
     persistOwnerPlaylist(updatedTracks, trackIdToSync);
   }, [isHost, tracks, selectedTrack, socket, showToast, persistOwnerPlaylist]);
 
-  // Ref vers les tracks courants (lecture dans l'async de restauration sans dépendance instable)
+  // Refs vers tracks/socket courants (lecture dans l'async de restauration sans dépendance instable).
+  // ⚠️ socket change d'identité à chaque render (value non mémoïsé) : on NE doit pas le mettre en
+  // dépendance de l'effet de restauration, sinon le cleanup annule l'async et le garde bloque la reprise.
   const tracksRef = useRef<Track[]>(tracks);
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  const socketRef = useRef(socket);
+  useEffect(() => { socketRef.current = socket; }, [socket]);
 
   // 💾 OBJECTIF B: Restauration auto de la playlist du coach à l'ouverture/création de session.
   // Une seule fois par sessionId ; uniquement si la session n'a pas déjà sa propre playlist
@@ -1147,27 +1156,39 @@ export const SessionPage: React.FC = () => {
 
     let cancelled = false;
     (async () => {
+      console.log('[PLAYLIST] restore: start', { sessionId, ownerPlaylistKey });
       // Laisser d'abord le fetch de la session live se faire (évite d'écraser une playlist existante)
-      await new Promise(r => setTimeout(r, 1000));
-      if (cancelled || tracksRef.current.length > 0) return;
+      await new Promise(r => setTimeout(r, 800));
+      if (cancelled) return;
+      if (tracksRef.current.length > 0) {
+        console.log('[PLAYLIST] restore: session a déjà', tracksRef.current.length, 'titres → skip');
+        return;
+      }
 
       const saved = await loadPlaylist(ownerPlaylistKey);
-      if (cancelled || tracksRef.current.length > 0) return;
-
+      if (cancelled) return;
       const restored = (saved?.tracks || []) as Track[];
+      console.log('[PLAYLIST] restore: owner playlist chargée =', restored.length, 'titres');
       if (restored.length === 0) return;
+      if (tracksRef.current.length > 0) {
+        console.log('[PLAYLIST] restore: session peuplée entre-temps → skip');
+        return;
+      }
 
       setTracks(restored);
       const sel = restored.find(t => t.id === saved?.selected_track_id) || restored[0];
       setSelectedTrack(sel);
       // Pousser vers la session live pour les participants (réutilise la synchro existante)
-      socket.syncPlaylist(restored, sel.id);
-      socket.savePlaylistToDb(restored, sel.id);
+      socketRef.current.syncPlaylist(restored, sel.id);
+      socketRef.current.savePlaylistToDb(restored, sel.id);
       showToast('Votre playlist a été restaurée', 'success');
+      console.log('[PLAYLIST] restore: appliquée ✓', restored.length, 'titres');
     })();
 
     return () => { cancelled = true; };
-  }, [isHost, ownerPlaylistKey, sessionId, socket, showToast]);
+    // socket/showToast volontairement hors deps (cf. commentaire ci-dessus) ; showToast est stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, ownerPlaylistKey, sessionId]);
 
   // Initialize - check for stored nickname
   useEffect(() => {
@@ -1500,21 +1521,6 @@ export const SessionPage: React.FC = () => {
                 />
               )}
               
-              {/* WebRTC status indicator — POINT 1: réservé à l'hôte (info technique masquée aux participants) */}
-              {isHost && peerState.isConnected && (
-                <span
-                  className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
-                    peerState.isBroadcasting
-                      ? 'bg-green-500/20 text-green-400'
-                      : 'bg-blue-500/20 text-blue-400'
-                  }`}
-                  title={`WebRTC: ${peerState.connectedPeers.length} pairs connectés`}
-                >
-                  <Radio className="w-3 h-3" />
-                  {peerState.isBroadcasting ? 'Live' : 'WebRTC'}
-                </span>
-              )}
-
               {/* PARTICIPANT: Voice receiving indicator */}
               {!isHost && peerState.isReceivingVoice && (
                 <span

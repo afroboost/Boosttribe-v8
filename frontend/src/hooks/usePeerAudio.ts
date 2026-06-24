@@ -58,6 +58,33 @@ const initialState: PeerState = {
 const REMOTE_AUDIO_ID = 'remote-voice-audio';
 
 /**
+ * Construit la liste des serveurs ICE : STUN publics (toujours) + TURN optionnel
+ * activable SANS recompiler la logique, via variables d'environnement :
+ *   REACT_APP_TURN_URL, REACT_APP_TURN_USERNAME, REACT_APP_TURN_CREDENTIAL
+ */
+function buildIceServers(): RTCIceServer[] {
+  const iceServers: RTCIceServer[] = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.stunprotocol.org:3478' },
+  ];
+
+  const turnUrl = process.env.REACT_APP_TURN_URL;
+  if (turnUrl) {
+    iceServers.push({
+      urls: turnUrl,
+      username: process.env.REACT_APP_TURN_USERNAME,
+      credential: process.env.REACT_APP_TURN_CREDENTIAL,
+    });
+  }
+
+  return iceServers;
+}
+
+/**
  * Create or get the remote audio element for voice playback
  * This element plays the host's voice on participant devices
  */
@@ -210,18 +237,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         // Production: log removed
         // Production: log removed
 
-        // Create peer with robust STUN servers
+        // Create peer with robust STUN servers (+ TURN optionnel via variables d'env)
         const peer = new Peer(peerId, {
           debug: 2,
           config: {
-            iceServers: [
-              { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' },
-              { urls: 'stun:stun2.l.google.com:19302' },
-              { urls: 'stun:stun3.l.google.com:19302' },
-              { urls: 'stun:stun4.l.google.com:19302' },
-              { urls: 'stun:stun.stunprotocol.org:3478' },
-            ],
+            iceServers: buildIceServers(),
           },
         });
 

@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { useSiteSettings } from '@/hooks/useSiteSettings';
+import { useToast } from '@/components/ui/Toast';
+import { createCheckout } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -76,19 +78,38 @@ const PricingPage: React.FC = () => {
   const { theme } = useTheme();
   const navigate = useNavigate();
   const { settings, isLoaded } = useSiteSettings();
-  const { 
+  const {
     isAuthenticated,
-    profile, 
-    isAdmin, 
-    isSubscribed, 
-    hasAcceptedTerms, 
+    profile,
+    isAdmin,
+    isSubscribed,
+    hasAcceptedTerms,
     acceptTerms,
+    refreshProfile,
   } = useAuth();
+  const { showToast } = useToast();
 
   const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
   const [termsChecked, setTermsChecked] = useState(hasAcceptedTerms);
   const [isAccepting, setIsAccepting] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [checkoutLoadingPlan, setCheckoutLoadingPlan] = useState<string | null>(null);
+
+  // Retour de paiement Stripe (?success=1 / ?canceled=1)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('success') === '1') {
+      showToast('Abonnement activé ! Bienvenue 🎉', 'success');
+      // Rafraîchir le profil pour refléter subscription_status (peut prendre quelques secondes via le webhook)
+      refreshProfile();
+      setTimeout(() => refreshProfile(), 3000);
+      window.history.replaceState({}, '', '/pricing');
+    } else if (params.get('canceled') === '1') {
+      showToast('Paiement annulé', 'default');
+      window.history.replaceState({}, '', '/pricing');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Inject Stripe links AND dynamic prices from settings into plans
   // Also filter by visibility settings
@@ -157,34 +178,23 @@ const PricingPage: React.FC = () => {
       return;
     }
 
-    // Get Stripe link based on billing period
-    const stripeLink = billingPeriod === 'monthly' 
-      ? plan.stripeMonthlyLink 
-      : plan.stripeYearlyLink;
+    // Abonnements payants (pro/enterprise) → Stripe Checkout via le backend
+    if (plan.id !== 'pro' && plan.id !== 'enterprise') {
+      navigate('/contact');
+      return;
+    }
 
-    // If Stripe link exists, redirect directly to Stripe
-    if (stripeLink) {
-      // Open Stripe Checkout in new tab
-      window.open(stripeLink, '_blank');
-    } else {
-      // FALLBACK: Use default Stripe links if not configured
-      const defaultStripeLinks: Record<string, string> = {
-        'pro': 'https://buy.stripe.com/test_beattribe_pro',
-        'enterprise': 'https://buy.stripe.com/test_beattribe_enterprise',
-      };
-      
-      const fallbackLink = defaultStripeLinks[plan.id];
-      if (fallbackLink) {
-        // Open default Stripe link in new tab
-        window.open(fallbackLink, '_blank');
+    const interval: 'month' | 'year' = billingPeriod === 'monthly' ? 'month' : 'year';
+    setCheckoutLoadingPlan(plan.id);
+    try {
+      const { url, error } = await createCheckout(plan.id as 'pro' | 'enterprise', interval);
+      if (url) {
+        window.location.href = url;
       } else {
-        // Navigate to pricing for free trial
-        if (plan.id === 'trial') {
-          navigate('/session');
-        } else {
-          navigate('/contact');
-        }
+        showToast(error || 'Impossible de démarrer le paiement', 'error');
       }
+    } finally {
+      setCheckoutLoadingPlan(null);
     }
   };
 
@@ -404,16 +414,21 @@ const PricingPage: React.FC = () => {
                 {/* CTA Button */}
                 <Button
                   onClick={() => handleSelectPlan(plan)}
-                  disabled={!termsChecked && !hasAcceptedTerms && plan.id !== 'trial' && isAuthenticated}
+                  disabled={
+                    (!termsChecked && !hasAcceptedTerms && plan.id !== 'trial' && isAuthenticated) ||
+                    checkoutLoadingPlan === plan.id
+                  }
                   className={`w-full ${
-                    plan.isPopular 
-                      ? 'text-white' 
+                    plan.isPopular
+                      ? 'text-white'
                       : 'bg-white/10 hover:bg-white/20 text-white'
                   }`}
                   style={plan.isPopular ? { background: theme.colors.gradient.primary } : {}}
                 >
                   {plan.id === 'trial' ? (
                     isAuthenticated ? 'Commencer gratuitement' : 'Créer un compte'
+                  ) : checkoutLoadingPlan === plan.id ? (
+                    'Redirection…'
                   ) : (
                     <>
                       Souscrire <ExternalLink size={14} className="ml-1" />

@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
+import { syncPlan } from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -353,19 +354,36 @@ const Dashboard: React.FC = () => {
         stripe_enterprise_monthly: settings.stripe_enterprise_monthly || '',
         stripe_enterprise_yearly: settings.stripe_enterprise_yearly || '',
       };
-      
+
       const { error } = await supabase.from('site_settings').upsert(dataToSave);
-      
-      if (error) { 
-        alert("ERREUR DB : " + error.message); 
-      } else { 
-        // Témoin de fonctionnement avec timestamp précis
-        alert("✅ SYNCHRO RÉUSSIE ! Nom : " + dataToSave.site_name + " | Date : " + new Date().toLocaleTimeString());
-        // Rafraîchir le cache global des settings pour tous les composants
-        refreshSiteSettings();
-        // Recharger la page pour appliquer les changements visuels
-        window.location.reload(); 
+
+      if (error) {
+        alert("ERREUR DB : " + error.message);
+        return;
       }
+
+      // 💳 Synchronisation des prix Stripe (création/maj des Price via le backend).
+      // Ne bloque pas la sauvegarde CMS : si le backend est injoignable, on avertit seulement.
+      const num = (v: string) => {
+        const n = parseFloat(v);
+        return isNaN(n) ? null : n;
+      };
+      const stripeMessages: string[] = [];
+      for (const plan of ['pro', 'enterprise'] as const) {
+        const monthly = num(plan === 'pro' ? settings.plan_pro_price_monthly : settings.plan_enterprise_price_monthly);
+        const annual = num(plan === 'pro' ? settings.plan_pro_price_yearly : settings.plan_enterprise_price_yearly);
+        const res = await syncPlan({ plan, monthly_price: monthly, annual_price: annual, currency: 'eur' });
+        stripeMessages.push(res.ok ? `Stripe ${plan} : OK` : `Stripe ${plan} : ${res.error}`);
+      }
+
+      alert(
+        "✅ Réglages enregistrés (" + new Date().toLocaleTimeString() + ")\n" +
+        stripeMessages.join("\n")
+      );
+      // Rafraîchir le cache global des settings pour tous les composants
+      refreshSiteSettings();
+      // Recharger la page pour appliquer les changements visuels
+      window.location.reload();
     } catch (err) {
       alert("EXCEPTION : " + (err instanceof Error ? err.message : String(err)));
     } finally {

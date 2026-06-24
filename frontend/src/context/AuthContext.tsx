@@ -4,7 +4,7 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
 // Types
 export type UserRole = 'user' | 'admin';
-export type SubscriptionStatus = 'none' | 'trial' | 'monthly' | 'yearly' | 'enterprise';
+export type SubscriptionStatus = 'none' | 'trial' | 'monthly' | 'yearly' | 'pro' | 'enterprise';
 
 export interface UserProfile {
   id: string;
@@ -55,7 +55,8 @@ const TRACK_LIMITS: Record<SubscriptionStatus, number> = {
   trial: 1,
   monthly: 50,
   yearly: 200,
-  enterprise: -1,
+  pro: 50,        // Stripe "pro" → plusieurs titres
+  enterprise: -1, // illimité
 };
 
 // Context

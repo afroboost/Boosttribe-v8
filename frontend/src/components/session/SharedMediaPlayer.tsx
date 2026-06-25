@@ -29,17 +29,18 @@ function vimeoId(url: string): string | null {
 export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const lastEmitRef = useRef(0);
 
-  // Participant : appliquer l'état distant à l'élément <video>
+  // Participant : appliquer l'état distant à l'élément <video> (sync + late-join : seek au temps reçu)
   useEffect(() => {
     if (isHost || !remote || media.type !== 'video') return;
     const v = videoRef.current;
     if (!v) return;
-    if (Math.abs(v.currentTime - remote.currentTime) > 1) {
+    if (Math.abs(v.currentTime - remote.currentTime) > 1.2) {
       v.currentTime = remote.currentTime;
     }
     if (remote.isPlaying && v.paused) {
-      v.play().catch(() => { /* autoplay bloqué : geste requis */ });
+      v.play().catch(() => { /* autoplay bloqué : un geste page le débloquera, le prochain heartbeat relance */ });
     } else if (!remote.isPlaying && !v.paused) {
       v.pause();
     }
@@ -51,6 +52,16 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     if (!v || !onState) return;
     onState({ isPlaying: !v.paused, currentTime: v.currentTime });
   }, [onState]);
+
+  // Hôte : diffuser la position périodiquement pendant la lecture (heartbeat → late-join précis)
+  const onTimeUpdate = useCallback(() => {
+    if (!isHost) return;
+    const now = Date.now();
+    if (now - lastEmitRef.current >= 2500) {
+      lastEmitRef.current = now;
+      emit();
+    }
+  }, [isHost, emit]);
 
   const goFullscreen = useCallback(() => {
     const el = (media.type === 'video' ? videoRef.current : containerRef.current) as HTMLElement | null;
@@ -70,13 +81,21 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       <video
         ref={videoRef}
         src={media.url}
+        // Item 1 : seul l'hôte/co-animateur a les contrôles ; le participant ne peut pas piloter
         controls={isHost}
+        tabIndex={isHost ? 0 : -1}
         playsInline
-        crossOrigin="anonymous"
+        // Item 4 : lecture rapide depuis l'URL storage (Range/streaming progressif, pas de blob)
+        preload="metadata"
+        // Item 2 : pas de téléchargement / PiP / vitesse / menu contextuel
+        controlsList="nodownload noremoteplayback noplaybackrate"
+        disablePictureInPicture
+        onContextMenu={(e) => e.preventDefault()}
         className="w-full h-full object-contain bg-black"
         onPlay={emit}
         onPause={emit}
         onSeeked={emit}
+        onTimeUpdate={onTimeUpdate}
         data-testid="shared-video"
       />
     );
@@ -85,12 +104,15 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   } else if (media.type === 'youtube') {
     const id = youtubeId(media.url);
     const start = Math.floor(media.currentTime || 0);
+    // Item 3 : embed sans redirection — sandbox SANS allow-popups / allow-top-navigation*
+    // → un clic sur le logo YouTube ne peut jamais sortir du site.
     body = id ? (
       <iframe
         title="YouTube"
-        src={`https://www.youtube.com/embed/${id}?autoplay=1&start=${start}&rel=0`}
+        src={`https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1&autoplay=1&start=${start}`}
         className="w-full h-full"
-        allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+        allow="autoplay; encrypted-media; fullscreen"
+        sandbox="allow-scripts allow-same-origin allow-presentation"
         allowFullScreen
         frameBorder={0}
       />
@@ -101,9 +123,10 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     body = id ? (
       <iframe
         title="Vimeo"
-        src={`https://player.vimeo.com/video/${id}?autoplay=1#t=${start}s`}
+        src={`https://player.vimeo.com/video/${id}?autoplay=1&playsinline=1#t=${start}s`}
         className="w-full h-full"
-        allow="autoplay; fullscreen; picture-in-picture"
+        allow="autoplay; fullscreen"
+        sandbox="allow-scripts allow-same-origin allow-presentation"
         allowFullScreen
         frameBorder={0}
       />
@@ -125,7 +148,7 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         src={safeUrl}
         className="w-full h-full bg-white"
         allow="autoplay; fullscreen"
-        sandbox="allow-scripts allow-forms allow-popups allow-presentation"
+        sandbox="allow-scripts allow-forms allow-presentation"
         allowFullScreen
         frameBorder={0}
       />

@@ -28,6 +28,7 @@ import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
 import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
+import { SessionSocial } from '@/components/session/SessionSocial';
 import { claimHost, setCohosts } from '@/lib/paymentApi';
 import { Pencil } from 'lucide-react';
 
@@ -1637,6 +1638,21 @@ export const SessionPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [isHost, sessionId]);
 
+  // 💓 Item 1 : Heartbeat MÉDIA (vidéo) toutes les 3s → late-join précis (position courante).
+  useEffect(() => {
+    if (!isHost || !sessionId || !supabase || !isSupabaseConfigured) return;
+    const interval = setInterval(() => {
+      const m = sharedMediaRef.current;
+      if (!m || m.type !== 'video') return; // heartbeat utile pour la sync vidéo uniquement
+      supabase!.channel(`playback:${sessionId}`).send({
+        type: 'broadcast',
+        event: 'MEDIA_COMMAND',
+        payload: { media: m, isPlaying: m.isPlaying ?? false, currentTime: m.currentTime ?? 0 },
+      });
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isHost, sessionId]);
+
   // Handle sync state changes
   const handleSyncStateChange = useCallback((state: SyncState) => {
     setSyncState(prevState => {
@@ -1939,12 +1955,22 @@ export const SessionPage: React.FC = () => {
               />
             )}
 
-            {/* E : Contrôles de partage média (hôte + co-animateurs uniquement) */}
+            {/* E + item 6 : Panneau de partage (Audio | Vidéo | Image | Lien) — hôte + co-animateurs */}
             {canShare && sessionId && (
               <MediaShareControls
                 sessionId={sessionId}
                 onShare={handleShareMedia}
                 showToast={showToast}
+                audioPanel={isHost ? (
+                  <TrackUploader
+                    sessionId={sessionId}
+                    onTrackUploaded={handleTrackUploaded}
+                    currentTrackCount={tracks.length}
+                    maxTracks={10}
+                    disabled={!isHost}
+                    onUpgradeRequest={handleUpgradeRequest}
+                  />
+                ) : undefined}
               />
             )}
 
@@ -2201,16 +2227,7 @@ export const SessionPage: React.FC = () => {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-4">
-                  {/* Track Uploader */}
-                  <TrackUploader
-                    sessionId={sessionId || ''}
-                    onTrackUploaded={handleTrackUploaded}
-                    currentTrackCount={tracks.length}
-                    maxTracks={10}
-                    disabled={!isHost}
-                    onUpgradeRequest={handleUpgradeRequest}
-                  />
-                  
+                  {/* L'ajout de pistes se fait via le panneau de partage (mode Audio) ci-dessus */}
                   {/* Playlist with DnD */}
                   <PlaylistDnD
                     tracks={tracks}
@@ -2399,6 +2416,9 @@ export const SessionPage: React.FC = () => {
                 />
               </CardContent>
             </Card>
+
+            {/* Item 8 : Likes + commentaires de session (temps réel) */}
+            {sessionId && <SessionSocial sessionId={sessionId} />}
 
             {/* Instructions */}
             <Card className="border-white/10 bg-white/5">

@@ -69,9 +69,9 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
       ref={setNodeRef}
       style={style}
       className={`
-        flex items-center gap-3 p-3 rounded-lg transition-all group
-        ${isSelected 
-          ? 'bg-white/10 border border-[#8A2EFF]/50' 
+        flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg transition-all group
+        ${isSelected
+          ? 'bg-white/10 border border-[#8A2EFF]/50'
           : 'bg-[var(--bt-surface-alpha)] border border-white/10 hover:bg-white/5'
         }
         ${isDragging ? 'shadow-lg shadow-[#8A2EFF]/20 z-50' : ''}
@@ -110,23 +110,23 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
       {/* Track Info - Cliquable pour l'hôte seulement */}
       <div
         onClick={() => isHost && !isEditMode && onSelect(track)}
-        className={`flex-1 flex items-center gap-3 text-left ${isHost && !isEditMode ? 'cursor-pointer' : 'cursor-default'}`}
+        className={`flex-1 min-w-0 flex items-center gap-2 sm:gap-3 text-left ${isHost && !isEditMode ? 'cursor-pointer' : 'cursor-default'}`}
       >
         {/* Cover Art */}
-        <div 
-          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+        <div
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center flex-shrink-0"
           style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
         >
           {isSelected ? (
-            <Play size={18} strokeWidth={1.5} className="text-white ml-0.5" fill="currentColor" />
+            <Play size={16} strokeWidth={1.5} className="text-white ml-0.5 sm:w-[18px] sm:h-[18px]" fill="currentColor" />
           ) : (
-            <Music size={18} strokeWidth={1.5} className="text-white/80" />
+            <Music size={16} strokeWidth={1.5} className="text-white/80 sm:w-[18px] sm:h-[18px]" />
           )}
         </div>
 
         {/* Title & Artist */}
         <div className="flex-1 min-w-0">
-          <p className="text-white font-medium truncate text-sm">{track.title}</p>
+          <p className="text-white font-medium truncate text-sm leading-tight">{track.title}</p>
           <p className="text-white/50 text-xs truncate">{track.artist}</p>
         </div>
       </div>
@@ -138,13 +138,13 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
             e.stopPropagation();
             onDeleteSingle(track);
           }}
-          className="bg-red-500/20 text-red-500 hover:bg-red-500 hover:text-white p-2 rounded-lg transition-all flex-shrink-0 visible"
+          className="text-red-500 hover:bg-red-500 hover:text-white p-1.5 sm:p-2 rounded-lg transition-all flex-shrink-0"
           style={{ color: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
           title="Supprimer cette piste"
           data-testid={`delete-track-${track.id}`}
           aria-label={`Supprimer ${track.title}`}
         >
-          <Trash2 size={18} strokeWidth={2} />
+          <Trash2 size={16} strokeWidth={2} className="sm:w-[18px] sm:h-[18px]" />
         </button>
       )}
 
@@ -248,7 +248,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="flex items-center justify-between px-1">
+      <div className="flex items-center justify-between gap-2 flex-wrap px-1">
         <p className="text-white/50 text-xs">
           {displayTracks.length} / {maxTracks} titres
           {/* 🔒 Indicateur pour les participants */}

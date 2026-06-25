@@ -467,6 +467,62 @@ export async function uploadSessionImage(file: File, sessionId: string): Promise
 }
 
 /**
+ * Item 7 : Upload DIRECT d'une vidéo de session vers le bucket "session-media" (gros fichiers,
+ * ne transite PAS par le backend), avec progression (XHR), puis insertion d'une ligne
+ * session_media (owner_id = auth.uid()) pour la suppression auto 24h.
+ */
+export async function uploadSessionVideoDirect(
+  file: File,
+  sessionId: string,
+  onProgress?: (pct: number) => void,
+): Promise<{ url?: string; error?: string }> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token;
+    const userId = sess.session?.user?.id;
+    if (!token || !userId) return { error: 'Connectez-vous pour partager' };
+
+    const safe = (file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)) || 'video.mp4';
+    const path = `${sessionId}/${userId}/${Date.now()}_${safe}`;
+
+    const publicUrl = await new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${supabaseUrl}/storage/v1/object/session-media/${path}`);
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('apikey', supabaseAnonKey as string);
+      xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
+      xhr.setRequestHeader('x-upsert', 'true');
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(`${supabaseUrl}/storage/v1/object/public/session-media/${path}`);
+        } else {
+          reject(new Error(`Upload échoué (${xhr.status})`));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Erreur réseau'));
+      xhr.send(file);
+    });
+
+    // Ligne session_media (RLS : owner_id = auth.uid()) → suppression auto 24h côté backend
+    await supabase.from('session_media').insert({
+      owner_id: userId,
+      session_id: sessionId,
+      storage_path: path,
+      url: publicUrl,
+      media_type: 'video',
+    });
+
+    return { url: publicUrl };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Erreur upload vidéo' };
+  }
+}
+
+/**
  * Met à jour la description courte de la session (playlists.description).
  */
 export async function saveSessionDescription(sessionId: string, description: string): Promise<boolean> {

@@ -112,11 +112,17 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       if (cancelled || !ytMountRef.current) return;
       ytPlayerRef.current = new YT.Player(ytMountRef.current, {
         videoId: id,
+        // Bug 1 : host explicite → l'iframe poste vers la bonne origine (corrige le postMessage origin mismatch)
+        host: 'https://www.youtube.com',
         playerVars: {
           // Participant : aucun contrôle visible ; hôte : contrôles natifs
           controls: isHost ? 1 : 0,
           // Bug 2 : participant en muet → l'autoplay muet est autorisé (plus d'écran noir)
           mute: isHost ? 0 : 1,
+          // Bug 1 : activer l'API JS + déclarer l'origine parente → le player reçoit/émet l'état
+          // (sinon "postMessage… does not match recipient origin" → participant en écran noir)
+          enablejsapi: 1,
+          origin: window.location.origin,
           disablekb: 1,
           rel: 0,
           modestbranding: 1,

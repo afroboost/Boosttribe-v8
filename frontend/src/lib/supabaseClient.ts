@@ -474,10 +474,18 @@ export async function uploadSessionImage(file: File, sessionId: string): Promise
  * vraie progression. Ne transite PAS par le backend. Insère ensuite une ligne session_media
  * (owner_id = auth.uid()) pour la suppression auto 24h.
  */
+export interface VideoUploadProgress {
+  pct: number;          // 0–100
+  sentBytes: number;
+  totalBytes: number;
+  bytesPerSec: number;  // débit observé
+  etaSeconds: number;   // temps restant estimé
+}
+
 export async function uploadSessionVideoDirect(
   file: File,
   sessionId: string,
-  onProgress?: (pct: number) => void,
+  onProgress?: (p: VideoUploadProgress) => void,
 ): Promise<{ url?: string; error?: string }> {
   if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
   try {
@@ -492,6 +500,7 @@ export async function uploadSessionVideoDirect(
 
     const safe = (file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)) || 'video.mp4';
     const objectName = `${sessionId}/${userId}/${Date.now()}_${safe}`;
+    const startTime = Date.now(); // Item 2 : pour estimer le débit et le temps restant
 
     const publicUrl = await new Promise<string>((resolve, reject) => {
       const upload = new tus.Upload(file, {
@@ -504,7 +513,8 @@ export async function uploadSessionVideoDirect(
         },
         uploadDataDuringCreation: true,
         removeFingerprintOnSuccess: true,
-        chunkSize: 6 * 1024 * 1024,
+        // Item 2 : gros morceaux (~25 Mo) → moins d'allers-retours → upload plus rapide sur gros fichiers
+        chunkSize: 25 * 1024 * 1024,
         metadata: {
           bucketName: 'session-media',
           objectName,
@@ -526,7 +536,11 @@ export async function uploadSessionVideoDirect(
           reject(new Error(msg));
         },
         onProgress: (sent, total) => {
-          if (total && onProgress) onProgress(Math.round((sent / total) * 100));
+          if (!total || !onProgress) return;
+          const elapsed = (Date.now() - startTime) / 1000;
+          const bytesPerSec = elapsed > 0 ? sent / elapsed : 0;
+          const etaSeconds = bytesPerSec > 0 ? (total - sent) / bytesPerSec : 0;
+          onProgress({ pct: Math.round((sent / total) * 100), sentBytes: sent, totalBytes: total, bytesPerSec, etaSeconds });
         },
         onSuccess: () => {
           resolve(`${supabaseUrl}/storage/v1/object/public/session-media/${objectName}`);

@@ -1,10 +1,28 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Video, Image as ImageIcon, Link as LinkIcon, Loader2, Send, Music } from 'lucide-react';
+import { Video, Image as ImageIcon, Link as LinkIcon, Loader2, Send, Music, Lightbulb } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { uploadSessionVideoDirect, uploadSessionImage, SharedMedia } from '@/lib/supabaseClient';
 
 export type ShareMode = 'audio' | 'video' | 'image' | 'link';
+
+const LARGE_FILE_BYTES = 200 * 1024 * 1024; // seuil "fichier volumineux" → conseil 720p
+
+// Poids lisible (Mo / Go)
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} Go`;
+  return `${Math.round(bytes / (1024 * 1024))} Mo`;
+}
+
+// Temps restant lisible (ex. "1 min 20 s", "45 s")
+function formatEta(seconds: number): string {
+  if (!isFinite(seconds) || seconds <= 0) return '…';
+  const s = Math.round(seconds);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return r ? `${m} min ${r} s` : `${m} min`;
+}
 
 interface MediaShareControlsProps {
   sessionId: string;
@@ -38,6 +56,8 @@ function getVideoDuration(file: File): Promise<number> {
 export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel, mode, onModeChange }) => {
   const [busy, setBusy] = useState<null | 'video' | 'image'>(null);
   const [progress, setProgress] = useState(0);
+  const [etaSeconds, setEtaSeconds] = useState(0);
+  const [fileBytes, setFileBytes] = useState(0);
   const [linkUrl, setLinkUrl] = useState('');
   const videoInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -56,8 +76,13 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
 
     setBusy('video');
     setProgress(0);
+    setEtaSeconds(0);
+    setFileBytes(file.size);
     try {
-      const { url, error } = await uploadSessionVideoDirect(file, sessionId, setProgress);
+      const { url, error } = await uploadSessionVideoDirect(file, sessionId, (p) => {
+        setProgress(p.pct);
+        setEtaSeconds(p.etaSeconds);
+      });
       if (url) {
         onShare({ type: 'video', url, title: file.name, isPlaying: false, currentTime: 0, updatedAt: Date.now() });
         showToast('Les vidéos partagées sont automatiquement supprimées après 24h', 'default');
@@ -67,6 +92,8 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
     } finally {
       setBusy(null);
       setProgress(0);
+      setEtaSeconds(0);
+      setFileBytes(0);
     }
   }, [sessionId, onShare, showToast]);
 
@@ -145,9 +172,23 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
             {busy === 'video' ? `Envoi… ${progress}%` : 'Choisir une vidéo (max 90 min)'}
           </Button>
           {busy === 'video' && (
-            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-              <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #8A2EFF 0%, #FF2FB3 100%)' }} />
-            </div>
+            <>
+              <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #8A2EFF 0%, #FF2FB3 100%)' }} />
+              </div>
+              {/* Item 2 : poids du fichier + temps estimé restant */}
+              <div className="flex items-center justify-between gap-2 text-white/50 text-[11px]">
+                <span>{fileBytes > 0 ? formatBytes(fileBytes) : ''}</span>
+                <span>{progress >= 100 ? 'Finalisation…' : `~ ${formatEta(etaSeconds)} restant`}</span>
+              </div>
+              {/* Item 2 : conseil discret pour les gros fichiers */}
+              {fileBytes > LARGE_FILE_BYTES && (
+                <p className="flex items-start gap-1.5 text-amber-400/70 text-[11px]">
+                  <Lightbulb className="w-3.5 h-3.5 flex-shrink-0 mt-px" />
+                  Astuce : une vidéo plus légère (720p) s'envoie plus vite.
+                </p>
+              )}
+            </>
           )}
           <p className="text-white/30 text-[11px]">Supprimée automatiquement après 24h.</p>
         </div>

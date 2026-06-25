@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { Maximize2, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube } from 'lucide-react';
+import Vimeo from '@vimeo/player';
 import type { SharedMedia } from '@/lib/supabaseClient';
 
 export interface RemoteMediaState {
@@ -26,17 +27,55 @@ function vimeoId(url: string): string | null {
   return m ? m[1] : null;
 }
 
+// Charge l'API IFrame YouTube une seule fois (sync + masquage des contrôles côté participant)
+function loadYouTubeApi(): Promise<any> {
+  return new Promise((resolve) => {
+    const w = window as any;
+    if (w.YT && w.YT.Player) { resolve(w.YT); return; }
+    const prev = w.onYouTubeIframeAPIReady;
+    w.onYouTubeIframeAPIReady = () => { if (typeof prev === 'function') prev(); resolve(w.YT); };
+    if (!document.getElementById('yt-iframe-api')) {
+      const s = document.createElement('script');
+      s.id = 'yt-iframe-api';
+      s.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(s);
+    }
+  });
+}
+
+const DRIFT = 1.2;          // s : seuil de resynchro de position
+const HOST_EMIT_MS = 1500;  // intervalle d'émission de l'hôte pendant la lecture
+
 export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastEmitRef = useRef(0);
 
-  // Participant : appliquer l'état distant à l'élément <video> (sync + late-join : seek au temps reçu)
+  // onState peut changer d'identité : on le garde dans une ref pour des effets stables.
+  const onStateRef = useRef(onState);
+  useEffect(() => { onStateRef.current = onState; }, [onState]);
+
+  // Dernier état distant connu (appliqué dès qu'un player externe est prêt — late-join).
+  const latestRemoteRef = useRef<RemoteMediaState | null>(remote || null);
+  useEffect(() => { latestRemoteRef.current = remote || null; }, [remote]);
+
+  // Hôte : émettre play/pause/seek/position (throttle pour la lecture continue)
+  const emitState = useCallback((isPlaying: boolean, currentTime: number, force = false) => {
+    const cb = onStateRef.current;
+    if (!cb) return;
+    const now = Date.now();
+    if (!force && now - lastEmitRef.current < HOST_EMIT_MS) return;
+    lastEmitRef.current = now;
+    cb({ isPlaying, currentTime: currentTime || 0 });
+  }, []);
+
+  // ───────────────────────── VIDÉO UPLOADÉE (<video>) ─────────────────────────
+  // Participant : appliquer l'état distant (sync + late-join : seek au temps reçu)
   useEffect(() => {
     if (isHost || !remote || media.type !== 'video') return;
     const v = videoRef.current;
     if (!v) return;
-    if (Math.abs(v.currentTime - remote.currentTime) > 1.2) {
+    if (Math.abs(v.currentTime - remote.currentTime) > DRIFT) {
       v.currentTime = remote.currentTime;
     }
     if (remote.isPlaying && v.paused) {
@@ -46,22 +85,158 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     }
   }, [remote, isHost, media.type]);
 
-  // Hôte : diffuser play/pause/seek
-  const emit = useCallback(() => {
+  const emitVideo = useCallback((force = false) => {
     const v = videoRef.current;
-    if (!v || !onState) return;
-    onState({ isPlaying: !v.paused, currentTime: v.currentTime });
-  }, [onState]);
+    if (!v) return;
+    emitState(!v.paused, v.currentTime, force);
+  }, [emitState]);
 
-  // Hôte : diffuser la position périodiquement pendant la lecture (heartbeat → late-join précis)
-  const onTimeUpdate = useCallback(() => {
-    if (!isHost) return;
-    const now = Date.now();
-    if (now - lastEmitRef.current >= 2500) {
-      lastEmitRef.current = now;
-      emit();
+  // ───────────────────────── YOUTUBE (IFrame Player API) ─────────────────────────
+  const ytMountRef = useRef<HTMLDivElement>(null);
+  const ytPlayerRef = useRef<any>(null);
+  const ytReadyRef = useRef(false);
+
+  useEffect(() => {
+    if (media.type !== 'youtube') return;
+    const id = youtubeId(media.url);
+    if (!id) return;
+    let cancelled = false;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    ytReadyRef.current = false;
+
+    loadYouTubeApi().then((YT) => {
+      if (cancelled || !ytMountRef.current) return;
+      ytPlayerRef.current = new YT.Player(ytMountRef.current, {
+        videoId: id,
+        playerVars: {
+          // Participant : aucun contrôle visible ; hôte : contrôles natifs
+          controls: isHost ? 1 : 0,
+          disablekb: 1,
+          rel: 0,
+          modestbranding: 1,
+          playsinline: 1,
+          fs: 1,
+          autoplay: 1,
+          start: Math.floor(media.currentTime || 0),
+        },
+        events: {
+          onReady: () => {
+            ytReadyRef.current = true;
+            // Late-join : appliquer immédiatement le dernier état distant
+            const p = ytPlayerRef.current;
+            const r = latestRemoteRef.current;
+            if (!isHost && p && r) {
+              try {
+                if (Math.abs((p.getCurrentTime?.() || 0) - r.currentTime) > DRIFT) p.seekTo(r.currentTime, true);
+                if (r.isPlaying) p.playVideo(); else p.pauseVideo();
+              } catch { /* ignore */ }
+            }
+          },
+          onStateChange: (e: any) => {
+            if (!isHost) return;
+            const p = e.target;
+            if (e.data === YT.PlayerState.PLAYING) emitState(true, p.getCurrentTime(), true);
+            else if (e.data === YT.PlayerState.PAUSED) emitState(false, p.getCurrentTime(), true);
+          },
+        },
+      });
+    });
+
+    // Hôte : émettre la position périodiquement pendant la lecture (sync fine + late-join)
+    if (isHost) {
+      poll = setInterval(() => {
+        const p = ytPlayerRef.current;
+        if (p?.getPlayerState && p.getPlayerState() === 1) emitState(true, p.getCurrentTime());
+      }, HOST_EMIT_MS);
     }
-  }, [isHost, emit]);
+
+    return () => {
+      cancelled = true;
+      if (poll) clearInterval(poll);
+      try { ytPlayerRef.current?.destroy?.(); } catch { /* ignore */ }
+      ytPlayerRef.current = null;
+      ytReadyRef.current = false;
+    };
+    // currentTime volontairement exclu : on ne recrée le player que si l'URL change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [media.type, media.url, isHost, emitState]);
+
+  // Participant : appliquer l'état distant YouTube
+  useEffect(() => {
+    if (isHost || media.type !== 'youtube' || !remote) return;
+    const p = ytPlayerRef.current;
+    if (!p || !ytReadyRef.current || !p.getCurrentTime) return;
+    try {
+      if (Math.abs(p.getCurrentTime() - remote.currentTime) > DRIFT) p.seekTo(remote.currentTime, true);
+      const st = p.getPlayerState ? p.getPlayerState() : -1;
+      if (remote.isPlaying && st !== 1) p.playVideo();
+      else if (!remote.isPlaying && st === 1) p.pauseVideo();
+    } catch { /* ignore */ }
+  }, [remote, isHost, media.type]);
+
+  // ───────────────────────── VIMEO (@vimeo/player SDK) ─────────────────────────
+  const vimeoMountRef = useRef<HTMLDivElement>(null);
+  const vimeoPlayerRef = useRef<Vimeo | null>(null);
+  const vimeoReadyRef = useRef(false);
+
+  useEffect(() => {
+    if (media.type !== 'vimeo') return;
+    const id = vimeoId(media.url);
+    if (!id || !vimeoMountRef.current) return;
+    let cancelled = false;
+    vimeoReadyRef.current = false;
+
+    const player = new Vimeo(vimeoMountRef.current, {
+      id: Number(id),
+      controls: isHost,   // participant : aucun contrôle
+      autoplay: true,
+      playsinline: true,
+      keyboard: false,
+      responsive: true,
+    });
+    vimeoPlayerRef.current = player;
+
+    player.ready().then(() => {
+      if (cancelled) return;
+      vimeoReadyRef.current = true;
+      const r = latestRemoteRef.current;
+      const startAt = (!isHost && r) ? r.currentTime : (media.currentTime || 0);
+      if (startAt) player.setCurrentTime(startAt).catch(() => { /* ignore */ });
+      if (!isHost && r && !r.isPlaying) player.pause().catch(() => { /* ignore */ });
+    }).catch(() => { /* ignore */ });
+
+    if (isHost) {
+      const emitNow = (force: boolean) => {
+        Promise.all([player.getCurrentTime(), player.getPaused()])
+          .then(([t, paused]) => emitState(!paused, t, force))
+          .catch(() => { /* ignore */ });
+      };
+      player.on('play', () => emitNow(true));
+      player.on('pause', () => emitNow(true));
+      player.on('seeked', () => emitNow(true));
+      player.on('timeupdate', () => emitNow(false));
+    }
+
+    return () => {
+      cancelled = true;
+      vimeoReadyRef.current = false;
+      try { player.destroy(); } catch { /* ignore */ }
+      vimeoPlayerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [media.type, media.url, isHost, emitState]);
+
+  // Participant : appliquer l'état distant Vimeo
+  useEffect(() => {
+    if (isHost || media.type !== 'vimeo' || !remote) return;
+    const p = vimeoPlayerRef.current;
+    if (!p || !vimeoReadyRef.current) return;
+    p.getCurrentTime().then((cur) => {
+      if (Math.abs(cur - remote.currentTime) > DRIFT) p.setCurrentTime(remote.currentTime).catch(() => { /* ignore */ });
+      if (remote.isPlaying) p.play().catch(() => { /* ignore */ });
+      else p.pause().catch(() => { /* ignore */ });
+    }).catch(() => { /* ignore */ });
+  }, [remote, isHost, media.type]);
 
   const goFullscreen = useCallback(() => {
     const el = (media.type === 'video' ? videoRef.current : containerRef.current) as HTMLElement | null;
@@ -73,6 +248,10 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     media.type === 'youtube' ? <Youtube className="w-4 h-4" /> :
     media.type === 'video' ? <VideoIcon className="w-4 h-4" /> :
     <LinkIcon className="w-4 h-4" />;
+
+  // Types « pilotables » : sync hôte→participants ; le participant ne contrôle jamais.
+  const isControllable = media.type === 'video' || media.type === 'youtube' || media.type === 'vimeo';
+  const blockParticipant = !isHost && isControllable;
 
   // Construire le contenu intégré (jamais de redirection externe)
   let body: React.ReactNode = null;
@@ -91,11 +270,12 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         controlsList="nodownload noremoteplayback noplaybackrate"
         disablePictureInPicture
         onContextMenu={(e) => e.preventDefault()}
+        style={{ pointerEvents: isHost ? 'auto' : 'none' }}
         className="w-full h-full object-contain bg-black"
-        onPlay={emit}
-        onPause={emit}
-        onSeeked={emit}
-        onTimeUpdate={onTimeUpdate}
+        onPlay={() => emitVideo(true)}
+        onPause={() => emitVideo(true)}
+        onSeeked={() => emitVideo(true)}
+        onTimeUpdate={() => { if (isHost) emitVideo(false); }}
         data-testid="shared-video"
       />
     );
@@ -103,38 +283,19 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     body = <img src={media.url} alt={media.title || 'Image partagée'} className="w-full h-full object-contain bg-black" />;
   } else if (media.type === 'youtube') {
     const id = youtubeId(media.url);
-    const start = Math.floor(media.currentTime || 0);
-    // Item 3 : embed sans redirection — sandbox SANS allow-popups / allow-top-navigation*
-    // → un clic sur le logo YouTube ne peut jamais sortir du site.
+    // Item 1/3 : IFrame Player API (window.YT) — pas de simple <iframe> → contrôle + masquage possibles.
     body = id ? (
-      <iframe
-        title="YouTube"
-        src={`https://www.youtube.com/embed/${id}?rel=0&modestbranding=1&playsinline=1&autoplay=1&start=${start}`}
-        className="w-full h-full"
-        allow="autoplay; encrypted-media; fullscreen"
-        sandbox="allow-scripts allow-same-origin allow-presentation"
-        allowFullScreen
-        frameBorder={0}
-      />
+      <div ref={ytMountRef} className="w-full h-full" data-testid="shared-youtube" />
     ) : <p className="text-white/60 text-sm p-4">Lien YouTube invalide</p>;
   } else if (media.type === 'vimeo') {
     const id = vimeoId(media.url);
-    const start = Math.floor(media.currentTime || 0);
     body = id ? (
-      <iframe
-        title="Vimeo"
-        src={`https://player.vimeo.com/video/${id}?autoplay=1&playsinline=1#t=${start}s`}
-        className="w-full h-full"
-        allow="autoplay; fullscreen"
-        sandbox="allow-scripts allow-same-origin allow-presentation"
-        allowFullScreen
-        frameBorder={0}
-      />
+      <div ref={vimeoMountRef} className="w-full h-full [&>iframe]:w-full [&>iframe]:h-full" data-testid="shared-vimeo" />
     ) : <p className="text-white/60 text-sm p-4">Lien Vimeo invalide</p>;
   } else {
     // Lien générique : on tente l'intégration en iframe (reste DANS la page).
     // Sécurité : on n'accepte que http(s) et on isole le contenu via sandbox
-    // (PAS de allow-same-origin → l'iframe ne peut pas accéder à l'origine parente).
+    // (PAS de allow-popups / allow-top-navigation → impossible de sortir du site).
     let safeUrl: string | null = null;
     try {
       const u = new URL(media.url);
@@ -177,8 +338,12 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       </div>
       <div ref={containerRef} className="relative w-full aspect-video bg-black">
         {body}
+        {/* Item 1 : overlay participant → aucune interaction possible (play/pause/seek bloqués) */}
+        {blockParticipant && (
+          <div className="absolute inset-0 z-10" style={{ cursor: 'default' }} data-testid="media-block-overlay" />
+        )}
       </div>
-      {!isHost && media.type === 'video' && (
+      {blockParticipant && (
         <p className="px-4 py-1.5 text-[11px] text-white/40">Lecture synchronisée avec l'hôte</p>
       )}
     </div>

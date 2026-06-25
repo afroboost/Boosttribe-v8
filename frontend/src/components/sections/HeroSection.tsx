@@ -28,6 +28,15 @@ export const HeroSection: React.FC = () => {
   const [sessionCode, setSessionCode] = useState<string>("");
   const [isJoining, setIsJoining] = useState<boolean>(false);
 
+  // Item 3 : dernier code de session rejoint (mémorisé en localStorage) → reprise rapide
+  const [lastCode, setLastCode] = useState<string>("");
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem("bt_last_session_code");
+      if (saved) { setLastCode(saved); setSessionCode(saved); }
+    } catch { /* ignore */ }
+  }, []);
+
   // Generate particles with memoization to prevent re-renders
   const particles = useMemo<Particle[]>(() => {
     return Array.from({ length: 20 }, (_, i) => ({
@@ -53,12 +62,22 @@ export const HeroSection: React.FC = () => {
     }
     
     setIsJoining(true);
-    
+    // Item 3 : mémoriser le code rejoint
+    try { localStorage.setItem("bt_last_session_code", trimmedCode); } catch { /* ignore */ }
+
     // Small delay for UX feedback
     setTimeout(() => {
       navigate(`/session/${trimmedCode}`);
     }, 300);
   }, [sessionCode, navigate, showToast]);
+
+  // Item 3 : reprendre directement la dernière session mémorisée
+  const handleResumeSession = useCallback(() => {
+    const code = lastCode.trim().toUpperCase();
+    if (!code) return;
+    setIsJoining(true);
+    setTimeout(() => { navigate(`/session/${code}`); }, 200);
+  }, [lastCode, navigate]);
 
   // Handle create new session
   const handleCreateSession = useCallback(() => {
@@ -260,6 +279,25 @@ export const HeroSection: React.FC = () => {
               )}
             </PrimaryButton>
           </form>
+
+          {/* Item 3 : Reprendre la dernière session (participant revenant après avoir quitté) */}
+          {lastCode && (
+            <button
+              onClick={handleResumeSession}
+              disabled={isJoining}
+              className="w-full h-12 mt-3 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
+              style={{
+                background: 'rgba(138, 46, 255, 0.15)',
+                border: '1px solid rgba(138, 46, 255, 0.4)',
+                color: '#FFFFFF',
+              }}
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              <span className="truncate">Reprendre la session <span className="font-mono">{lastCode}</span></span>
+            </button>
+          )}
 
           {/* Divider */}
           <div className="relative my-6">

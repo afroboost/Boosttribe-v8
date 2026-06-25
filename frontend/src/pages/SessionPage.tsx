@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound } from 'lucide-react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
@@ -443,6 +443,13 @@ export const SessionPage: React.FC = () => {
       setIsHost(true);
     }
   }, [hasHostPrivileges, isHost]);
+
+  // Item 3 : mémoriser le code de session rejoint (participant) → reprise rapide depuis l'accueil
+  useEffect(() => {
+    if (urlSessionId && !isHost) {
+      try { localStorage.setItem('bt_last_session_code', urlSessionId); } catch { /* ignore */ }
+    }
+  }, [urlSessionId, isHost]);
   
   // Nickname state
   const [nickname, setNickname] = useState<string | null>(null);
@@ -497,6 +504,13 @@ export const SessionPage: React.FC = () => {
   // vidéo/image/lien = uniquement le média partagé). Hôte/co-host le contrôlent via le sélecteur ;
   // les participants le dérivent du média reçu (effet plus bas).
   const [shareMode, setShareMode] = useState<ShareMode>('audio');
+  // Item 2 : panneaux repliables (repliés par défaut pour désencombrer la page)
+  const [panelOpen, setPanelOpen] = useState<{ status: boolean; code: boolean; instructions: boolean }>({
+    status: false, code: false, instructions: false,
+  });
+  const togglePanel = useCallback((key: 'status' | 'code' | 'instructions') => {
+    setPanelOpen((p) => ({ ...p, [key]: !p[key] }));
+  }, []);
   const mediaSeqRef = useRef(0);
 
   // F : co-animateurs autorisés à partager (userId)
@@ -839,7 +853,13 @@ export const SessionPage: React.FC = () => {
         // C : charger la description ; E : média partagé courant
         if (data) {
           if (typeof data.description === 'string') setDescription(data.description);
-          if (data.shared_media) setSharedMedia(data.shared_media as SharedMedia);
+          if (data.shared_media) {
+            const sm = data.shared_media as SharedMedia;
+            setSharedMedia(sm);
+            // Item 1 : late-join — se positionner immédiatement à l'état stocké (corrigé ensuite par heartbeat)
+            mediaSeqRef.current += 1;
+            setRemoteMediaState({ isPlaying: !!sm.isPlaying, currentTime: sm.currentTime || 0, seq: mediaSeqRef.current });
+          }
         }
 
         // F : co-animateurs (autorité DB) — requête séparée tolérante (colonne optionnelle)
@@ -1661,7 +1681,8 @@ export const SessionPage: React.FC = () => {
     if (!isHost || !sessionId || !supabase || !isSupabaseConfigured) return;
     const interval = setInterval(() => {
       const m = sharedMediaRef.current;
-      if (!m || m.type !== 'video') return; // heartbeat utile pour la sync vidéo uniquement
+      // heartbeat utile pour les médias pilotables (vidéo uploadée + lien YouTube/Vimeo)
+      if (!m || (m.type !== 'video' && m.type !== 'youtube' && m.type !== 'vimeo')) return;
       supabase!.channel(`playback:${sessionId}`).send({
         type: 'broadcast',
         event: 'MEDIA_COMMAND',
@@ -1994,10 +2015,26 @@ export const SessionPage: React.FC = () => {
               />
             )}
 
-            {/* Share Link Card (Host only) */}
+            {/* Share Link Card (Host only) — Item 2 : repliable */}
             {isHost && sessionId && (
               <Card className="border-white/10 bg-white/5">
-                <CardContent className="p-4 space-y-4">
+                <CardHeader className="p-0">
+                  <button
+                    type="button"
+                    onClick={() => togglePanel('code')}
+                    className="w-full flex items-center justify-between gap-2 px-6 py-4 text-left"
+                    aria-expanded={panelOpen.code}
+                    data-testid="panel-code-toggle"
+                  >
+                    <CardTitle className="text-white text-lg flex items-center gap-2">
+                      <KeyRound className="w-5 h-5 text-[#8A2EFF]" />
+                      Code de la session
+                    </CardTitle>
+                    <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.code ? 'rotate-180' : ''}`} />
+                  </button>
+                </CardHeader>
+                {panelOpen.code && (
+                <CardContent className="p-4 pt-0 space-y-4">
                   {/* 🔢 BUG 5: CODE de session bien visible + explication pour rejoindre */}
                   <div className="rounded-xl border border-[#8A2EFF]/30 bg-[#8A2EFF]/10 p-4 text-center">
                     <p className="text-white/50 text-xs mb-2 uppercase tracking-wider">
@@ -2073,6 +2110,7 @@ export const SessionPage: React.FC = () => {
                     </Button>
                   </div>
                 </CardContent>
+                )}
               </Card>
             )}
 
@@ -2312,25 +2350,35 @@ export const SessionPage: React.FC = () => {
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Session Info */}
+            {/* Session Info — Item 2 : repliable */}
             <Card className="border-white/10 bg-white/5">
-              <CardHeader>
-                <CardTitle className="text-white text-lg flex items-center gap-2">
-                  <span className="relative flex h-3 w-3">
-                    <span 
-                      className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                        syncState?.isLive ? 'animate-ping' : ''
-                      }`}
-                      style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
-                    />
-                    <span 
-                      className="relative inline-flex rounded-full h-3 w-3"
-                      style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
-                    />
-                  </span>
-                  Statut de la session
-                </CardTitle>
+              <CardHeader className="p-0">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('status')}
+                  className="w-full flex items-center justify-between gap-2 px-6 py-4 text-left"
+                  aria-expanded={panelOpen.status}
+                  data-testid="panel-status-toggle"
+                >
+                  <CardTitle className="text-white text-lg flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span
+                        className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                          syncState?.isLive ? 'animate-ping' : ''
+                        }`}
+                        style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
+                      />
+                      <span
+                        className="relative inline-flex rounded-full h-3 w-3"
+                        style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
+                      />
+                    </span>
+                    Statut de la session
+                  </CardTitle>
+                  <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.status ? 'rotate-180' : ''}`} />
+                </button>
               </CardHeader>
+              {panelOpen.status && (
               <CardContent className="space-y-4">
                 <div className="flex justify-between items-center">
                   <span className="text-white/60 text-sm">Session ID</span>
@@ -2396,6 +2444,7 @@ export const SessionPage: React.FC = () => {
                   </div>
                 )}
               </CardContent>
+              )}
             </Card>
 
             {/* 🎧 Audio Mixer Panel - Escamotable sur mobile */}
@@ -2441,14 +2490,24 @@ export const SessionPage: React.FC = () => {
             {/* Item 8 : Likes + commentaires de session (temps réel) */}
             {sessionId && <SessionSocial sessionId={sessionId} />}
 
-            {/* Instructions */}
+            {/* Instructions — Item 2 : repliable */}
             <Card className="border-white/10 bg-white/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-white text-lg">
-                  <Lightbulb className="w-5 h-5 text-purple-400" />
-                  Instructions
-                </CardTitle>
+              <CardHeader className="p-0">
+                <button
+                  type="button"
+                  onClick={() => togglePanel('instructions')}
+                  className="w-full flex items-center justify-between gap-2 px-6 py-4 text-left"
+                  aria-expanded={panelOpen.instructions}
+                  data-testid="panel-instructions-toggle"
+                >
+                  <CardTitle className="flex items-center gap-2 text-white text-lg">
+                    <Lightbulb className="w-5 h-5 text-purple-400" />
+                    Instructions
+                  </CardTitle>
+                  <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.instructions ? 'rotate-180' : ''}`} />
+                </button>
               </CardHeader>
+              {panelOpen.instructions && (
               <CardContent className="text-white/60 text-sm space-y-2">
                 {isHost ? (
                   <>
@@ -2464,6 +2523,7 @@ export const SessionPage: React.FC = () => {
                   </>
                 )}
               </CardContent>
+              )}
             </Card>
           </div>
         </div>

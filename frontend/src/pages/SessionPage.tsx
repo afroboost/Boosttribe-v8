@@ -831,6 +831,17 @@ export const SessionPage: React.FC = () => {
     return unsubPlayback;
   }, [socket, isHost, tracks, showToast]);
 
+  // 🩹 BUG 1 : refs vers les valeurs changeantes lues DANS l'effet realtime ci-dessous.
+  // Elles permettent de ne dépendre QUE de [sessionId] → l'effet (fetch initial + abonnements)
+  // s'exécute UNE SEULE FOIS au montage et ne se relance plus quand tracks/selectedTrack changent
+  // (sinon : chaque setTracks/setSelectedTrack relançait le fetch → tempête de requêtes playlists).
+  const isHostRef = useRef(isHost);
+  useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+  const selectedTrackRef = useRef(selectedTrack);
+  useEffect(() => { selectedTrackRef.current = selectedTrack; }, [selectedTrack]);
+  const showToastRef = useRef(showToast);
+  useEffect(() => { showToastRef.current = showToast; }, [showToast]);
+
   // 🔄 SUPABASE REALTIME: Sync playlist changes for participants
   useEffect(() => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
@@ -878,7 +889,7 @@ export const SessionPage: React.FC = () => {
           setTracks(data.tracks as Track[]);
           setIsSyncActive(true);
 
-          if (!selectedTrack) {
+          if (!selectedTrackRef.current) {
             setSelectedTrack(data.tracks[0] as Track);
           }
         } else {
@@ -925,10 +936,10 @@ export const SessionPage: React.FC = () => {
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
-          if (!isHost) {
+          if (!isHostRef.current) {
             setTracks([]);
             setSelectedTrack(null);
-            showToast('La playlist a été supprimée par l\'hôte', 'warning');
+            showToastRef.current('La playlist a été supprimée par l\'hôte', 'warning');
           }
         }
       )
@@ -945,7 +956,7 @@ export const SessionPage: React.FC = () => {
       .channel(`playback:${sessionId}`)
       .on('broadcast', { event: 'HOST_COMMAND' }, (payload) => {
         // ⚠️ PARTICIPANT ESCLAVE : écouter et obéir aux commandes de l'hôte
-        if (!isHost && payload.payload) {
+        if (!isHostRef.current && payload.payload) {
           const command = payload.payload as {
             action: 'PLAY' | 'PAUSE' | 'SEEK' | 'STATE';
             currentTime: number;
@@ -957,9 +968,9 @@ export const SessionPage: React.FC = () => {
           if (!audioEl) return;
 
           // Synchroniser la piste si fournie
-          if (command.trackId && tracks.length > 0) {
-            const targetTrack = tracks.find(t => t.id === command.trackId);
-            if (targetTrack && selectedTrack?.id !== command.trackId) {
+          if (command.trackId && tracksRef.current.length > 0) {
+            const targetTrack = tracksRef.current.find(t => t.id === command.trackId);
+            if (targetTrack && selectedTrackRef.current?.id !== command.trackId) {
               setSelectedTrack(targetTrack);
             }
           }
@@ -1019,7 +1030,7 @@ export const SessionPage: React.FC = () => {
       })
       // E : média partagé (vidéo/image/lien) — les participants suivent l'hôte
       .on('broadcast', { event: 'MEDIA_COMMAND' }, (payload) => {
-        if (isHost || !payload.payload) return;
+        if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as MediaCommandPayload;
         setSharedMedia(p.media);
         if (p.media) {
@@ -1033,7 +1044,7 @@ export const SessionPage: React.FC = () => {
       //     (playlists.cohosts), écrite par le backend host-only et reçue via postgres_changes.
       // C : mise à jour live de la description
       .on('broadcast', { event: 'DESC_UPDATE' }, (payload) => {
-        if (isHost || !payload.payload) return;
+        if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as DescPayload;
         setDescription(p.description || '');
       })
@@ -1048,7 +1059,7 @@ export const SessionPage: React.FC = () => {
         setCoHostIds(new Set(data.new.cohosts));
       }
       // C : description live (participants)
-      if (data.new && typeof data.new.description === 'string' && !isHost) {
+      if (data.new && typeof data.new.description === 'string' && !isHostRef.current) {
         setDescription(data.new.description);
       }
 
@@ -1056,11 +1067,11 @@ export const SessionPage: React.FC = () => {
       if (data.new && 'tracks' in data.new) {
         const newTracks = data.new.tracks || [];
 
-        if (!isHost) {
+        if (!isHostRef.current) {
           setTracks(newTracks);
-          showToast('Playlist synchronisée', 'default');
+          showToastRef.current('Playlist synchronisée', 'default');
 
-          if (newTracks.length > 0 && !selectedTrack) {
+          if (newTracks.length > 0 && !selectedTrackRef.current) {
             setSelectedTrack(newTracks[0]);
           }
         }
@@ -1074,7 +1085,10 @@ export const SessionPage: React.FC = () => {
         supabase.removeChannel(playbackChannel);
       }
     };
-  }, [sessionId, isHost, showToast, selectedTrack, user?.id, tracks]);
+    // 🩹 BUG 1 : ne dépend QUE de [sessionId] → fetch initial + abonnements UNE SEULE FOIS au montage.
+    // Les valeurs changeantes (isHost, selectedTrack, tracks, showToast) sont lues via refs ci-dessus.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
 
   // 👥 POINT 2: Peupler la liste des participants depuis la Presence Realtime (temps réel).
   // On exclut soi-même (ajouté séparément dans le useMemo ci-dessous) et on applique

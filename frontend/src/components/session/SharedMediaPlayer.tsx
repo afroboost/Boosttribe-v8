@@ -60,6 +60,9 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   // Bug 2 : le participant démarre EN MUET (autoplay muet autorisé par les navigateurs → plus
   // d'écran noir). Un bouton "Activer le son" (geste utilisateur) réactive l'audio.
   const [muted, setMuted] = useState<boolean>(!isHost);
+  // Si l'utilisateur clique "Activer le son" avant que le player soit prêt, on mémorise l'intention
+  // et on l'exécute dans onReady (sinon le clic serait perdu).
+  const pendingUnmuteRef = useRef(false);
 
   // onState peut changer d'identité : on le garde dans une ref pour des effets stables.
   const onStateRef = useRef(onState);
@@ -156,14 +159,20 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
           onReady: () => {
             ytReadyRef.current = true;
             const p = ytPlayerRef.current;
-            // Participant : démarrer muet + se positionner et lancer la lecture si l'hôte joue
+            // Participant : TOUJOURS démarrer la lecture (muet) → une frame se décode, jamais d'écran noir.
+            // autoplay=1 ne suffit pas avec new YT.Player : il faut appeler playVideo() explicitement.
             if (!isHost && p) {
               try {
-                p.mute();
                 const r = latestRemoteRef.current;
-                const pos = r ? r.currentTime : (media.currentTime || 0);
-                if (Math.abs((p.getCurrentTime?.() || 0) - pos) > DRIFT) p.seekTo(pos, true);
-                if (!r || r.isPlaying) p.playVideo(); else p.pauseVideo();
+                const pos = r ? r.currentTime : 0; // position courante de l'hôte (ou 0 si inconnue)
+                if (pendingUnmuteRef.current) { pendingUnmuteRef.current = false; p.unMute(); p.setVolume?.(100); setMuted(false); }
+                else p.mute();
+                if (pos > 0) p.seekTo(pos, true);
+                p.playVideo();
+                // Si l'hôte est explicitement en pause : laisser une frame s'afficher puis se mettre en pause.
+                if (r && r.isPlaying === false) {
+                  setTimeout(() => { try { ytPlayerRef.current?.pauseVideo?.(); } catch { /* ignore */ } }, 350);
+                }
               } catch { /* ignore */ }
             }
           },
@@ -247,10 +256,14 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       const startAt = (!isHost && r) ? r.currentTime : (media.currentTime || 0);
       if (startAt) player.setCurrentTime(startAt).catch(() => { /* ignore */ });
       if (!isHost) {
-        player.setMuted(true).catch(() => { /* ignore */ });
-        // Lancer la lecture muette si l'hôte joue (ou par défaut au late-join)
-        if (!r || r.isPlaying) player.play().catch(() => { /* ignore */ });
-        else player.pause().catch(() => { /* ignore */ });
+        // TOUJOURS lancer la lecture (muet) au ready → une frame s'affiche, jamais d'écran noir.
+        if (pendingUnmuteRef.current) { pendingUnmuteRef.current = false; player.setMuted(false).catch(() => { /* ignore */ }); setMuted(false); }
+        else player.setMuted(true).catch(() => { /* ignore */ });
+        player.play().catch(() => { /* ignore */ });
+        // Hôte explicitement en pause → afficher une frame puis se mettre en pause.
+        if (r && r.isPlaying === false) {
+          setTimeout(() => { vimeoPlayerRef.current?.pause().catch(() => { /* ignore */ }); }, 350);
+        }
       }
     }).catch(() => { /* ignore */ });
 
@@ -294,19 +307,30 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     if (el?.requestFullscreen) el.requestFullscreen().catch(() => { /* ignore */ });
   }, [media.type]);
 
-  // Bug 2 : geste utilisateur → réactiver le son du lecteur courant (+ relancer la lecture au cas où)
+  // Bug 2 : geste utilisateur → réactiver le son du lecteur courant, relancer la lecture et
+  // resynchroniser à la position de l'hôte. Si le player n'est pas prêt, on mémorise l'intention
+  // (pendingUnmuteRef) et onReady l'exécutera.
   const enableSound = useCallback(() => {
     setMuted(false);
+    const pos = latestRemoteRef.current?.currentTime ?? 0;
     try {
       if (media.type === 'video') {
         const v = videoRef.current;
-        if (v) { v.muted = false; v.play?.().catch(() => { /* ignore */ }); }
+        if (v) { v.muted = false; if (pos > 0 && Math.abs(v.currentTime - pos) > DRIFT) v.currentTime = pos; v.play?.().catch(() => { /* ignore */ }); }
       } else if (media.type === 'youtube') {
         const p = ytPlayerRef.current;
-        if (p?.unMute) { p.unMute(); p.setVolume?.(100); p.playVideo?.(); }
+        if (p?.unMute && ytReadyRef.current) {
+          p.unMute(); p.setVolume?.(100);
+          if (pos > 0) p.seekTo(pos, true);
+          p.playVideo?.();
+        } else { pendingUnmuteRef.current = true; }
       } else if (media.type === 'vimeo') {
         const p = vimeoPlayerRef.current;
-        if (p) { p.setMuted(false).catch(() => { /* ignore */ }); p.play().catch(() => { /* ignore */ }); }
+        if (p && vimeoReadyRef.current) {
+          p.setMuted(false).catch(() => { /* ignore */ });
+          if (pos > 0) p.setCurrentTime(pos).catch(() => { /* ignore */ });
+          p.play().catch(() => { /* ignore */ });
+        } else { pendingUnmuteRef.current = true; }
       }
     } catch { /* ignore */ }
   }, [media.type]);
@@ -354,6 +378,18 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         onContextMenu={(e) => e.preventDefault()}
         style={{ pointerEvents: isHost ? 'auto' : 'none' }}
         className="w-full h-full object-contain bg-black"
+        // Bug 2 : participant → au chargement, se positionner à l'état hôte et lancer la lecture muette
+        // (frame visible, jamais d'écran noir) ; la sync mettra en pause si l'hôte est en pause.
+        onLoadedMetadata={() => {
+          if (isHost) return;
+          const v = videoRef.current;
+          if (!v) return;
+          const r = latestRemoteRef.current;
+          v.muted = true;
+          if (r && r.currentTime && Math.abs(v.currentTime - r.currentTime) > DRIFT) v.currentTime = r.currentTime;
+          v.play().catch(() => { /* autoplay bloqué : le 1er tap relancera */ });
+          if (r && r.isPlaying === false) setTimeout(() => { try { videoRef.current?.pause(); } catch { /* ignore */ } }, 350);
+        }}
         onPlay={() => emitVideo(true)}
         onPause={() => emitVideo(true)}
         onSeeked={() => emitVideo(true)}

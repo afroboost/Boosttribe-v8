@@ -107,12 +107,22 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     let cancelled = false;
     let poll: ReturnType<typeof setInterval> | null = null;
     ytReadyRef.current = false;
+    const mount = ytMountRef.current; // capturé pour le cleanup (ref stable pendant la vie de l'effet)
 
     loadYouTubeApi().then((YT) => {
-      if (cancelled || !ytMountRef.current) return;
-      ytPlayerRef.current = new YT.Player(ytMountRef.current, {
+      if (cancelled || !mount) return;
+      // CORRECTIF écran noir : l'API YouTube REMPLACE l'élément qu'on lui passe par son <iframe>.
+      // On ne doit JAMAIS lui donner un nœud géré par React (le conteneur), sinon à chaque re-render
+      // (commandes de sync fréquentes) React réinsère son div et détache l'iframe → écran noir et le
+      // player pointe vers un élément détaché → playVideo() ne fait plus rien.
+      // → on crée un div interne impératif que React ne touche jamais et que l'API peut remplacer.
+      const inner = document.createElement('div');
+      inner.style.width = '100%';
+      inner.style.height = '100%';
+      mount.replaceChildren(inner);
+      ytPlayerRef.current = new YT.Player(inner, {
         videoId: id,
-        // Bug 1 : host explicite → l'iframe poste vers la bonne origine (corrige le postMessage origin mismatch)
+        // host explicite → l'iframe poste vers la bonne origine (corrige le postMessage origin mismatch)
         host: 'https://www.youtube.com',
         playerVars: {
           // Participant : aucun contrôle visible ; hôte : contrôles natifs
@@ -168,6 +178,8 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       cancelled = true;
       if (poll) clearInterval(poll);
       try { ytPlayerRef.current?.destroy?.(); } catch { /* ignore */ }
+      // Nettoyer l'iframe laissée par l'API dans le conteneur React
+      try { mount?.replaceChildren(); } catch { /* ignore */ }
       ytPlayerRef.current = null;
       ytReadyRef.current = false;
     };
@@ -264,7 +276,7 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     if (el?.requestFullscreen) el.requestFullscreen().catch(() => { /* ignore */ });
   }, [media.type]);
 
-  // Bug 2 : geste utilisateur → réactiver le son du lecteur courant
+  // Bug 2 : geste utilisateur → réactiver le son du lecteur courant (+ relancer la lecture au cas où)
   const enableSound = useCallback(() => {
     setMuted(false);
     try {
@@ -273,10 +285,21 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         if (v) { v.muted = false; v.play?.().catch(() => { /* ignore */ }); }
       } else if (media.type === 'youtube') {
         const p = ytPlayerRef.current;
-        if (p?.unMute) { p.unMute(); p.setVolume?.(100); }
+        if (p?.unMute) { p.unMute(); p.setVolume?.(100); p.playVideo?.(); }
       } else if (media.type === 'vimeo') {
-        vimeoPlayerRef.current?.setMuted(false).catch(() => { /* ignore */ });
+        const p = vimeoPlayerRef.current;
+        if (p) { p.setMuted(false).catch(() => { /* ignore */ }); p.play().catch(() => { /* ignore */ }); }
       }
+    } catch { /* ignore */ }
+  }, [media.type]);
+
+  // Filet de sécurité : si l'autoplay (même muet) est bloqué, le 1er clic du participant
+  // dans la zone vidéo relance la lecture via l'API du player.
+  const handleParticipantTap = useCallback(() => {
+    try {
+      if (media.type === 'video') videoRef.current?.play?.().catch(() => { /* ignore */ });
+      else if (media.type === 'youtube') ytPlayerRef.current?.playVideo?.();
+      else if (media.type === 'vimeo') vimeoPlayerRef.current?.play().catch(() => { /* ignore */ });
     } catch { /* ignore */ }
   }, [media.type]);
 
@@ -379,9 +402,15 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       </div>
       <div ref={containerRef} className="relative w-full aspect-video bg-black">
         {body}
-        {/* Item 1 : overlay participant → aucune interaction possible (play/pause/seek bloqués) */}
+        {/* Item 1 : overlay participant → bloque le contrôle du média MAIS le 1er tap relance la
+            lecture si l'autoplay a été bloqué (filet de sécurité, ne pilote pas la sync). */}
         {blockParticipant && (
-          <div className="absolute inset-0 z-10" style={{ cursor: 'default' }} data-testid="media-block-overlay" />
+          <div
+            className="absolute inset-0 z-10"
+            style={{ cursor: 'pointer' }}
+            onClick={handleParticipantTap}
+            data-testid="media-block-overlay"
+          />
         )}
         {/* Bug 2 : participant en muet → bouton discret pour activer le son (geste utilisateur) */}
         {blockParticipant && muted && (

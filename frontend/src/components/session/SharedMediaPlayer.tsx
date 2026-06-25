@@ -43,13 +43,12 @@ function loadYouTubeApi(): Promise<any> {
   });
 }
 
-const DRIFT = 1.2;          // s : seuil de resynchro de position (anti-saccade)
-const HOST_EMIT_MS = 1000;  // intervalle d'émission de l'hôte pendant la lecture (≈ heartbeat 1s)
+const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
+const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
 export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const lastEmitRef = useRef(0);
 
   // Identifiants STABLES du média (primitifs) : ce sont les SEULES dépendances des effets de
   // CRÉATION des players. Tant que l'id ne change pas, le player n'est jamais recréé — même si
@@ -72,37 +71,27 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const latestRemoteRef = useRef<RemoteMediaState | null>(remote || null);
   useEffect(() => { latestRemoteRef.current = remote || null; }, [remote]);
 
-  // Hôte : émettre play/pause/seek/position (throttle pour la lecture continue)
-  const emitState = useCallback((isPlaying: boolean, currentTime: number, force = false) => {
-    const cb = onStateRef.current;
-    if (!cb) return;
-    const now = Date.now();
-    if (!force && now - lastEmitRef.current < HOST_EMIT_MS) return;
-    lastEmitRef.current = now;
-    cb({ isPlaying, currentTime: currentTime || 0 });
+  // 🎬 HÔTE = SOURCE UNIQUE : émettre l'état (lu sur le lecteur LIVE) vers le parent, qui le
+  // diffuse en VIDEO_SYNC. Pas de throttle ici : appelé par l'UNIQUE interval (700ms) + à chaque action.
+  const emitHostState = useCallback((isPlaying: boolean, currentTime: number) => {
+    onStateRef.current?.({ isPlaying, currentTime: currentTime || 0 });
   }, []);
 
   // ───────────────────────── VIDÉO UPLOADÉE (<video>) ─────────────────────────
-  // Participant : appliquer l'état distant (sync + late-join : seek au temps reçu)
+  // Participant : appliquer l'état distant. host.isPlaying=true → play + seek si écart > DRIFT.
+  // host.isPlaying=false → pause ET seek (caler exactement sur l'hôte).
   useEffect(() => {
     if (isHost || !remote || media.type !== 'video') return;
     const v = videoRef.current;
     if (!v) return;
-    if (Math.abs(v.currentTime - remote.currentTime) > DRIFT) {
+    if (remote.isPlaying) {
+      if (Math.abs(v.currentTime - remote.currentTime) > DRIFT) v.currentTime = remote.currentTime;
+      if (v.paused) v.play().catch(() => { /* autoplay bloqué : muet l'autorise, le prochain sync relance */ });
+    } else {
       v.currentTime = remote.currentTime;
-    }
-    if (remote.isPlaying && v.paused) {
-      v.play().catch(() => { /* autoplay bloqué : un geste page le débloquera, le prochain heartbeat relance */ });
-    } else if (!remote.isPlaying && !v.paused) {
-      v.pause();
+      if (!v.paused) v.pause();
     }
   }, [remote, isHost, media.type]);
-
-  const emitVideo = useCallback((force = false) => {
-    const v = videoRef.current;
-    if (!v) return;
-    emitState(!v.paused, v.currentTime, force);
-  }, [emitState]);
 
   // ───────────────────────── YOUTUBE (IFrame Player API) ─────────────────────────
   const ytMountRef = useRef<HTMLDivElement>(null);
@@ -118,7 +107,6 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     if (ytPlayerRef.current && ytLoadedIdRef.current === ytId) return;
     const id = ytId;
     let cancelled = false;
-    let poll: ReturnType<typeof setInterval> | null = null;
     ytReadyRef.current = false;
     const mount = ytMountRef.current; // capturé pour le cleanup (ref stable pendant la vie de l'effet)
 
@@ -177,26 +165,26 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
             }
           },
           onStateChange: (e: any) => {
-            if (!isHost) return;
             const p = e.target;
-            if (e.data === YT.PlayerState.PLAYING) emitState(true, p.getCurrentTime(), true);
-            else if (e.data === YT.PlayerState.PAUSED) emitState(false, p.getCurrentTime(), true);
+            if (isHost) {
+              // Hôte : émission instantanée sur play/pause (en plus de l'interval unique)
+              if (e.data === YT.PlayerState.PLAYING) emitHostState(true, p.getCurrentTime());
+              else if (e.data === YT.PlayerState.PAUSED) emitHostState(false, p.getCurrentTime());
+              return;
+            }
+            // PARTICIPANT — anti-pause : si l'hôte joue et que le lecteur passe en pause → relancer
+            const r = latestRemoteRef.current;
+            if (e.data === YT.PlayerState.PAUSED && r?.isPlaying) {
+              console.log('[VIDEO] re-enforce play');
+              try { p.playVideo(); } catch { /* ignore */ }
+            }
           },
         },
       });
     });
 
-    // Hôte : émettre la position périodiquement pendant la lecture (sync fine + late-join)
-    if (isHost) {
-      poll = setInterval(() => {
-        const p = ytPlayerRef.current;
-        if (p?.getPlayerState && p.getPlayerState() === 1) emitState(true, p.getCurrentTime());
-      }, HOST_EMIT_MS);
-    }
-
     return () => {
       cancelled = true;
-      if (poll) clearInterval(poll);
       try { ytPlayerRef.current?.destroy?.(); } catch { /* ignore */ }
       // Nettoyer l'iframe laissée par l'API dans le conteneur React
       try { mount?.replaceChildren(); } catch { /* ignore */ }
@@ -204,20 +192,24 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       ytReadyRef.current = false;
       ytLoadedIdRef.current = null;
     };
-    // Dépend UNIQUEMENT de l'id (ytId) + isHost → création unique. emitState est stable (useCallback []).
+    // Dépend UNIQUEMENT de l'id (ytId) + isHost → création unique. emitHostState est stable (useCallback []).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ytId, isHost]);
 
-  // Participant : appliquer l'état distant YouTube
+  // Participant : appliquer l'état distant YouTube (ré-imposé à chaque VIDEO_SYNC)
   useEffect(() => {
     if (isHost || media.type !== 'youtube' || !remote) return;
     const p = ytPlayerRef.current;
     if (!p || !ytReadyRef.current || !p.getCurrentTime) return;
     try {
-      if (Math.abs(p.getCurrentTime() - remote.currentTime) > DRIFT) p.seekTo(remote.currentTime, true);
       const st = p.getPlayerState ? p.getPlayerState() : -1;
-      if (remote.isPlaying && st !== 1) p.playVideo();
-      else if (!remote.isPlaying && st === 1) p.pauseVideo();
+      if (remote.isPlaying) {
+        if (Math.abs(p.getCurrentTime() - remote.currentTime) > DRIFT) p.seekTo(remote.currentTime, true);
+        if (st !== 1) p.playVideo();
+      } else {
+        p.seekTo(remote.currentTime, true);
+        if (st === 1) p.pauseVideo();
+      }
     } catch { /* ignore */ }
   }, [remote, isHost, media.type]);
 
@@ -268,15 +260,24 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     }).catch(() => { /* ignore */ });
 
     if (isHost) {
-      const emitNow = (force: boolean) => {
+      // Hôte : émission instantanée sur chaque action (en plus de l'interval unique)
+      const emitNow = () => {
         Promise.all([player.getCurrentTime(), player.getPaused()])
-          .then(([t, paused]) => emitState(!paused, t, force))
+          .then(([t, paused]) => emitHostState(!paused, t))
           .catch(() => { /* ignore */ });
       };
-      player.on('play', () => emitNow(true));
-      player.on('pause', () => emitNow(true));
-      player.on('seeked', () => emitNow(true));
-      player.on('timeupdate', () => emitNow(false));
+      player.on('play', emitNow);
+      player.on('pause', emitNow);
+      player.on('seeked', emitNow);
+    } else {
+      // PARTICIPANT — anti-pause : si l'hôte joue et que le lecteur passe en pause → relancer
+      player.on('pause', () => {
+        const r = latestRemoteRef.current;
+        if (r?.isPlaying) {
+          console.log('[VIDEO] re-enforce play');
+          player.play().catch(() => { /* ignore */ });
+        }
+      });
     }
 
     return () => {
@@ -286,21 +287,47 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       vimeoPlayerRef.current = null;
       vimeoLoadedIdRef.current = null;
     };
-    // Dépend UNIQUEMENT de l'id (vmId) + isHost → création unique. emitState est stable (useCallback []).
+    // Dépend UNIQUEMENT de l'id (vmId) + isHost → création unique. emitHostState est stable (useCallback []).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vmId, isHost]);
 
-  // Participant : appliquer l'état distant Vimeo
+  // Participant : appliquer l'état distant Vimeo (ré-imposé à chaque VIDEO_SYNC)
   useEffect(() => {
     if (isHost || media.type !== 'vimeo' || !remote) return;
     const p = vimeoPlayerRef.current;
     if (!p || !vimeoReadyRef.current) return;
     p.getCurrentTime().then((cur) => {
-      if (Math.abs(cur - remote.currentTime) > DRIFT) p.setCurrentTime(remote.currentTime).catch(() => { /* ignore */ });
-      if (remote.isPlaying) p.play().catch(() => { /* ignore */ });
-      else p.pause().catch(() => { /* ignore */ });
+      if (remote.isPlaying) {
+        if (Math.abs(cur - remote.currentTime) > DRIFT) p.setCurrentTime(remote.currentTime).catch(() => { /* ignore */ });
+        p.play().catch(() => { /* ignore */ });
+      } else {
+        p.setCurrentTime(remote.currentTime).catch(() => { /* ignore */ });
+        p.pause().catch(() => { /* ignore */ });
+      }
     }).catch(() => { /* ignore */ });
   }, [remote, isHost, media.type]);
+
+  // 🎬 ÉMETTEUR HÔTE UNIQUE : un SEUL setInterval qui lit l'état RÉEL du lecteur au moment T et
+  // l'émet (le parent diffuse VIDEO_SYNC). C'est la seule source de vérité → plus d'états
+  // contradictoires. Les actions (play/pause/seek) émettent en plus immédiatement (handlers ci-dessus).
+  useEffect(() => {
+    if (!isHost) return;
+    const interval = setInterval(() => {
+      try {
+        if (media.type === 'youtube') {
+          const p = ytPlayerRef.current;
+          if (p?.getPlayerState && p.getCurrentTime) emitHostState(p.getPlayerState() === 1, p.getCurrentTime());
+        } else if (media.type === 'video') {
+          const v = videoRef.current;
+          if (v && !Number.isNaN(v.currentTime)) emitHostState(!v.paused, v.currentTime);
+        } else if (media.type === 'vimeo') {
+          const p = vimeoPlayerRef.current;
+          if (p) Promise.all([p.getCurrentTime(), p.getPaused()]).then(([t, paused]) => emitHostState(!paused, t)).catch(() => { /* ignore */ });
+        }
+      } catch { /* ignore */ }
+    }, HOST_EMIT_MS);
+    return () => clearInterval(interval);
+  }, [isHost, media.type, emitHostState]);
 
   // Item 4 : plein écran de l'élément INTÉGRÉ (jamais de redirection vers youtube.com) + paysage mobile.
   const goFullscreen = useCallback(() => {
@@ -373,16 +400,6 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     } catch { /* ignore */ }
   }, [media.type]);
 
-  // Filet de sécurité : si l'autoplay (même muet) est bloqué, le 1er clic du participant
-  // dans la zone vidéo relance la lecture via l'API du player.
-  const handleParticipantTap = useCallback(() => {
-    try {
-      if (media.type === 'video') videoRef.current?.play?.().catch(() => { /* ignore */ });
-      else if (media.type === 'youtube') ytPlayerRef.current?.playVideo?.();
-      else if (media.type === 'vimeo') vimeoPlayerRef.current?.play().catch(() => { /* ignore */ });
-    } catch { /* ignore */ }
-  }, [media.type]);
-
   const icon =
     media.type === 'image' ? <ImageIcon className="w-4 h-4" /> :
     media.type === 'youtube' ? <Youtube className="w-4 h-4" /> :
@@ -428,10 +445,15 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
           v.play().catch(() => { /* autoplay bloqué : le 1er tap relancera */ });
           if (r && r.isPlaying === false) setTimeout(() => { try { videoRef.current?.pause(); } catch { /* ignore */ } }, 350);
         }}
-        onPlay={() => emitVideo(true)}
-        onPause={() => emitVideo(true)}
-        onSeeked={() => emitVideo(true)}
-        onTimeUpdate={() => { if (isHost) emitVideo(false); }}
+        // Hôte : émission instantanée sur action. Participant : anti-pause (relance si l'hôte joue).
+        onPlay={() => { const v = videoRef.current; if (isHost && v) emitHostState(true, v.currentTime); }}
+        onPause={() => {
+          const v = videoRef.current; if (!v) return;
+          if (isHost) { emitHostState(false, v.currentTime); return; }
+          const r = latestRemoteRef.current;
+          if (r?.isPlaying) { console.log('[VIDEO] re-enforce play'); v.play().catch(() => { /* ignore */ }); }
+        }}
+        onSeeked={() => { const v = videoRef.current; if (isHost && v) emitHostState(!v.paused, v.currentTime); }}
         data-testid="shared-video"
       />
     );
@@ -498,13 +520,15 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         className="relative w-full aspect-video bg-black [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:aspect-auto [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center"
       >
         {body}
-        {/* Item 1 : overlay participant → bloque le contrôle du média MAIS le 1er tap relance la
-            lecture si l'autoplay a été bloqué (filet de sécurité, ne pilote pas la sync). */}
+        {/* Item 2 : overlay BLOQUANT → capte et neutralise TOUS les clics/taps du participant.
+            Le participant ne peut JAMAIS piloter le lecteur (pas de pause via clic vidéo). */}
         {blockParticipant && (
           <div
             className="absolute inset-0 z-10"
-            style={{ cursor: 'pointer' }}
-            onClick={handleParticipantTap}
+            style={{ cursor: 'default' }}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onTouchStart={(e) => { e.preventDefault(); e.stopPropagation(); }}
+            onContextMenu={(e) => e.preventDefault()}
             data-testid="media-block-overlay"
           />
         )}

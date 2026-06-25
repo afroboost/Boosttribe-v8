@@ -500,9 +500,9 @@ export const SessionPage: React.FC = () => {
   // E : média partagé (vidéo/image/youtube/vimeo/lien) + état distant pour les participants
   const [sharedMedia, setSharedMedia] = useState<SharedMedia | null>(null);
   const [remoteMediaState, setRemoteMediaState] = useState<RemoteMediaState | null>(null);
-  // 🎬 SYNCHRO VIDÉO (même principe que l'audio) : dernier état de lecture vidéo de l'hôte,
-  // émis en continu (heartbeat 1s) sur le canal playback via l'événement VIDEO_SYNC.
-  const videoHostStateRef = useRef<{ isPlaying: boolean; currentTime: number }>({ isPlaying: false, currentTime: 0 });
+  // 🎬 SYNCHRO VIDÉO : ts du dernier VIDEO_SYNC appliqué → ignorer les messages plus anciens
+  // (réordonnancement réseau) pour ne jamais revenir en arrière.
+  const lastVideoTsRef = useRef(0);
   // Item 6 : le sélecteur de mode pilote TOUTE la zone centrale (audio = lecteur + playlist ;
   // vidéo/image/lien = uniquement le média partagé). Hôte/co-host le contrôlent via le sélecteur ;
   // les participants le dérivent du média reçu (effet plus bas).
@@ -1049,8 +1049,10 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as { isPlaying: boolean; currentTime: number; mediaId?: string; ts?: number };
         const cur = sharedMediaRef.current;
-        if (!cur) return;                                // pas encore reçu l'identité du média
-        if (p.mediaId && cur.url !== p.mediaId) return;  // sync pour un autre média → ignorer
+        if (!cur) return;                                  // pas encore reçu l'identité du média
+        if (p.mediaId && cur.url !== p.mediaId) return;    // sync pour un autre média → ignorer
+        if (p.ts && p.ts < lastVideoTsRef.current) return; // message plus ancien que le dernier appliqué → ignorer
+        if (p.ts) lastVideoTsRef.current = p.ts;
         console.log('[VIDEO] recv', p.isPlaying, p.currentTime);
         mediaSeqRef.current += 1;
         setRemoteMediaState({ isPlaying: !!p.isPlaying, currentTime: p.currentTime || 0, seq: mediaSeqRef.current });
@@ -1248,12 +1250,10 @@ export const SessionPage: React.FC = () => {
     sendPlaybackEvent('MEDIA_COMMAND', { media, isPlaying: media.isPlaying ?? false, currentTime: media.currentTime ?? 0 });
   }, [sessionId, sendPlaybackEvent]);
 
-  // 🎬 état de lecture VIDÉO (hôte/co-animateur) → diffusé aux participants à CHAQUE action
-  // (play/pause/seek), sur le MÊME canal que l'audio (playback:<id>), événement VIDEO_SYNC.
-  // On met à jour une ref (pas de setState → pas de re-render à chaque frame) ; le heartbeat 1s
-  // ré-émet l'état pour le late-join et la correction de dérive.
+  // 🎬 ÉMETTEUR VIDÉO UNIQUE : le SharedMediaPlayer (hôte) appelle ceci avec l'état LIVE du lecteur
+  // (via son unique interval 700ms + à chaque action play/pause/seek). C'est la SEULE source qui
+  // diffuse VIDEO_SYNC sur le canal audio (playback:<id>) → plus d'états contradictoires.
   const handleMediaState = useCallback((s: { isPlaying: boolean; currentTime: number }) => {
-    videoHostStateRef.current = { isPlaying: s.isPlaying, currentTime: s.currentTime };
     const m = sharedMediaRef.current;
     if (!m) return;
     console.log('[VIDEO] emit', s.isPlaying, s.currentTime);
@@ -1710,24 +1710,9 @@ export const SessionPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [isHost, sessionId]);
 
-  // 💓 🎬 Heartbeat VIDÉO toutes les 1000 ms (même principe que le heartbeat audio) → late-join
-  // précis (≤ 1 s) + correction de dérive. Émis sur le canal playback:<id>, événement VIDEO_SYNC.
-  useEffect(() => {
-    if (!isHost || !sessionId || !supabase || !isSupabaseConfigured) return;
-    const interval = setInterval(() => {
-      const m = sharedMediaRef.current;
-      // utile uniquement pour les médias pilotables (vidéo uploadée + lien YouTube/Vimeo)
-      if (!m || (m.type !== 'video' && m.type !== 'youtube' && m.type !== 'vimeo')) return;
-      const st = videoHostStateRef.current;
-      console.log('[VIDEO] emit', st.isPlaying, st.currentTime);
-      supabase!.channel(`playback:${sessionId}`).send({
-        type: 'broadcast',
-        event: 'VIDEO_SYNC',
-        payload: { isPlaying: st.isPlaying, currentTime: st.currentTime, mediaId: m.url, ts: Date.now() },
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isHost, sessionId]);
+  // ℹ️ Plus de heartbeat vidéo séparé ici : l'ÉMETTEUR UNIQUE est l'interval 700ms du
+  // SharedMediaPlayer (hôte) qui lit l'état LIVE du lecteur et appelle handleMediaState →
+  // VIDEO_SYNC. Avoir deux émetteurs créait des états contradictoires (BUG B). Ne pas réintroduire.
 
   // Handle sync state changes
   const handleSyncStateChange = useCallback((state: SyncState) => {

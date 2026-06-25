@@ -379,6 +379,10 @@ async def list_users(authorization: Optional[str] = Header(default=None)):
 # --------------------------------------------------------------------------- #
 # E : upload vidéo de session (hôte) + nettoyage auto 24h
 # --------------------------------------------------------------------------- #
+# Format autorisé d'un id de session (empêche l'injection de chemin de stockage / IDOR)
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+
+
 @app.post("/session/upload-video")
 async def upload_video(
     file: UploadFile = File(...),
@@ -388,6 +392,10 @@ async def upload_video(
     user = await get_user_from_token(authorization)  # utilisateur authentifié (hôte/co-animateur)
     user_id = user.get("id")
 
+    # Sécurité : valider strictement le session_id avant tout usage dans le chemin de stockage
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+
     content_type = file.content_type or "application/octet-stream"
     if not content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="Fichier vidéo requis")
@@ -396,9 +404,10 @@ async def upload_video(
     if len(data) > 200 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Vidéo trop volumineuse (max 200 Mo)")
 
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "video.mp4")
+    # Le nom de fichier est nettoyé ET ne sert qu'au libellé ; le segment de chemin est neutralisé
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "video.mp4")[:80]
     ts = int(datetime.now(timezone.utc).timestamp())
-    storage_path = f"{session_id}/{ts}_{safe_name}"
+    storage_path = f"{session_id}/{user_id}/{ts}_{safe_name}"
 
     async with httpx.AsyncClient(timeout=180) as client:
         up = await client.post(

@@ -109,16 +109,28 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       />
     ) : <p className="text-white/60 text-sm p-4">Lien Vimeo invalide</p>;
   } else {
-    // Lien générique : on tente l'intégration en iframe (reste DANS la page)
-    body = (
+    // Lien générique : on tente l'intégration en iframe (reste DANS la page).
+    // Sécurité : on n'accepte que http(s) et on isole le contenu via sandbox
+    // (PAS de allow-same-origin → l'iframe ne peut pas accéder à l'origine parente).
+    let safeUrl: string | null = null;
+    try {
+      const u = new URL(media.url);
+      if (u.protocol === 'https:' || u.protocol === 'http:') safeUrl = u.href;
+    } catch {
+      safeUrl = null;
+    }
+    body = safeUrl ? (
       <iframe
         title="Contenu partagé"
-        src={media.url}
+        src={safeUrl}
         className="w-full h-full bg-white"
         allow="autoplay; fullscreen"
+        sandbox="allow-scripts allow-forms allow-popups allow-presentation"
         allowFullScreen
         frameBorder={0}
       />
+    ) : (
+      <p className="text-white/60 text-sm p-4">Lien non pris en charge</p>
     );
   }
 

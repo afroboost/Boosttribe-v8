@@ -1,16 +1,18 @@
 /**
- * 🚀 BOOSTTRIBE SERVICE WORKER - V8 Stable Gold
- * 
- * Stratégies de cache :
- * - Assets statiques (CSS, JS, images) : Cache First
- * - Pages HTML : Network First avec fallback cache
- * - Page /session : Network First (toujours frais pour sync)
- * - Audio (.mp3, .wav) : JAMAIS caché (streaming)
- * - API Supabase : JAMAIS caché (temps réel)
+ * 🚀 BOOSTTRIBE SERVICE WORKER - V9 Auto-Update
+ *
+ * Mise à jour AUTOMATIQUE à chaque déploiement :
+ * - skipWaiting() à l'install + clients.claim() à l'activate
+ * - JS / CSS + navigation (app shell) : NETWORK FIRST → la dernière version se charge
+ *   dès qu'elle est dispo ; le cache ne sert que de repli hors-ligne
+ * - Images / fonts : Cache First (fichiers hashés/immuables)
+ * - Audio (.mp3, .wav) + API Supabase : JAMAIS cachés (streaming / temps réel)
+ *
+ * ⚠️ Incrémenter CACHE_NAME à chaque changement de stratégie pour invalider l'ancien cache.
  */
 
-const CACHE_NAME = 'boosttribe-v8-gold';
-const CACHE_VERSION = '1.0.0';
+const CACHE_NAME = 'boosttribe-v9-auto-update';
+const CACHE_VERSION = '2.0.0';
 
 // Assets à pré-cacher lors de l'installation
 const STATIC_ASSETS = [
@@ -125,16 +127,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   
-  // 📦 CACHE FIRST : Assets statiques (CSS, JS, images, fonts)
-  if (request.destination === 'style' || 
-      request.destination === 'script' || 
-      request.destination === 'image' ||
-      request.destination === 'font') {
+  // 🔄 NETWORK FIRST : JS / CSS (app shell) → la dernière version se charge dès qu'elle est dispo,
+  // le cache ne sert que de repli hors-ligne. Indispensable pour voir les mises à jour après déploiement.
+  if (request.destination === 'style' || request.destination === 'script') {
+    event.respondWith(networkFirstStrategy(request));
+    return;
+  }
+
+  // 📦 CACHE FIRST : images / fonts (fichiers hashés, immuables)
+  if (request.destination === 'image' || request.destination === 'font') {
     event.respondWith(cacheFirstStrategy(request));
     return;
   }
-  
-  // 🌐 NETWORK FIRST par défaut pour les pages HTML
+
+  // 🌐 NETWORK FIRST par défaut pour la navigation / pages HTML
   event.respondWith(networkFirstStrategy(request));
 });
 

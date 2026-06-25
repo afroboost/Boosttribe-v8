@@ -195,15 +195,49 @@
             });
         </script>
         
-        <!-- 🚀 PWA Service Worker Registration -->
+        <!-- 🚀 PWA Service Worker Registration + mise à jour AUTOMATIQUE -->
         <script>
             if ('serviceWorker' in navigator) {
-                window.addEventListener('load', function() {
+                window.addEventListener('load', function () {
+                    var refreshing = false;
+                    // Un contrôleur déjà présent = visiteur de retour → un changement de contrôleur
+                    // signifie une vraie mise à jour (et pas la prise de contrôle du tout premier SW).
+                    var hadController = !!navigator.serviceWorker.controller;
+
+                    // Recharger automatiquement quand le nouveau SW prend le contrôle (après mise à jour)
+                    navigator.serviceWorker.addEventListener('controllerchange', function () {
+                        if (refreshing || !hadController) return;
+                        refreshing = true;
+                        window.location.reload();
+                    });
+
                     navigator.serviceWorker.register('/sw.js')
-                        .then(function(registration) {
+                        .then(function (registration) {
                             console.log('🚀 Boosttribe PWA: Service Worker registered');
+
+                            // Un SW est déjà en attente → l'activer immédiatement
+                            if (registration.waiting) {
+                                registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                            }
+
+                            // Nouvelle version détectée → demander l'activation immédiate
+                            registration.addEventListener('updatefound', function () {
+                                var newWorker = registration.installing;
+                                if (!newWorker) return;
+                                newWorker.addEventListener('statechange', function () {
+                                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                        newWorker.postMessage({ type: 'SKIP_WAITING' });
+                                    }
+                                });
+                            });
+
+                            // Vérifier les mises à jour maintenant, puis à chaque retour sur l'onglet
+                            registration.update();
+                            document.addEventListener('visibilitychange', function () {
+                                if (document.visibilityState === 'visible') registration.update();
+                            });
                         })
-                        .catch(function(error) {
+                        .catch(function (error) {
                             console.log('🚀 Boosttribe PWA: SW registration failed:', error);
                         });
                 });

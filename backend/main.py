@@ -16,7 +16,7 @@ import re
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 import httpx
 import stripe
@@ -27,6 +27,9 @@ from pydantic import BaseModel
 # Bucket de stockage des médias de session (vidéos partagées par l'hôte)
 SESSION_MEDIA_BUCKET = "session-media"
 MEDIA_TTL_HOURS = 24
+
+# Format autorisé d'un identifiant (session / user) — anti path traversal & injection
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
 
 # --------------------------------------------------------------------------- #
 # Configuration (variables d'environnement)
@@ -160,6 +163,34 @@ async def get_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Autorité de session (hôte / co-animateurs) — source de vérité côté serveur
+# --------------------------------------------------------------------------- #
+async def get_session_authz(session_id: str) -> Optional[Dict[str, Any]]:
+    """Renvoie {host_id, cohosts} de la session depuis playlists, ou None."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/playlists",
+            headers=_service_headers(),
+            params={"session_id": f"eq.{session_id}", "select": "session_id,host_id,cohosts"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+
+async def upsert_playlist_fields(session_id: str, patch: Dict[str, Any]) -> bool:
+    """Upsert partiel sur playlists (clé session_id) sans écraser les autres colonnes."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/playlists",
+            headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            params={"on_conflict": "session_id"},
+            json={"session_id": session_id, **patch},
+        )
+    return resp.status_code in (200, 201, 204)
+
+
 async def find_profile_by_subscription(subscription_id: str) -> Optional[Dict[str, Any]]:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
@@ -196,6 +227,15 @@ class GrantAccessBody(BaseModel):
 
 class RevokeAccessBody(BaseModel):
     user_id: str
+
+
+class ClaimHostBody(BaseModel):
+    session_id: str
+
+
+class CohostsBody(BaseModel):
+    session_id: str
+    cohosts: List[str] = []
 
 
 # --------------------------------------------------------------------------- #
@@ -379,8 +419,42 @@ async def list_users(authorization: Optional[str] = Header(default=None)):
 # --------------------------------------------------------------------------- #
 # E : upload vidéo de session (hôte) + nettoyage auto 24h
 # --------------------------------------------------------------------------- #
-# Format autorisé d'un id de session (empêche l'injection de chemin de stockage / IDOR)
-SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{4,64}$")
+# --------------------------------------------------------------------------- #
+# F : autorité hôte / co-animateurs (source de vérité serveur)
+# --------------------------------------------------------------------------- #
+@app.post("/session/claim-host")
+async def claim_host(body: ClaimHostBody, authorization: Optional[str] = Header(default=None)):
+    """L'hôte revendique sa session (premier arrivé = hôte). Idempotent pour le même hôte."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not body.session_id or not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+
+    row = await get_session_authz(body.session_id)
+    current = row.get("host_id") if row else None
+    if current and current != uid:
+        # Déjà revendiquée par un autre compte → on ne réécrit pas
+        return {"ok": False, "host_id": current}
+    if current != uid:
+        await upsert_playlist_fields(body.session_id, {"host_id": uid})
+    return {"ok": True, "host_id": uid}
+
+
+@app.post("/session/cohosts")
+async def set_cohosts(body: CohostsBody, authorization: Optional[str] = Header(default=None)):
+    """Seul l'hôte (host_id) peut définir la liste des co-animateurs autorisés à partager."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not body.session_id or not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+
+    row = await get_session_authz(body.session_id)
+    if not row or row.get("host_id") != uid:
+        raise HTTPException(status_code=403, detail="Seul l'hôte peut gérer les co-animateurs")
+
+    cohosts = [c for c in (body.cohosts or []) if isinstance(c, str) and SESSION_ID_RE.match(c)][:50]
+    await upsert_playlist_fields(body.session_id, {"cohosts": cohosts})
+    return {"ok": True, "cohosts": cohosts}
 
 
 @app.post("/session/upload-video")
@@ -398,6 +472,13 @@ async def upload_video(
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     if not user_id or not SESSION_ID_RE.match(str(user_id)):
         raise HTTPException(status_code=400, detail="Utilisateur invalide")
+
+    # Autorisation : seul l'hôte ou un co-animateur de CETTE session peut uploader (anti IDOR)
+    authz = await get_session_authz(session_id)
+    host_id = authz.get("host_id") if authz else None
+    cohosts = (authz.get("cohosts") if authz else None) or []
+    if user_id != host_id and user_id not in cohosts:
+        raise HTTPException(status_code=403, detail="Partage réservé à l'hôte et aux co-animateurs")
 
     content_type = file.content_type or "application/octet-stream"
     if not content_type.startswith("video/"):

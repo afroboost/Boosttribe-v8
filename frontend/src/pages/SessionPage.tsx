@@ -28,6 +28,7 @@ import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
 import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
+import { claimHost, setCohosts } from '@/lib/paymentApi';
 import { Pencil } from 'lucide-react';
 
 // LocalStorage key for nickname
@@ -36,8 +37,9 @@ const NICKNAME_STORAGE_KEY = 'bt_nickname';
 // Types de payload Realtime (E/F/C) — déclarés hors composant pour éviter les faux positifs
 // de react-hooks/exhaustive-deps (noms de propriétés confondus avec des variables d'état).
 interface MediaCommandPayload { media: SharedMedia | null; isPlaying?: boolean; currentTime?: number; }
-interface CoHostPayload { coHostIds: string[]; }
 interface DescPayload { description: string; }
+interface PlaylistChangeRow { tracks?: Track[]; cohosts?: string[]; description?: string }
+interface PlaylistChangePayload { new?: PlaylistChangeRow; eventType?: string }
 
 // ============================================
 // 🛡️ INTERFACES TYPESCRIPT - Boosttribe V8 Stable Gold
@@ -828,11 +830,23 @@ export const SessionPage: React.FC = () => {
 
         if (error) return;
 
-        // C : charger la description ; E : charger le média partagé courant
+        // C : charger la description ; E : média partagé courant
         if (data) {
           if (typeof data.description === 'string') setDescription(data.description);
           if (data.shared_media) setSharedMedia(data.shared_media as SharedMedia);
         }
+
+        // F : co-animateurs (autorité DB) — requête séparée tolérante (colonne optionnelle)
+        try {
+          const { data: cd } = await supabase
+            .from('playlists')
+            .select('cohosts')
+            .eq('session_id', sessionId)
+            .maybeSingle();
+          if (cd && Array.isArray((cd as { cohosts?: string[] }).cohosts)) {
+            setCoHostIds(new Set((cd as { cohosts: string[] }).cohosts));
+          }
+        } catch { /* colonne cohosts pas encore créée → ignoré */ }
 
         if (data && data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
           setTracks(data.tracks as Track[]);
@@ -989,12 +1003,8 @@ export const SessionPage: React.FC = () => {
           setRemoteMediaState(null);
         }
       })
-      // F : mise à jour des co-animateurs autorisés à partager
-      .on('broadcast', { event: 'COHOST_UPDATE' }, (payload) => {
-        if (isHost || !payload.payload) return;
-        const p = payload.payload as CoHostPayload;
-        setCoHostIds(new Set(p.coHostIds || []));
-      })
+      // F : les co-animateurs ne sont PLUS dérivés d'un broadcast (spoofable) mais de la DB
+      //     (playlists.cohosts), écrite par le backend host-only et reçue via postgres_changes.
       // C : mise à jour live de la description
       .on('broadcast', { event: 'DESC_UPDATE' }, (payload) => {
         if (isHost || !payload.payload) return;
@@ -1005,16 +1015,25 @@ export const SessionPage: React.FC = () => {
 
     // Handler pour INSERT et UPDATE (playlist seulement)
     function handlePlaylistUpdate(payload: unknown) {
-      const data = payload as { new?: { tracks?: Track[] }, eventType?: string };
-      
+      const data = payload as PlaylistChangePayload;
+
+      // F : co-animateurs depuis la DB (autorité). Tous les clients dérivent la liste de playlists.cohosts.
+      if (data.new && Array.isArray(data.new.cohosts)) {
+        setCoHostIds(new Set(data.new.cohosts));
+      }
+      // C : description live (participants)
+      if (data.new && typeof data.new.description === 'string' && !isHost) {
+        setDescription(data.new.description);
+      }
+
       // Synchroniser la playlist uniquement
       if (data.new && 'tracks' in data.new) {
         const newTracks = data.new.tracks || [];
-        
+
         if (!isHost) {
           setTracks(newTracks);
           showToast('Playlist synchronisée', 'default');
-          
+
           if (newTracks.length > 0 && !selectedTrack) {
             setSelectedTrack(newTracks[0]);
           }
@@ -1189,20 +1208,26 @@ export const SessionPage: React.FC = () => {
     sendPlaybackEvent('DESC_UPDATE', { description: text });
   }, [descDraft, sessionId, sendPlaybackEvent]);
 
-  // F : autoriser/retirer un participant comme co-animateur (partage)
-  const handleToggleCoHost = useCallback((id: string, makeCoHost: boolean) => {
-    setCoHostIds(prev => {
-      const next = new Set(prev);
-      if (makeCoHost) next.add(id); else next.delete(id);
-      sendPlaybackEvent('COHOST_UPDATE', { coHostIds: Array.from(next) });
-      return next;
-    });
+  // F : autoriser/retirer un co-animateur — autorité SERVEUR (backend host-only).
+  // La liste est persistée dans playlists.cohosts ; tous les clients la dérivent via postgres_changes.
+  const handleToggleCoHost = useCallback(async (id: string, makeCoHost: boolean) => {
+    if (!isHost || !sessionId) return;
+    const next = new Set(coHostIds);
+    if (makeCoHost) next.add(id); else next.delete(id);
+    setCoHostIds(next); // optimiste ; réconcilié par la DB
+
     const p = participantsState.find(x => x.id === id);
-    showToast(
-      makeCoHost ? `${p?.name || 'Participant'} peut maintenant partager` : `Partage retiré pour ${p?.name || 'Participant'}`,
-      makeCoHost ? 'success' : 'default',
-    );
-  }, [sendPlaybackEvent, participantsState, showToast]);
+    const { ok, error } = await setCohosts(sessionId, Array.from(next));
+    if (ok) {
+      showToast(
+        makeCoHost ? `${p?.name || 'Participant'} peut maintenant partager` : `Partage retiré pour ${p?.name || 'Participant'}`,
+        makeCoHost ? 'success' : 'default',
+      );
+    } else {
+      setCoHostIds(coHostIds); // rollback
+      showToast(error || 'Échec de la mise à jour des co-animateurs', 'error');
+    }
+  }, [isHost, sessionId, coHostIds, participantsState, showToast]);
 
   // 💾 OBJECTIF B: Sauvegarde STABLE de la playlist du coach, liée à son COMPTE.
   // Clé dérivée de l'utilisateur (indépendante du session_id aléatoire) → retrouvée à la reconnexion.
@@ -1449,6 +1474,15 @@ export const SessionPage: React.FC = () => {
       clearInterval(interval);
       clearActiveSession(uid, sessionId);
     };
+  }, [isHost, sessionId, user?.id]);
+
+  // F : l'hôte revendique sa session côté serveur (host_id) → autorité pour le partage/co-animateurs
+  const claimedSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isHost || !sessionId || !user?.id) return;
+    if (claimedSessionRef.current === sessionId) return;
+    claimedSessionRef.current = sessionId;
+    claimHost(sessionId);
   }, [isHost, sessionId, user?.id]);
 
   // Get shareable session URL

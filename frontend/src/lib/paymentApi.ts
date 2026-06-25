@@ -142,6 +142,42 @@ export async function listUsers(): Promise<{ users: AdminUser[]; error?: string 
   return { users: (data?.users || []) as AdminUser[] };
 }
 
+// F : autorité hôte / co-animateurs (source de vérité serveur)
+export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_id?: string }> {
+  if (!API_URL) return { ok: false };
+  const token = await getAccessToken();
+  if (!token) return { ok: false };
+  try {
+    const res = await fetch(`${API_URL}/session/claim-host`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: !!data?.ok, host_id: data?.host_id };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export async function setCohosts(sessionId: string, cohosts: string[]): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Session expirée' };
+  try {
+    const res = await fetch(`${API_URL}/session/cohosts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ session_id: sessionId, cohosts }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: !!data?.ok };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
 // E : upload d'une vidéo de session (hôte) → backend (bucket session-media, suppression auto 24h)
 export async function uploadSessionVideo(
   file: File,

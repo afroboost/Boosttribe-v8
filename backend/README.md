@@ -82,3 +82,27 @@ alter table profiles
 
 > Mapping prix → plan : le webhook retrouve le plan via le `price_id` de l'abonnement, comparé
 > aux ids stockés dans `site_settings`, ou via `metadata.plan` (posé à la création du checkout).
+
+## Autorité hôte / co-animateurs (F) — colonnes à ajouter
+
+Pour que l'autorisation de partage soit appliquée **côté serveur** (et non via un broadcast
+spoofable), ajouter sur `playlists` :
+
+```sql
+alter table playlists
+  add column if not exists host_id uuid,
+  add column if not exists cohosts jsonb default '[]'::jsonb;
+```
+
+- `POST /session/claim-host` (token) → fixe `host_id = caller` si la session n'a pas encore d'hôte
+  (premier arrivé = hôte ; le code de session est aléatoire donc non devinable).
+- `POST /session/cohosts` (token, **host-only**) → vérifie `host_id == caller` puis écrit `cohosts`.
+- `POST /session/upload-video` exige `caller == host_id` OU `caller ∈ cohosts` (sinon 403).
+
+Le frontend dérive la liste des co-animateurs de `playlists.cohosts` (fetch initial +
+`postgres_changes`), pas du broadcast. Pour la propagation temps réel, activer la réplication
+Realtime sur `playlists` (déjà le cas) — la colonne `cohosts` est incluse dans le payload `UPDATE`.
+
+> Recommandé en complément : des **policies RLS** sur `playlists` (UPDATE de `shared_media`/`cohosts`
+> réservé à `host_id`/`cohosts`) et sur le bucket `session-media`, pour fermer aussi les écritures
+> directes côté client.

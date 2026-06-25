@@ -51,6 +51,12 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastEmitRef = useRef(0);
 
+  // Identifiants STABLES du média (primitifs) : ce sont les SEULES dépendances des effets de
+  // CRÉATION des players. Tant que l'id ne change pas, le player n'est jamais recréé — même si
+  // l'objet `media` / `remote` change à chaque commande de synchro (heartbeat + broadcasts).
+  const ytId = media.type === 'youtube' ? youtubeId(media.url) : null;
+  const vmId = media.type === 'vimeo' ? vimeoId(media.url) : null;
+
   // Bug 2 : le participant démarre EN MUET (autoplay muet autorisé par les navigateurs → plus
   // d'écran noir). Un bouton "Activer le son" (geste utilisateur) réactive l'audio.
   const [muted, setMuted] = useState<boolean>(!isHost);
@@ -99,11 +105,15 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const ytMountRef = useRef<HTMLDivElement>(null);
   const ytPlayerRef = useRef<any>(null);
   const ytReadyRef = useRef(false);
+  const ytLoadedIdRef = useRef<string | null>(null); // garde anti-recréation
 
+  // EFFET DE CRÉATION — dépend UNIQUEMENT de l'id (ytId) et de isHost. Jamais de currentTime /
+  // isPlaying / objet media → le player est créé UNE SEULE FOIS par vidéo (pas de boucle widget2→8).
   useEffect(() => {
-    if (media.type !== 'youtube') return;
-    const id = youtubeId(media.url);
-    if (!id) return;
+    if (media.type !== 'youtube' || !ytId) return;
+    // Garde : si le player existe déjà pour cette vidéo, NE PAS le recréer.
+    if (ytPlayerRef.current && ytLoadedIdRef.current === ytId) return;
+    const id = ytId;
     let cancelled = false;
     let poll: ReturnType<typeof setInterval> | null = null;
     ytReadyRef.current = false;
@@ -111,6 +121,7 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
 
     loadYouTubeApi().then((YT) => {
       if (cancelled || !mount) return;
+      ytLoadedIdRef.current = id;
       // CORRECTIF écran noir : l'API YouTube REMPLACE l'élément qu'on lui passe par son <iframe>.
       // On ne doit JAMAIS lui donner un nœud géré par React (le conteneur), sinon à chaque re-render
       // (commandes de sync fréquentes) React réinsère son div et détache l'iframe → écran noir et le
@@ -139,7 +150,7 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
           playsinline: 1,
           fs: 1,
           autoplay: 1,
-          start: Math.floor(media.currentTime || 0),
+          start: Math.floor(latestRemoteRef.current?.currentTime ?? media.currentTime ?? 0),
         },
         events: {
           onReady: () => {
@@ -182,10 +193,11 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       try { mount?.replaceChildren(); } catch { /* ignore */ }
       ytPlayerRef.current = null;
       ytReadyRef.current = false;
+      ytLoadedIdRef.current = null;
     };
-    // currentTime volontairement exclu : on ne recrée le player que si l'URL change
+    // Dépend UNIQUEMENT de l'id (ytId) + isHost → création unique. emitState est stable (useCallback []).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [media.type, media.url, isHost, emitState]);
+  }, [ytId, isHost]);
 
   // Participant : appliquer l'état distant YouTube
   useEffect(() => {
@@ -204,13 +216,17 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const vimeoMountRef = useRef<HTMLDivElement>(null);
   const vimeoPlayerRef = useRef<Vimeo | null>(null);
   const vimeoReadyRef = useRef(false);
+  const vimeoLoadedIdRef = useRef<string | null>(null); // garde anti-recréation
 
+  // EFFET DE CRÉATION — dépend UNIQUEMENT de l'id (vmId) + isHost → création unique par vidéo.
   useEffect(() => {
-    if (media.type !== 'vimeo') return;
-    const id = vimeoId(media.url);
-    if (!id || !vimeoMountRef.current) return;
+    if (media.type !== 'vimeo' || !vmId || !vimeoMountRef.current) return;
+    // Garde : player déjà créé pour cette vidéo → ne pas recréer.
+    if (vimeoPlayerRef.current && vimeoLoadedIdRef.current === vmId) return;
+    const id = vmId;
     let cancelled = false;
     vimeoReadyRef.current = false;
+    vimeoLoadedIdRef.current = id;
 
     const player = new Vimeo(vimeoMountRef.current, {
       id: Number(id),
@@ -255,9 +271,11 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       vimeoReadyRef.current = false;
       try { player.destroy(); } catch { /* ignore */ }
       vimeoPlayerRef.current = null;
+      vimeoLoadedIdRef.current = null;
     };
+    // Dépend UNIQUEMENT de l'id (vmId) + isHost → création unique. emitState est stable (useCallback []).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [media.type, media.url, isHost, emitState]);
+  }, [vmId, isHost]);
 
   // Participant : appliquer l'état distant Vimeo
   useEffect(() => {

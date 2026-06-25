@@ -392,9 +392,12 @@ async def upload_video(
     user = await get_user_from_token(authorization)  # utilisateur authentifié (hôte/co-animateur)
     user_id = user.get("id")
 
-    # Sécurité : valider strictement le session_id avant tout usage dans le chemin de stockage
-    if not SESSION_ID_RE.match(session_id):
+    # Sécurité : valider strictement chaque segment AVANT usage dans le chemin de stockage.
+    # session_id et user_id sont des identifiants ; on rejette tout caractère non sûr (anti path traversal).
+    if not session_id or not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if not user_id or not SESSION_ID_RE.match(str(user_id)):
+        raise HTTPException(status_code=400, detail="Utilisateur invalide")
 
     content_type = file.content_type or "application/octet-stream"
     if not content_type.startswith("video/"):
@@ -404,8 +407,9 @@ async def upload_video(
     if len(data) > 200 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Vidéo trop volumineuse (max 200 Mo)")
 
-    # Le nom de fichier est nettoyé ET ne sert qu'au libellé ; le segment de chemin est neutralisé
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "video.mp4")[:80]
+    # Nom de fichier : on ne garde que le basename, on neutralise les "." de tête et toute séquence ".."
+    raw_name = (file.filename or "video.mp4").replace("\\", "/").split("/")[-1]
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name).replace("..", "_").lstrip(".")[:80] or "video.mp4"
     ts = int(datetime.now(timezone.utc).timestamp())
     storage_path = f"{session_id}/{user_id}/{ts}_{safe_name}"
 

@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import * as tus from 'tus-js-client';
 
 // Environment variables
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
@@ -467,9 +468,11 @@ export async function uploadSessionImage(file: File, sessionId: string): Promise
 }
 
 /**
- * Item 7 : Upload DIRECT d'une vidéo de session vers le bucket "session-media" (gros fichiers,
- * ne transite PAS par le backend), avec progression (XHR), puis insertion d'une ligne
- * session_media (owner_id = auth.uid()) pour la suppression auto 24h.
+ * Item 7 : Upload RÉSUMABLE (TUS) d'une vidéo de session vers le bucket "session-media".
+ * L'upload standard est plafonné (~50 Mo) côté serveur, ce qui faisait échouer les grosses
+ * vidéos (bloqué à "Envoi 0%"). TUS supporte les gros fichiers (bucket réglé à 5 Go) et la
+ * vraie progression. Ne transite PAS par le backend. Insère ensuite une ligne session_media
+ * (owner_id = auth.uid()) pour la suppression auto 24h.
  */
 export async function uploadSessionVideoDirect(
   file: File,
@@ -484,36 +487,44 @@ export async function uploadSessionVideoDirect(
     if (!token || !userId) return { error: 'Connectez-vous pour partager' };
 
     const safe = (file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)) || 'video.mp4';
-    const path = `${sessionId}/${userId}/${Date.now()}_${safe}`;
+    const objectName = `${sessionId}/${userId}/${Date.now()}_${safe}`;
 
     const publicUrl = await new Promise<string>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${supabaseUrl}/storage/v1/object/session-media/${path}`);
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-      xhr.setRequestHeader('apikey', supabaseAnonKey as string);
-      xhr.setRequestHeader('Content-Type', file.type || 'video/mp4');
-      xhr.setRequestHeader('x-upsert', 'true');
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
-      };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(`${supabaseUrl}/storage/v1/object/public/session-media/${path}`);
-        } else {
-          reject(new Error(`Upload échoué (${xhr.status})`));
-        }
-      };
-      xhr.onerror = () => reject(new Error('Erreur réseau'));
-      xhr.send(file);
+      const upload = new tus.Upload(file, {
+        endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: supabaseAnonKey as string,
+          'x-upsert': 'true',
+        },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        chunkSize: 6 * 1024 * 1024,
+        metadata: {
+          bucketName: 'session-media',
+          objectName,
+          contentType: file.type || 'video/mp4',
+          cacheControl: '3600',
+        },
+        onError: (err) => reject(err instanceof Error ? err : new Error(String(err))),
+        onProgress: (sent, total) => {
+          if (total && onProgress) onProgress(Math.round((sent / total) * 100));
+        },
+        onSuccess: () => {
+          resolve(`${supabaseUrl}/storage/v1/object/public/session-media/${objectName}`);
+        },
+      });
+      upload.start();
     });
 
     // Ligne session_media (RLS : owner_id = auth.uid()) → suppression auto 24h côté backend
     await supabase.from('session_media').insert({
       owner_id: userId,
       session_id: sessionId,
-      storage_path: path,
+      storage_path: objectName,
       url: publicUrl,
       media_type: 'video',
+      created_at: new Date().toISOString(),
     });
 
     return { url: publicUrl };

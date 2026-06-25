@@ -28,6 +28,7 @@ import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
 import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
+import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { claimHost, setCohosts } from '@/lib/paymentApi';
 import { Pencil } from 'lucide-react';
@@ -492,6 +493,10 @@ export const SessionPage: React.FC = () => {
   // E : média partagé (vidéo/image/youtube/vimeo/lien) + état distant pour les participants
   const [sharedMedia, setSharedMedia] = useState<SharedMedia | null>(null);
   const [remoteMediaState, setRemoteMediaState] = useState<RemoteMediaState | null>(null);
+  // Item 6 : le sélecteur de mode pilote TOUTE la zone centrale (audio = lecteur + playlist ;
+  // vidéo/image/lien = uniquement le média partagé). Hôte/co-host le contrôlent via le sélecteur ;
+  // les participants le dérivent du média reçu (effet plus bas).
+  const [shareMode, setShareMode] = useState<ShareMode>('audio');
   const mediaSeqRef = useRef(0);
 
   // F : co-animateurs autorisés à partager (userId)
@@ -1168,6 +1173,19 @@ export const SessionPage: React.FC = () => {
   // E/F : ref vers le média courant + envoi d'événements sur le canal de lecture
   const sharedMediaRef = useRef<SharedMedia | null>(null);
   useEffect(() => { sharedMediaRef.current = sharedMedia; }, [sharedMedia]);
+
+  // Item 6 : maintenir shareMode cohérent.
+  // - Hôte : pilote librement via le sélecteur (qui inclut "Audio").
+  // - Co-host : pas de panneau audio → ne jamais rester bloqué sur 'audio'.
+  // - Participant : dérive le mode du média reçu (média ⇒ on cache lecteur audio + playlist).
+  useEffect(() => {
+    if (canShare) {
+      if (!isHost) setShareMode((m) => (m === 'audio' ? 'video' : m));
+      return;
+    }
+    if (!sharedMedia) { setShareMode('audio'); return; }
+    setShareMode(sharedMedia.type === 'image' ? 'image' : sharedMedia.type === 'video' ? 'video' : 'link');
+  }, [canShare, isHost, sharedMedia]);
 
   const sendPlaybackEvent = useCallback((event: string, payload: unknown) => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
@@ -1944,8 +1962,8 @@ export const SessionPage: React.FC = () => {
               </Card>
             )}
 
-            {/* E : Média partagé (vidéo/image/lien) — intégré, jamais de redirection */}
-            {sharedMedia && (
+            {/* E : Média partagé (vidéo/image/lien) — affiché UNIQUEMENT hors mode audio */}
+            {shareMode !== 'audio' && sharedMedia && (
               <SharedMediaPlayer
                 media={sharedMedia}
                 isHost={canShare}
@@ -1961,6 +1979,8 @@ export const SessionPage: React.FC = () => {
                 sessionId={sessionId}
                 onShare={handleShareMedia}
                 showToast={showToast}
+                mode={shareMode}
+                onModeChange={setShareMode}
                 audioPanel={isHost ? (
                   <TrackUploader
                     sessionId={sessionId}
@@ -2057,7 +2077,8 @@ export const SessionPage: React.FC = () => {
             )}
 
             {/* Audio Player - Only show if there's a track selected */}
-            {selectedTrack ? (
+            {/* Item 6 : lecteur audio + playlist UNIQUEMENT en mode audio */}
+            {shareMode === 'audio' && (selectedTrack ? (
               <>
                 {/* Free Trial Timer Indicator */}
                 {isFreeTrial && !trialLimitReached && (
@@ -2213,10 +2234,10 @@ export const SessionPage: React.FC = () => {
                   </p>
                 </CardContent>
               </Card>
-            )}
+            ))}
 
             {/* Track Selection (Host only) */}
-            {isHost && (
+            {shareMode === 'audio' && isHost && (
               <Card className="border-white/10 bg-white/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-white text-lg">
@@ -2251,7 +2272,7 @@ export const SessionPage: React.FC = () => {
             )}
 
             {/* Playlist View (Participant - Read Only) */}
-            {!isHost && tracks.length > 0 && (
+            {shareMode === 'audio' && !isHost && tracks.length > 0 && (
               <Card className="border-white/10 bg-white/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-white text-lg flex items-center gap-2">

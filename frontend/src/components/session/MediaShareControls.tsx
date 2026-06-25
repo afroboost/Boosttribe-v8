@@ -4,13 +4,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { uploadSessionVideoDirect, uploadSessionImage, SharedMedia } from '@/lib/supabaseClient';
 
-type ShareMode = 'audio' | 'video' | 'image' | 'link';
+export type ShareMode = 'audio' | 'video' | 'image' | 'link';
 
 interface MediaShareControlsProps {
   sessionId: string;
   onShare: (media: SharedMedia) => void;
   showToast: (msg: string, variant?: 'default' | 'success' | 'error' | 'warning') => void;
   audioPanel?: React.ReactNode; // panneau audio (TrackUploader) rendu en mode "Audio"
+  mode: ShareMode;              // contrôlé par le parent : pilote TOUTE la zone centrale
+  onModeChange: (mode: ShareMode) => void;
 }
 
 const MAX_VIDEO_SECONDS = 90 * 60; // 90 minutes
@@ -33,8 +35,7 @@ function getVideoDuration(file: File): Promise<number> {
   });
 }
 
-export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel }) => {
-  const [mode, setMode] = useState<ShareMode>(audioPanel ? 'audio' : 'video');
+export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel, mode, onModeChange }) => {
   const [busy, setBusy] = useState<null | 'video' | 'image'>(null);
   const [progress, setProgress] = useState(0);
   const [linkUrl, setLinkUrl] = useState('');
@@ -116,7 +117,7 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
         {modes.filter(m => !m.hidden).map((m) => (
           <button
             key={m.id}
-            onClick={() => setMode(m.id)}
+            onClick={() => onModeChange(m.id)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
               mode === m.id ? 'bg-[#8A2EFF] text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'
             }`}

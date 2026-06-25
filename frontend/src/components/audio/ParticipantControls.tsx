@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, VolumeX, X, MoreHorizontal, Mic, Crown } from 'lucide-react';
+import { Volume2, VolumeX, X, MoreHorizontal, Mic, Crown, Share2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 
@@ -7,9 +7,11 @@ export interface Participant {
   id: string;
   name: string;
   avatar: string;
+  avatarUrl?: string;     // Photo de profil (URL ou data URL)
   isSynced: boolean;
   isCurrentUser?: boolean;
   isHost?: boolean;
+  isCoHost?: boolean;     // Co-animateur autorisé à partager
   volume?: number;
   isMuted?: boolean;
   isMicActive?: boolean; // Indicates if mic is active
@@ -22,6 +24,7 @@ interface ParticipantItemProps {
   onVolumeChange: (id: string, volume: number) => void;
   onMuteToggle: (id: string) => void;
   onEject: (id: string) => void;
+  onToggleCoHost?: (id: string, makeCoHost: boolean) => void;
   theme: {
     colors: {
       gradient: {
@@ -37,6 +40,7 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
   onVolumeChange,
   onMuteToggle,
   onEject,
+  onToggleCoHost,
   theme,
 }) => {
   const [showControls, setShowControls] = useState(false);
@@ -63,16 +67,20 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
       }}
     >
       {/* Avatar */}
-      <div 
-        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white relative flex-shrink-0"
-        style={{ 
-          background: participant.isCurrentUser 
-            ? theme.colors.gradient.primary 
+      <div
+        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white relative flex-shrink-0 overflow-hidden"
+        style={{
+          background: participant.isCurrentUser
+            ? theme.colors.gradient.primary
             : 'linear-gradient(135deg, #666 0%, #444 100%)',
           opacity: isMuted ? 0.5 : 1,
         }}
       >
-        {participant.avatar}
+        {participant.avatarUrl ? (
+          <img src={participant.avatarUrl} alt={participant.name} className="w-full h-full object-cover" />
+        ) : (
+          participant.avatar
+        )}
         {participant.isHost && (
           <span className="absolute -top-1 -right-1 text-yellow-400">
             <Crown size={10} strokeWidth={2} fill="currentColor" />
@@ -96,6 +104,9 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
         </span>
         {participant.isHost && !participant.isCurrentUser && (
           <span className="text-yellow-400 text-xs">Hôte</span>
+        )}
+        {participant.isCoHost && !participant.isHost && (
+          <span className="text-[#8A2EFF] text-xs flex items-center gap-1"><Share2 size={10} /> Co-animateur</span>
         )}
       </div>
 
@@ -150,15 +161,28 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
 
             {/* Dropdown Menu */}
             {showMenu && (
-              <div 
-                className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-lg border border-white/10 bg-[#14141A]/95 backdrop-blur-xl shadow-xl"
+              <div
+                className="absolute right-0 top-full mt-1 z-50 min-w-[170px] rounded-lg border border-white/10 bg-[#14141A]/95 backdrop-blur-xl shadow-xl overflow-hidden"
               >
+                {/* F : autoriser / retirer le partage (co-animateur) */}
+                {onToggleCoHost && (
+                  <button
+                    onClick={() => {
+                      onToggleCoHost(participant.id, !participant.isCoHost);
+                      setShowMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition-colors"
+                  >
+                    <Share2 size={14} strokeWidth={1.5} />
+                    {participant.isCoHost ? 'Retirer le partage' : 'Autoriser le partage'}
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onEject(participant.id);
                     setShowMenu(false);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors rounded-lg"
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
                 >
                   <X size={14} strokeWidth={1.5} />
                   Éjecter
@@ -178,6 +202,7 @@ interface ParticipantControlsProps {
   onVolumeChange: (id: string, volume: number) => void;
   onMuteToggle: (id: string) => void;
   onEject: (id: string) => void;
+  onToggleCoHost?: (id: string, makeCoHost: boolean) => void;
   theme: {
     colors: {
       gradient: {
@@ -193,6 +218,7 @@ export const ParticipantControls: React.FC<ParticipantControlsProps> = ({
   onVolumeChange,
   onMuteToggle,
   onEject,
+  onToggleCoHost,
   theme,
 }) => {
   return (
@@ -206,6 +232,7 @@ export const ParticipantControls: React.FC<ParticipantControlsProps> = ({
             onVolumeChange={onVolumeChange}
             onMuteToggle={onMuteToggle}
             onEject={onEject}
+            onToggleCoHost={onToggleCoHost}
             theme={theme}
           />
         ))}

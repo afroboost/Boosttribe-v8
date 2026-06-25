@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
-import { syncPlan, grantAccess, revokeAccess, listGranted, GrantedRow } from "@/lib/paymentApi";
+import { syncPlan, grantAccess, revokeAccess, listGranted, listUsers, GrantedRow, AdminUser } from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -34,7 +34,10 @@ import {
   Globe,
   Gift,
   Trash2,
-  Crown
+  Crown,
+  Users,
+  Search,
+  Download
 } from "lucide-react";
 
 // Site settings interface - matches Supabase table
@@ -174,7 +177,12 @@ const Dashboard: React.FC = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
-  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'access'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'access' | 'users'>('identity');
+
+  // D : liste de tous les utilisateurs
+  const [usersList, setUsersList] = useState<AdminUser[]>([]);
+  const [usersSearch, setUsersSearch] = useState('');
+  const [usersLoading, setUsersLoading] = useState(false);
 
   // POINT 6 : état de la section "Accès offerts"
   const [grantEmail, setGrantEmail] = useState('');
@@ -237,10 +245,50 @@ const Dashboard: React.FC = () => {
     }
   }, [refreshGranted, showToast]);
 
-  // Charger la liste quand on ouvre l'onglet
+  // D : charger tous les utilisateurs
+  const refreshUsers = useCallback(async () => {
+    setUsersLoading(true);
+    try {
+      const { users, error } = await listUsers();
+      if (error) { showToast(`Utilisateurs : ${error}`, 'error'); return; }
+      setUsersList(users);
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [showToast]);
+
+  // Filtre par nom OU email
+  const filteredUsers = useMemo(() => {
+    const q = usersSearch.trim().toLowerCase();
+    if (!q) return usersList;
+    return usersList.filter(u =>
+      (u.email || '').toLowerCase().includes(q) || (u.full_name || '').toLowerCase().includes(q)
+    );
+  }, [usersList, usersSearch]);
+
+  // Export CSV
+  const handleExportCsv = useCallback(() => {
+    const header = ['email', 'nom', 'plan', 'acces_offert', 'expiration_acces', 'inscription'];
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = filteredUsers.map(u => [
+      u.email, u.full_name || '', u.subscription_status || '', u.comp_access_plan || '',
+      u.comp_access_until || '', u.created_at || '',
+    ].map(esc).join(','));
+    const csv = [header.join(','), ...lines].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `boosttribe-utilisateurs-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filteredUsers]);
+
+  // Charger la liste quand on ouvre les onglets concernés
   useEffect(() => {
-    if (activeTab === 'access') refreshGranted();
-  }, [activeTab, refreshGranted]);
+    if (activeTab === 'access') { refreshGranted(); refreshUsers(); }
+    if (activeTab === 'users') refreshUsers();
+  }, [activeTab, refreshGranted, refreshUsers]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -682,6 +730,7 @@ const Dashboard: React.FC = () => {
             { id: 'stripe', label: 'Liens Stripe', icon: <CreditCard size={16} /> },
             { id: 'plans', label: 'Plans & Prix', icon: <DollarSign size={16} /> },
             { id: 'access', label: 'Accès offerts', icon: <Gift size={16} /> },
+            { id: 'users', label: 'Utilisateurs', icon: <Users size={16} /> },
           ].map(tab => (
             <Button
               key={tab.id}
@@ -1121,14 +1170,21 @@ const Dashboard: React.FC = () => {
               {/* Formulaire d'attribution */}
               <div className="p-4 rounded-lg bg-white/5 border border-white/10 space-y-4">
                 <div>
-                  <Label className="text-white/70">Email du compte</Label>
+                  <Label className="text-white/70">Compte (recherche par nom ou email)</Label>
                   <Input
                     value={grantEmail}
                     onChange={(e) => setGrantEmail(e.target.value)}
                     placeholder="utilisateur@email.com"
-                    type="email"
+                    type="text"
+                    list="grant-users-datalist"
                     className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
                   />
+                  {/* D : suggestions basées sur la liste de tous les utilisateurs */}
+                  <datalist id="grant-users-datalist">
+                    {usersList.map((u) => (
+                      <option key={u.id} value={u.email}>{u.full_name ? `${u.full_name} — ${u.email}` : u.email}</option>
+                    ))}
+                  </datalist>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1226,6 +1282,68 @@ const Dashboard: React.FC = () => {
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* D : Utilisateurs Tab */}
+        {activeTab === 'users' && (
+          <Card className="bg-white/5 border-white/10">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Users size={20} className="text-purple-400" />
+                  Utilisateurs ({filteredUsers.length})
+                </CardTitle>
+                <Button size="sm" onClick={handleExportCsv} className="text-white border-none" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+                  <Download size={14} className="mr-1" /> Télécharger la liste
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+                <Input
+                  value={usersSearch}
+                  onChange={(e) => setUsersSearch(e.target.value)}
+                  placeholder="Rechercher par nom ou email…"
+                  className="pl-9 bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                />
+              </div>
+
+              {usersLoading ? (
+                <p className="text-white/40 text-sm py-4 text-center">Chargement…</p>
+              ) : filteredUsers.length === 0 ? (
+                <p className="text-white/40 text-sm py-4 text-center">Aucun utilisateur.</p>
+              ) : (
+                <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+                  {filteredUsers.map((u) => {
+                    const compActive = u.comp_access_until && new Date(u.comp_access_until).getTime() > Date.now();
+                    return (
+                      <div key={u.id} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
+                        <div className="w-9 h-9 rounded-full overflow-hidden bg-white/10 flex items-center justify-center flex-shrink-0">
+                          {u.avatar_url ? (
+                            <img src={u.avatar_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-white/50 text-xs">{(u.full_name || u.email || '?').slice(0, 2).toUpperCase()}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-white text-sm truncate">{u.full_name || '—'}</p>
+                          <p className="text-white/50 text-xs truncate">{u.email}</p>
+                        </div>
+                        <div className="text-right flex-shrink-0">
+                          <p className="text-white/70 text-xs">{u.subscription_status || 'none'}</p>
+                          {compActive && (
+                            <p className="text-purple-400 text-[11px]">offert {u.comp_access_plan} · {new Date(u.comp_access_until as string).toLocaleDateString()}</p>
+                          )}
+                          <p className="text-white/30 text-[11px]">{u.created_at ? new Date(u.created_at).toLocaleDateString() : ''}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
         )}

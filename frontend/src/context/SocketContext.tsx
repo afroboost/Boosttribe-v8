@@ -53,7 +53,7 @@ interface SocketContextValue {
   presentUsers: PresenceMeta[];
 
   // Join/Leave
-  joinSession: (sessionId: string, userId: string, isHost: boolean, nickname: string) => void;
+  joinSession: (sessionId: string, userId: string, isHost: boolean, nickname: string, avatar?: string) => void;
   leaveSession: () => void;
   
   // Host Commands
@@ -201,7 +201,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [userId, isDev]);
 
   // Join session
-  const joinSession = useCallback((newSessionId: string, newUserId: string, isHost: boolean, nickname: string) => {
+  const joinSession = useCallback((newSessionId: string, newUserId: string, isHost: boolean, nickname: string, avatar?: string) => {
     // Close existing channel
     if (supabaseChannelRef.current && supabase) {
       unsubscribeChannel(supabaseChannelRef.current);
@@ -218,7 +218,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (isSupabaseConfigured) {
       try {
         supabaseChannelRef.current = createSessionChannel(newSessionId, handleMessage, {
-          meta: { userId: newUserId, nickname, isHost },
+          meta: { userId: newUserId, nickname, isHost, avatar },
           onSync: (users) => setPresentUsers(users),
         });
         setConnectionStatus('connected');

@@ -21,11 +21,23 @@ import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
-import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist } from '@/lib/supabaseClient';
+import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSessionDescription, saveSharedMedia } from '@/lib/supabaseClient';
+import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
+import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
+import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
+import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
+import { MediaShareControls } from '@/components/session/MediaShareControls';
+import { Pencil } from 'lucide-react';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
+
+// Types de payload Realtime (E/F/C) — déclarés hors composant pour éviter les faux positifs
+// de react-hooks/exhaustive-deps (noms de propriétés confondus avec des variables d'état).
+interface MediaCommandPayload { media: SharedMedia | null; isPlaying?: boolean; currentTime?: number; }
+interface CoHostPayload { coHostIds: string[]; }
+interface DescPayload { description: string; }
 
 // ============================================
 // 🛡️ INTERFACES TYPESCRIPT - Boosttribe V8 Stable Gold
@@ -273,7 +285,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
 
 // Subscription Badge Component
 const SubscriptionBadge: React.FC = () => {
-  const { isAdmin, isSubscribed, profile, trackLimit } = useAuth();
+  const { isAdmin, isSubscribed, profile } = useAuth();
   
   if (isAdmin) {
     return (
@@ -292,15 +304,9 @@ const SubscriptionBadge: React.FC = () => {
       </Badge>
     );
   }
-  
-  return (
-    <Link to="/pricing">
-      <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 cursor-pointer hover:bg-yellow-500/30 flex items-center gap-1">
-        <Music className="w-3.5 h-3.5" />
-        Essai ({trackLimit} titre)
-      </Badge>
-    </Link>
-  );
+
+  // A : le badge « Essai (1 titre) » est définitivement retiré de l'UI.
+  return null;
 };
 
 // Session creation view
@@ -398,7 +404,7 @@ export const SessionPage: React.FC = () => {
   const { theme } = useTheme();
   const { showToast } = useToast();
   const socket = useSocket();
-  const { isAdmin, user, isLoading: authLoading, isSubscribed, sessionLimit } = useAuth();
+  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, sessionLimit } = useAuth();
   
   // ADMIN BYPASS: Check email directly for instant host access
   const userEmail = user?.email?.toLowerCase() || '';
@@ -468,6 +474,27 @@ export const SessionPage: React.FC = () => {
   const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set());
   // 🔊 Volumes par participant (overlay local, la presence ne transporte pas le volume)
   const [userVolumes, setUserVolumes] = useState<Record<string, number>>({});
+
+  // B : photo de profil — avatar courant (compte) ou data URL locale (anonyme)
+  const [localAvatar, setLocalAvatar] = useState<string | null>(null);
+  const myAvatar = profile?.avatar_url || localAvatar || null;
+  const [showAvatarCrop, setShowAvatarCrop] = useState(false);
+  const pendingAfterAvatarRef = useRef<(() => void) | null>(null);
+
+  // C : description de session
+  const [description, setDescription] = useState('');
+  const [editingDesc, setEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState('');
+
+  // E : média partagé (vidéo/image/youtube/vimeo/lien) + état distant pour les participants
+  const [sharedMedia, setSharedMedia] = useState<SharedMedia | null>(null);
+  const [remoteMediaState, setRemoteMediaState] = useState<RemoteMediaState | null>(null);
+  const mediaSeqRef = useRef(0);
+
+  // F : co-animateurs autorisés à partager (userId)
+  const [coHostIds, setCoHostIds] = useState<Set<string>>(new Set());
+  const isCoHost = !isHost && !!user && coHostIds.has(socket.userId);
+  const canShare = isHost || isCoHost;
 
   // 💓 POINT 3a: dernier état de lecture de l'hôte (pour heartbeat de resynchro)
   const heartbeatStateRef = useRef<{ isPlaying: boolean; currentTime: number; trackId: number | null }>({
@@ -697,7 +724,7 @@ export const SessionPage: React.FC = () => {
   // Join socket session when session ID is available
   useEffect(() => {
     if (sessionId && socket.userId && nickname) {
-      socket.joinSession(sessionId, socket.userId, isHost, nickname);
+      socket.joinSession(sessionId, socket.userId, isHost, nickname, myAvatar || undefined);
     }
     
     return () => {
@@ -795,16 +822,22 @@ export const SessionPage: React.FC = () => {
       try {
         const { data, error } = await supabase
           .from('playlists')
-          .select('tracks')
+          .select('tracks, description, shared_media')
           .eq('session_id', sessionId)
           .maybeSingle();
-        
+
         if (error) return;
-        
+
+        // C : charger la description ; E : charger le média partagé courant
+        if (data) {
+          if (typeof data.description === 'string') setDescription(data.description);
+          if (data.shared_media) setSharedMedia(data.shared_media as SharedMedia);
+        }
+
         if (data && data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
           setTracks(data.tracks as Track[]);
           setIsSyncActive(true);
-          
+
           if (!selectedTrack) {
             setSelectedTrack(data.tracks[0] as Track);
           }
@@ -944,8 +977,32 @@ export const SessionPage: React.FC = () => {
           }
         }
       })
+      // E : média partagé (vidéo/image/lien) — les participants suivent l'hôte
+      .on('broadcast', { event: 'MEDIA_COMMAND' }, (payload) => {
+        if (isHost || !payload.payload) return;
+        const p = payload.payload as MediaCommandPayload;
+        setSharedMedia(p.media);
+        if (p.media) {
+          mediaSeqRef.current += 1;
+          setRemoteMediaState({ isPlaying: !!p.isPlaying, currentTime: p.currentTime || 0, seq: mediaSeqRef.current });
+        } else {
+          setRemoteMediaState(null);
+        }
+      })
+      // F : mise à jour des co-animateurs autorisés à partager
+      .on('broadcast', { event: 'COHOST_UPDATE' }, (payload) => {
+        if (isHost || !payload.payload) return;
+        const p = payload.payload as CoHostPayload;
+        setCoHostIds(new Set(p.coHostIds || []));
+      })
+      // C : mise à jour live de la description
+      .on('broadcast', { event: 'DESC_UPDATE' }, (payload) => {
+        if (isHost || !payload.payload) return;
+        const p = payload.payload as DescPayload;
+        setDescription(p.description || '');
+      })
       .subscribe();
-    
+
     // Handler pour INSERT et UPDATE (playlist seulement)
     function handlePlaylistUpdate(payload: unknown) {
       const data = payload as { new?: { tracks?: Track[] }, eventType?: string };
@@ -984,33 +1041,37 @@ export const SessionPage: React.FC = () => {
         id: u.userId,
         name: u.nickname || 'Invité',
         avatar: generateAvatar(u.nickname || 'Invité'),
+        avatarUrl: u.avatar,
         isSynced: true,
         isCurrentUser: false,
         isHost: u.isHost,
+        isCoHost: coHostIds.has(u.userId),
         volume: userVolumes[u.userId] ?? 100,
         isMuted: mutedUserIds.has(u.userId),
       }));
     setParticipantsState(others);
-  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes]);
+  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes, coHostIds]);
 
   // Build participants list with current user
   const participants = useMemo<Participant[]>(() => {
     if (!nickname) return participantsState;
-    
+
     const currentUser: Participant = {
       id: socket.userId,
       name: nickname,
       avatar: generateAvatar(nickname),
+      avatarUrl: myAvatar || undefined,
       isSynced: true,
       isCurrentUser: true,
       isHost: isHost,
+      isCoHost: isCoHost,
       volume: 100,
       isMuted: isRemoteMuted,
     };
-    
+
     // Place current user at the top
     return [currentUser, ...participantsState];
-  }, [nickname, isHost, participantsState, socket.userId, isRemoteMuted]);
+  }, [nickname, isHost, isCoHost, myAvatar, participantsState, socket.userId, isRemoteMuted]);
 
   // FREE TRIAL TIME TRACKING
   useEffect(() => {
@@ -1083,6 +1144,65 @@ export const SessionPage: React.FC = () => {
       showToast(`${participant?.name || 'Participant'} a été éjecté`, 'success');
     }
   }, [isHost, participantsState, socket, showToast]);
+
+  // E/F : ref vers le média courant + envoi d'événements sur le canal de lecture
+  const sharedMediaRef = useRef<SharedMedia | null>(null);
+  useEffect(() => { sharedMediaRef.current = sharedMedia; }, [sharedMedia]);
+
+  const sendPlaybackEvent = useCallback((event: string, payload: unknown) => {
+    if (!sessionId || !supabase || !isSupabaseConfigured) return;
+    supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
+  }, [sessionId]);
+
+  // E : partager un média (vidéo/image/lien)
+  const handleShareMedia = useCallback((media: SharedMedia) => {
+    setSharedMedia(media);
+    if (sessionId) saveSharedMedia(sessionId, media);
+    sendPlaybackEvent('MEDIA_COMMAND', { media, isPlaying: media.isPlaying ?? false, currentTime: media.currentTime ?? 0 });
+  }, [sessionId, sendPlaybackEvent]);
+
+  // E : état de lecture du média (hôte/co-animateur) → diffusé aux participants
+  const handleMediaState = useCallback((s: { isPlaying: boolean; currentTime: number }) => {
+    const media = sharedMediaRef.current ? { ...sharedMediaRef.current, isPlaying: s.isPlaying, currentTime: s.currentTime } : null;
+    setSharedMedia(media);
+    sendPlaybackEvent('MEDIA_COMMAND', { media, isPlaying: s.isPlaying, currentTime: s.currentTime });
+  }, [sendPlaybackEvent]);
+
+  // E : retirer le média partagé
+  const handleCloseMedia = useCallback(() => {
+    setSharedMedia(null);
+    if (sessionId) saveSharedMedia(sessionId, null);
+    sendPlaybackEvent('MEDIA_COMMAND', { media: null });
+  }, [sessionId, sendPlaybackEvent]);
+
+  // C : édition de la description de session (hôte)
+  const handleStartEditDesc = useCallback(() => {
+    setDescDraft(description);
+    setEditingDesc(true);
+  }, [description]);
+
+  const handleSaveDescription = useCallback(() => {
+    const text = descDraft.trim().slice(0, 140);
+    setDescription(text);
+    setEditingDesc(false);
+    if (sessionId) saveSessionDescription(sessionId, text);
+    sendPlaybackEvent('DESC_UPDATE', { description: text });
+  }, [descDraft, sessionId, sendPlaybackEvent]);
+
+  // F : autoriser/retirer un participant comme co-animateur (partage)
+  const handleToggleCoHost = useCallback((id: string, makeCoHost: boolean) => {
+    setCoHostIds(prev => {
+      const next = new Set(prev);
+      if (makeCoHost) next.add(id); else next.delete(id);
+      sendPlaybackEvent('COHOST_UPDATE', { coHostIds: Array.from(next) });
+      return next;
+    });
+    const p = participantsState.find(x => x.id === id);
+    showToast(
+      makeCoHost ? `${p?.name || 'Participant'} peut maintenant partager` : `Partage retiré pour ${p?.name || 'Participant'}`,
+      makeCoHost ? 'success' : 'default',
+    );
+  }, [sendPlaybackEvent, participantsState, showToast]);
 
   // 💾 OBJECTIF B: Sauvegarde STABLE de la playlist du coach, liée à son COMPTE.
   // Clé dérivée de l'utilisateur (indépendante du session_id aléatoire) → retrouvée à la reconnexion.
@@ -1253,16 +1373,41 @@ export const SessionPage: React.FC = () => {
     }
   }, [urlSessionId, sessionId]);
 
-  // Handle nickname submission
-  const handleNicknameSubmit = useCallback((newNickname: string) => {
-    setStoredNickname(newNickname);
-    setNickname(newNickname);
-    setShowNicknameModal(false);
-    showToast(`Bienvenue ${newNickname} !`, 'success');
-  }, [showToast]);
+  // B : photo de profil obligatoire — exécute `next` si avatar présent, sinon ouvre le crop
+  const ensureAvatar = useCallback((next: () => void) => {
+    if (myAvatar) { next(); return; }
+    pendingAfterAvatarRef.current = next;
+    setShowAvatarCrop(true);
+  }, [myAvatar]);
 
-  // Generate session ID when creating new session
-  const handleCreateSession = useCallback(() => {
+  const handleAvatarComplete = useCallback((url: string) => {
+    setShowAvatarCrop(false);
+    if (user?.id) {
+      // compte connecté : enregistrer l'URL dans profiles.avatar_url
+      if (supabase) {
+        supabase.from('profiles').update({ avatar_url: url }).eq('id', user.id).then(() => refreshProfile());
+      }
+    } else {
+      setLocalAvatar(url); // participant anonyme : avatar local (présence)
+    }
+    const next = pendingAfterAvatarRef.current;
+    pendingAfterAvatarRef.current = null;
+    if (next) next();
+  }, [user?.id, refreshProfile]);
+
+  // Handle nickname submission (B : exige une photo de profil avant de rejoindre)
+  const handleNicknameSubmit = useCallback((newNickname: string) => {
+    const finish = () => {
+      setStoredNickname(newNickname);
+      setNickname(newNickname);
+      setShowNicknameModal(false);
+      showToast(`Bienvenue ${newNickname} !`, 'success');
+    };
+    ensureAvatar(finish);
+  }, [showToast, ensureAvatar]);
+
+  // Création de session (corps), gardée par l'avatar dans handleCreateSession
+  const createSessionNow = useCallback(() => {
     // POINT 2 : respect du nombre de sessions par plan (gratuit = 1 session active à la fois)
     if (sessionLimit !== Infinity && user?.id) {
       const active = countActiveSessions(user.id);
@@ -1288,6 +1433,11 @@ export const SessionPage: React.FC = () => {
       showToast('Session créée ! Partagez le lien avec vos amis.', 'success');
     }
   }, [navigate, showToast, sessionLimit, user?.id]);
+
+  // B : à la création, l'hôte DOIT avoir une photo de profil
+  const handleCreateSession = useCallback(() => {
+    ensureAvatar(createSessionNow);
+  }, [ensureAvatar, createSessionNow]);
 
   // POINT 2 : heartbeat de la session active de l'hôte (garde le marqueur frais, libère à la sortie)
   useEffect(() => {
@@ -1476,7 +1626,21 @@ export const SessionPage: React.FC = () => {
 
   // Show create session view if no sessionId and is potential host
   if (!sessionId && !urlSessionId) {
-    return <CreateSessionView onCreateSession={handleCreateSession} theme={theme} />;
+    return (
+      <>
+        <CreateSessionView onCreateSession={handleCreateSession} theme={theme} />
+        {/* B : photo de profil obligatoire avant de créer une session */}
+        {showAvatarCrop && (
+          <AvatarUploadCrop
+            userId={user?.id || null}
+            title="Votre photo de profil"
+            subtitle="Ajoutez une photo pour créer votre session"
+            onComplete={handleAvatarComplete}
+            onCancel={() => setShowAvatarCrop(false)}
+          />
+        )}
+      </>
+    );
   }
 
   // Show loading while initializing
@@ -1512,6 +1676,16 @@ export const SessionPage: React.FC = () => {
         onSubmit={handleNicknameSubmit}
         theme={theme}
       />
+
+      {/* B : photo de profil obligatoire (upload + recadrage) */}
+      {showAvatarCrop && (
+        <AvatarUploadCrop
+          userId={user?.id || null}
+          title="Votre photo de profil"
+          subtitle={isHost ? 'Ajoutez une photo pour créer votre session' : 'Ajoutez une photo pour rejoindre la session'}
+          onComplete={handleAvatarComplete}
+        />
+      )}
 
       {/* 🔊 BUG 1: Overlay d'activation du son (autoplay bloqué côté participant) */}
       {audioBlocked && !isHost && (
@@ -1679,6 +1853,67 @@ export const SessionPage: React.FC = () => {
               </p>
             </div>
 
+            {/* C : Description de session (modifiable par l'hôte) */}
+            {(isHost || description) && (
+              <Card className="border-white/10 bg-white/5">
+                <CardContent className="p-4">
+                  {editingDesc ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={descDraft}
+                        onChange={(e) => setDescDraft(e.target.value.slice(0, 140))}
+                        maxLength={140}
+                        rows={2}
+                        placeholder="Description courte de la session (140 caractères max)"
+                        className="w-full rounded-lg bg-white/5 border border-white/10 text-white text-sm p-2 placeholder:text-white/30 focus:outline-none focus:border-[#8A2EFF]"
+                        autoFocus
+                      />
+                      <div className="flex items-center justify-between">
+                        <span className="text-white/30 text-xs">{descDraft.length}/140</span>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => setEditingDesc(false)} className="border-white/20 text-white/70">Annuler</Button>
+                          <Button size="sm" onClick={handleSaveDescription} className="text-white border-none" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+                            <Check className="w-4 h-4 mr-1" /> Enregistrer
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-white/70 text-sm min-w-0 break-words">
+                        {description || (isHost ? <span className="text-white/30 italic">Ajoutez une description courte…</span> : null)}
+                      </p>
+                      {isHost && (
+                        <button onClick={handleStartEditDesc} className="p-1.5 rounded text-white/50 hover:text-white hover:bg-white/10 flex-shrink-0" title="Modifier la description" data-testid="edit-desc-btn">
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* E : Média partagé (vidéo/image/lien) — intégré, jamais de redirection */}
+            {sharedMedia && (
+              <SharedMediaPlayer
+                media={sharedMedia}
+                isHost={canShare}
+                onState={canShare ? handleMediaState : undefined}
+                remote={!canShare ? remoteMediaState : null}
+                onClose={canShare ? handleCloseMedia : undefined}
+              />
+            )}
+
+            {/* E : Contrôles de partage média (hôte + co-animateurs uniquement) */}
+            {canShare && sessionId && (
+              <MediaShareControls
+                sessionId={sessionId}
+                onShare={handleShareMedia}
+                showToast={showToast}
+              />
+            )}
+
             {/* Share Link Card (Host only) */}
             {isHost && sessionId && (
               <Card className="border-white/10 bg-white/5">
@@ -1688,13 +1923,11 @@ export const SessionPage: React.FC = () => {
                     <p className="text-white/50 text-xs mb-2 uppercase tracking-wider">
                       Code de la session
                     </p>
-                    <div className="flex items-center justify-center gap-3">
-                      <span
-                        className="text-2xl sm:text-3xl font-bold text-white tracking-[0.2em] font-mono select-all"
-                        data-testid="session-code"
-                      >
-                        {sessionId}
-                      </span>
+                    {/* A : responsive — le code passe à la ligne, les boutons s'enroulent sans déborder */}
+                    <div className="text-xl sm:text-3xl font-bold text-white tracking-[0.15em] sm:tracking-[0.2em] font-mono select-all break-all px-1" data-testid="session-code">
+                      {sessionId}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-center gap-2 mt-3">
                       <Button
                         onClick={handleCopyCode}
                         size="sm"
@@ -2127,6 +2360,7 @@ export const SessionPage: React.FC = () => {
                   onVolumeChange={handleParticipantVolumeChange}
                   onMuteToggle={handleParticipantMuteToggle}
                   onEject={handleParticipantEject}
+                  onToggleCoHost={isHost ? handleToggleCoHost : undefined}
                   theme={theme}
                 />
               </CardContent>

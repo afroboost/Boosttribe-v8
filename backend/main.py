@@ -12,15 +12,21 @@ Endpoints :
 """
 
 import os
+import re
+import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 
 import httpx
 import stripe
-from fastapi import FastAPI, Request, HTTPException, Header
+from fastapi import FastAPI, Request, HTTPException, Header, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Bucket de stockage des médias de session (vidéos partagées par l'hôte)
+SESSION_MEDIA_BUCKET = "session-media"
+MEDIA_TTL_HOURS = 24
 
 # --------------------------------------------------------------------------- #
 # Configuration (variables d'environnement)
@@ -349,6 +355,131 @@ async def list_granted(authorization: Optional[str] = Header(default=None)):
         )
     rows = resp.json() if resp.status_code == 200 else []
     return {"granted": rows}
+
+
+# --------------------------------------------------------------------------- #
+# D : liste de TOUS les utilisateurs (admin)
+# --------------------------------------------------------------------------- #
+@app.get("/admin/users")
+async def list_users(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=_service_headers(),
+            params={
+                "select": "id,email,full_name,avatar_url,subscription_status,comp_access_plan,comp_access_until,created_at",
+                "order": "created_at.desc",
+            },
+        )
+    rows = resp.json() if resp.status_code == 200 else []
+    return {"users": rows}
+
+
+# --------------------------------------------------------------------------- #
+# E : upload vidéo de session (hôte) + nettoyage auto 24h
+# --------------------------------------------------------------------------- #
+@app.post("/session/upload-video")
+async def upload_video(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await get_user_from_token(authorization)  # utilisateur authentifié (hôte/co-animateur)
+    user_id = user.get("id")
+
+    content_type = file.content_type or "application/octet-stream"
+    if not content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="Fichier vidéo requis")
+
+    data = await file.read()
+    if len(data) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Vidéo trop volumineuse (max 200 Mo)")
+
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename or "video.mp4")
+    ts = int(datetime.now(timezone.utc).timestamp())
+    storage_path = f"{session_id}/{ts}_{safe_name}"
+
+    async with httpx.AsyncClient(timeout=180) as client:
+        up = await client.post(
+            f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{storage_path}",
+            headers={
+                "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                "Content-Type": content_type,
+                "x-upsert": "true",
+            },
+            content=data,
+        )
+    if up.status_code not in (200, 201):
+        logger.error("session-media upload failed: %s %s", up.status_code, up.text)
+        raise HTTPException(status_code=500, detail="Upload échoué")
+
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{storage_path}"
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/session_media",
+            headers=_service_headers({"Prefer": "return=minimal"}),
+            json={
+                "session_id": session_id,
+                "owner_id": user_id,
+                "storage_path": storage_path,
+                "url": public_url,
+                "media_type": "video",
+            },
+        )
+
+    return {"url": public_url, "storage_path": storage_path}
+
+
+async def cleanup_old_media() -> None:
+    """Supprime du bucket + de la table tout média de plus de MEDIA_TTL_HOURS."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=MEDIA_TTL_HOURS)).isoformat()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/session_media",
+            headers=_service_headers(),
+            params={"created_at": f"lt.{cutoff}", "select": "storage_path"},
+        )
+        if resp.status_code != 200:
+            return
+        rows = resp.json()
+        for r in rows:
+            sp = r.get("storage_path")
+            if not sp:
+                continue
+            try:
+                await client.delete(
+                    f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{sp}",
+                    headers={
+                        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("storage delete failed for %s: %s", sp, exc)
+        if rows:
+            await client.delete(
+                f"{SUPABASE_URL}/rest/v1/session_media",
+                headers=_service_headers(),
+                params={"created_at": f"lt.{cutoff}"},
+            )
+            logger.info("cleanup: %d médias de session supprimés (>24h)", len(rows))
+
+
+async def _cleanup_loop() -> None:
+    while True:
+        try:
+            await cleanup_old_media()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("cleanup loop error: %s", exc)
+        await asyncio.sleep(3600)  # toutes les heures
+
+
+@app.on_event("startup")
+async def _on_startup():
+    asyncio.create_task(_cleanup_loop())
 
 
 def _plan_from_price_id(price_id: Optional[str], settings: Dict[str, Any]) -> Optional[str]:

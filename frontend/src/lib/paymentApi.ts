@@ -123,3 +123,46 @@ export async function listGranted(): Promise<{ granted: GrantedRow[]; error?: st
   if (error) return { granted: [], error };
   return { granted: (data?.granted || []) as GrantedRow[] };
 }
+
+// D : liste de tous les utilisateurs
+export interface AdminUser {
+  id: string;
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+  subscription_status: string | null;
+  comp_access_plan: string | null;
+  comp_access_until: string | null;
+  created_at: string | null;
+}
+
+export async function listUsers(): Promise<{ users: AdminUser[]; error?: string }> {
+  const { data, error } = await adminFetch('/admin/users', { method: 'GET' });
+  if (error) return { users: [], error };
+  return { users: (data?.users || []) as AdminUser[] };
+}
+
+// E : upload d'une vidéo de session (hôte) → backend (bucket session-media, suppression auto 24h)
+export async function uploadSessionVideo(
+  file: File,
+  sessionId: string,
+): Promise<{ url?: string; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée (REACT_APP_API_URL)' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous pour partager' };
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('session_id', sessionId);
+    const res = await fetch(`${API_URL}/session/upload-video`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { url: data.url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}

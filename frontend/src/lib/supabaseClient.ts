@@ -273,6 +273,7 @@ export interface PresenceMeta {
   userId: string;
   nickname: string;
   isHost: boolean;
+  avatar?: string; // URL (compte) ou data URL (anonyme)
 }
 
 export interface SessionPresence {
@@ -319,6 +320,7 @@ export function createSessionChannel(
             userId: entry.userId,
             nickname: entry.nickname,
             isHost: entry.isHost,
+            avatar: entry.avatar,
           });
         });
       });
@@ -379,6 +381,15 @@ export async function unsubscribeChannel(channel: RealtimeChannel): Promise<void
 // DATABASE FUNCTIONS (for playlist persistence)
 // ============================================
 
+export interface SharedMedia {
+  type: 'video' | 'image' | 'youtube' | 'vimeo' | 'link';
+  url: string;
+  title?: string;
+  isPlaying?: boolean;
+  currentTime?: number;
+  updatedAt?: number;
+}
+
 export interface PlaylistRecord {
   id?: string;
   session_id: string;
@@ -390,8 +401,91 @@ export interface PlaylistRecord {
     uploaded?: boolean;
   }>;
   selected_track_id: number;
+  description?: string | null;
+  shared_media?: SharedMedia | null;
   created_at?: string;
   updated_at?: string;
+}
+
+/**
+ * Upload d'une photo de profil vers le bucket "avatars" (auth utilisateur requise).
+ * Renvoie l'URL publique.
+ */
+export async function uploadAvatar(file: Blob, userId: string): Promise<{ url?: string; error?: string }> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token || supabaseAnonKey;
+    const contentType = file.type || 'image/jpeg';
+    const ext = contentType.includes('png') ? 'png' : 'jpg';
+    const path = `${userId}/${Date.now()}.${ext}`;
+    const res = await fetch(`${supabaseUrl}/storage/v1/object/avatars/${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': contentType,
+        'x-upsert': 'true',
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      return { error: `Upload échoué (${res.status})` };
+    }
+    return { url: `${supabaseUrl}/storage/v1/object/public/avatars/${path}` };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Erreur upload avatar' };
+  }
+}
+
+/**
+ * Upload d'une image de session vers le bucket "session-media" (auth utilisateur requise).
+ */
+export async function uploadSessionImage(file: File, sessionId: string): Promise<{ url?: string; error?: string }> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
+  if (!file.type.startsWith('image/')) return { error: 'Image requise' };
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token || supabaseAnonKey;
+    const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `${sessionId}/${Date.now()}_${safe}`;
+    const res = await fetch(`${supabaseUrl}/storage/v1/object/session-media/${path}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: supabaseAnonKey,
+        'Content-Type': file.type || 'image/jpeg',
+        'x-upsert': 'true',
+      },
+      body: file,
+    });
+    if (!res.ok) return { error: `Upload échoué (${res.status})` };
+    return { url: `${supabaseUrl}/storage/v1/object/public/session-media/${path}` };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Erreur upload image' };
+  }
+}
+
+/**
+ * Met à jour la description courte de la session (playlists.description).
+ */
+export async function saveSessionDescription(sessionId: string, description: string): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from('playlists')
+    .upsert({ session_id: sessionId, description, updated_at: new Date().toISOString() }, { onConflict: 'session_id' });
+  return !error;
+}
+
+/**
+ * Met à jour le média partagé de la session (playlists.shared_media, jsonb).
+ */
+export async function saveSharedMedia(sessionId: string, sharedMedia: SharedMedia | null): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from('playlists')
+    .upsert({ session_id: sessionId, shared_media: sharedMedia, updated_at: new Date().toISOString() }, { onConflict: 'session_id' });
+  return !error;
 }
 
 /**

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useCallback } from 'react';
-import { Maximize2, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube } from 'lucide-react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
+import { Maximize2, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube, Volume2 } from 'lucide-react';
 import Vimeo from '@vimeo/player';
 import type { SharedMedia } from '@/lib/supabaseClient';
 
@@ -50,6 +50,10 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastEmitRef = useRef(0);
+
+  // Bug 2 : le participant démarre EN MUET (autoplay muet autorisé par les navigateurs → plus
+  // d'écran noir). Un bouton "Activer le son" (geste utilisateur) réactive l'audio.
+  const [muted, setMuted] = useState<boolean>(!isHost);
 
   // onState peut changer d'identité : on le garde dans une ref pour des effets stables.
   const onStateRef = useRef(onState);
@@ -111,6 +115,8 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         playerVars: {
           // Participant : aucun contrôle visible ; hôte : contrôles natifs
           controls: isHost ? 1 : 0,
+          // Bug 2 : participant en muet → l'autoplay muet est autorisé (plus d'écran noir)
+          mute: isHost ? 0 : 1,
           disablekb: 1,
           rel: 0,
           modestbranding: 1,
@@ -122,13 +128,15 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         events: {
           onReady: () => {
             ytReadyRef.current = true;
-            // Late-join : appliquer immédiatement le dernier état distant
             const p = ytPlayerRef.current;
-            const r = latestRemoteRef.current;
-            if (!isHost && p && r) {
+            // Participant : démarrer muet + se positionner et lancer la lecture si l'hôte joue
+            if (!isHost && p) {
               try {
-                if (Math.abs((p.getCurrentTime?.() || 0) - r.currentTime) > DRIFT) p.seekTo(r.currentTime, true);
-                if (r.isPlaying) p.playVideo(); else p.pauseVideo();
+                p.mute();
+                const r = latestRemoteRef.current;
+                const pos = r ? r.currentTime : (media.currentTime || 0);
+                if (Math.abs((p.getCurrentTime?.() || 0) - pos) > DRIFT) p.seekTo(pos, true);
+                if (!r || r.isPlaying) p.playVideo(); else p.pauseVideo();
               } catch { /* ignore */ }
             }
           },
@@ -189,6 +197,8 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     const player = new Vimeo(vimeoMountRef.current, {
       id: Number(id),
       controls: isHost,   // participant : aucun contrôle
+      // Bug 2 : participant en muet → autoplay muet autorisé (plus d'écran noir)
+      muted: !isHost,
       autoplay: true,
       playsinline: true,
       keyboard: false,
@@ -202,7 +212,12 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       const r = latestRemoteRef.current;
       const startAt = (!isHost && r) ? r.currentTime : (media.currentTime || 0);
       if (startAt) player.setCurrentTime(startAt).catch(() => { /* ignore */ });
-      if (!isHost && r && !r.isPlaying) player.pause().catch(() => { /* ignore */ });
+      if (!isHost) {
+        player.setMuted(true).catch(() => { /* ignore */ });
+        // Lancer la lecture muette si l'hôte joue (ou par défaut au late-join)
+        if (!r || r.isPlaying) player.play().catch(() => { /* ignore */ });
+        else player.pause().catch(() => { /* ignore */ });
+      }
     }).catch(() => { /* ignore */ });
 
     if (isHost) {
@@ -243,6 +258,22 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     if (el?.requestFullscreen) el.requestFullscreen().catch(() => { /* ignore */ });
   }, [media.type]);
 
+  // Bug 2 : geste utilisateur → réactiver le son du lecteur courant
+  const enableSound = useCallback(() => {
+    setMuted(false);
+    try {
+      if (media.type === 'video') {
+        const v = videoRef.current;
+        if (v) { v.muted = false; v.play?.().catch(() => { /* ignore */ }); }
+      } else if (media.type === 'youtube') {
+        const p = ytPlayerRef.current;
+        if (p?.unMute) { p.unMute(); p.setVolume?.(100); }
+      } else if (media.type === 'vimeo') {
+        vimeoPlayerRef.current?.setMuted(false).catch(() => { /* ignore */ });
+      }
+    } catch { /* ignore */ }
+  }, [media.type]);
+
   const icon =
     media.type === 'image' ? <ImageIcon className="w-4 h-4" /> :
     media.type === 'youtube' ? <Youtube className="w-4 h-4" /> :
@@ -264,6 +295,10 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         controls={isHost}
         tabIndex={isHost ? 0 : -1}
         playsInline
+        // Bug 2 : participant en muet + autoplay → l'autoplay muet est autorisé (plus d'écran noir)
+        // (lié à l'état `muted` pour que "Activer le son" persiste au re-render)
+        muted={muted}
+        autoPlay={!isHost}
         // Item 4 : lecture rapide depuis l'URL storage (Range/streaming progressif, pas de blob)
         preload="metadata"
         // Item 2 : pas de téléchargement / PiP / vitesse / menu contextuel
@@ -341,6 +376,17 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         {/* Item 1 : overlay participant → aucune interaction possible (play/pause/seek bloqués) */}
         {blockParticipant && (
           <div className="absolute inset-0 z-10" style={{ cursor: 'default' }} data-testid="media-block-overlay" />
+        )}
+        {/* Bug 2 : participant en muet → bouton discret pour activer le son (geste utilisateur) */}
+        {blockParticipant && muted && (
+          <button
+            onClick={enableSound}
+            className="absolute bottom-2 right-2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-white bg-black/70 hover:bg-black/85 border border-white/20 backdrop-blur-sm shadow-lg"
+            data-testid="media-unmute"
+          >
+            <Volume2 className="w-3.5 h-3.5" />
+            Activer le son
+          </button>
         )}
       </div>
       {blockParticipant && (

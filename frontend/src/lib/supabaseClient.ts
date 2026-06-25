@@ -481,10 +481,14 @@ export async function uploadSessionVideoDirect(
 ): Promise<{ url?: string; error?: string }> {
   if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
   try {
-    const { data: sess } = await supabase.auth.getSession();
-    const token = sess.session?.access_token;
-    const userId = sess.session?.user?.id;
-    if (!token || !userId) return { error: 'Connectez-vous pour partager' };
+    // Bug 1 : le serveur résumable exige un JWT utilisateur VALIDE (sinon 403 "Invalid Compact JWS").
+    // → on récupère une session FRAÎCHE juste avant l'upload.
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    const userId = session?.user?.id;
+    if (!token || token.trim() === '' || !userId) {
+      return { error: 'Reconnecte-toi pour partager une vidéo' };
+    }
 
     const safe = (file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-80)) || 'video.mp4';
     const objectName = `${sessionId}/${userId}/${Date.now()}_${safe}`;
@@ -493,6 +497,7 @@ export async function uploadSessionVideoDirect(
       const upload = new tus.Upload(file, {
         endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
         headers: {
+          // JWT utilisateur (PAS la clé anon) → indispensable pour passer l'auth du serveur résumable
           Authorization: `Bearer ${token}`,
           apikey: supabaseAnonKey as string,
           'x-upsert': 'true',
@@ -506,7 +511,20 @@ export async function uploadSessionVideoDirect(
           contentType: file.type || 'video/mp4',
           cacheControl: '3600',
         },
-        onError: (err) => reject(err instanceof Error ? err : new Error(String(err))),
+        // Ne PAS réessayer en boucle sur une erreur 4xx (auth/validation) → on échoue vite et clair
+        onShouldRetry: (err) => {
+          const status = (err as { originalResponse?: { getStatus?: () => number } })?.originalResponse?.getStatus?.() ?? 0;
+          if (status === 400 || status === 401 || status === 403) return false;
+          return true;
+        },
+        onError: (err) => {
+          // Bug 1 : NE PAS rester à 0% → remonter l'erreur réelle (corps de réponse serveur si dispo)
+          console.error('[TUS upload]', err);
+          let body = '';
+          try { body = (err as { originalResponse?: { getBody?: () => string } })?.originalResponse?.getBody?.() || ''; } catch { /* ignore */ }
+          const msg = body || (err instanceof Error ? err.message : String(err)) || 'Échec de l\'envoi de la vidéo';
+          reject(new Error(msg));
+        },
         onProgress: (sent, total) => {
           if (total && onProgress) onProgress(Math.round((sent / total) * 100));
         },

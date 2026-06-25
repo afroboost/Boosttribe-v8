@@ -43,8 +43,8 @@ function loadYouTubeApi(): Promise<any> {
   });
 }
 
-const DRIFT = 1.2;          // s : seuil de resynchro de position
-const HOST_EMIT_MS = 1500;  // intervalle d'émission de l'hôte pendant la lecture
+const DRIFT = 1.2;          // s : seuil de resynchro de position (anti-saccade)
+const HOST_EMIT_MS = 1000;  // intervalle d'émission de l'hôte pendant la lecture (≈ heartbeat 1s)
 
 export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -302,10 +302,48 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     }).catch(() => { /* ignore */ });
   }, [remote, isHost, media.type]);
 
+  // Item 4 : plein écran de l'élément INTÉGRÉ (jamais de redirection vers youtube.com) + paysage mobile.
   const goFullscreen = useCallback(() => {
-    const el = (media.type === 'video' ? videoRef.current : containerRef.current) as HTMLElement | null;
-    if (el?.requestFullscreen) el.requestFullscreen().catch(() => { /* ignore */ });
-  }, [media.type]);
+    const el = containerRef.current as (HTMLElement & {
+      webkitRequestFullscreen?: () => void;
+    }) | null;
+    const vid = videoRef.current as (HTMLVideoElement & {
+      webkitEnterFullscreen?: () => void;
+    }) | null;
+    // Forcer l'orientation PAYSAGE sur mobile (try/catch : non supporté partout, ex. iOS Safari).
+    const lockLandscape = () => {
+      try { (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.('landscape').catch(() => { /* non supporté → l'utilisateur tourne son téléphone */ }); } catch { /* ignore */ }
+    };
+    try {
+      if (el?.requestFullscreen) {
+        el.requestFullscreen().then(lockLandscape).catch(lockLandscape);
+      } else if (el?.webkitRequestFullscreen) {
+        el.webkitRequestFullscreen();
+        lockLandscape();
+      } else if (vid?.webkitEnterFullscreen) {
+        // iOS Safari : seul l'élément <video> natif passe en plein écran (vidéo uploadée)
+        vid.webkitEnterFullscreen();
+      } else {
+        lockLandscape();
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // À la sortie du plein écran : déverrouiller l'orientation (retour à l'affichage intégré normal).
+  useEffect(() => {
+    const onFsChange = () => {
+      const fsEl = document.fullscreenElement || (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
+      if (!fsEl) {
+        try { (screen.orientation as unknown as { unlock?: () => void })?.unlock?.(); } catch { /* ignore */ }
+      }
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    document.addEventListener('webkitfullscreenchange', onFsChange as EventListener);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      document.removeEventListener('webkitfullscreenchange', onFsChange as EventListener);
+    };
+  }, []);
 
   // Bug 2 : geste utilisateur → réactiver le son du lecteur courant, relancer la lecture et
   // resynchroniser à la position de l'hôte. Si le player n'est pas prêt, on mémorise l'intention
@@ -454,7 +492,11 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
           )}
         </div>
       </div>
-      <div ref={containerRef} className="relative w-full aspect-video bg-black">
+      {/* En plein écran : le conteneur occupe TOUT l'écran (object-contain, fond noir) */}
+      <div
+        ref={containerRef}
+        className="relative w-full aspect-video bg-black [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:aspect-auto [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center"
+      >
         {body}
         {/* Item 1 : overlay participant → bloque le contrôle du média MAIS le 1er tap relance la
             lecture si l'autoplay a été bloqué (filet de sécurité, ne pilote pas la sync). */}

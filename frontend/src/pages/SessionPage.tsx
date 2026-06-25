@@ -500,6 +500,9 @@ export const SessionPage: React.FC = () => {
   // E : média partagé (vidéo/image/youtube/vimeo/lien) + état distant pour les participants
   const [sharedMedia, setSharedMedia] = useState<SharedMedia | null>(null);
   const [remoteMediaState, setRemoteMediaState] = useState<RemoteMediaState | null>(null);
+  // 🎬 SYNCHRO VIDÉO (même principe que l'audio) : dernier état de lecture vidéo de l'hôte,
+  // émis en continu (heartbeat 1s) sur le canal playback via l'événement VIDEO_SYNC.
+  const videoHostStateRef = useRef<{ isPlaying: boolean; currentTime: number }>({ isPlaying: false, currentTime: 0 });
   // Item 6 : le sélecteur de mode pilote TOUTE la zone centrale (audio = lecteur + playlist ;
   // vidéo/image/lien = uniquement le média partagé). Hôte/co-host le contrôlent via le sélecteur ;
   // les participants le dérivent du média reçu (effet plus bas).
@@ -1028,7 +1031,7 @@ export const SessionPage: React.FC = () => {
           }
         }
       })
-      // E : média partagé (vidéo/image/lien) — les participants suivent l'hôte
+      // E : média partagé (vidéo/image/lien) — identité du média (partage/retrait)
       .on('broadcast', { event: 'MEDIA_COMMAND' }, (payload) => {
         if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as MediaCommandPayload;
@@ -1039,6 +1042,18 @@ export const SessionPage: React.FC = () => {
         } else {
           setRemoteMediaState(null);
         }
+      })
+      // 🎬 SYNCHRO VIDÉO (même canal/abonnement que l'audio) : le participant applique l'état de
+      // lecture de l'hôte (play/pause/seek) reçu en continu (heartbeat 1s + à chaque action).
+      .on('broadcast', { event: 'VIDEO_SYNC' }, (payload) => {
+        if (isHostRef.current || !payload.payload) return;
+        const p = payload.payload as { isPlaying: boolean; currentTime: number; mediaId?: string; ts?: number };
+        const cur = sharedMediaRef.current;
+        if (!cur) return;                                // pas encore reçu l'identité du média
+        if (p.mediaId && cur.url !== p.mediaId) return;  // sync pour un autre média → ignorer
+        console.log('[VIDEO] recv', p.isPlaying, p.currentTime);
+        mediaSeqRef.current += 1;
+        setRemoteMediaState({ isPlaying: !!p.isPlaying, currentTime: p.currentTime || 0, seq: mediaSeqRef.current });
       })
       // F : les co-animateurs ne sont PLUS dérivés d'un broadcast (spoofable) mais de la DB
       //     (playlists.cohosts), écrite par le backend host-only et reçue via postgres_changes.
@@ -1233,11 +1248,16 @@ export const SessionPage: React.FC = () => {
     sendPlaybackEvent('MEDIA_COMMAND', { media, isPlaying: media.isPlaying ?? false, currentTime: media.currentTime ?? 0 });
   }, [sessionId, sendPlaybackEvent]);
 
-  // E : état de lecture du média (hôte/co-animateur) → diffusé aux participants
+  // 🎬 état de lecture VIDÉO (hôte/co-animateur) → diffusé aux participants à CHAQUE action
+  // (play/pause/seek), sur le MÊME canal que l'audio (playback:<id>), événement VIDEO_SYNC.
+  // On met à jour une ref (pas de setState → pas de re-render à chaque frame) ; le heartbeat 1s
+  // ré-émet l'état pour le late-join et la correction de dérive.
   const handleMediaState = useCallback((s: { isPlaying: boolean; currentTime: number }) => {
-    const media = sharedMediaRef.current ? { ...sharedMediaRef.current, isPlaying: s.isPlaying, currentTime: s.currentTime } : null;
-    setSharedMedia(media);
-    sendPlaybackEvent('MEDIA_COMMAND', { media, isPlaying: s.isPlaying, currentTime: s.currentTime });
+    videoHostStateRef.current = { isPlaying: s.isPlaying, currentTime: s.currentTime };
+    const m = sharedMediaRef.current;
+    if (!m) return;
+    console.log('[VIDEO] emit', s.isPlaying, s.currentTime);
+    sendPlaybackEvent('VIDEO_SYNC', { isPlaying: s.isPlaying, currentTime: s.currentTime, mediaId: m.url, ts: Date.now() });
   }, [sendPlaybackEvent]);
 
   // E : retirer le média partagé
@@ -1690,19 +1710,22 @@ export const SessionPage: React.FC = () => {
     return () => clearInterval(interval);
   }, [isHost, sessionId]);
 
-  // 💓 Item 1 : Heartbeat MÉDIA (vidéo) toutes les 3s → late-join précis (position courante).
+  // 💓 🎬 Heartbeat VIDÉO toutes les 1000 ms (même principe que le heartbeat audio) → late-join
+  // précis (≤ 1 s) + correction de dérive. Émis sur le canal playback:<id>, événement VIDEO_SYNC.
   useEffect(() => {
     if (!isHost || !sessionId || !supabase || !isSupabaseConfigured) return;
     const interval = setInterval(() => {
       const m = sharedMediaRef.current;
-      // heartbeat utile pour les médias pilotables (vidéo uploadée + lien YouTube/Vimeo)
+      // utile uniquement pour les médias pilotables (vidéo uploadée + lien YouTube/Vimeo)
       if (!m || (m.type !== 'video' && m.type !== 'youtube' && m.type !== 'vimeo')) return;
+      const st = videoHostStateRef.current;
+      console.log('[VIDEO] emit', st.isPlaying, st.currentTime);
       supabase!.channel(`playback:${sessionId}`).send({
         type: 'broadcast',
-        event: 'MEDIA_COMMAND',
-        payload: { media: m, isPlaying: m.isPlaying ?? false, currentTime: m.currentTime ?? 0 },
+        event: 'VIDEO_SYNC',
+        payload: { isPlaying: st.isPlaying, currentTime: st.currentTime, mediaId: m.url, ts: Date.now() },
       });
-    }, 3000);
+    }, 1000);
     return () => clearInterval(interval);
   }, [isHost, sessionId]);
 

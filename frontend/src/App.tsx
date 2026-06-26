@@ -6,6 +6,7 @@ import { SocketProvider } from "@/context/SocketContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { I18nProvider } from "@/context/I18nContext";
 import { ToastProvider } from "@/components/ui/Toast";
+import { Footer } from "@/components/layout/Footer";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
@@ -98,6 +99,7 @@ const HomePage: React.FC = () => {
       <main>
         <HeroSection />
       </main>
+      <Footer />
     </div>
   );
 };

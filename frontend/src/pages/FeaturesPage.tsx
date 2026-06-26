@@ -278,7 +278,7 @@ const FeaturesPage: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-white/40 text-sm">
-              © 2024 {theme.name}. Tous droits réservés.
+              © 2024–{new Date().getFullYear()} {theme.name}. Tous droits réservés.
             </p>
             <div className="flex items-center gap-6">
               <Link to="/" className="text-white/40 hover:text-white text-sm transition-colors">

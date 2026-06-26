@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
+import { Footer } from '@/components/layout/Footer';
 import { useSiteSettings } from '@/hooks/useSiteSettings';
 import { useToast } from '@/components/ui/Toast';
 import { createCheckout } from '@/lib/paymentApi';
@@ -523,6 +524,8 @@ const PricingPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      <Footer />
     </div>
   );
 };

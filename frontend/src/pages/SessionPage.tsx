@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -31,6 +31,8 @@ import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
+import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
+import { useVideoMesh } from '@/hooks/useVideoMesh';
 import { claimHost, setCohosts } from '@/lib/paymentApi';
 import { Pencil } from 'lucide-react';
 
@@ -706,6 +708,32 @@ export const SessionPage: React.FC = () => {
       }
     }
   }, [isTalking, participantMic, stopTalkToHost, showToast]);
+
+  // 🎥 MODE LIVE / VISIO (Zoom-like) — module ISOLÉ (son propre Peer + canal de signaling).
+  // N'altère rien de l'audio/mixeur/synchro existants : purement additif.
+  const MAX_VISIO_CAMERAS = 6;
+  const [liveMode, setLiveMode] = useState(false);
+  const videoMesh = useVideoMesh({
+    sessionId: sessionId || '',
+    userId: socket.userId,
+    active: liveMode && !!sessionId,
+    maxCameras: MAX_VISIO_CAMERAS,
+    onLimit: () => showToast(`Limite de ${MAX_VISIO_CAMERAS} caméras atteinte (version actuelle)`, 'warning'),
+  });
+  const handleToggleCamera = useCallback(async () => {
+    if (videoMesh.cameraOn) {
+      videoMesh.stopCamera();
+    } else {
+      const ok = await videoMesh.startCamera();
+      if (!ok && videoMesh.activeCameraCount < MAX_VISIO_CAMERAS) {
+        showToast('Impossible d\'accéder à la caméra (autorisez l\'accès)', 'error');
+      }
+    }
+  }, [videoMesh, showToast]);
+  const handleLiveMicToggle = useCallback(() => {
+    if (isHost) { showToast('Gérez votre micro avec le bouton Micro en haut de la session', 'default'); return; }
+    handleToggleTalk();
+  }, [isHost, handleToggleTalk, showToast]);
 
   // Auto-play effect: when a new track is set via autoplay, force play
   useEffect(() => {
@@ -2024,6 +2052,51 @@ export const SessionPage: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Player */}
           <div className="lg:col-span-2 space-y-6">
+            {/* 🎥 Interrupteur de mode : Écoute seule / Live Visio (additif, n'altère pas l'existant) */}
+            {sessionId && (
+              <div className="flex items-center gap-1.5 p-1 rounded-xl border border-white/10 bg-white/5 w-fit">
+                <button
+                  onClick={() => setLiveMode(false)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[#8A2EFF] text-white' : 'text-white/60 hover:text-white'}`}
+                  data-testid="mode-listen"
+                >
+                  <Headphones className="w-4 h-4" /> Écoute seule
+                </button>
+                <button
+                  onClick={() => setLiveMode(true)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${liveMode ? 'text-white' : 'text-white/60 hover:text-white'}`}
+                  style={liveMode ? { background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' } : undefined}
+                  data-testid="mode-live"
+                >
+                  <Video className="w-4 h-4" /> Live Visio
+                </button>
+              </div>
+            )}
+
+            {/* 🎥 Panneau Live Visio — au-dessus de la vidéo partagée, qui reste intacte/synchronisée */}
+            {liveMode && sessionId && (
+              <LiveVisioPanel
+                participants={participants.map((p) => ({
+                  id: p.id,
+                  name: p.name,
+                  avatarUrl: p.avatarUrl,
+                  isHost: p.isHost,
+                  isCurrentUser: p.isCurrentUser,
+                  isMicActive: p.isCurrentUser ? (isHost ? hostMicActive : isTalking) : peerState.remoteMicUsers.includes(p.id),
+                }))}
+                myUserId={socket.userId}
+                localStream={videoMesh.localStream}
+                remoteCameras={videoMesh.remoteCameras}
+                cameraOn={videoMesh.cameraOn}
+                activeCameraCount={videoMesh.activeCameraCount}
+                maxCameras={MAX_VISIO_CAMERAS}
+                micActive={isHost ? hostMicActive : isTalking}
+                onToggleMic={handleLiveMicToggle}
+                onToggleCamera={handleToggleCamera}
+                onLeaveLive={() => setLiveMode(false)}
+              />
+            )}
+
             {/* Session Title */}
             <div>
               <h1 

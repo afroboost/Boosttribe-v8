@@ -178,15 +178,16 @@ async def require_admin(authorization: Optional[str]) -> Dict[str, Any]:
 
 
 async def get_stripe_secret_record() -> Optional[str]:
-    """Valeur CHIFFRÉE de la clé secrète Stripe (table stripe_secrets, service-role only)."""
+    """Valeur CHIFFRÉE de la clé secrète Stripe (table stripe_secrets, service-role only).
+    Schéma : id='default', colonne encrypted_secret_key."""
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/stripe_secrets",
             headers=_service_headers(),
-            params={"id": "eq.stripe_secret_key", "select": "value_encrypted"},
+            params={"id": "eq.default", "select": "encrypted_secret_key"},
         )
     if resp.status_code == 200 and resp.json():
-        return resp.json()[0].get("value_encrypted")
+        return resp.json()[0].get("encrypted_secret_key")
     return None
 
 
@@ -197,8 +198,8 @@ async def store_stripe_secret(encrypted: str) -> bool:
             headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
             params={"on_conflict": "id"},
             json={
-                "id": "stripe_secret_key",
-                "value_encrypted": encrypted,
+                "id": "default",
+                "encrypted_secret_key": encrypted,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             },
         )

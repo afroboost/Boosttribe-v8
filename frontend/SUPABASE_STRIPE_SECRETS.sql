@@ -8,10 +8,11 @@
 -- La clé n'apparaît jamais dans le bundle frontend ni dans site_settings.
 -- =====================================================================
 
+-- NB : en prod, la table est déjà créée avec ce schéma exact (ligne id='default').
 CREATE TABLE IF NOT EXISTS public.stripe_secrets (
-  id            text PRIMARY KEY,        -- ex. 'stripe_secret_key'
-  value_encrypted text NOT NULL,         -- jeton Fernet (chiffré)
-  updated_at    timestamptz DEFAULT now()
+  id                   text PRIMARY KEY DEFAULT 'default',
+  encrypted_secret_key text,             -- jeton Fernet (clé secrète chiffrée)
+  updated_at           timestamptz DEFAULT now()
 );
 
 -- RLS activée, AUCUNE policy → seul le service-role (qui bypass la RLS) y accède.

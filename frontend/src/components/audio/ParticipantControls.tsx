@@ -26,6 +26,8 @@ interface ParticipantItemProps {
   onMuteToggle: (id: string) => void;
   onEject: (id: string) => void;
   onToggleCoHost?: (id: string, makeCoHost: boolean) => void;
+  isPrivateTarget?: boolean;
+  onTogglePrivate?: (id: string) => void;
   theme: {
     colors: {
       gradient: {
@@ -42,6 +44,8 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
   onMuteToggle,
   onEject,
   onToggleCoHost,
+  isPrivateTarget,
+  onTogglePrivate,
   theme,
 }) => {
   const [showControls, setShowControls] = useState(false);
@@ -110,6 +114,9 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
         {participant.isCoHost && !participant.isHost && (
           <span className="text-[#8A2EFF] text-xs flex items-center gap-1"><Share2 size={10} /> Co-animateur</span>
         )}
+        {isPrivateTarget && (
+          <span className="text-pink-400 text-xs flex items-center gap-1"><Mic size={10} /> Privé</span>
+        )}
       </div>
 
       {/* Sync Status */}
@@ -134,6 +141,23 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
         >
           <Share2 size={13} strokeWidth={2} />
           <span>{participant.isCoHost ? 'Retirer' : 'Partager'}</span>
+        </button>
+      )}
+
+      {/* PARTIE 3 : bouton "Parler en privé" (hôte) — toujours visible */}
+      {canModerate && onTogglePrivate && (
+        <button
+          onClick={() => onTogglePrivate(participant.id)}
+          className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 transition-colors ${
+            isPrivateTarget
+              ? 'bg-pink-500/20 text-pink-400 hover:bg-pink-500/30'
+              : 'bg-white/10 text-white/70 hover:bg-white/20'
+          }`}
+          title={isPrivateTarget ? 'Retirer de la conversation privée' : 'Parler en privé à ce participant'}
+          data-testid="private-talk-toggle"
+        >
+          <Mic size={13} strokeWidth={2} />
+          <span>{isPrivateTarget ? 'Privé ✓' : 'Privé'}</span>
         </button>
       )}
 
@@ -210,6 +234,8 @@ interface ParticipantControlsProps {
   onMuteToggle: (id: string) => void;
   onEject: (id: string) => void;
   onToggleCoHost?: (id: string, makeCoHost: boolean) => void;
+  privateTargetIds?: Set<string>;
+  onTogglePrivate?: (id: string) => void;
   theme: {
     colors: {
       gradient: {
@@ -226,6 +252,8 @@ export const ParticipantControls: React.FC<ParticipantControlsProps> = ({
   onMuteToggle,
   onEject,
   onToggleCoHost,
+  privateTargetIds,
+  onTogglePrivate,
   theme,
 }) => {
   return (
@@ -240,6 +268,8 @@ export const ParticipantControls: React.FC<ParticipantControlsProps> = ({
             onMuteToggle={onMuteToggle}
             onEject={onEject}
             onToggleCoHost={onToggleCoHost}
+            isPrivateTarget={privateTargetIds?.has(participant.id)}
+            onTogglePrivate={onTogglePrivate}
             theme={theme}
           />
         ))}

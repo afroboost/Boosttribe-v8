@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProfilePhoto } from '@/components/session/ProfilePhoto';
+import { useToast } from '@/components/ui/Toast';
 
 interface CommentRow {
   id: string | number;
@@ -21,6 +22,7 @@ interface SessionSocialProps {
 
 export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
   const { user, profile, isAuthenticated } = useAuth();
+  const { showToast } = useToast();
   const [likeCount, setLikeCount] = useState(0);
   const [liked, setLiked] = useState(false);
   const [comments, setComments] = useState<CommentRow[]>([]);
@@ -96,28 +98,41 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
   }, [sessionId, loadLikes, loadComments]);
 
   const toggleLike = useCallback(async () => {
-    if (!supabase || !user?.id) return;
+    if (!supabase) return;
+    if (!user?.id) { showToast('Connectez-vous pour aimer cette session', 'warning'); return; }
+    const wasLiked = liked;
     // Optimiste
-    setLiked((v) => !v);
-    setLikeCount((c) => (liked ? Math.max(0, c - 1) : c + 1));
-    if (liked) {
-      await supabase.from('session_likes').delete().eq('session_id', sessionId).eq('user_id', user.id);
-    } else {
-      await supabase.from('session_likes').insert({ session_id: sessionId, user_id: user.id });
+    setLiked(!wasLiked);
+    setLikeCount((c) => (wasLiked ? Math.max(0, c - 1) : c + 1));
+    const { error } = wasLiked
+      ? await supabase.from('session_likes').delete().eq('session_id', sessionId).eq('user_id', user.id)
+      : await supabase.from('session_likes').insert({ session_id: sessionId, user_id: user.id });
+    if (error) {
+      // rollback + message clair (souvent un RLS manquant sur session_likes)
+      setLiked(wasLiked);
+      setLikeCount((c) => (wasLiked ? c + 1 : Math.max(0, c - 1)));
+      console.error('[LIKE] error', error);
+      showToast(`Like impossible : ${error.message}`, 'error');
     }
-  }, [liked, sessionId, user?.id]);
+  }, [liked, sessionId, user?.id, showToast]);
 
   const addComment = useCallback(async () => {
     const content = draft.trim().slice(0, 500);
-    if (!content || !supabase || !user?.id) return;
+    if (!content || !supabase) return;
+    if (!user?.id) { showToast('Connectez-vous pour commenter', 'warning'); return; }
     setBusy(true);
     try {
       const { error } = await supabase.from('session_comments').insert({ session_id: sessionId, user_id: user.id, content });
-      if (!error) setDraft('');
+      if (error) {
+        console.error('[COMMENT] error', error);
+        showToast(`Commentaire impossible : ${error.message}`, 'error');
+      } else {
+        setDraft('');
+      }
     } finally {
       setBusy(false);
     }
-  }, [draft, sessionId, user?.id]);
+  }, [draft, sessionId, user?.id, showToast]);
 
   const deleteComment = useCallback(async (id: string | number) => {
     if (!supabase || !user?.id) return;

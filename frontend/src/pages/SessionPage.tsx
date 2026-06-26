@@ -585,10 +585,12 @@ export const SessionPage: React.FC = () => {
     stopTalkToHost,
     setTribeVolume: setTribeAudioVolume,
     setHostVoiceVolume: setHostVoiceAudioVolume,
+    setPrivateTargets,
     remoteAudioRef,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
     isHost,
+    userId: socket.userId,
     onPeerConnected: () => {},
     onPeerDisconnected: () => {},
     onReceiveAudio: () => {},
@@ -1333,6 +1335,28 @@ export const SessionPage: React.FC = () => {
       showToast(error || 'Échec de la mise à jour des co-animateurs', 'error');
     }
   }, [isHost, sessionId, coHostIds, participantsState, showToast]);
+
+  // 🎙️ POINT 3 (hôte) : "Parler en privé" à une sélection de participants.
+  // privateTargets vide = parler à TOUS. Sinon, seuls les userId sélectionnés entendent l'hôte.
+  const [privateTargets, setPrivateTargetsState] = useState<Set<string>>(new Set());
+  const handleTogglePrivateTalk = useCallback((id: string) => {
+    setPrivateTargetsState((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      setPrivateTargets(next.size ? Array.from(next) : null);
+      const p = participantsState.find(x => x.id === id);
+      showToast(
+        next.has(id) ? `🎙️ Conversation privée avec ${p?.name || 'le participant'}` : `${p?.name || 'Participant'} retiré du privé`,
+        'default',
+      );
+      return next;
+    });
+  }, [setPrivateTargets, participantsState, showToast]);
+  const handleTalkToAll = useCallback(() => {
+    setPrivateTargetsState(new Set());
+    setPrivateTargets(null);
+    showToast('🔊 Vous parlez de nouveau à tout le monde', 'default');
+  }, [setPrivateTargets, showToast]);
 
   // 💾 OBJECTIF B: Sauvegarde STABLE de la playlist du coach, liée à son COMPTE.
   // Clé dérivée de l'utilisateur (indépendante du session_id aléatoire) → retrouvée à la reconnexion.
@@ -2549,7 +2573,23 @@ export const SessionPage: React.FC = () => {
                   </CardDescription>
                 )}
               </CardHeader>
-              <CardContent className="pt-0">
+              <CardContent className="pt-0 space-y-2">
+                {/* 🎙️ POINT 3 : bandeau "conversation privée" + retour à tous (hôte) */}
+                {isHost && privateTargets.size > 0 && (
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#8A2EFF]/15 border border-[#8A2EFF]/30">
+                    <span className="flex items-center gap-1.5 text-[#c9a3ff] text-xs min-w-0">
+                      <Mic className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">Privé avec {privateTargets.size} participant{privateTargets.size > 1 ? 's' : ''}</span>
+                    </span>
+                    <button
+                      onClick={handleTalkToAll}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white/10 text-white text-xs hover:bg-white/20 flex-shrink-0"
+                      data-testid="talk-to-all-btn"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" /> Parler à tous
+                    </button>
+                  </div>
+                )}
                 <ParticipantControls
                   participants={participants}
                   isHost={isHost}
@@ -2557,6 +2597,8 @@ export const SessionPage: React.FC = () => {
                   onMuteToggle={handleParticipantMuteToggle}
                   onEject={handleParticipantEject}
                   onToggleCoHost={isHost ? handleToggleCoHost : undefined}
+                  privateTargetIds={privateTargets}
+                  onTogglePrivate={isHost ? handleTogglePrivateTalk : undefined}
                   theme={theme}
                 />
               </CardContent>

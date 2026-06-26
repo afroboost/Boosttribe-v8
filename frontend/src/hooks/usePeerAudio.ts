@@ -17,6 +17,7 @@ export interface PeerState {
 export interface UsePeerAudioOptions {
   sessionId: string;
   isHost: boolean;
+  userId?: string; // POINT 3 : identité du participant (envoyée à l'hôte → ciblage "parler en privé")
   onPeerConnected?: (peerId: string) => void;
   onPeerDisconnected?: (peerId: string) => void;
   onReceiveAudio?: (stream: MediaStream) => void;
@@ -41,6 +42,8 @@ export interface UsePeerAudioReturn {
   // 🔊 POINT 1.6: volume des voix participants (tribu) côté hôte
   setTribeVolume: (volume: number) => void;
   setHostVoiceVolume: (volume: number) => void;
+  // 🎙️ POINT 3 (hôte) : restreindre sa voix à une sélection de participants (null = tout le monde)
+  setPrivateTargets: (userIds: string[] | null) => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
 }
@@ -149,6 +152,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const {
     sessionId,
     isHost,
+    userId,
     onPeerConnected,
     onPeerDisconnected,
     onReceiveAudio,
@@ -182,6 +186,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const tribeVolumeRef = useRef<number>(1);
   // 🔊 "Volume Hôte" (participant) appliqué directement à l'<audio> de la voix de l'hôte
   const hostVoiceVolumeRef = useRef<number>(1);
+  // 🎙️ POINT 3 : identité du participant (pour le ciblage "parler en privé")
+  const userIdRef = useRef<string | undefined>(userId);
+  userIdRef.current = userId;
+  // 🎙️ POINT 3 (hôte) : mapping peerId WebRTC → userId du participant, et sélection privée courante
+  const peerIdToUserIdRef = useRef<Map<string, string>>(new Map());
+  const privateTargetsRef = useRef<Set<string> | null>(null); // null = parler à TOUT le monde
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
@@ -308,9 +318,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
           // Participant: Connect to host for data channel
           if (!isHost) {
-            // Production: log removed
-            const dataConn = peer.connect(hostPeerId);
-            
+            // POINT 3 : on transmet l'userId à l'hôte (metadata) → ciblage "parler en privé"
+            const dataConn = peer.connect(hostPeerId, { metadata: { userId: userIdRef.current } });
+
             dataConn.on('open', () => {
               // Production: log removed
               dataConnectionsRef.current.set(hostPeerId, dataConn);
@@ -398,6 +408,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           
           dataConn.on('open', () => {
             dataConnectionsRef.current.set(dataConn.peer, dataConn);
+            // POINT 3 : mémoriser le mapping peerId → userId (depuis la metadata du participant)
+            const meta = (dataConn as unknown as { metadata?: { userId?: string } }).metadata;
+            if (meta?.userId) peerIdToUserIdRef.current.set(dataConn.peer, meta.userId);
             setState(prev => ({
               ...prev,
               connectedPeers: [...prev.connectedPeers, dataConn.peer],
@@ -410,7 +423,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
               const call = peerRef.current?.call(dataConn.peer, currentStreamRef.current);
               if (call) {
                 connectionsRef.current.set(dataConn.peer, call);
-                // Production: log removed
+                // POINT 3 : appliquer la sélection privée à ce nouveau participant
+                call.on('stream', () => applyPrivacyToCall(call, dataConn.peer));
+                applyPrivacyToCall(call, dataConn.peer);
               }
             }
           });
@@ -419,6 +434,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             // Production: log removed
             dataConnectionsRef.current.delete(dataConn.peer);
             connectionsRef.current.delete(dataConn.peer);
+            peerIdToUserIdRef.current.delete(dataConn.peer); // POINT 3 : nettoyer le mapping
             setState(prev => ({
               ...prev,
               connectedPeers: prev.connectedPeers.filter(id => id !== dataConn.peer),
@@ -487,12 +503,43 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         resolve(false);
       }
     });
-    // onVoiceStart est consommé via forcePlayRemoteAudio ; sessionId via generatePeerId/getHostPeerId
+    // onVoiceStart est consommé via forcePlayRemoteAudio ; sessionId via generatePeerId/getHostPeerId.
+    // applyPrivacyToCall (stable) est déclaré plus bas et userId est lu via userIdRef → hors deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, generatePeerId, getHostPeerId, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceEnd, onReceiveTribeAudio, onTribeAudioEnd, onError, onReady, forcePlayRemoteAudio]);
 
   /**
    * HOST: Broadcast audio to all connected peers
    */
+  // 🎙️ POINT 3 : applique la sélection privée à UNE connexion (call vers un participant).
+  // null = tout le monde entend → on (re)met la piste micro. Sinon, seuls les userId sélectionnés
+  // gardent la piste ; les autres reçoivent replaceTrack(null) → ils n'entendent pas la voix privée.
+  const applyPrivacyToCall = useCallback((call: MediaConnection, peerId: string) => {
+    try {
+      const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+      if (!pc || !pc.getSenders) return;
+      const sender = pc.getSenders().find((s) => !s.track || s.track.kind === 'audio') || pc.getSenders()[0];
+      if (!sender || !sender.replaceTrack) return;
+      const micTrack = currentStreamRef.current?.getAudioTracks?.()[0] || null;
+      const targets = privateTargetsRef.current;
+      const uid = peerIdToUserIdRef.current.get(peerId);
+      const allowed = !targets || (uid != null && targets.has(uid));
+      sender.replaceTrack(allowed ? micTrack : null).catch(() => { /* ignore */ });
+    } catch { /* ignore */ }
+  }, []);
+
+  // 🎙️ POINT 3 : ré-applique la sélection à TOUTES les connexions actives
+  const applyPrivacyToAll = useCallback(() => {
+    connectionsRef.current.forEach((call, peerId) => applyPrivacyToCall(call, peerId));
+  }, [applyPrivacyToCall]);
+
+  // 🎙️ POINT 3 (hôte) : définir la sélection des participants entendant la voix privée.
+  // [] ou null → "parler à tous".
+  const setPrivateTargets = useCallback((userIds: string[] | null) => {
+    privateTargetsRef.current = (userIds && userIds.length > 0) ? new Set(userIds) : null;
+    applyPrivacyToAll();
+  }, [applyPrivacyToAll]);
+
   const broadcastAudio = useCallback((stream: MediaStream) => {
     // Production: log removed
     // Production: log removed
@@ -520,10 +567,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       if (!connectionsRef.current.has(peerId)) {
         // Production: log removed
         const call = peerRef.current!.call(peerId, stream);
-        
-        call.on('stream', () => {
-          // Production: log removed
-        });
+
+        // POINT 3 : appliquer la sélection privée dès que la connexion média est établie
+        call.on('stream', () => applyPrivacyToCall(call, peerId));
 
         call.on('close', () => {
           // Production: log removed
@@ -537,7 +583,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         connectionsRef.current.set(peerId, call);
       }
     });
-  }, [isHost, updateState]);
+    // (re)appliquer la sélection privée à toutes les connexions existantes
+    applyPrivacyToAll();
+  }, [isHost, updateState, applyPrivacyToCall, applyPrivacyToAll]);
 
   // Stop broadcasting
   const stopBroadcast = useCallback(() => {
@@ -701,6 +749,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     stopTalkToHost,
     setTribeVolume,
     setHostVoiceVolume,
+    setPrivateTargets,
     reconnect,
     remoteAudioRef,
   };

@@ -101,11 +101,23 @@ const initialSyncState: SyncState = {
   sessionId: null,
 };
 
-// Generate unique session ID
+// Alphabet SANS caractères ambigus pour la génération des codes de session.
+// Exclus volontairement : 0 O, 1 I L (et aucune minuscule) → fini la confusion O/0, l/1, etc.
+// ⚠️ N'affecte QUE la génération de NOUVEAUX codes : les anciens codes (avec O/0/…) restent
+// valides pour rejoindre une session existante (le code n'est jamais re-validé contre cet alphabet).
+const SESSION_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function randomCodeSegment(length: number): string {
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += SESSION_CODE_ALPHABET[Math.floor(Math.random() * SESSION_CODE_ALPHABET.length)];
+  }
+  return out;
+}
+
+// Generate unique session ID — même format qu'avant (2 segments 8-6, majuscules, séparés par "-")
 export function generateSessionId(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 8);
-  return `${timestamp}-${randomPart}`.toUpperCase();
+  return `${randomCodeSegment(8)}-${randomCodeSegment(6)}`;
 }
 
 export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn {

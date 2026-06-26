@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
@@ -1572,7 +1573,7 @@ export const SessionPage: React.FC = () => {
     try {
       await navigator.clipboard.writeText(sessionUrl);
       setLinkCopied(true);
-      showToast('Lien copié dans le presse-papier !', 'success');
+      showToast('Lien copié ✅', 'success');
       setTimeout(() => setLinkCopied(false), 3000);
     } catch (error) {
       showToast('Erreur lors de la copie', 'error');
@@ -2123,14 +2124,33 @@ export const SessionPage: React.FC = () => {
                         <span className="flex items-center gap-1"><Check className="w-4 h-4" /> Copié</span>
                       ) : (
                         <span className="flex items-center gap-1">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                          </svg>
+                          <Copy className="w-4 h-4" />
                           Copier le lien
                         </span>
                       )}
                     </Button>
                   </div>
+
+                  {/* QR code de l'URL complète → le participant scanne au lieu de taper le code */}
+                  {sessionUrl && (
+                    <div className="flex flex-col items-center gap-2 pt-1">
+                      <div className="flex items-center gap-1.5 text-white/50 text-xs">
+                        <QrCode className="w-4 h-4 text-[#8A2EFF]" />
+                        Scannez pour rejoindre
+                      </div>
+                      <div className="rounded-xl bg-white p-3 shadow-lg shadow-[#8A2EFF]/10">
+                        <QRCodeCanvas
+                          value={sessionUrl}
+                          size={160}
+                          level="M"
+                          includeMargin={false}
+                          fgColor="#1a1a2e"
+                          bgColor="#ffffff"
+                          data-testid="session-qr"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
                 )}
               </Card>

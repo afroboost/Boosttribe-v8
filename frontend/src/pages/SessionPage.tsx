@@ -33,6 +33,9 @@ import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { useVideoMesh } from '@/hooks/useVideoMesh';
+import { DraggableWindow } from '@/components/session/DraggableWindow';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts } from '@/lib/paymentApi';
 import { Pencil } from 'lucide-react';
 
@@ -735,6 +738,50 @@ export const SessionPage: React.FC = () => {
     handleToggleTalk();
   }, [isHost, handleToggleTalk, showToast]);
 
+  // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → fenêtre flottante
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
+
+  // 🔴 POINT 3 — Enregistrement audio (hôte uniquement) : micro local + voix participants (DOM tribu).
+  // N'inclut PAS l'audio de la vidéo partagée. + bandeau de consentement diffusé à tous (realtime).
+  const [recordingActive, setRecordingActive] = useState(false); // état "vu par tous" (bandeau)
+  const recorder = useSessionRecorder({
+    getLocalStream: () => hostMicStream,
+    getRemoteStreams: () => Array.from(document.querySelectorAll<HTMLAudioElement>('.bt-tribe-audio'))
+      .map((el) => el.srcObject as MediaStream | null)
+      .filter((s): s is MediaStream => !!s),
+    fileBaseName: 'boosttribe-session',
+  });
+  const broadcastRecording = useCallback((active: boolean) => {
+    setRecordingActive(active);
+    if (sessionId && supabase && isSupabaseConfigured) {
+      supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'RECORDING_STATE', payload: { active } });
+    }
+  }, [sessionId]);
+  const handleToggleRecording = useCallback(() => {
+    if (!isHost) return;
+    if (recorder.isRecording) {
+      recorder.stop();
+      broadcastRecording(false);
+      showToast('Enregistrement arrêté — téléchargement du fichier…', 'success');
+    } else {
+      const ok = recorder.start();
+      if (ok) {
+        broadcastRecording(true);
+        showToast('🔴 Enregistrement des voix démarré', 'success');
+      } else {
+        showToast('Enregistrement non supporté par ce navigateur', 'error');
+      }
+    }
+  }, [isHost, recorder, broadcastRecording, showToast]);
+  // Heartbeat de l'état d'enregistrement (late-join : un participant qui arrive voit le bandeau)
+  useEffect(() => {
+    if (!isHost || !recorder.isRecording || !sessionId || !supabase || !isSupabaseConfigured) return;
+    const t = setInterval(() => {
+      supabase!.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'RECORDING_STATE', payload: { active: true } });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [isHost, recorder.isRecording, sessionId]);
+
   // Auto-play effect: when a new track is set via autoplay, force play
   useEffect(() => {
     if (autoPlayPending && selectedTrack && selectedTrack.src === autoPlayPending) {
@@ -1111,6 +1158,12 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as DescPayload;
         setDescription(p.description || '');
+      })
+      // 🔴 POINT 3 : transparence — le participant voit le bandeau d'enregistrement
+      .on('broadcast', { event: 'RECORDING_STATE' }, (payload) => {
+        if (isHostRef.current || !payload.payload) return;
+        const p = payload.payload as { active?: boolean };
+        setRecordingActive(!!p.active);
       })
       .subscribe();
 
@@ -1878,8 +1931,32 @@ export const SessionPage: React.FC = () => {
     );
   }
 
+  // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
+  const liveVisioNode = (
+    <LiveVisioPanel
+      participants={participants.map((p) => ({
+        id: p.id,
+        name: p.name,
+        avatarUrl: p.avatarUrl,
+        isHost: p.isHost,
+        isCurrentUser: p.isCurrentUser,
+        isMicActive: p.isCurrentUser ? (isHost ? hostMicActive : isTalking) : peerState.remoteMicUsers.includes(p.id),
+      }))}
+      myUserId={socket.userId}
+      localStream={videoMesh.localStream}
+      remoteCameras={videoMesh.remoteCameras}
+      cameraOn={videoMesh.cameraOn}
+      activeCameraCount={videoMesh.activeCameraCount}
+      maxCameras={MAX_VISIO_CAMERAS}
+      micActive={isHost ? hostMicActive : isTalking}
+      onToggleMic={handleLiveMicToggle}
+      onToggleCamera={handleToggleCamera}
+      onLeaveLive={() => setLiveMode(false)}
+    />
+  );
+
   return (
-    <div 
+    <div
       className="min-h-screen"
       style={{ 
         background: '#000000',
@@ -2073,46 +2150,59 @@ export const SessionPage: React.FC = () => {
               </div>
             )}
 
-            {/* 🎥 Panneau Live Visio — au-dessus de la vidéo partagée, qui reste intacte/synchronisée */}
-            {liveMode && sessionId && (
-              <LiveVisioPanel
-                participants={participants.map((p) => ({
-                  id: p.id,
-                  name: p.name,
-                  avatarUrl: p.avatarUrl,
-                  isHost: p.isHost,
-                  isCurrentUser: p.isCurrentUser,
-                  isMicActive: p.isCurrentUser ? (isHost ? hostMicActive : isTalking) : peerState.remoteMicUsers.includes(p.id),
-                }))}
-                myUserId={socket.userId}
-                localStream={videoMesh.localStream}
-                remoteCameras={videoMesh.remoteCameras}
-                cameraOn={videoMesh.cameraOn}
-                activeCameraCount={videoMesh.activeCameraCount}
-                maxCameras={MAX_VISIO_CAMERAS}
-                micActive={isHost ? hostMicActive : isTalking}
-                onToggleMic={handleLiveMicToggle}
-                onToggleCamera={handleToggleCamera}
-                onLeaveLive={() => setLiveMode(false)}
-              />
+            {/* 🎥 Panneau Live Visio : mobile → fenêtre flottante (plus bas) ; desktop → colonne de droite */}
+            {liveMode && sessionId && !isDesktop && (
+              <DraggableWindow title="Live Visio" storageKey="bt_visio_pos" defaultWidth={300}>
+                {liveVisioNode}
+              </DraggableWindow>
+            )}
+
+            {/* 🔴 POINT 3 : bandeau de transparence — visible par TOUS pendant l'enregistrement */}
+            {recordingActive && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-sm" data-testid="recording-banner">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+                </span>
+                Cette session est en cours d'enregistrement (voix uniquement).
+              </div>
             )}
 
             {/* Session Title */}
-            <div>
-              <h1 
-                className="text-2xl sm:text-3xl font-bold text-white mb-2"
-                style={{ fontFamily: "'Space Grotesk', sans-serif" }}
-              >
-                Session d'écoute
-              </h1>
-              <p className="text-white/60 text-sm sm:text-base">
-                {isHost
-                  ? (isAdminUser
-                      ? 'Mode Admin - Contrôle total de la session.'
-                      : 'Vous êtes l\'hôte. Contrôlez la lecture pour tous les participants.')
-                  : 'Mode écoute seule. La lecture est synchronisée avec l\'hôte.'
-                }
-              </p>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h1
+                  className="text-2xl sm:text-3xl font-bold text-white mb-2"
+                  style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                >
+                  Session d'écoute
+                </h1>
+                <p className="text-white/60 text-sm sm:text-base">
+                  {isHost
+                    ? (isAdminUser
+                        ? 'Mode Admin - Contrôle total de la session.'
+                        : 'Vous êtes l\'hôte. Contrôlez la lecture pour tous les participants.')
+                    : 'Mode écoute seule. La lecture est synchronisée avec l\'hôte.'
+                  }
+                </p>
+              </div>
+
+              {/* 🔴 POINT 3 : bouton Enregistrer / Arrêter — HÔTE uniquement */}
+              {isHost && (
+                <button
+                  onClick={handleToggleRecording}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold flex-shrink-0 transition-colors ${
+                    recorder.isRecording
+                      ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
+                      : 'bg-white/10 text-white/80 border border-white/15 hover:bg-white/20'
+                  }`}
+                  title="Enregistrer les voix de la session (téléchargement local)"
+                  data-testid="record-toggle"
+                >
+                  <span className={`inline-block w-2.5 h-2.5 rounded-full ${recorder.isRecording ? 'bg-red-500 animate-pulse' : 'bg-red-500'}`} />
+                  {recorder.isRecording ? 'Arrêter l\'enregistrement' : 'Enregistrer'}
+                </button>
+              )}
             </div>
 
             {/* C : Description de session (modifiable par l'hôte) */}
@@ -2543,6 +2633,9 @@ export const SessionPage: React.FC = () => {
 
           {/* Sidebar */}
           <div className="space-y-6">
+            {/* 🎥 Desktop : Live Visio à côté de la vidéo partagée (en haut de la colonne de droite) */}
+            {liveMode && sessionId && isDesktop && liveVisioNode}
+
             {/* Session Info — Item 2 : repliable */}
             <Card className="border-white/10 bg-white/5">
               <CardHeader className="p-0">

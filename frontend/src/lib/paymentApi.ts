@@ -142,6 +142,30 @@ export async function listUsers(): Promise<{ users: AdminUser[]; error?: string 
   return { users: (data?.users || []) as AdminUser[] };
 }
 
+// PARTIE C : clés Stripe (publique en clair, secrète chiffrée côté serveur)
+export interface StripeKeysState {
+  public_key: string;
+  secret_configured: boolean;
+  secret_last4: string;
+  secret_source?: string;
+  secret_key?: string; // présent uniquement si reveal=true
+}
+
+export async function getStripeKeys(reveal = false): Promise<{ data?: StripeKeysState; error?: string }> {
+  const { data, error } = await adminFetch(`/admin/stripe-keys${reveal ? '?reveal=true' : ''}`, { method: 'GET' });
+  if (error) return { error };
+  return { data: data as StripeKeysState };
+}
+
+export async function saveStripeKeys(payload: { public_key?: string; secret_key?: string }): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch('/admin/stripe-keys', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
+}
+
 // F : autorité hôte / co-animateurs (source de vérité serveur)
 export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_id?: string }> {
   if (!API_URL) return { ok: false };

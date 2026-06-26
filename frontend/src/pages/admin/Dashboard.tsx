@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
-import { syncPlan, grantAccess, revokeAccess, listGranted, listUsers, GrantedRow, AdminUser } from "@/lib/paymentApi";
+import { syncPlan, grantAccess, revokeAccess, listGranted, listUsers, GrantedRow, AdminUser, getStripeKeys, saveStripeKeys } from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -14,9 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import supabase, { isSupabaseConfigured } from "@/lib/supabaseClient";
-import { 
-  Settings, 
-  CreditCard, 
+import {
+  KeyRound,
+  ShieldCheck,
+  Settings,
+  CreditCard,
   Palette, 
   Type,
   Save,
@@ -184,6 +186,53 @@ const Dashboard: React.FC = () => {
   const [usersSearch, setUsersSearch] = useState('');
   const [usersLoading, setUsersLoading] = useState(false);
 
+  // PARTIE C : clés API Stripe (publique en clair, secrète chiffrée côté serveur)
+  const [stripePubKey, setStripePubKey] = useState('');
+  const [stripeSecretInput, setStripeSecretInput] = useState('');
+  const [stripeSecretConfigured, setStripeSecretConfigured] = useState(false);
+  const [stripeSecretLast4, setStripeSecretLast4] = useState('');
+  const [stripeSecretSource, setStripeSecretSource] = useState('');
+  const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [keysSaving, setKeysSaving] = useState(false);
+
+  const loadStripeKeys = useCallback(async () => {
+    setKeysLoading(true);
+    const { data, error } = await getStripeKeys(false);
+    if (data) {
+      setStripePubKey(data.public_key || '');
+      setStripeSecretConfigured(!!data.secret_configured);
+      setStripeSecretLast4(data.secret_last4 || '');
+      setStripeSecretSource(data.secret_source || '');
+    } else if (error) {
+      showToast(error, 'error');
+    }
+    setKeysLoading(false);
+  }, [showToast]);
+
+  const handleSaveStripeKeys = useCallback(async () => {
+    setKeysSaving(true);
+    const payload: { public_key?: string; secret_key?: string } = { public_key: stripePubKey.trim() };
+    if (stripeSecretInput.trim()) payload.secret_key = stripeSecretInput.trim();
+    const { ok, error } = await saveStripeKeys(payload);
+    if (ok) {
+      showToast('Clés Stripe enregistrées', 'success');
+      setStripeSecretInput('');
+      setRevealedSecret(null);
+      await loadStripeKeys();
+    } else {
+      showToast(error || 'Échec de l\'enregistrement des clés', 'error');
+    }
+    setKeysSaving(false);
+  }, [stripePubKey, stripeSecretInput, showToast, loadStripeKeys]);
+
+  const handleRevealSecret = useCallback(async () => {
+    if (revealedSecret) { setRevealedSecret(null); return; }
+    const { data, error } = await getStripeKeys(true);
+    if (data?.secret_key) setRevealedSecret(data.secret_key);
+    else showToast(error || 'Clé secrète non configurée', 'warning');
+  }, [revealedSecret, showToast]);
+
   // POINT 6 : état de la section "Accès offerts"
   const [grantEmail, setGrantEmail] = useState('');
   const [grantPlan, setGrantPlan] = useState<'pro' | 'enterprise'>('pro');
@@ -288,7 +337,8 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'access') { refreshGranted(); refreshUsers(); }
     if (activeTab === 'users') refreshUsers();
-  }, [activeTab, refreshGranted, refreshUsers]);
+    if (activeTab === 'stripe') loadStripeKeys();
+  }, [activeTab, refreshGranted, refreshUsers, loadStripeKeys]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -896,6 +946,76 @@ const Dashboard: React.FC = () => {
         )}
 
         {activeTab === 'stripe' && (
+          <>
+          {/* PARTIE C : Clés API Stripe (publique + secrète chiffrée serveur) */}
+          <Card className="border-white/10 bg-white/5 mb-6">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <KeyRound size={20} className="text-[#8A2EFF]" />
+                Clés API Stripe
+              </CardTitle>
+              <CardDescription className="text-white/50">
+                La clé publique (pk_…) est utilisée par le site. La clé secrète (sk_…) est chiffrée et stockée
+                côté serveur — jamais exposée au navigateur.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Clé publique */}
+              <div className="space-y-2">
+                <Label className="text-white/70">Clé publique (pk_…)</Label>
+                <Input
+                  value={stripePubKey}
+                  onChange={(e) => setStripePubKey(e.target.value)}
+                  placeholder="pk_live_..."
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm"
+                />
+              </div>
+
+              {/* Clé secrète */}
+              <div className="space-y-2">
+                <Label className="text-white/70 flex items-center gap-2">
+                  Clé secrète (sk_…)
+                  {stripeSecretConfigured && (
+                    <span className="flex items-center gap-1 text-green-400 text-xs"><ShieldCheck size={13} /> Configurée{stripeSecretSource === 'env' ? ' (env)' : ''}</span>
+                  )}
+                </Label>
+                <Input
+                  type="password"
+                  value={stripeSecretInput}
+                  onChange={(e) => setStripeSecretInput(e.target.value)}
+                  placeholder={stripeSecretConfigured ? `sk_live_••••${stripeSecretLast4}` : 'sk_live_...'}
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm"
+                  autoComplete="off"
+                />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    variant="outline" size="sm"
+                    onClick={handleRevealSecret}
+                    disabled={!stripeSecretConfigured}
+                    className="border-white/20 text-white/70"
+                  >
+                    {revealedSecret ? <EyeOff size={14} className="mr-1" /> : <Eye size={14} className="mr-1" />}
+                    {revealedSecret ? 'Masquer' : 'Révéler'}
+                  </Button>
+                  {revealedSecret && (
+                    <code className="px-2 py-1 rounded bg-black/40 text-green-300 text-xs font-mono break-all">{revealedSecret}</code>
+                  )}
+                </div>
+                <p className="text-white/30 text-[11px]">La clé secrète n'est jamais stockée dans le navigateur. « Révéler » la récupère ponctuellement via le backend (token admin).</p>
+              </div>
+
+              <Button
+                onClick={handleSaveStripeKeys}
+                disabled={keysSaving || keysLoading}
+                className="text-white border-none"
+                style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+              >
+                <Save size={16} className="mr-1.5" />
+                {keysSaving ? 'Enregistrement…' : 'Enregistrer les clés'}
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="border-white/10 bg-white/5">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
@@ -994,6 +1114,7 @@ const Dashboard: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+          </>
         )}
 
         {/* Plans & Prix Tab */}

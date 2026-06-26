@@ -143,6 +143,34 @@ const translations: Translations = {
     en: 'No tracks',
     de: 'Keine Titel',
   },
+  'session.host': { fr: 'Hôte', en: 'Host', de: 'Gastgeber' },
+  'session.participant': { fr: 'Participant', en: 'Participant', de: 'Teilnehmer' },
+  'session.subtitle.host': {
+    fr: "Vous êtes l'hôte. Contrôlez la lecture pour tous les participants.",
+    en: 'You are the host. Control playback for all participants.',
+    de: 'Sie sind der Gastgeber. Steuern Sie die Wiedergabe für alle Teilnehmer.',
+  },
+  'session.subtitle.listen': {
+    fr: "Mode écoute seule. La lecture est synchronisée avec l'hôte.",
+    en: 'Listen-only mode. Playback is synchronized with the host.',
+    de: 'Nur-Hören-Modus. Die Wiedergabe ist mit dem Gastgeber synchronisiert.',
+  },
+  'session.mode.listen': { fr: 'Écoute seule', en: 'Listen only', de: 'Nur hören' },
+  'session.mode.live': { fr: 'Live Visio', en: 'Live Video', de: 'Live-Video' },
+  'session.status': { fr: 'Statut de la session', en: 'Session status', de: 'Sitzungsstatus' },
+  'session.instructions': { fr: 'Instructions', en: 'Instructions', de: 'Anleitung' },
+  'session.code': { fr: 'Code de la session', en: 'Session code', de: 'Sitzungscode' },
+  'session.record': { fr: 'Enregistrer', en: 'Record', de: 'Aufnehmen' },
+  'session.record.stop': { fr: "Arrêter l'enregistrement", en: 'Stop recording', de: 'Aufnahme stoppen' },
+  'session.recording.banner': {
+    fr: "Cette session est en cours d'enregistrement (voix uniquement).",
+    en: 'This session is being recorded (voices only).',
+    de: 'Diese Sitzung wird aufgezeichnet (nur Stimmen).',
+  },
+  'visio.title': { fr: 'Live Visio', en: 'Live Video', de: 'Live-Video' },
+  'visio.camera.on': { fr: 'Allumer la caméra', en: 'Turn on camera', de: 'Kamera einschalten' },
+  'visio.camera.off': { fr: 'Couper la caméra', en: 'Turn off camera', de: 'Kamera ausschalten' },
+  'visio.leave': { fr: 'Quitter le live', en: 'Leave live', de: 'Live verlassen' },
   
   // Auth
   'auth.login': {

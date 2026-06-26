@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useTheme } from '@/context/ThemeContext';
 import { useSocket } from '@/context/SocketContext';
+import { useI18n, LanguageSelector } from '@/context/I18nContext';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { generateSessionId } from '@/hooks/useAudioSync';
@@ -413,6 +414,7 @@ export const SessionPage: React.FC = () => {
   const navigate = useNavigate();
   const { theme } = useTheme();
   const { showToast } = useToast();
+  const { t } = useI18n();
   const socket = useSocket();
   const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, sessionLimit } = useAuth();
   
@@ -2070,14 +2072,17 @@ export const SessionPage: React.FC = () => {
                 }`}
               >
                 {isHost ? <Radio className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
-                {isHost ? 'Hôte' : 'Participant'}
+                {isHost ? t('session.host') : t('session.participant')}
               </Badge>
 
               {/* Subscription Badge — POINT 1: réservé à l'hôte/admin, masqué pour les participants */}
               {isHost && <SubscriptionBadge />}
             </div>
-            
+
             <div className="flex items-center gap-3">
+              {/* PARTIE D : sélecteur de langue (globe) — hôte ET participants */}
+              <LanguageSelector />
+
               {/* Host Microphone Control */}
               {isHost && (
                 <MicrophoneControl
@@ -2137,7 +2142,7 @@ export const SessionPage: React.FC = () => {
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[#8A2EFF] text-white' : 'text-white/60 hover:text-white'}`}
                   data-testid="mode-listen"
                 >
-                  <Headphones className="w-4 h-4" /> Écoute seule
+                  <Headphones className="w-4 h-4" /> {t('session.mode.listen')}
                 </button>
                 <button
                   onClick={() => setLiveMode(true)}
@@ -2145,7 +2150,7 @@ export const SessionPage: React.FC = () => {
                   style={liveMode ? { background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' } : undefined}
                   data-testid="mode-live"
                 >
-                  <Video className="w-4 h-4" /> Live Visio
+                  <Video className="w-4 h-4" /> {t('session.mode.live')}
                 </button>
               </div>
             )}
@@ -2164,7 +2169,7 @@ export const SessionPage: React.FC = () => {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
                 </span>
-                Cette session est en cours d'enregistrement (voix uniquement).
+                {t('session.recording.banner')}
               </div>
             )}
 
@@ -2175,14 +2180,14 @@ export const SessionPage: React.FC = () => {
                   className="text-2xl sm:text-3xl font-bold text-white mb-2"
                   style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                 >
-                  Session d'écoute
+                  {t('session.title')}
                 </h1>
                 <p className="text-white/60 text-sm sm:text-base">
                   {isHost
                     ? (isAdminUser
                         ? 'Mode Admin - Contrôle total de la session.'
-                        : 'Vous êtes l\'hôte. Contrôlez la lecture pour tous les participants.')
-                    : 'Mode écoute seule. La lecture est synchronisée avec l\'hôte.'
+                        : t('session.subtitle.host'))
+                    : t('session.subtitle.listen')
                   }
                 </p>
               </div>
@@ -2200,7 +2205,7 @@ export const SessionPage: React.FC = () => {
                   data-testid="record-toggle"
                 >
                   <span className={`inline-block w-2.5 h-2.5 rounded-full ${recorder.isRecording ? 'bg-red-500 animate-pulse' : 'bg-red-500'}`} />
-                  {recorder.isRecording ? 'Arrêter l\'enregistrement' : 'Enregistrer'}
+                  {recorder.isRecording ? t('session.record.stop') : t('session.record')}
                 </button>
               )}
             </div>
@@ -2659,7 +2664,7 @@ export const SessionPage: React.FC = () => {
                         style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
                       />
                     </span>
-                    Statut de la session
+                    {t('session.status')}
                   </CardTitle>
                   <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.status ? 'rotate-180' : ''}`} />
                 </button>
@@ -2813,7 +2818,7 @@ export const SessionPage: React.FC = () => {
                 >
                   <CardTitle className="flex items-center gap-2 text-white text-lg">
                     <Lightbulb className="w-5 h-5 text-purple-400" />
-                    Instructions
+                    {t('session.instructions')}
                   </CardTitle>
                   <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.instructions ? 'rotate-180' : ''}`} />
                 </button>

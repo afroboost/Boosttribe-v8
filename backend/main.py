@@ -47,8 +47,34 @@ ADMIN_EMAILS = [
 
 stripe.api_key = STRIPE_SECRET_KEY
 
+# Chiffrement au repos de la clé secrète Stripe saisie par l'admin (Fernet).
+# La clé APP_ENCRYPTION_KEY (base64 urlsafe 32 octets) vient de l'environnement, JAMAIS en dur.
+APP_ENCRYPTION_KEY = os.environ.get("APP_ENCRYPTION_KEY", "")
+_fernet = None
+try:
+    if APP_ENCRYPTION_KEY:
+        from cryptography.fernet import Fernet, InvalidToken  # noqa: WPS433
+        _fernet = Fernet(APP_ENCRYPTION_KEY.encode())
+except Exception as _e:  # clé invalide → chiffrement désactivé (stockage refusé proprement)
+    _fernet = None
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("boosttribe-pay")
+
+
+def encrypt_secret(plaintext: str) -> str:
+    if not _fernet:
+        raise HTTPException(status_code=500, detail="APP_ENCRYPTION_KEY non configurée côté serveur")
+    return _fernet.encrypt(plaintext.encode()).decode()
+
+
+def decrypt_secret(token: Optional[str]) -> Optional[str]:
+    if not _fernet or not token:
+        return None
+    try:
+        return _fernet.decrypt(token.encode()).decode()
+    except Exception:
+        return None
 
 app = FastAPI(title="BoostTribe Pay")
 
@@ -151,6 +177,51 @@ async def require_admin(authorization: Optional[str]) -> Dict[str, Any]:
     return user
 
 
+async def get_stripe_secret_record() -> Optional[str]:
+    """Valeur CHIFFRÉE de la clé secrète Stripe (table stripe_secrets, service-role only)."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/stripe_secrets",
+            headers=_service_headers(),
+            params={"id": "eq.stripe_secret_key", "select": "value_encrypted"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0].get("value_encrypted")
+    return None
+
+
+async def store_stripe_secret(encrypted: str) -> bool:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/stripe_secrets",
+            headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            params={"on_conflict": "id"},
+            json={
+                "id": "stripe_secret_key",
+                "value_encrypted": encrypted,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    return resp.status_code in (200, 201, 204)
+
+
+async def get_stripe_secret_key() -> str:
+    """Clé secrète Stripe effective : DB chiffrée (saisie admin) prioritaire, sinon repli env."""
+    enc = await get_stripe_secret_record()
+    if enc:
+        dec = decrypt_secret(enc)
+        if dec:
+            return dec
+    return STRIPE_SECRET_KEY
+
+
+async def apply_stripe_key() -> str:
+    """Positionne stripe.api_key avec la clé effective (DB chiffrée ou env) et la renvoie."""
+    key = await get_stripe_secret_key()
+    stripe.api_key = key
+    return key
+
+
 async def get_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
@@ -218,6 +289,45 @@ class CheckoutBody(BaseModel):
     interval: str  # "month" | "year"
 
 
+class StripeKeysBody(BaseModel):
+    public_key: Optional[str] = None   # pk_... (stockée en clair dans site_settings)
+    secret_key: Optional[str] = None   # sk_... (chiffrée, table dédiée service-role)
+
+
+@app.post("/admin/stripe-keys")
+async def set_stripe_keys(body: StripeKeysBody, authorization: Optional[str] = Header(default=None)):
+    """Admin : enregistre la clé publique (site_settings) et la clé secrète (chiffrée, table dédiée)."""
+    await require_admin(authorization)
+    if body.public_key is not None:
+        await update_site_settings({"stripe_public_key": body.public_key.strip()})
+    if body.secret_key:
+        sk = body.secret_key.strip()
+        if not sk.startswith("sk_"):
+            raise HTTPException(status_code=400, detail="La clé secrète doit commencer par sk_")
+        if not await store_stripe_secret(encrypt_secret(sk)):
+            raise HTTPException(status_code=500, detail="Échec de l'enregistrement de la clé secrète")
+    return {"ok": True}
+
+
+@app.get("/admin/stripe-keys")
+async def get_stripe_keys(reveal: bool = False, authorization: Optional[str] = Header(default=None)):
+    """Admin : état des clés. ?reveal=true → renvoie la clé secrète déchiffrée (affichage admin only)."""
+    await require_admin(authorization)
+    settings = await get_site_settings()
+    public_key = (settings or {}).get("stripe_public_key", "") or ""
+    secret_plain = decrypt_secret(await get_stripe_secret_record())
+    effective = secret_plain or STRIPE_SECRET_KEY
+    out: Dict[str, Any] = {
+        "public_key": public_key,
+        "secret_configured": bool(effective),
+        "secret_last4": effective[-4:] if effective else "",
+        "secret_source": "db" if secret_plain else ("env" if STRIPE_SECRET_KEY else "none"),
+    }
+    if reveal and effective:
+        out["secret_key"] = effective
+    return out
+
+
 class GrantAccessBody(BaseModel):
     email: Optional[str] = None
     user_id: Optional[str] = None
@@ -248,7 +358,7 @@ async def health():
 
 @app.post("/stripe/sync-plan")
 async def sync_plan(body: SyncPlanBody, authorization: Optional[str] = Header(default=None)):
-    if not STRIPE_SECRET_KEY:
+    if not await apply_stripe_key():
         raise HTTPException(status_code=500, detail="Stripe non configuré")
     if body.plan not in PLANS:
         raise HTTPException(status_code=400, detail="Plan inconnu")
@@ -320,7 +430,7 @@ async def sync_plan(body: SyncPlanBody, authorization: Optional[str] = Header(de
 
 @app.post("/stripe/create-checkout")
 async def create_checkout(body: CheckoutBody, authorization: Optional[str] = Header(default=None)):
-    if not STRIPE_SECRET_KEY:
+    if not await apply_stripe_key():
         raise HTTPException(status_code=500, detail="Stripe non configuré")
     if body.plan not in PLANS:
         raise HTTPException(status_code=400, detail="Plan inconnu")
@@ -598,6 +708,9 @@ async def stripe_webhook(request: Request):
 
     etype = event["type"]
     obj = event["data"]["object"]
+
+    # clé effective (DB chiffrée ou env) pour d'éventuels appels API dans le traitement
+    await apply_stripe_key()
 
     try:
         if etype == "checkout.session.completed":

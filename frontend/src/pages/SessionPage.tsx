@@ -40,7 +40,7 @@ const NICKNAME_STORAGE_KEY = 'bt_nickname';
 // de react-hooks/exhaustive-deps (noms de propriétés confondus avec des variables d'état).
 interface MediaCommandPayload { media: SharedMedia | null; isPlaying?: boolean; currentTime?: number; }
 interface DescPayload { description: string; }
-interface PlaylistChangeRow { tracks?: Track[]; cohosts?: string[]; description?: string }
+interface PlaylistChangeRow { tracks?: Track[]; cohosts?: string[]; description?: string; host_id?: string }
 interface PlaylistChangePayload { new?: PlaylistChangeRow; eventType?: string }
 
 // ============================================
@@ -415,34 +415,30 @@ export const SessionPage: React.FC = () => {
   const isAdminByEmail = userEmail === 'contact.artboost@gmail.com';
   const isAdminUser = isAdminByEmail || isAdmin;
 
-  // 🎤 DROIT D'HÉBERGER = être AUTHENTIFIÉ (pas l'abonnement).
-  // L'offre gratuite autorise 1 session active (1 titre/30s) : tout utilisateur connecté
-  // peut donc créer et contrôler SA session en tant qu'hôte. L'abonnement ne fait que
-  // lever la limite de titres (gérée par trackLimit/canUploadTrack dans TrackUploader).
-  const hasHostPrivileges = !!user;
-  
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
-  
-  // 🔒 CALCUL ROBUSTE DE isHost:
-  // 1. Création de session (pas d'URL) = toujours host
-  // 2. Tout utilisateur AUTHENTIFIÉ (hasHostPrivileges = !!user) = host de sa session
-  // 3. Visiteur non connecté ouvrant un lien = participant (lecture seule)
+
+  // 🔒 SÉCURITÉ — être l'HÔTE de CETTE session ≠ être authentifié.
+  // L'hôte est UNIQUEMENT : le créateur de la session, OU le propriétaire (host_id == user.id)
+  // chargé depuis la DB, OU un admin. Un utilisateur connecté qui rejoint la session d'un AUTRE
+  // est un simple participant (aucun contrôle de partage). Le droit de CRÉER une session
+  // (plan Pro/etc.) est géré ailleurs et n'a rien à voir avec être hôte d'une session donnée.
+  const [sessionHostId, setSessionHostId] = useState<string | null>(null);
   const [isHost, setIsHost] = useState<boolean>(() => {
-    // Si création de session (pas d'URL ID), toujours host
+    // Création de session (pas d'URL ID) = créateur = hôte
     if (!urlSessionId) return true;
-    // Hôte si connecté (gratuit/abonné/admin). bt_is_admin = bypass admin instantané.
-    const isAdminStored = sessionStorage.getItem('bt_is_admin') === 'true';
-    return isAdminStored || hasHostPrivileges;
+    // bypass admin instantané ; sinon participant tant que host_id non vérifié
+    return sessionStorage.getItem('bt_is_admin') === 'true';
   });
   const [sessionId, setSessionId] = useState<string | null>(urlSessionId || null);
-  
-  // Admin/Subscriber bypass
+
+  // 🔒 Détermination de l'hôte propriétaire à partir de host_id (DB) — JAMAIS de "tout authentifié".
   useEffect(() => {
-    if (hasHostPrivileges && !isHost) {
-      setIsHost(true);
-    }
-  }, [hasHostPrivileges, isHost]);
+    if (isAdminUser) { setIsHost(true); return; }
+    if (!urlSessionId) return;        // création → isHost déjà true (createSessionNow)
+    if (!sessionHostId) return;       // host_id pas encore connu → ne pas dégrader le créateur avant claim
+    setIsHost(!!user?.id && user.id === sessionHostId);
+  }, [isAdminUser, urlSessionId, sessionHostId, user?.id]);
 
   // Item 3 : mémoriser le code de session rejoint (participant) → reprise rapide depuis l'accueil
   useEffect(() => {
@@ -858,14 +854,17 @@ export const SessionPage: React.FC = () => {
       try {
         const { data, error } = await supabase
           .from('playlists')
-          .select('tracks, description, shared_media')
+          .select('tracks, description, shared_media, host_id')
           .eq('session_id', sessionId)
           .maybeSingle();
 
         if (error) return;
 
-        // C : charger la description ; E : média partagé courant
+        // C : charger la description ; E : média partagé courant ; 🔒 host_id (propriétaire)
         if (data) {
+          if (typeof (data as { host_id?: string }).host_id === 'string') {
+            setSessionHostId((data as { host_id?: string }).host_id || null);
+          }
           if (typeof data.description === 'string') setDescription(data.description);
           if (data.shared_media) {
             const sm = data.shared_media as SharedMedia;
@@ -1071,6 +1070,11 @@ export const SessionPage: React.FC = () => {
     function handlePlaylistUpdate(payload: unknown) {
       const data = payload as PlaylistChangePayload;
 
+      // 🔒 host_id (propriétaire) en live : si l'hôte revendique sa session après l'arrivée du
+      // participant, on met à jour → l'effet de droits recalcule isHost (jamais "tout authentifié").
+      if (data.new && typeof data.new.host_id === 'string') {
+        setSessionHostId(data.new.host_id || null);
+      }
       // F : co-animateurs depuis la DB (autorité). Tous les clients dérivent la liste de playlists.cohosts.
       if (data.new && Array.isArray(data.new.cohosts)) {
         setCoHostIds(new Set(data.new.cohosts));
@@ -1226,17 +1230,13 @@ export const SessionPage: React.FC = () => {
   useEffect(() => { sharedMediaRef.current = sharedMedia; }, [sharedMedia]);
 
   // Item 6 : maintenir shareMode cohérent.
-  // - Hôte : pilote librement via le sélecteur (qui inclut "Audio").
-  // - Co-host : pas de panneau audio → ne jamais rester bloqué sur 'audio'.
+  // - Hôte / co-host (canShare) : pilotent librement via le sélecteur (qui inclut "Audio").
   // - Participant : dérive le mode du média reçu (média ⇒ on cache lecteur audio + playlist).
   useEffect(() => {
-    if (canShare) {
-      if (!isHost) setShareMode((m) => (m === 'audio' ? 'video' : m));
-      return;
-    }
+    if (canShare) return; // hôte/co-host pilotent via le sélecteur
     if (!sharedMedia) { setShareMode('audio'); return; }
     setShareMode(sharedMedia.type === 'image' ? 'image' : sharedMedia.type === 'video' ? 'video' : 'link');
-  }, [canShare, isHost, sharedMedia]);
+  }, [canShare, sharedMedia]);
 
   const sendPlaybackEvent = useCallback((event: string, payload: unknown) => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
@@ -2024,13 +2024,13 @@ export const SessionPage: React.FC = () => {
                 showToast={showToast}
                 mode={shareMode}
                 onModeChange={setShareMode}
-                audioPanel={isHost ? (
+                audioPanel={canShare ? (
                   <TrackUploader
                     sessionId={sessionId}
                     onTrackUploaded={handleTrackUploaded}
                     currentTrackCount={tracks.length}
                     maxTracks={10}
-                    disabled={!isHost}
+                    disabled={!canShare}
                     onUpgradeRequest={handleUpgradeRequest}
                   />
                 ) : undefined}

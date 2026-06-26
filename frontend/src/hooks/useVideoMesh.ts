@@ -64,6 +64,12 @@ export interface VideoMeshReturn {
   activeCameraCount: number; // locale + distantes
   startCamera: () => Promise<boolean>;
   stopCamera: () => void;
+  // 🖥️ Partage d'écran (diffusé à tous via le même transport mesh)
+  screenOn: boolean;
+  localScreen: MediaStream | null;       // l'écran que JE partage
+  remoteScreen: RemoteCamera | null;     // l'écran partagé par un autre (reçu)
+  startScreen: (stream: MediaStream) => void;
+  stopScreen: () => void;
 }
 
 export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
@@ -73,17 +79,24 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
   const [cameraOn, setCameraOn] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteCameras, setRemoteCameras] = useState<RemoteCamera[]>([]);
+  const [screenOn, setScreenOn] = useState(false);
+  const [localScreen, setLocalScreen] = useState<MediaStream | null>(null);
+  const [remoteScreen, setRemoteScreen] = useState<RemoteCamera | null>(null);
 
   const peerRef = useRef<Peer | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const outCallsRef = useRef<Map<string, MediaConnection>>(new Map()); // mes envois → userId
-  const inCallsRef = useRef<Map<string, MediaConnection>>(new Map());  // réceptions ← userId
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const outCallsRef = useRef<Map<string, MediaConnection>>(new Map()); // mes envois caméra → userId
+  const outScreenCallsRef = useRef<Map<string, MediaConnection>>(new Map()); // mes envois écran → userId
+  const inCallsRef = useRef<Map<string, MediaConnection>>(new Map());  // réceptions ← peerId
   const knownPeersRef = useRef<Set<string>>(new Set()); // userId des pairs visio présents
   const channelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
   const onLimitRef = useRef(onLimit);
   onLimitRef.current = onLimit;
   const cameraOnRef = useRef(false);
   cameraOnRef.current = cameraOn;
+  const screenOnRef = useRef(false);
+  screenOnRef.current = screenOn;
 
   const setRemote = useCallback((uid: string, stream: MediaStream) => {
     setRemoteCameras((prev) => {
@@ -102,7 +115,7 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
     if (!peer || !peer.open || !stream || targetUserId === userId) return;
     if (outCallsRef.current.has(targetUserId)) return; // déjà en cours
     try {
-      const call = peer.call(visioPeerId(sessionId, targetUserId), stream, { metadata: { userId } });
+      const call = peer.call(visioPeerId(sessionId, targetUserId), stream, { metadata: { userId, kind: 'camera' } });
       if (!call) return;
       outCallsRef.current.set(targetUserId, call);
       call.on('close', () => outCallsRef.current.delete(targetUserId));
@@ -110,12 +123,27 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
     } catch { /* ignore */ }
   }, [sessionId, userId]);
 
-  // Annonce ma présence visio (+ si caméra active) sur le canal de signaling
+  // 🖥️ Appelle un pair (envoi de MON écran) — uniquement si je partage l'écran
+  const callPeerScreen = useCallback((targetUserId: string) => {
+    const peer = peerRef.current;
+    const stream = screenStreamRef.current;
+    if (!peer || !peer.open || !stream || targetUserId === userId) return;
+    if (outScreenCallsRef.current.has(targetUserId)) return;
+    try {
+      const call = peer.call(visioPeerId(sessionId, targetUserId), stream, { metadata: { userId, kind: 'screen' } });
+      if (!call) return;
+      outScreenCallsRef.current.set(targetUserId, call);
+      call.on('close', () => outScreenCallsRef.current.delete(targetUserId));
+      call.on('error', () => outScreenCallsRef.current.delete(targetUserId));
+    } catch { /* ignore */ }
+  }, [sessionId, userId]);
+
+  // Annonce ma présence visio (caméra + écran) sur le canal de signaling
   const announce = useCallback(() => {
     channelRef.current?.send({
       type: 'broadcast',
       event: PRESENCE_EVENT,
-      payload: { userId, hasCamera: cameraOnRef.current },
+      payload: { userId, hasCamera: cameraOnRef.current, hasScreen: screenOnRef.current },
     });
   }, [userId]);
 
@@ -136,17 +164,23 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
       announce();
     });
 
-    // Réception d'une caméra distante (envoi unidirectionnel d'un autre pair)
+    // Réception d'un flux distant (caméra OU écran, distingué par metadata.kind)
     peer.on('call', (call) => {
-      const fromUserId = (call as unknown as { metadata?: { userId?: string } }).metadata?.userId;
+      const meta = (call as unknown as { metadata?: { userId?: string; kind?: string } }).metadata;
+      const fromUserId = meta?.userId;
+      const isScreen = meta?.kind === 'screen';
       call.answer(); // on ne renvoie pas de flux ici (notre envoi est un call séparé)
       inCallsRef.current.set(call.peer, call);
       call.on('stream', (remoteStream) => {
-        if (fromUserId) setRemote(fromUserId, remoteStream);
+        if (!fromUserId) return;
+        if (isScreen) setRemoteScreen({ userId: fromUserId, stream: remoteStream });
+        else setRemote(fromUserId, remoteStream);
       });
       const cleanup = () => {
         inCallsRef.current.delete(call.peer);
-        if (fromUserId) removeRemote(fromUserId);
+        if (!fromUserId) return;
+        if (isScreen) setRemoteScreen((prev) => (prev && prev.userId === fromUserId ? null : prev));
+        else removeRemote(fromUserId);
       };
       call.on('close', cleanup);
       call.on('error', cleanup);
@@ -161,8 +195,9 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
         const p = msg.payload as { userId?: string; hasCamera?: boolean };
         if (!p?.userId || p.userId === userId) return;
         knownPeersRef.current.add(p.userId);
-        // si J'AI ma caméra active, j'envoie ma vidéo à ce pair
+        // si J'AI ma caméra/écran actif, j'envoie le flux à ce pair
         if (cameraOnRef.current) callPeer(p.userId);
+        if (screenOnRef.current) callPeerScreen(p.userId);
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') announce();
@@ -173,21 +208,28 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
 
     // Capturer les refs (Maps/Sets stables) pour le cleanup
     const outCalls = outCallsRef.current;
+    const outScreenCalls = outScreenCallsRef.current;
     const inCalls = inCallsRef.current;
     const known = knownPeersRef.current;
 
     return () => {
       cancelled = true;
       clearInterval(heartbeat);
-      // Nettoyage STRICT (anti-fuite caméra) : pistes, calls, peer, canal
+      // Nettoyage STRICT (anti-fuite caméra/écran) : pistes, calls, peer, canal
       outCalls.forEach((c) => { try { c.close(); } catch { /* ignore */ } });
       outCalls.clear();
+      outScreenCalls.forEach((c) => { try { c.close(); } catch { /* ignore */ } });
+      outScreenCalls.clear();
       inCalls.forEach((c) => { try { c.close(); } catch { /* ignore */ } });
       inCalls.clear();
       known.clear();
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach((t) => t.stop());
         localStreamRef.current = null;
+      }
+      if (screenStreamRef.current) {
+        screenStreamRef.current.getTracks().forEach((t) => t.stop());
+        screenStreamRef.current = null;
       }
       try { peer.destroy(); } catch { /* ignore */ }
       peerRef.current = null;
@@ -196,8 +238,11 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
       setCameraOn(false);
       setLocalStream(null);
       setRemoteCameras([]);
+      setScreenOn(false);
+      setLocalScreen(null);
+      setRemoteScreen(null);
     };
-  }, [active, sessionId, userId, announce, callPeer, setRemote, removeRemote]);
+  }, [active, sessionId, userId, announce, callPeer, callPeerScreen, setRemote, removeRemote]);
 
   const startCamera = useCallback(async (): Promise<boolean> => {
     if (cameraOnRef.current) return true;
@@ -240,6 +285,29 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
     announce();
   }, [announce]);
 
+  // 🖥️ Diffuse un flux d'écran (déjà capturé via getDisplayMedia) à tous les pairs.
+  const startScreen = useCallback((stream: MediaStream) => {
+    screenStreamRef.current = stream;
+    setLocalScreen(stream);
+    setScreenOn(true);
+    screenOnRef.current = true;
+    announce();
+    knownPeersRef.current.forEach((uid) => callPeerScreen(uid));
+  }, [announce, callPeerScreen]);
+
+  const stopScreen = useCallback(() => {
+    outScreenCallsRef.current.forEach((c) => { try { c.close(); } catch { /* ignore */ } });
+    outScreenCallsRef.current.clear();
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((t) => t.stop());
+      screenStreamRef.current = null;
+    }
+    setLocalScreen(null);
+    setScreenOn(false);
+    screenOnRef.current = false;
+    announce();
+  }, [announce]);
+
   return {
     ready,
     cameraOn,
@@ -248,6 +316,11 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
     activeCameraCount: remoteCameras.length + (cameraOn ? 1 : 0),
     startCamera,
     stopCamera,
+    screenOn,
+    localScreen,
+    remoteScreen,
+    startScreen,
+    stopScreen,
   };
 }
 

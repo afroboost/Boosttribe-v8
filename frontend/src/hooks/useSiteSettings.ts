@@ -288,19 +288,19 @@ export function useSiteSettings() {
     };
   }, [loadSettings]);
 
-  // Apply favicon when settings change
+  // Apply favicon when settings change — vide = favicon PAR DÉFAUT (jamais sans favicon)
   useEffect(() => {
-    if (settings.favicon_url) {
-      let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'icon';
-        document.head.appendChild(link);
-      }
-      if (link.href !== settings.favicon_url) {
-        link.href = settings.favicon_url;
-        console.log('[SiteSettings] Favicon applied:', settings.favicon_url);
-      }
+    const DEFAULT_FAVICON = '/icon-192x192.png'; // icône note de musique violette (public/)
+    const url = settings.favicon_url?.trim() || DEFAULT_FAVICON;
+    let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    const absolute = new URL(url, window.location.origin).href;
+    if (link.href !== absolute) {
+      link.href = url;
     }
   }, [settings.favicon_url]);
 

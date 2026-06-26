@@ -357,18 +357,16 @@ const Dashboard: React.FC = () => {
     }
   }, [hasAdminAccess, authLoading, navigate, showToast, isAdminByEmail]);
 
-  // Update favicon in document head
+  // Update favicon in document head — preview immédiat ; vide = favicon par défaut
   useEffect(() => {
-    if (settings.favicon_url) {
-      let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'icon';
-        document.head.appendChild(link);
-      }
-      link.href = settings.favicon_url;
-      console.log('[CMS] Favicon updated:', settings.favicon_url);
+    const url = settings.favicon_url?.trim() || '/icon-192x192.png';
+    let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
     }
+    link.href = url;
   }, [settings.favicon_url]);
 
   // Load settings from Supabase with AUTO-HEALING mode (auto-insert if empty)
@@ -836,6 +834,16 @@ const Dashboard: React.FC = () => {
                 onChange={(v) => handleUpdate('site_badge', v)}
                 placeholder="La communauté des créateurs"
               />
+              {/* Favicon paramétrable — vide = favicon par défaut (icône note de musique) */}
+              <div className="space-y-1">
+                <EditableField
+                  label="Favicon (lien)"
+                  value={settings.favicon_url}
+                  onChange={(v) => handleUpdate('favicon_url', v)}
+                  placeholder="https://… .png / .svg / .ico (vide = favicon par défaut)"
+                />
+                <p className="text-white/30 text-[11px]">Collez l'URL d'une image (png/svg/ico). Laissez vide pour utiliser le favicon par défaut du site.</p>
+              </div>
               <Separator className="my-4 bg-white/10" />
               <EditableField
                 label="URL du Favicon"

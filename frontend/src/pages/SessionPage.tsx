@@ -17,6 +17,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useSocket } from '@/context/SocketContext';
 import { useI18n, LanguageSelector } from '@/context/I18nContext';
 import { WaitingRoomScreen } from '@/components/session/WaitingRoomScreen';
+import { ScreenShareView } from '@/components/session/ScreenShareView';
 import { AccessRequestsPanel, AccessRequest } from '@/components/session/AccessRequestsPanel';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
@@ -728,10 +729,13 @@ export const SessionPage: React.FC = () => {
   // N'altère rien de l'audio/mixeur/synchro existants : purement additif.
   const MAX_VISIO_CAMERAS = 6;
   const [liveMode, setLiveMode] = useState(false);
+  const [screenSharing, setScreenSharing] = useState(false); // 🖥️ l'hôte/co-hôte partage son écran
+  const [remoteScreenActive, setRemoteScreenActive] = useState(false); // un AUTRE partage son écran
   const videoMesh = useVideoMesh({
     sessionId: sessionId || '',
     userId: socket.userId,
-    active: liveMode && !!sessionId,
+    // le Peer visio doit être actif pour le Live Visio, le partage d'écran émis OU reçu
+    active: (liveMode || screenSharing || remoteScreenActive) && !!sessionId,
     maxCameras: MAX_VISIO_CAMERAS,
     onLimit: () => showToast(`Limite de ${MAX_VISIO_CAMERAS} caméras atteinte (version actuelle)`, 'warning'),
   });
@@ -745,6 +749,41 @@ export const SessionPage: React.FC = () => {
       }
     }
   }, [videoMesh, showToast]);
+
+  // 🖥️ PARTAGE ÉCRAN (desktop) — capture getDisplayMedia puis diffusion mesh à tous
+  const screenSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia;
+  const broadcastScreenState = useCallback((active: boolean) => {
+    if (sessionId && supabase && isSupabaseConfigured) {
+      supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'SCREEN_SHARE_STATE', payload: { active } });
+    }
+  }, [sessionId]);
+  const handleToggleScreenShare = useCallback(async () => {
+    if (screenSharing) {
+      videoMesh.stopScreen();
+      setScreenSharing(false);
+      broadcastScreenState(false);
+      return;
+    }
+    if (!screenSupported) { showToast('Partage d\'écran disponible sur ordinateur uniquement', 'warning'); return; }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      setScreenSharing(true);          // active le Peer visio
+      videoMesh.startScreen(stream);   // diffuse le flux écran
+      broadcastScreenState(true);      // prévient les participants → ils activent leur Peer pour recevoir
+      // l'arrêt natif du navigateur ("Arrêter le partage") coupe la piste → on stoppe proprement
+      const onEnded = () => { videoMesh.stopScreen(); setScreenSharing(false); broadcastScreenState(false); };
+      stream.getVideoTracks().forEach((tr) => tr.addEventListener('ended', onEnded, { once: true }));
+      showToast('Partage d\'écran démarré', 'success');
+    } catch {
+      // l'utilisateur a annulé le sélecteur, ou refus → rien
+    }
+  }, [screenSharing, screenSupported, videoMesh, showToast, broadcastScreenState]);
+  // Heartbeat de l'état partage écran (late-join : un participant qui arrive active son Peer)
+  useEffect(() => {
+    if (!screenSharing || !sessionId || !supabase || !isSupabaseConfigured) return;
+    const t = setInterval(() => broadcastScreenState(true), 4000);
+    return () => clearInterval(t);
+  }, [screenSharing, sessionId, broadcastScreenState]);
   const handleLiveMicToggle = useCallback(() => {
     if (isHost) { showToast('Gérez votre micro avec le bouton Micro en haut de la session', 'default'); return; }
     handleToggleTalk();
@@ -1190,6 +1229,12 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as { active?: boolean };
         setRecordingActive(!!p.active);
+      })
+      // 🖥️ partage écran : le participant active son Peer visio pour recevoir le flux
+      .on('broadcast', { event: 'SCREEN_SHARE_STATE' }, (payload) => {
+        if (isHostRef.current || !payload.payload) return;
+        const p = payload.payload as { active?: boolean };
+        setRemoteScreenActive(!!p.active);
       })
       // 🚪 SALLE D'ATTENTE — l'hôte reçoit les demandes d'accès des participants
       .on('broadcast', { event: 'JOIN_REQUEST' }, (payload) => {
@@ -2413,6 +2458,14 @@ export const SessionPage: React.FC = () => {
               </Card>
             )}
 
+            {/* 🖥️ Partage d'écran en direct (au-dessus du média partagé) */}
+            {videoMesh.localScreen && (
+              <ScreenShareView stream={videoMesh.localScreen} isLocal onStop={handleToggleScreenShare} />
+            )}
+            {!videoMesh.localScreen && videoMesh.remoteScreen && (
+              <ScreenShareView stream={videoMesh.remoteScreen.stream} hostName="l'hôte" />
+            )}
+
             {/* E : Média partagé (vidéo/image/lien) — affiché UNIQUEMENT hors mode audio */}
             {shareMode !== 'audio' && sharedMedia && (
               <SharedMediaPlayer
@@ -2435,6 +2488,9 @@ export const SessionPage: React.FC = () => {
                 mode={shareMode}
                 onModeChange={setShareMode}
                 maxVideoSeconds={isFree ? 30 : undefined}
+                onToggleScreenShare={handleToggleScreenShare}
+                screenSharing={screenSharing}
+                screenSupported={screenSupported}
                 audioPanel={canShare ? (
                   <TrackUploader
                     sessionId={sessionId}

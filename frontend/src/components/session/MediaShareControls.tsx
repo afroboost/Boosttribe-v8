@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { Video, Image as ImageIcon, Link as LinkIcon, Loader2, Send, Music, Lightbulb } from 'lucide-react';
+import { Video, Image as ImageIcon, Link as LinkIcon, Loader2, Send, Music, Lightbulb, MonitorUp, MonitorX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { uploadSessionVideoDirect, uploadSessionImage, SharedMedia } from '@/lib/supabaseClient';
@@ -32,6 +32,10 @@ interface MediaShareControlsProps {
   mode: ShareMode;              // contrôlé par le parent : pilote TOUTE la zone centrale
   onModeChange: (mode: ShareMode) => void;
   maxVideoSeconds?: number;     // plan gratuit : 30s ; Pro/Enterprise : 90 min (défaut)
+  // 🖥️ Partage d'écran (desktop only)
+  onToggleScreenShare?: () => void;
+  screenSharing?: boolean;
+  screenSupported?: boolean;
 }
 
 const MAX_VIDEO_SECONDS = 90 * 60; // 90 minutes
@@ -54,7 +58,7 @@ function getVideoDuration(file: File): Promise<number> {
   });
 }
 
-export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel, mode, onModeChange, maxVideoSeconds }) => {
+export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel, mode, onModeChange, maxVideoSeconds, onToggleScreenShare, screenSharing, screenSupported }) => {
   const [busy, setBusy] = useState<null | 'video' | 'image'>(null);
   const [progress, setProgress] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState(0);
@@ -160,6 +164,26 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
             {m.label}
           </button>
         ))}
+
+        {/* 🖥️ Partage écran (desktop uniquement) — bouton d'action, pas un mode */}
+        {onToggleScreenShare && (
+          <button
+            onClick={() => { if (screenSupported) onToggleScreenShare(); }}
+            disabled={!screenSupported}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              !screenSupported
+                ? 'bg-white/5 text-white/30 cursor-not-allowed'
+                : screenSharing
+                  ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                  : 'bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
+            title={screenSupported ? undefined : 'Disponible sur ordinateur uniquement'}
+            data-testid="share-screen-toggle"
+          >
+            {screenSharing ? <MonitorX className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
+            {screenSharing ? 'Arrêter le partage' : 'Partage écran'}
+          </button>
+        )}
       </div>
 
       {/* Panneau du mode choisi */}

@@ -586,6 +586,7 @@ export const SessionPage: React.FC = () => {
     setTribeVolume: setTribeAudioVolume,
     setHostVoiceVolume: setHostVoiceAudioVolume,
     setPrivateTargets,
+    setRemoteMicVolume,
     remoteAudioRef,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
@@ -621,6 +622,13 @@ export const SessionPage: React.FC = () => {
     setHostVoiceVolume(volume);       // état du slider
     setHostVoiceAudioVolume(volume);  // volume direct de l'<audio> de la voix hôte
   }, [setHostVoiceVolume, setHostVoiceAudioVolume]);
+
+  // 🔊 POINT B (participant) : volume par AUTRE participant (voix relayée par l'hôte)
+  const [remoteMicVolumes, setRemoteMicVolumes] = useState<Record<string, number>>({});
+  const handleRemoteMicVolumeChange = useCallback((userId: string, volume: number) => {
+    setRemoteMicVolumes((prev) => ({ ...prev, [userId]: volume }));
+    setRemoteMicVolume(userId, volume); // applique direct sur l'<audio> du flux relayé
+  }, [setRemoteMicVolume]);
 
   // Host: Broadcast VOICE_START when mic is active
   useEffect(() => {
@@ -1186,6 +1194,15 @@ export const SessionPage: React.FC = () => {
     // Place current user at the top
     return [currentUser, ...participantsState];
   }, [nickname, isHost, isCoHost, myAvatar, participantsState, socket.userId, isRemoteMuted]);
+
+  // 🔊 POINT B : curseurs "Volume — <pseudo>" pour chaque AUTRE participant dont on reçoit la voix
+  const remoteMicSliders = useMemo(
+    () => peerState.remoteMicUsers.map((uid) => {
+      const p = participantsState.find((x) => x.id === uid);
+      return { userId: uid, name: p?.name || 'Participant', volume: remoteMicVolumes[uid] ?? 1 };
+    }),
+    [peerState.remoteMicUsers, participantsState, remoteMicVolumes],
+  );
 
   // FREE TRIAL TIME TRACKING
   useEffect(() => {
@@ -2559,6 +2576,8 @@ export const SessionPage: React.FC = () => {
               isMicActive={hostMicActive}
               defaultCollapsed={false}
               isVideoShared={isVideoShared}
+              remoteMicSliders={remoteMicSliders}
+              onRemoteMicVolumeChange={handleRemoteMicVolumeChange}
             />
 
             {/* Participants */}
@@ -2576,14 +2595,14 @@ export const SessionPage: React.FC = () => {
               <CardContent className="pt-0 space-y-2">
                 {/* 🎙️ POINT 3 : bandeau "conversation privée" + retour à tous (hôte) */}
                 {isHost && privateTargets.size > 0 && (
-                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#8A2EFF]/15 border border-[#8A2EFF]/30">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#8A2EFF]/15 border border-[#8A2EFF]/30">
                     <span className="flex items-center gap-1.5 text-[#c9a3ff] text-xs min-w-0">
                       <Mic className="w-3.5 h-3.5 flex-shrink-0" />
-                      <span className="truncate">Privé avec {privateTargets.size} participant{privateTargets.size > 1 ? 's' : ''}</span>
+                      <span className="truncate">Conversation privée — {privateTargets.size} participant{privateTargets.size > 1 ? 's' : ''}</span>
                     </span>
                     <button
                       onClick={handleTalkToAll}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-white/10 text-white text-xs hover:bg-white/20 flex-shrink-0"
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-white/10 text-white text-xs font-medium hover:bg-white/20 flex-shrink-0"
                       data-testid="talk-to-all-btn"
                     >
                       <Volume2 className="w-3.5 h-3.5" /> Parler à tous

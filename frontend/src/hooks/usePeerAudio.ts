@@ -12,6 +12,8 @@ export interface PeerState {
   isBroadcasting: boolean;
   isReady: boolean;
   isReceivingVoice: boolean; // NEW: Indicator for participants receiving voice
+  // POINT B : userId des AUTRES participants dont on reçoit la voix (relayée par l'hôte)
+  remoteMicUsers: string[];
 }
 
 export interface UsePeerAudioOptions {
@@ -44,6 +46,8 @@ export interface UsePeerAudioReturn {
   setHostVoiceVolume: (volume: number) => void;
   // 🎙️ POINT 3 (hôte) : restreindre sa voix à une sélection de participants (null = tout le monde)
   setPrivateTargets: (userIds: string[] | null) => void;
+  // 🔊 POINT B (participant) : volume de la voix d'un AUTRE participant (relayée)
+  setRemoteMicVolume: (userId: string, volume: number) => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
 }
@@ -58,6 +62,7 @@ const initialState: PeerState = {
   isBroadcasting: false,
   isReady: false,
   isReceivingVoice: false,
+  remoteMicUsers: [],
 };
 
 // Audio element ID for remote voice
@@ -115,6 +120,31 @@ function getOrCreateTribeAudioElement(peerId: string): HTMLAudioElement {
 
 function removeTribeAudioElement(peerId: string): void {
   const el = document.getElementById(`tribe-audio-${peerId}`);
+  if (el) {
+    (el as HTMLAudioElement).srcObject = null;
+    el.remove();
+  }
+}
+
+// POINT B : <audio> dédié à la voix d'un AUTRE participant (relayée par l'hôte), 1 par userId source.
+const RELAY_AUDIO_CLASS = 'bt-relay-audio';
+function getOrCreateRelayAudioElement(fromUserId: string): HTMLAudioElement {
+  const id = `relay-audio-${fromUserId}`;
+  let el = document.getElementById(id) as HTMLAudioElement;
+  if (!el) {
+    el = document.createElement('audio');
+    el.id = id;
+    el.className = RELAY_AUDIO_CLASS;
+    el.autoplay = true;
+    el.setAttribute('playsinline', 'true');
+    el.controls = false;
+    el.style.display = 'none';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function removeRelayAudioElement(fromUserId: string): void {
+  const el = document.getElementById(`relay-audio-${fromUserId}`);
   if (el) {
     (el as HTMLAudioElement).srcObject = null;
     el.remove();
@@ -192,6 +222,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   // 🎙️ POINT 3 (hôte) : mapping peerId WebRTC → userId du participant, et sélection privée courante
   const peerIdToUserIdRef = useRef<Map<string, string>>(new Map());
   const privateTargetsRef = useRef<Set<string> | null>(null); // null = parler à TOUT le monde
+  // POINT B (hôte) : relais des voix participants → relayCalls clé `${fromPeerId}__${toPeerId}`
+  const relayCallsRef = useRef<Map<string, MediaConnection>>(new Map());
+  // POINT B (participant) : volume choisi par flux relay (userId → 0..1)
+  const relayVolumesRef = useRef<Map<string, number>>(new Map());
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
@@ -350,11 +384,14 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
               el.volume = tribeVolumeRef.current;
               el.play().catch((e) => console.warn('[PEER] tribe autoplay blocked:', e));
               onReceiveTribeAudio?.(tribeStream, call.peer);
+              // 🔊 POINT B : relayer cette voix vers les AUTRES participants (ils s'entendent entre eux)
+              relayStreamToOthers(call.peer, tribeStream);
             });
 
             call.on('close', () => {
               tribeCallsRef.current.delete(call.peer);
               removeTribeAudioElement(call.peer);
+              closeRelaysFrom(call.peer); // 🔊 POINT B : couper les relais de ce participant
               onTribeAudioEnd?.(call.peer);
             });
 
@@ -362,8 +399,32 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
               console.error('[PEER] ❌ Tribe call error:', err);
               tribeCallsRef.current.delete(call.peer);
               removeTribeAudioElement(call.peer);
+              closeRelaysFrom(call.peer);
               onTribeAudioEnd?.(call.peer);
             });
+            return;
+          }
+
+          // 🔊 POINT B — PARTICIPANT: appel RELAYÉ = voix d'un AUTRE participant (metadata.kind === 'relay')
+          const meta = (call as unknown as { metadata?: { kind?: string; fromUserId?: string } }).metadata;
+          if (meta?.kind === 'relay' && meta.fromUserId) {
+            const fromUserId = meta.fromUserId;
+            call.answer();
+            call.on('stream', (relayStream) => {
+              const el = getOrCreateRelayAudioElement(fromUserId);
+              el.srcObject = relayStream;
+              el.volume = relayVolumesRef.current.get(fromUserId) ?? 1;
+              el.play().catch(() => { /* autoplay : débloqué par un geste */ });
+              setState((prev) => prev.remoteMicUsers.includes(fromUserId)
+                ? prev
+                : { ...prev, remoteMicUsers: [...prev.remoteMicUsers, fromUserId] });
+            });
+            const cleanupRelay = () => {
+              removeRelayAudioElement(fromUserId);
+              setState((prev) => ({ ...prev, remoteMicUsers: prev.remoteMicUsers.filter((u) => u !== fromUserId) }));
+            };
+            call.on('close', cleanupRelay);
+            call.on('error', cleanupRelay);
             return;
           }
 
@@ -427,6 +488,13 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
                 call.on('stream', () => applyPrivacyToCall(call, dataConn.peer));
                 applyPrivacyToCall(call, dataConn.peer);
               }
+            }
+            // 🔊 POINT B : si des participants parlent déjà, relayer leur voix vers ce nouveau venu
+            if (isHost) {
+              tribeCallsRef.current.forEach((tribeCall, fromPeerId) => {
+                const s = (tribeCall as unknown as { remoteStream?: MediaStream }).remoteStream;
+                if (s) relayStreamToOthers(fromPeerId, s);
+              });
             }
           });
 
@@ -511,6 +579,43 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   /**
    * HOST: Broadcast audio to all connected peers
    */
+  // 🔊 POINT B (hôte) : relaie le flux d'un participant (fromPeerId) vers TOUS les autres
+  // participants connectés (sauf lui-même → pas d'écho). Réutilise l'infra PeerJS + TURN.
+  const relayStreamToOthers = useCallback((fromPeerId: string, stream: MediaStream) => {
+    if (!isHost || !peerRef.current?.open) return;
+    const fromUserId = peerIdToUserIdRef.current.get(fromPeerId);
+    if (!fromUserId) return; // sans identité, on ne peut pas étiqueter la source
+    dataConnectionsRef.current.forEach((_, toPeerId) => {
+      if (toPeerId === fromPeerId) return; // ne jamais renvoyer la voix à son émetteur
+      const key = `${fromPeerId}__${toPeerId}`;
+      if (relayCallsRef.current.has(key)) return; // relais déjà actif
+      try {
+        const relay = peerRef.current!.call(toPeerId, stream, { metadata: { kind: 'relay', fromUserId } });
+        relayCallsRef.current.set(key, relay);
+        relay.on('close', () => relayCallsRef.current.delete(key));
+        relay.on('error', () => relayCallsRef.current.delete(key));
+      } catch { /* ignore */ }
+    });
+  }, [isHost]);
+
+  // 🔊 POINT B (hôte) : ferme tous les relais émis depuis un participant qui arrête de parler
+  const closeRelaysFrom = useCallback((fromPeerId: string) => {
+    relayCallsRef.current.forEach((call, key) => {
+      if (key.startsWith(`${fromPeerId}__`)) {
+        try { call.close(); } catch { /* ignore */ }
+        relayCallsRef.current.delete(key);
+      }
+    });
+  }, []);
+
+  // 🔊 POINT B (participant) : règle le volume de la voix d'un autre participant (relayée)
+  const setRemoteMicVolume = useCallback((userId: string, volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    relayVolumesRef.current.set(userId, clamped);
+    const el = document.getElementById(`relay-audio-${userId}`) as HTMLAudioElement | null;
+    if (el) el.volume = clamped;
+  }, []);
+
   // 🎙️ POINT 3 : applique la sélection privée à UNE connexion (call vers un participant).
   // null = tout le monde entend → on (re)met la piste micro. Sinon, seuls les userId sélectionnés
   // gardent la piste ; les autres reçoivent replaceTrack(null) → ils n'entendent pas la voix privée.
@@ -689,6 +794,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     });
     tribeCallsRef.current.clear();
 
+    // 🔊 POINT B : couper tous les relais + supprimer les <audio> relay (anti-fuite)
+    relayCallsRef.current.forEach((call) => { try { call.close(); } catch { /* ignore */ } });
+    relayCallsRef.current.clear();
+    document.querySelectorAll<HTMLAudioElement>(`.${RELAY_AUDIO_CLASS}`).forEach((el) => { el.srcObject = null; el.remove(); });
+    setState((prev) => ({ ...prev, remoteMicUsers: [] }));
+
     dataConnectionsRef.current.forEach((conn) => conn.close());
     dataConnectionsRef.current.clear();
 
@@ -750,6 +861,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     setTribeVolume,
     setHostVoiceVolume,
     setPrivateTargets,
+    setRemoteMicVolume,
     reconnect,
     remoteAudioRef,
   };

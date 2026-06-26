@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Heart, Send, Trash2, MessageCircle, X } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Heart, Send, Trash2, MessageCircle, X, LogIn } from 'lucide-react';
 import supabase from '@/lib/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,12 @@ interface SessionSocialProps {
 export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
   const { user, profile, isAuthenticated } = useAuth();
   const { showToast } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // POINT A : ouvrir la page de connexion et revenir à la session après login
+  const goLogin = useCallback(() => {
+    navigate('/login', { state: { from: location.pathname + location.search } });
+  }, [navigate, location.pathname, location.search]);
   const [likeCount, setLikeCount] = useState(0);
   const [liked, setLiked] = useState(false);
   const [comments, setComments] = useState<CommentRow[]>([]);
@@ -162,21 +169,30 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
       </Button>
     </div>
   ) : (
-    <p className="text-white/40 text-xs text-center">Connectez-vous pour aimer et commenter.</p>
+    <div className="flex flex-col items-center gap-2 text-center py-1">
+      <p className="text-white/60 text-xs">Connecte-toi pour aimer et commenter</p>
+      <button
+        onClick={goLogin}
+        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-white"
+        style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+        data-testid="social-login-btn"
+      >
+        <LogIn className="w-3.5 h-3.5" /> Se connecter / Créer un compte
+      </button>
+    </div>
   );
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-3" data-testid="session-social">
+    <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5" data-testid="session-social">
       {/* Vue compacte : Like + bouton Commentaires (ouvre la modale) */}
       <div className="flex items-center gap-3">
         <button
-          onClick={toggleLike}
-          disabled={!isAuthenticated}
+          onClick={isAuthenticated ? toggleLike : goLogin}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors ${
             liked ? 'bg-pink-500/20 text-pink-400' : 'bg-white/10 text-white/70 hover:bg-white/20'
-          } ${!isAuthenticated ? 'opacity-50 cursor-not-allowed' : ''}`}
+          }`}
           data-testid="like-btn"
-          title={isAuthenticated ? '' : 'Connectez-vous pour aimer'}
+          title={isAuthenticated ? '' : 'Connecte-toi pour aimer'}
         >
           <Heart className="w-4 h-4" fill={liked ? 'currentColor' : 'none'} />
           <span className="text-sm font-medium">{likeCount}</span>
@@ -192,6 +208,9 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
           <span className="text-sm font-medium">{comments.length}</span>
         </button>
       </div>
+
+      {/* POINT A : invite de connexion claire (utilisateur non connecté) */}
+      {!isAuthenticated && composer}
 
       {/* Modale commentaires (style Instagram) — par-dessus la page, via portail */}
       {commentsOpen && createPortal(

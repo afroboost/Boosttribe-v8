@@ -86,6 +86,9 @@ interface AudioMixerPanelProps {
   className?: string;
   defaultCollapsed?: boolean;
   isVideoShared?: boolean; // si une vidéo est partagée → le 1er curseur devient "Volume Vidéo"
+  // POINT B (participant) : un curseur par AUTRE participant dont on reçoit la voix (relayée)
+  remoteMicSliders?: { userId: string; name: string; volume: number }[];
+  onRemoteMicVolumeChange?: (userId: string, volume: number) => void;
 }
 
 export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
@@ -102,6 +105,8 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
   className = '',
   defaultCollapsed = false,
   isVideoShared = false,
+  remoteMicSliders = [],
+  onRemoteMicVolumeChange,
 }) => {
   // 📱 Mobile: Panneau escamotable par défaut sur mobile
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
@@ -188,15 +193,34 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
               />
             </>
           ) : (
-            /* Volume Hôte - Participant only */
-            <MixerSlider
-              label="Volume Hôte"
-              icon={<Mic size={14} className="sm:w-4 sm:h-4" />}
-              value={hostVoiceVolume}
-              onChange={onHostVoiceVolumeChange}
-              color="#10B981"
-              compact={true}
-            />
+            /* Volume Hôte + voix des autres participants - Participant only */
+            <>
+              <MixerSlider
+                label="Volume Hôte"
+                icon={<Mic size={14} className="sm:w-4 sm:h-4" />}
+                value={hostVoiceVolume}
+                onChange={onHostVoiceVolumeChange}
+                color="#10B981"
+                compact={true}
+              />
+
+              {/* POINT B : un curseur par AUTRE participant qui parle (liste scrollable sur mobile) */}
+              {remoteMicSliders.length > 0 && onRemoteMicVolumeChange && (
+                <div className="pt-1 mt-1 border-t border-white/10 space-y-2.5 sm:space-y-3 max-h-40 overflow-y-auto pr-0.5">
+                  {remoteMicSliders.map((s) => (
+                    <MixerSlider
+                      key={s.userId}
+                      label={`Volume — ${s.name}`}
+                      icon={<Users size={14} className="sm:w-4 sm:h-4" />}
+                      value={s.volume}
+                      onChange={(v) => onRemoteMicVolumeChange(s.userId, v)}
+                      color="#FF2FB3"
+                      compact={true}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

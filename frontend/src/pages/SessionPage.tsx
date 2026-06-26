@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -16,6 +16,8 @@ import { Label } from '@/components/ui/label';
 import { useTheme } from '@/context/ThemeContext';
 import { useSocket } from '@/context/SocketContext';
 import { useI18n, LanguageSelector } from '@/context/I18nContext';
+import { WaitingRoomScreen } from '@/components/session/WaitingRoomScreen';
+import { AccessRequestsPanel, AccessRequest } from '@/components/session/AccessRequestsPanel';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
 import { generateSessionId } from '@/hooks/useAudioSync';
@@ -23,7 +25,7 @@ import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
-import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSessionDescription, saveSharedMedia } from '@/lib/supabaseClient';
+import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSessionDescription, saveSharedMedia, saveSessionPrivacy } from '@/lib/supabaseClient';
 import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
@@ -47,7 +49,7 @@ const NICKNAME_STORAGE_KEY = 'bt_nickname';
 // de react-hooks/exhaustive-deps (noms de propriétés confondus avec des variables d'état).
 interface MediaCommandPayload { media: SharedMedia | null; isPlaying?: boolean; currentTime?: number; }
 interface DescPayload { description: string; }
-interface PlaylistChangeRow { tracks?: Track[]; cohosts?: string[]; description?: string; host_id?: string }
+interface PlaylistChangeRow { tracks?: Track[]; cohosts?: string[]; description?: string; host_id?: string; is_private?: boolean }
 interface PlaylistChangePayload { new?: PlaylistChangeRow; eventType?: string }
 
 // ============================================
@@ -439,6 +441,14 @@ export const SessionPage: React.FC = () => {
     return sessionStorage.getItem('bt_is_admin') === 'true';
   });
   const [sessionId, setSessionId] = useState<string | null>(urlSessionId || null);
+
+  // 🚪 SALLE D'ATTENTE (sessions privées) — additif, public par défaut.
+  const [isPrivate, setIsPrivate] = useState(false);          // état de la session (playlists.is_private)
+  const [privacyChecked, setPrivacyChecked] = useState(false); // le fetch initial a-t-il déterminé is_private ?
+  const [admitted, setAdmitted] = useState(false);            // participant admis dans la session privée
+  const [refused, setRefused] = useState(false);              // participant refusé par l'hôte
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]); // (hôte) demandes en attente
+  const admittedIdsRef = useRef<Set<string>>(new Set());      // (hôte) userId déjà admis (persistés)
 
   // 🔒 Détermination de l'hôte propriétaire à partir de host_id (DB) — JAMAIS de "tout authentifié".
   useEffect(() => {
@@ -933,6 +943,8 @@ export const SessionPage: React.FC = () => {
   // (sinon : chaque setTracks/setSelectedTrack relançait le fetch → tempête de requêtes playlists).
   const isHostRef = useRef(isHost);
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+  const myUserIdRef = useRef(socket.userId);
+  useEffect(() => { myUserIdRef.current = socket.userId; }, [socket.userId]);
   const selectedTrackRef = useRef(selectedTrack);
   useEffect(() => { selectedTrackRef.current = selectedTrack; }, [selectedTrack]);
   const showToastRef = useRef(showToast);
@@ -983,6 +995,18 @@ export const SessionPage: React.FC = () => {
             setCoHostIds(new Set((cd as { cohosts: string[] }).cohosts));
           }
         } catch { /* colonne cohosts pas encore créée → ignoré */ }
+
+        // 🚪 confidentialité (salle d'attente) — requête séparée TOLÉRANTE (colonne is_private optionnelle).
+        // Si la colonne n'existe pas encore → public par défaut, sans casser le reste du fetch.
+        try {
+          const { data: pd, error: perr } = await supabase
+            .from('playlists')
+            .select('is_private')
+            .eq('session_id', sessionId)
+            .maybeSingle();
+          if (!perr) setIsPrivate(!!(pd as { is_private?: boolean } | null)?.is_private);
+        } catch { /* colonne is_private pas encore créée → public */ }
+        setPrivacyChecked(true);
 
         if (data && data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
           setTracks(data.tracks as Track[]);
@@ -1167,6 +1191,35 @@ export const SessionPage: React.FC = () => {
         const p = payload.payload as { active?: boolean };
         setRecordingActive(!!p.active);
       })
+      // 🚪 SALLE D'ATTENTE — l'hôte reçoit les demandes d'accès des participants
+      .on('broadcast', { event: 'JOIN_REQUEST' }, (payload) => {
+        if (!isHostRef.current || !payload.payload) return;
+        const p = payload.payload as { userId?: string; name?: string; photoUrl?: string | null };
+        if (!p.userId) return;
+        if (admittedIdsRef.current.has(p.userId)) {
+          // déjà admis (ex. reload) → ré-admission automatique
+          if (supabase) supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'ADMIT', payload: { userId: p.userId } });
+          return;
+        }
+        setAccessRequests((prev) => prev.some((r) => r.userId === p.userId)
+          ? prev
+          : [...prev, { userId: p.userId!, name: p.name || 'Invité', photoUrl: p.photoUrl || null }]);
+      })
+      // 🚪 le participant concerné est admis → il entre
+      .on('broadcast', { event: 'ADMIT' }, (payload) => {
+        const p = payload.payload as { userId?: string };
+        if (!isHostRef.current && p?.userId && p.userId === myUserIdRef.current) {
+          setAdmitted(true);
+          setRefused(false);
+        }
+      })
+      // 🚪 le participant concerné est refusé
+      .on('broadcast', { event: 'REFUSE' }, (payload) => {
+        const p = payload.payload as { userId?: string };
+        if (!isHostRef.current && p?.userId && p.userId === myUserIdRef.current) {
+          setRefused(true);
+        }
+      })
       .subscribe();
 
     // Handler pour INSERT et UPDATE (playlist seulement)
@@ -1181,6 +1234,11 @@ export const SessionPage: React.FC = () => {
       // F : co-animateurs depuis la DB (autorité). Tous les clients dérivent la liste de playlists.cohosts.
       if (data.new && Array.isArray(data.new.cohosts)) {
         setCoHostIds(new Set(data.new.cohosts));
+      }
+      // 🚪 confidentialité live : l'hôte (dé)active la salle d'attente → tous les clients suivent
+      if (data.new && typeof data.new.is_private === 'boolean') {
+        setIsPrivate(data.new.is_private);
+        setPrivacyChecked(true);
       }
       // C : description live (participants)
       if (data.new && typeof data.new.description === 'string' && !isHostRef.current) {
@@ -1381,6 +1439,54 @@ export const SessionPage: React.FC = () => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
   }, [sessionId]);
+
+  // 🚪 SALLE D'ATTENTE — persistance des admis (survit au reload de l'hôte)
+  const admittedStorageKey = sessionId ? `bt_admitted_${sessionId}` : '';
+  useEffect(() => {
+    if (!isHost || !admittedStorageKey) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(admittedStorageKey) || '[]');
+      if (Array.isArray(saved)) admittedIdsRef.current = new Set(saved as string[]);
+    } catch { /* ignore */ }
+  }, [isHost, admittedStorageKey]);
+  const persistAdmitted = useCallback(() => {
+    if (!admittedStorageKey) return;
+    try { localStorage.setItem(admittedStorageKey, JSON.stringify(Array.from(admittedIdsRef.current))); } catch { /* ignore */ }
+  }, [admittedStorageKey]);
+
+  // 🚪 Hôte : admettre / refuser un participant en attente
+  const handleAdmit = useCallback((userId: string) => {
+    admittedIdsRef.current.add(userId);
+    persistAdmitted();
+    sendPlaybackEvent('ADMIT', { userId });
+    setAccessRequests((prev) => prev.filter((r) => r.userId !== userId));
+    showToast('Participant admis', 'success');
+  }, [persistAdmitted, sendPlaybackEvent, showToast]);
+  const handleRefuse = useCallback((userId: string) => {
+    sendPlaybackEvent('REFUSE', { userId });
+    setAccessRequests((prev) => prev.filter((r) => r.userId !== userId));
+  }, [sendPlaybackEvent]);
+
+  // 🚪 Hôte/co-hôte : activer/désactiver la salle d'attente (session privée)
+  const handleTogglePrivacy = useCallback(() => {
+    const next = !isPrivate;
+    setIsPrivate(next);
+    if (sessionId) saveSessionPrivacy(sessionId, next);
+    showToast(next ? '🔒 Session privée : les participants passent par la salle d\'attente' : '🌐 Session publique : entrée directe', 'default');
+  }, [isPrivate, sessionId, showToast]);
+
+  // 🚪 Participant (session privée, non admis) : émet sa demande d'accès (+ heartbeat 3s)
+  useEffect(() => {
+    if (isHost || !isPrivate || admitted || refused || !privacyChecked || !nickname) return;
+    if (!sessionId || !supabase || !isSupabaseConfigured) return;
+    const emit = () => supabase!.channel(`playback:${sessionId}`).send({
+      type: 'broadcast', event: 'JOIN_REQUEST',
+      payload: { userId: socket.userId, name: nickname, photoUrl: myAvatar || null },
+    });
+    emit();
+    const t = setInterval(emit, 3000);
+    return () => clearInterval(t);
+  }, [isHost, isPrivate, admitted, refused, privacyChecked, nickname, sessionId, socket.userId, myAvatar]);
 
   // E : partager un média (vidéo/image/lien)
   const handleShareMedia = useCallback((media: SharedMedia) => {
@@ -1933,6 +2039,17 @@ export const SessionPage: React.FC = () => {
     );
   }
 
+  // 🚪 SALLE D'ATTENTE — un participant confirmé (ni hôte propriétaire, ni admin) d'une session
+  // PRIVÉE n'entre pas tant qu'il n'est pas admis. Sessions publiques : isPrivate=false → jamais ici.
+  const isConfirmedParticipant = privacyChecked && !isHost && !isAdminUser
+    && (!user?.id || (sessionHostId != null && user.id !== sessionHostId));
+  if (nickname && isConfirmedParticipant && refused) {
+    return <WaitingRoomScreen name={nickname} photoUrl={myAvatar} refused />;
+  }
+  if (nickname && isConfirmedParticipant && isPrivate && !admitted) {
+    return <WaitingRoomScreen name={nickname} photoUrl={myAvatar} />;
+  }
+
   // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
   const liveVisioNode = (
     <LiveVisioPanel
@@ -2153,6 +2270,31 @@ export const SessionPage: React.FC = () => {
                   <Video className="w-4 h-4" /> {t('session.mode.live')}
                 </button>
               </div>
+            )}
+
+            {/* 🚪 Interrupteur "Session privée (salle d'attente)" — hôte + co-hôtes uniquement */}
+            {canShare && sessionId && (
+              <button
+                onClick={handleTogglePrivacy}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium w-fit transition-colors ${
+                  isPrivate
+                    ? 'bg-[#8A2EFF]/15 border-[#8A2EFF]/40 text-[#c9a3ff]'
+                    : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
+                }`}
+                title="Session privée : chaque participant doit être admis manuellement"
+                data-testid="privacy-toggle"
+              >
+                {isPrivate ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
+                {isPrivate ? 'Session privée (salle d\'attente)' : 'Session publique (entrée directe)'}
+                <span className={`ml-1 inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors ${isPrivate ? 'bg-[#8A2EFF]' : 'bg-white/20'}`}>
+                  <span className={`h-3 w-3 rounded-full bg-white transition-transform ${isPrivate ? 'translate-x-3' : ''}`} />
+                </span>
+              </button>
+            )}
+
+            {/* 🚪 Panneau "Demandes d'accès" — hôte uniquement, visible s'il y a des demandes */}
+            {isHost && accessRequests.length > 0 && (
+              <AccessRequestsPanel requests={accessRequests} onAdmit={handleAdmit} onRefuse={handleRefuse} />
             )}
 
             {/* 🎥 Panneau Live Visio : mobile → fenêtre flottante (plus bas) ; desktop → colonne de droite */}

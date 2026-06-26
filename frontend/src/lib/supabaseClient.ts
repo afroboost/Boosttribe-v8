@@ -588,6 +588,18 @@ export async function saveSharedMedia(sessionId: string, sharedMedia: SharedMedi
 }
 
 /**
+ * Salle d'attente : active/désactive le mode "session privée" (playlists.is_private).
+ * L'écriture est protégée côté serveur par la policy RLS (hôte/co-hôte uniquement).
+ */
+export async function saveSessionPrivacy(sessionId: string, isPrivate: boolean): Promise<boolean> {
+  if (!supabase) return false;
+  const { error } = await supabase
+    .from('playlists')
+    .upsert({ session_id: sessionId, is_private: isPrivate, updated_at: new Date().toISOString() }, { onConflict: 'session_id' });
+  return !error;
+}
+
+/**
  * Save playlist to database
  */
 export async function savePlaylist(playlist: PlaylistRecord): Promise<boolean> {

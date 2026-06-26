@@ -377,10 +377,7 @@ const PricingPage: React.FC = () => {
                 </div>
                 <CardTitle className="text-white">{plan.name}</CardTitle>
                 <CardDescription className="text-white/50">
-                  {plan.trackLimit === -1 
-                    ? 'Chansons illimitées' 
-                    : `${plan.trackLimit} chanson${plan.trackLimit > 1 ? 's' : ''}`
-                  }
+                  {plan.id === 'pro' ? 'Pour les créateurs' : plan.id === 'enterprise' ? 'Sans limite' : 'Pour découvrir'}
                 </CardDescription>
               </CardHeader>
 
@@ -524,16 +521,6 @@ const PricingPage: React.FC = () => {
           </div>
         </div>
       )}
-
-      {/* Footer */}
-      <div className="max-w-4xl mx-auto mt-16 text-center">
-        <p className="text-white/40 text-sm">
-          Questions ? Contactez-nous à{' '}
-          <a href="mailto:support@beattribe.app" className="text-purple-400 hover:text-purple-300">
-            support@beattribe.app
-          </a>
-        </p>
-      </div>
     </div>
   );
 };

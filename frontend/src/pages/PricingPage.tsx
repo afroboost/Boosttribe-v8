@@ -444,24 +444,6 @@ const PricingPage: React.FC = () => {
         })}
       </div>
 
-      {/* Admin skip notice */}
-      {isAdmin && (
-        <div className="max-w-2xl mx-auto mt-12 p-6 rounded-lg bg-purple-500/10 border border-purple-500/30 text-center">
-          <Crown className="w-8 h-8 text-purple-400 mx-auto mb-3" />
-          <h3 className="text-lg font-semibold text-white mb-2">Mode Administrateur Actif</h3>
-          <p className="text-white/60 mb-4">
-            Vous avez un accès illimité à toutes les fonctionnalités sans abonnement.
-          </p>
-          <Button 
-            onClick={() => navigate('/session')}
-            className="text-white"
-            style={{ background: theme.colors.gradient.primary }}
-          >
-            Créer une session
-          </Button>
-        </div>
-      )}
-
       {/* Terms Modal */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">

@@ -15,6 +15,7 @@ interface SharedMediaPlayerProps {
   onState?: (s: { isPlaying: boolean; currentTime: number }) => void;
   remote?: RemoteMediaState | null;
   onClose?: () => void; // hôte : retirer le média partagé
+  mediaVolume?: number;  // 0–1 : "Volume Vidéo" du mixeur → pilote le lecteur courant
 }
 
 // Extrait l'ID YouTube d'une URL
@@ -46,9 +47,10 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose }) => {
+export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaVolumeInitRef = useRef(true); // ignorer la 1re valeur (montage) pour ne pas casser l'autoplay muet
 
   // Identifiants STABLES du média (primitifs) : ce sont les SEULES dépendances des effets de
   // CRÉATION des players. Tant que l'id ne change pas, le player n'est jamais recréé — même si
@@ -306,6 +308,27 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       }
     }).catch(() => { /* ignore */ });
   }, [remote, isHost, media.type]);
+
+  // 🔊 "Volume Vidéo" (mixeur) → pilote le lecteur courant. On IGNORE la 1re valeur (montage)
+  // pour ne pas dé-muter avant un geste utilisateur (sinon l'autoplay muet est bloqué → écran noir).
+  // Dès que l'utilisateur bouge le slider : on applique le volume et on dé-mute si > 0.
+  useEffect(() => {
+    if (mediaVolume === undefined) return;
+    if (mediaVolumeInitRef.current) { mediaVolumeInitRef.current = false; return; }
+    const v = Math.max(0, Math.min(1, mediaVolume));
+    try {
+      if (media.type === 'youtube') {
+        const p = ytPlayerRef.current;
+        if (p?.setVolume) { p.setVolume(Math.round(v * 100)); if (v > 0) { p.unMute?.(); setMuted(false); } else { p.mute?.(); } }
+      } else if (media.type === 'video') {
+        const el = videoRef.current;
+        if (el) { el.volume = v; if (v > 0) { el.muted = false; setMuted(false); } else { el.muted = true; } }
+      } else if (media.type === 'vimeo') {
+        const p = vimeoPlayerRef.current;
+        if (p) { p.setVolume(v).catch(() => { /* ignore */ }); if (v > 0) { p.setMuted(false).catch(() => { /* ignore */ }); setMuted(false); } }
+      }
+    } catch { /* ignore */ }
+  }, [mediaVolume, media.type]);
 
   // 🎬 ÉMETTEUR HÔTE UNIQUE : un SEUL setInterval qui lit l'état RÉEL du lecteur au moment T et
   // l'émet (le parent diffuse VIDEO_SYNC). C'est la seule source de vérité → plus d'états

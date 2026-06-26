@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { Heart, Send, Trash2, MessageCircle } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Heart, Send, Trash2, MessageCircle, X } from 'lucide-react';
 import supabase from '@/lib/supabaseClient';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ProfilePhoto } from '@/components/session/ProfilePhoto';
 
 interface CommentRow {
   id: string | number;
@@ -17,17 +19,6 @@ interface SessionSocialProps {
   sessionId: string;
 }
 
-// Avatar rond (image ou initiales)
-const SocialAvatar: React.FC<{ url?: string | null; name?: string | null }> = ({ url, name }) => (
-  <div className="w-7 h-7 rounded-full overflow-hidden bg-white/10 flex items-center justify-center flex-shrink-0">
-    {url ? (
-      <img src={url} alt="" className="w-full h-full object-cover" />
-    ) : (
-      <span className="text-white/50 text-[10px]">{(name || '?').slice(0, 2).toUpperCase()}</span>
-    )}
-  </div>
-);
-
 export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
   const { user, profile, isAuthenticated } = useAuth();
   const [likeCount, setLikeCount] = useState(0);
@@ -36,6 +27,7 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
   const [authors, setAuthors] = useState<Record<string, { name: string; avatar: string | null }>>({});
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false); // modale style Instagram
   const authorsRef = useRef(authors);
   authorsRef.current = authors;
 
@@ -139,9 +131,28 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
     return authors[uid] || { name: 'Invité', avatar: null };
   };
 
+  // Champ d'ajout (réutilisé dans la modale)
+  const composer = isAuthenticated ? (
+    <div className="flex gap-2">
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addComment(); } }}
+        placeholder="Ajouter un commentaire…"
+        maxLength={500}
+        className="flex-1 min-w-0 bg-white/5 border-white/10 text-white placeholder:text-white/30 text-sm"
+      />
+      <Button onClick={addComment} disabled={busy || !draft.trim()} className="text-white border-none flex-shrink-0" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+        <Send className="w-4 h-4" />
+      </Button>
+    </div>
+  ) : (
+    <p className="text-white/40 text-xs text-center">Connectez-vous pour aimer et commenter.</p>
+  );
+
   return (
-    <div className="rounded-xl border border-white/10 bg-white/5 p-3 space-y-3" data-testid="session-social">
-      {/* Like */}
+    <div className="rounded-xl border border-white/10 bg-white/5 p-3" data-testid="session-social">
+      {/* Vue compacte : Like + bouton Commentaires (ouvre la modale) */}
       <div className="flex items-center gap-3">
         <button
           onClick={toggleLike}
@@ -155,58 +166,78 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
           <Heart className="w-4 h-4" fill={liked ? 'currentColor' : 'none'} />
           <span className="text-sm font-medium">{likeCount}</span>
         </button>
-        <span className="flex items-center gap-1.5 text-white/50 text-sm">
-          <MessageCircle className="w-4 h-4" /> {comments.length}
-        </span>
+
+        <button
+          onClick={() => setCommentsOpen(true)}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 text-white/70 hover:bg-white/20 transition-colors"
+          data-testid="comments-open-btn"
+          title="Voir les commentaires"
+        >
+          <MessageCircle className="w-4 h-4" />
+          <span className="text-sm font-medium">{comments.length}</span>
+        </button>
       </div>
 
-      {/* Commentaires */}
-      <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-        {comments.length === 0 ? (
-          <p className="text-white/30 text-xs text-center py-2">Aucun commentaire pour le moment.</p>
-        ) : (
-          comments.map((c) => {
-            const a = authorFor(c.user_id);
-            return (
-              <div key={c.id} className="flex items-start gap-2">
-                <SocialAvatar url={a.avatar} name={a.name} />
-                <div className="flex-1 min-w-0 rounded-lg bg-white/5 px-3 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-white/80 text-xs font-medium truncate">{a.name}</span>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-white/30 text-[10px]">{new Date(c.created_at).toLocaleDateString()} {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      {user?.id === c.user_id && (
-                        <button onClick={() => deleteComment(c.id)} className="text-white/30 hover:text-red-400" title="Supprimer" data-testid="delete-comment">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+      {/* Modale commentaires (style Instagram) — par-dessus la page, via portail */}
+      {commentsOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setCommentsOpen(false)}
+          data-testid="comments-modal"
+        >
+          <div
+            className="w-full sm:max-w-md max-h-[85vh] sm:max-h-[80vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#14141A] shadow-2xl shadow-[#8A2EFF]/10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* En-tête */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <h3 className="text-white font-semibold flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-[#8A2EFF]" />
+                Commentaires
+                <span className="text-white/40 text-sm font-normal">({comments.length})</span>
+              </h3>
+              <button onClick={() => setCommentsOpen(false)} className="p-1.5 rounded-full text-white/60 hover:text-white hover:bg-white/10" title="Fermer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Liste */}
+            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+              {comments.length === 0 ? (
+                <p className="text-white/30 text-sm text-center py-8">Aucun commentaire pour le moment.<br />Soyez le premier à écrire ✍️</p>
+              ) : (
+                comments.map((c) => {
+                  const a = authorFor(c.user_id);
+                  return (
+                    <div key={c.id} className="flex items-start gap-2.5">
+                      <ProfilePhoto url={a.avatar} name={a.name} size={36} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-white text-sm font-semibold truncate">{a.name}</span>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className="text-white/30 text-[10px]">{new Date(c.created_at).toLocaleDateString()} {new Date(c.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            {user?.id === c.user_id && (
+                              <button onClick={() => deleteComment(c.id)} className="text-white/30 hover:text-red-400" title="Supprimer" data-testid="delete-comment">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-white/75 text-sm break-words whitespace-pre-wrap mt-0.5">{c.content}</p>
+                      </div>
                     </div>
-                  </div>
-                  <p className="text-white/70 text-sm break-words whitespace-pre-wrap">{c.content}</p>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+                  );
+                })
+              )}
+            </div>
 
-      {/* Ajout */}
-      {isAuthenticated ? (
-        <div className="flex gap-2">
-          <Input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addComment(); } }}
-            placeholder="Ajouter un commentaire…"
-            maxLength={500}
-            className="flex-1 min-w-0 bg-white/5 border-white/10 text-white placeholder:text-white/30 text-sm"
-          />
-          <Button onClick={addComment} disabled={busy || !draft.trim()} className="text-white border-none flex-shrink-0" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
-            <Send className="w-4 h-4" />
-          </Button>
-        </div>
-      ) : (
-        <p className="text-white/40 text-xs text-center">Connectez-vous pour aimer et commenter.</p>
+            {/* Composer (collé en bas) */}
+            <div className="px-4 py-3 border-t border-white/10">
+              {composer}
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

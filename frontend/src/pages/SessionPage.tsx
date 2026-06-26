@@ -504,6 +504,8 @@ export const SessionPage: React.FC = () => {
   // vidéo/image/lien = uniquement le média partagé). Hôte/co-host le contrôlent via le sélecteur ;
   // les participants le dérivent du média reçu (effet plus bas).
   const [shareMode, setShareMode] = useState<ShareMode>('audio');
+  // 🔊 Une vidéo est-elle partagée ? → le curseur "Volume Musique" devient "Volume Vidéo"
+  const isVideoShared = !!sharedMedia && (sharedMedia.type === 'video' || sharedMedia.type === 'youtube' || sharedMedia.type === 'vimeo');
   // Item 2 : panneaux repliables (repliés par défaut pour désencombrer la page)
   const [panelOpen, setPanelOpen] = useState<{ status: boolean; code: boolean; instructions: boolean }>({
     status: false, code: false, instructions: false,
@@ -582,6 +584,7 @@ export const SessionPage: React.FC = () => {
     talkToHost,
     stopTalkToHost,
     setTribeVolume: setTribeAudioVolume,
+    setHostVoiceVolume: setHostVoiceAudioVolume,
     remoteAudioRef,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
@@ -610,6 +613,12 @@ export const SessionPage: React.FC = () => {
     setTribeVolume(volume);       // état du slider
     setTribeAudioVolume(volume);  // volume direct des <audio> tribu (zéro latence)
   }, [setTribeVolume, setTribeAudioVolume]);
+
+  // 🔊 "Volume Hôte" (participant) : met à jour l'affichage ET le volume réel de la voix de l'hôte
+  const handleHostVoiceVolumeChange = useCallback((volume: number) => {
+    setHostVoiceVolume(volume);       // état du slider
+    setHostVoiceAudioVolume(volume);  // volume direct de l'<audio> de la voix hôte
+  }, [setHostVoiceVolume, setHostVoiceAudioVolume]);
 
   // Host: Broadcast VOICE_START when mic is active
   useEffect(() => {
@@ -1112,6 +1121,28 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
+  // 📸 PARTIE 2 : photos de profil des participants chargées depuis la table `profiles`
+  // (la presence ne transporte pas toujours l'avatar) → affichées dans la liste Participants.
+  const [profileAvatars, setProfileAvatars] = useState<Record<string, string | null>>({});
+  const profileAvatarsRef = useRef(profileAvatars);
+  profileAvatarsRef.current = profileAvatars;
+  useEffect(() => {
+    if (!supabase) return;
+    const ids = socket.presentUsers.map(u => u.userId).filter(id => id && !(id in profileAvatarsRef.current));
+    if (ids.length === 0) return;
+    (async () => {
+      try {
+        const { data } = await supabase!.from('profiles').select('id, avatar_url').in('id', ids);
+        setProfileAvatars(prev => {
+          const next = { ...prev };
+          (data as { id: string; avatar_url: string | null }[] | null || []).forEach(p => { next[p.id] = p.avatar_url; });
+          ids.forEach(id => { if (!(id in next)) next[id] = null; }); // marquer "sans profil" → pas de re-fetch en boucle
+          return next;
+        });
+      } catch { /* profils non lisibles → fallback initiales */ }
+    })();
+  }, [socket.presentUsers]);
+
   // 👥 POINT 2: Peupler la liste des participants depuis la Presence Realtime (temps réel).
   // On exclut soi-même (ajouté séparément dans le useMemo ci-dessous) et on applique
   // les overlays locaux (mute décidé par l'hôte, volume par participant).
@@ -1122,7 +1153,7 @@ export const SessionPage: React.FC = () => {
         id: u.userId,
         name: u.nickname || 'Invité',
         avatar: generateAvatar(u.nickname || 'Invité'),
-        avatarUrl: u.avatar,
+        avatarUrl: profileAvatars[u.userId] ?? u.avatar, // 📸 photo profiles en priorité, sinon presence
         isSynced: true,
         isCurrentUser: false,
         isHost: u.isHost,
@@ -1131,7 +1162,7 @@ export const SessionPage: React.FC = () => {
         isMuted: mutedUserIds.has(u.userId),
       }));
     setParticipantsState(others);
-  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes, coHostIds]);
+  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes, coHostIds, profileAvatars]);
 
   // Build participants list with current user
   const participants = useMemo<Participant[]>(() => {
@@ -2014,6 +2045,7 @@ export const SessionPage: React.FC = () => {
                 onState={canShare ? handleMediaState : undefined}
                 remote={!canShare ? remoteMediaState : null}
                 onClose={canShare ? handleCloseMedia : undefined}
+                mediaVolume={mixerState.musicVolume}
               />
             )}
 
@@ -2499,9 +2531,10 @@ export const SessionPage: React.FC = () => {
               onMusicVolumeChange={handleMusicVolumeChange}
               onMicVolumeChange={setMicVolume}
               onTribeVolumeChange={handleTribeVolumeChange}
-              onHostVoiceVolumeChange={setHostVoiceVolume}
+              onHostVoiceVolumeChange={handleHostVoiceVolumeChange}
               isMicActive={hostMicActive}
               defaultCollapsed={false}
+              isVideoShared={isVideoShared}
             />
 
             {/* Participants */}

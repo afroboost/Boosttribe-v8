@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, Mic, Users, Headphones, ChevronDown, ChevronUp, Music } from 'lucide-react';
+import { Volume2, Mic, Users, Headphones, ChevronDown, ChevronUp, Music, Video } from 'lucide-react';
 
 /**
  * 🎚️ AUDIO MIXER PANEL - Boosttribe V8 Stable Gold
@@ -85,6 +85,7 @@ interface AudioMixerPanelProps {
   isMicActive?: boolean;
   className?: string;
   defaultCollapsed?: boolean;
+  isVideoShared?: boolean; // si une vidéo est partagée → le 1er curseur devient "Volume Vidéo"
 }
 
 export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
@@ -100,6 +101,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
   isMicActive = false,
   className = '',
   defaultCollapsed = false,
+  isVideoShared = false,
 }) => {
   // 📱 Mobile: Panneau escamotable par défaut sur mobile
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
@@ -152,10 +154,10 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
       {/* Sliders - Escamotable */}
       {!isCollapsed && (
         <div className="p-3 sm:p-4 space-y-3 sm:space-y-4">
-          {/* Volume Musique - Toujours visible */}
+          {/* Volume Musique → "Volume Vidéo" si une vidéo est partagée */}
           <MixerSlider
-            label="Volume Musique"
-            icon={<Volume2 size={14} className="sm:w-4 sm:h-4" />}
+            label={isVideoShared ? 'Volume Vidéo' : 'Volume Musique'}
+            icon={isVideoShared ? <Video size={14} className="sm:w-4 sm:h-4" /> : <Volume2 size={14} className="sm:w-4 sm:h-4" />}
             value={musicVolume}
             onChange={onMusicVolumeChange}
             color="#8A2EFF"

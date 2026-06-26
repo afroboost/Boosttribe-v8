@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Volume2, VolumeX, X, MoreHorizontal, Mic, Crown, Share2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
+import { ProfilePhoto } from '@/components/session/ProfilePhoto';
 
 export interface Participant {
   id: string;
@@ -66,29 +67,30 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
         setShowMenu(false);
       }}
     >
-      {/* Avatar */}
-      <div
-        className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white relative flex-shrink-0 overflow-hidden"
-        style={{
-          background: participant.isCurrentUser
-            ? theme.colors.gradient.primary
-            : 'linear-gradient(135deg, #666 0%, #444 100%)',
-          opacity: isMuted ? 0.5 : 1,
-        }}
-      >
+      {/* Avatar — photo cliquable (lightbox) si dispo, sinon avatar généré */}
+      <div className="relative flex-shrink-0" style={{ opacity: isMuted ? 0.5 : 1 }}>
         {participant.avatarUrl ? (
-          <img src={participant.avatarUrl} alt={participant.name} className="w-full h-full object-cover" />
+          <ProfilePhoto url={participant.avatarUrl} name={participant.name} size={32} />
         ) : (
-          participant.avatar
+          <div
+            className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white overflow-hidden"
+            style={{
+              background: participant.isCurrentUser
+                ? theme.colors.gradient.primary
+                : 'linear-gradient(135deg, #666 0%, #444 100%)',
+            }}
+          >
+            {participant.avatar}
+          </div>
         )}
         {participant.isHost && (
-          <span className="absolute -top-1 -right-1 text-yellow-400">
+          <span className="absolute -top-1 -right-1 text-yellow-400 pointer-events-none">
             <Crown size={10} strokeWidth={2} fill="currentColor" />
           </span>
         )}
         {/* Mic active indicator */}
         {participant.isMicActive && (
-          <span className="absolute -bottom-0.5 -right-0.5 p-0.5 rounded-full bg-green-500 border border-black">
+          <span className="absolute -bottom-0.5 -right-0.5 p-0.5 rounded-full bg-green-500 border border-black pointer-events-none">
             <Mic size={8} strokeWidth={2} className="text-white" />
           </span>
         )}
@@ -111,12 +113,29 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
       </div>
 
       {/* Sync Status */}
-      <div 
+      <div
         className={`w-2 h-2 rounded-full flex-shrink-0 ${
           participant.isSynced ? 'bg-green-400' : 'bg-yellow-400'
         }`}
         title={participant.isSynced ? 'Synchronisé' : 'En synchronisation...'}
       />
+
+      {/* PARTIE 3 : bouton "Autoriser à partager" TOUJOURS visible (y compris mobile, sans survol) */}
+      {canModerate && onToggleCoHost && (
+        <button
+          onClick={() => onToggleCoHost(participant.id, !participant.isCoHost)}
+          className={`flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 transition-colors ${
+            participant.isCoHost
+              ? 'bg-[#8A2EFF]/20 text-[#8A2EFF] hover:bg-[#8A2EFF]/30'
+              : 'bg-white/10 text-white/70 hover:bg-white/20'
+          }`}
+          title={participant.isCoHost ? 'Retirer l\'autorisation de partager' : 'Autoriser ce participant à partager'}
+          data-testid="cohost-toggle"
+        >
+          <Share2 size={13} strokeWidth={2} />
+          <span>{participant.isCoHost ? 'Retirer' : 'Partager'}</span>
+        </button>
+      )}
 
       {/* Moderation Controls (Host View Only) */}
       {canModerate && (
@@ -162,21 +181,9 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
             {/* Dropdown Menu */}
             {showMenu && (
               <div
-                className="absolute right-0 top-full mt-1 z-50 min-w-[170px] rounded-lg border border-white/10 bg-[#14141A]/95 backdrop-blur-xl shadow-xl overflow-hidden"
+                className="absolute right-0 top-full mt-1 z-50 min-w-[150px] rounded-lg border border-white/10 bg-[#14141A]/95 backdrop-blur-xl shadow-xl overflow-hidden"
               >
-                {/* F : autoriser / retirer le partage (co-animateur) */}
-                {onToggleCoHost && (
-                  <button
-                    onClick={() => {
-                      onToggleCoHost(participant.id, !participant.isCoHost);
-                      setShowMenu(false);
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-white/80 hover:bg-white/10 transition-colors"
-                  >
-                    <Share2 size={14} strokeWidth={1.5} />
-                    {participant.isCoHost ? 'Retirer le partage' : 'Autoriser le partage'}
-                  </button>
-                )}
+                {/* (Le toggle co-animateur est désormais un bouton dédié toujours visible.) */}
                 <button
                   onClick={() => {
                     onEject(participant.id);

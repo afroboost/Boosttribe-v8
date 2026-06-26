@@ -40,6 +40,7 @@ export interface UsePeerAudioReturn {
   stopTalkToHost: () => void;
   // 🔊 POINT 1.6: volume des voix participants (tribu) côté hôte
   setTribeVolume: (volume: number) => void;
+  setHostVoiceVolume: (volume: number) => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
 }
@@ -179,6 +180,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const tribeCallsRef = useRef<Map<string, MediaConnection>>(new Map());
   // 🔊 POINT 1.6: volume "Volume Tribu" appliqué directement aux <audio> tribu (zéro latence)
   const tribeVolumeRef = useRef<number>(1);
+  // 🔊 "Volume Hôte" (participant) appliqué directement à l'<audio> de la voix de l'hôte
+  const hostVoiceVolumeRef = useRef<number>(1);
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
@@ -207,9 +210,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const forcePlayRemoteAudio = useCallback(async (audioEl: HTMLAudioElement, stream: MediaStream) => {
     // Production: log removed
     
-    // Attach stream
+    // Attach stream — respecter le "Volume Hôte" choisi par le participant
     audioEl.srcObject = stream;
-    audioEl.volume = 1.0;
+    audioEl.volume = hostVoiceVolumeRef.current;
     audioEl.muted = false;
     
     // Force play
@@ -594,6 +597,19 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   }, []);
 
   /**
+   * 🔊 PARTICIPANT — règle le volume de la VOIX DE L'HÔTE (effet immédiat + mémorisé pour
+   * les prochains flux reçus).
+   */
+  const setHostVoiceVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    hostVoiceVolumeRef.current = clamped;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.volume = clamped;
+      if (clamped > 0) remoteAudioRef.current.muted = false;
+    }
+  }, []);
+
+  /**
    * 🎤 POINT 5: PARTICIPANT — rend la parole (ferme l'appel montant).
    */
   const stopTalkToHost = useCallback(() => {
@@ -684,6 +700,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     talkToHost,
     stopTalkToHost,
     setTribeVolume,
+    setHostVoiceVolume,
     reconnect,
     remoteAudioRef,
   };

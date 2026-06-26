@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, Mic, Users, Headphones, ChevronDown, ChevronUp, Music, Video } from 'lucide-react';
+import { Volume2, Mic, MicOff, Users, Headphones, ChevronDown, ChevronUp, Music, Video } from 'lucide-react';
 
 /**
  * 🎚️ AUDIO MIXER PANEL - Boosttribe V8 Stable Gold
@@ -86,9 +86,14 @@ interface AudioMixerPanelProps {
   className?: string;
   defaultCollapsed?: boolean;
   isVideoShared?: boolean; // si une vidéo est partagée → le 1er curseur devient "Volume Vidéo"
-  // POINT B (participant) : un curseur par AUTRE participant dont on reçoit la voix (relayée)
-  remoteMicSliders?: { userId: string; name: string; volume: number }[];
+  // POINT 2 : un curseur par AUTRE participant présent (toujours visible) ; micActive = parle en ce moment
+  remoteMicSliders?: { userId: string; name: string; volume: number; micActive: boolean }[];
   onRemoteMicVolumeChange?: (userId: string, volume: number) => void;
+  // POINT 1 (participant) : "Mon micro" — activer/couper + gain d'entrée
+  participantMicActive?: boolean;
+  participantMicVolume?: number;
+  onParticipantMicToggle?: () => void;
+  onParticipantMicVolumeChange?: (volume: number) => void;
 }
 
 export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
@@ -107,6 +112,10 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
   isVideoShared = false,
   remoteMicSliders = [],
   onRemoteMicVolumeChange,
+  participantMicActive = false,
+  participantMicVolume = 1,
+  onParticipantMicToggle,
+  onParticipantMicVolumeChange,
 }) => {
   // 📱 Mobile: Panneau escamotable par défaut sur mobile
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
@@ -193,28 +202,59 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
               />
             </>
           ) : (
-            /* Volume Hôte + voix des autres participants - Participant only */
+            /* Participant : Mon micro + Volume Hôte + voix des autres participants */
             <>
+              {/* POINT 1 : "Mon micro" — bouton activer/couper + gain d'entrée */}
+              {onParticipantMicToggle && (
+                <div className="space-y-2">
+                  <button
+                    onClick={onParticipantMicToggle}
+                    className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                      participantMicActive
+                        ? 'bg-green-500/20 text-green-400 border border-green-500/40 hover:bg-green-500/30'
+                        : 'bg-white/10 text-white/70 border border-white/15 hover:bg-white/20'
+                    }`}
+                    data-testid="participant-mic-toggle"
+                  >
+                    {participantMicActive ? <Mic size={14} /> : <MicOff size={14} />}
+                    {participantMicActive ? 'Mon micro : actif (couper)' : 'Activer mon micro'}
+                  </button>
+                  {participantMicActive && onParticipantMicVolumeChange && (
+                    <MixerSlider
+                      label="Mon micro"
+                      icon={<Mic size={14} className="sm:w-4 sm:h-4" />}
+                      value={participantMicVolume}
+                      onChange={onParticipantMicVolumeChange}
+                      color="#10B981"
+                      compact={true}
+                    />
+                  )}
+                </div>
+              )}
+
               <MixerSlider
                 label="Volume Hôte"
-                icon={<Mic size={14} className="sm:w-4 sm:h-4" />}
+                icon={<Volume2 size={14} className="sm:w-4 sm:h-4" />}
                 value={hostVoiceVolume}
                 onChange={onHostVoiceVolumeChange}
-                color="#10B981"
+                color="#8A2EFF"
                 compact={true}
               />
 
-              {/* POINT B : un curseur par AUTRE participant qui parle (liste scrollable sur mobile) */}
+              {/* POINT 2 : un curseur par AUTRE participant présent, TOUJOURS visible (scrollable mobile) */}
               {remoteMicSliders.length > 0 && onRemoteMicVolumeChange && (
-                <div className="pt-1 mt-1 border-t border-white/10 space-y-2.5 sm:space-y-3 max-h-40 overflow-y-auto pr-0.5">
+                <div className="pt-2 mt-1 border-t border-white/10 space-y-2.5 sm:space-y-3 max-h-44 overflow-y-auto pr-0.5">
+                  <p className="text-[10px] uppercase tracking-wider text-white/30">Voix des participants</p>
                   {remoteMicSliders.map((s) => (
                     <MixerSlider
                       key={s.userId}
                       label={`Volume — ${s.name}`}
-                      icon={<Users size={14} className="sm:w-4 sm:h-4" />}
+                      icon={s.micActive
+                        ? <Mic size={14} className="sm:w-4 sm:h-4" />
+                        : <MicOff size={14} className="sm:w-4 sm:h-4 text-white/30" />}
                       value={s.volume}
                       onChange={(v) => onRemoteMicVolumeChange(s.userId, v)}
-                      color="#FF2FB3"
+                      color={s.micActive ? '#FF2FB3' : '#666'}
                       compact={true}
                     />
                   ))}

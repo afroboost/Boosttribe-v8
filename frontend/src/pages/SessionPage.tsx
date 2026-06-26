@@ -1195,13 +1195,18 @@ export const SessionPage: React.FC = () => {
     return [currentUser, ...participantsState];
   }, [nickname, isHost, isCoHost, myAvatar, participantsState, socket.userId, isRemoteMuted]);
 
-  // 🔊 POINT B : curseurs "Volume — <pseudo>" pour chaque AUTRE participant dont on reçoit la voix
+  // 🔊 POINT 2 : un curseur "Volume — <pseudo>" pour CHAQUE autre participant présent (sauf soi
+  // et sauf l'hôte), TOUJOURS visible ; micActive = il parle (voix relayée reçue) en ce moment.
   const remoteMicSliders = useMemo(
-    () => peerState.remoteMicUsers.map((uid) => {
-      const p = participantsState.find((x) => x.id === uid);
-      return { userId: uid, name: p?.name || 'Participant', volume: remoteMicVolumes[uid] ?? 1 };
-    }),
-    [peerState.remoteMicUsers, participantsState, remoteMicVolumes],
+    () => participantsState
+      .filter((p) => !p.isCurrentUser && !p.isHost)
+      .map((p) => ({
+        userId: p.id,
+        name: p.name,
+        volume: remoteMicVolumes[p.id] ?? 1,
+        micActive: peerState.remoteMicUsers.includes(p.id),
+      })),
+    [participantsState, peerState.remoteMicUsers, remoteMicVolumes],
   );
 
   // FREE TRIAL TIME TRACKING
@@ -2578,6 +2583,10 @@ export const SessionPage: React.FC = () => {
               isVideoShared={isVideoShared}
               remoteMicSliders={remoteMicSliders}
               onRemoteMicVolumeChange={handleRemoteMicVolumeChange}
+              participantMicActive={isTalking}
+              participantMicVolume={(participantMic.state.volume ?? 100) / 100}
+              onParticipantMicToggle={handleToggleTalk}
+              onParticipantMicVolumeChange={(v) => participantMic.setVolume(Math.round(v * 100))}
             />
 
             {/* Participants */}

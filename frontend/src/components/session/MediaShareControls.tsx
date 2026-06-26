@@ -31,6 +31,7 @@ interface MediaShareControlsProps {
   audioPanel?: React.ReactNode; // panneau audio (TrackUploader) rendu en mode "Audio"
   mode: ShareMode;              // contrôlé par le parent : pilote TOUTE la zone centrale
   onModeChange: (mode: ShareMode) => void;
+  maxVideoSeconds?: number;     // plan gratuit : 30s ; Pro/Enterprise : 90 min (défaut)
 }
 
 const MAX_VIDEO_SECONDS = 90 * 60; // 90 minutes
@@ -53,7 +54,7 @@ function getVideoDuration(file: File): Promise<number> {
   });
 }
 
-export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel, mode, onModeChange }) => {
+export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionId, onShare, showToast, audioPanel, mode, onModeChange, maxVideoSeconds }) => {
   const [busy, setBusy] = useState<null | 'video' | 'image'>(null);
   const [progress, setProgress] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState(0);
@@ -67,10 +68,15 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
     if (!file) return;
     e.target.value = '';
 
-    // Item 7 : durée max 90 min vérifiée côté client
+    // Durée max : 90 min (Pro), ou 30s en plan gratuit
+    const limit = maxVideoSeconds ?? MAX_VIDEO_SECONDS;
     const duration = await getVideoDuration(file);
-    if (duration > MAX_VIDEO_SECONDS + 1) {
-      showToast(`Vidéo trop longue (${Math.round(duration / 60)} min). Maximum 90 minutes.`, 'error');
+    if (duration > limit + 1) {
+      if (maxVideoSeconds && maxVideoSeconds <= 60) {
+        showToast('En gratuit, la vidéo partagée est limitée à 30s — passez à Pro', 'warning');
+      } else {
+        showToast(`Vidéo trop longue (${Math.round(duration / 60)} min). Maximum 90 minutes.`, 'error');
+      }
       return;
     }
 
@@ -95,7 +101,7 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
       setEtaSeconds(0);
       setFileBytes(0);
     }
-  }, [sessionId, onShare, showToast]);
+  }, [sessionId, onShare, showToast, maxVideoSeconds]);
 
   const handleImage = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

@@ -1,17 +1,28 @@
-import React from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
 import { LanguageSelector } from "@/context/I18nContext";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
-import { LogOut, User, Settings } from "lucide-react";
+import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag } from "lucide-react";
 
 export const Header: React.FC = () => {
   const { theme } = useTheme();
   const { name, colors, fonts, navigation, buttons } = theme;
   const { isAuthenticated, profile, signOut, isAdmin } = useAuth();
   const navigate = useNavigate();
+  // 📱 Menu hamburger mobile
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const mobileRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (mobileRef.current && !mobileRef.current.contains(e.target as Node)) setMobileOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [mobileOpen]);
 
   // Filter out "Communauté" from navigation
   const filteredNavLinks = navigation.links.filter(
@@ -186,11 +197,61 @@ export const Header: React.FC = () => {
                 >
                   {buttons.login}
                 </PrimaryButton>
-                <PrimaryButton size="sm" onClick={handleStartClick}>
+                <PrimaryButton size="sm" onClick={handleStartClick} className="hidden sm:inline-flex">
                   {buttons.start}
                 </PrimaryButton>
               </>
             )}
+
+            {/* 📱 Hamburger — mobile uniquement */}
+            <div ref={mobileRef} className="md:hidden flex items-center">
+              <button
+                onClick={() => setMobileOpen((v) => !v)}
+                className="p-2 rounded-lg text-white/80 hover:bg-white/10 transition-colors"
+                aria-label="Menu"
+                aria-expanded={mobileOpen}
+                data-testid="mobile-menu-toggle"
+              >
+                {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+              </button>
+
+              {mobileOpen && (
+                <div
+                  className="fixed left-0 right-0 top-16 sm:top-20 z-50 border-t border-white/10 px-4 py-3"
+                  style={{ background: 'rgba(8,8,12,0.98)', backdropFilter: 'blur(20px)' }}
+                  data-testid="mobile-menu"
+                >
+                  <nav className="flex flex-col gap-1 max-w-7xl mx-auto">
+                    <Link to="/" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
+                      <Home size={18} /> Accueil
+                    </Link>
+                    <Link to="/features" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
+                      <Sparkles size={18} /> Fonctionnalités
+                    </Link>
+                    <Link to="/pricing" onClick={() => setMobileOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
+                      <Tag size={18} /> Tarifs
+                    </Link>
+                    {!isAuthenticated && (
+                      <button onClick={() => { setMobileOpen(false); handleLoginClick(); }} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10 text-left">
+                        <User size={18} /> {buttons.login}
+                      </button>
+                    )}
+                    {isAdmin && (
+                      <button onClick={() => { setMobileOpen(false); handleAdminClick(); }} className="flex items-center gap-3 px-3 py-3 rounded-lg text-purple-400 hover:bg-purple-500/10 text-left">
+                        <Settings size={18} /> Gestion Site
+                      </button>
+                    )}
+                    <button
+                      onClick={() => { setMobileOpen(false); handleStartClick(); }}
+                      className="mt-2 w-full px-4 py-3 rounded-xl text-white font-semibold text-center"
+                      style={{ background: colors.gradient.primary }}
+                    >
+                      {isAuthenticated ? 'Ma session' : buttons.start}
+                    </button>
+                  </nav>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

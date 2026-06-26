@@ -10,47 +10,72 @@ interface Message {
   timestamp: Date;
 }
 
-// Réponses prédéfinies du bot (contexte Boosttribe)
+// 🧠 Connaissances de l'assistant Boosttribe — à jour (réponses pré-écrites, 100% front).
 const BOT_RESPONSES: Record<string, string[]> = {
   default: [
-    "Bonjour ! Je suis l'assistant Boosttribe. Comment puis-je vous aider ?",
-    "Je peux vous aider avec les sessions d'écoute, les abonnements, ou toute question sur Boosttribe.",
+    "Bonjour ! Je suis l'assistant Boosttribe 👋 Je peux vous parler des sessions audio/vidéo synchronisées, du Live Visio, du micro, de l'enregistrement, des sessions privées ou des abonnements.",
+    "BoostTribe permet d'animer des sessions où tout le monde écoute/regarde la même chose, parfaitement synchronisé. Posez-moi votre question !",
   ],
   session: [
-    "Pour créer une session d'écoute : cliquez sur 'Créer ma session' puis uploadez vos fichiers MP3.",
-    "Vous pouvez inviter jusqu'à 50 participants par session avec un compte Pro !",
+    "Pour créer une session : cliquez sur « Créer ma session ». Vous partagez ensuite un lien ou un QR code, et vos participants rejoignent en un clic — audio ET vidéo restent synchronisés pour tout le monde.",
+    "Dans une session, l'hôte contrôle la lecture pour tous : musique, vidéo uploadée ou lien YouTube/Vimeo, tout est synchronisé au même instant.",
+  ],
+  video: [
+    "BoostTribe synchronise aussi la VIDÉO : partagez une vidéo uploadée ou un lien YouTube/Vimeo, et tous les participants la voient au même instant (l'hôte pilote play/pause/seek).",
+    "En plan gratuit, la vidéo partagée est limitée à 30 secondes. Les membres Pro profitent de la vidéo complète (jusqu'à 90 min).",
+  ],
+  visio: [
+    "Le Live Visio, c'est la visio façon Zoom DANS la session : activez votre caméra et voyez les autres en direct (jusqu'à 6 caméras), tout en gardant la vidéo partagée. Le lecteur est même déplaçable sur l'écran. 🎥 Réservé aux membres Pro.",
+  ],
+  voice: [
+    "Côté voix : prenez le micro pour guider votre audience, parlez à tout le groupe ou en privé à un ou plusieurs participants choisis. Chaque participant peut aussi régler le volume des autres.",
+  ],
+  record: [
+    "L'hôte peut enregistrer les VOIX de la session (micro + participants) en un clic, puis télécharger l'audio — idéal pour créer du contenu pour vos réseaux. Un bandeau prévient tout le monde quand l'enregistrement est actif.",
+  ],
+  social: [
+    "Pendant une session : likes et commentaires en direct, photos de profil, et partage de vidéo, image ou lien. Une vraie expérience de groupe. 💬",
+  ],
+  private: [
+    "Les sessions privées ont une SALLE D'ATTENTE : même si le lien fuite, l'hôte admet (ou refuse) chaque participant manuellement. Parfait pour vendre vos sessions et ne laisser entrer que ceux qui ont payé.",
   ],
   pricing: [
-    "Nous proposons un essai gratuit de 5 minutes, puis des plans Pro (9.99€/mois) et Enterprise (29.99€/mois).",
-    "Le plan Pro vous donne accès à 50 chansons par session et à la voix en temps réel.",
+    "Les plans : Essai Gratuit (1 session active, audio & vidéo synchronisés, partage vidéo 30s max, sans Live Visio), Pro à 9,99€/mois (Live Visio, vidéo complète jusqu'à 90 min, micro + voix privée, enregistrement) et Enterprise à 29,99€/mois (branding, analytics, API, support 24/7).",
+    "Le plan Pro (9,99€/mois) débloque le Live Visio, la vidéo complète, le micro/voix privée et l'enregistrement de session.",
   ],
-  upload: [
-    "Pour uploader de la musique : accédez à votre session et cliquez sur le bouton d'upload.",
-    "Formats acceptés : MP3, WAV, AAC. Taille max : 50 Mo par fichier.",
+  free: [
+    "En gratuit : 1 session active, audio & vidéo synchronisés, participants illimités, MAIS partage vidéo limité à 30s et pas de Live Visio. Passez à Pro (9,99€/mois) pour tout débloquer.",
+  ],
+  lang: [
+    "L'application est multilingue : Français, Anglais et Allemand (bouton globe 🌐). Le français est la langue par défaut.",
+  ],
+  access: [
+    "Rejoindre une session est ultra simple : un lien ou un QR code, aucune application à installer, compatible tous appareils (et installable en PWA).",
   ],
   help: [
-    "Besoin d'aide ? Voici ce que je peux faire : expliquer les fonctionnalités, vous guider dans l'utilisation, ou répondre à vos questions sur les abonnements.",
+    "Je peux vous expliquer : sessions synchronisées, Live Visio, micro & voix privée, enregistrement, sessions privées (salle d'attente), partage vidéo/image/lien, langues et abonnements. Que voulez-vous savoir ?",
   ],
 };
 
-// Simple keyword matching
+// Détection par mots-clés (français)
 function getBotResponse(userMessage: string): string {
   const msg = userMessage.toLowerCase();
-  
-  if (msg.includes('session') || msg.includes('écoute') || msg.includes('créer')) {
-    return BOT_RESPONSES.session[Math.floor(Math.random() * BOT_RESPONSES.session.length)];
-  }
-  if (msg.includes('prix') || msg.includes('abonnement') || msg.includes('pro') || msg.includes('payer')) {
-    return BOT_RESPONSES.pricing[Math.floor(Math.random() * BOT_RESPONSES.pricing.length)];
-  }
-  if (msg.includes('upload') || msg.includes('musique') || msg.includes('mp3') || msg.includes('fichier')) {
-    return BOT_RESPONSES.upload[Math.floor(Math.random() * BOT_RESPONSES.upload.length)];
-  }
-  if (msg.includes('aide') || msg.includes('help') || msg.includes('comment')) {
-    return BOT_RESPONSES.help[0];
-  }
-  
-  return BOT_RESPONSES.default[Math.floor(Math.random() * BOT_RESPONSES.default.length)];
+  const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+
+  if (msg.includes('visio') || msg.includes('caméra') || msg.includes('camera') || msg.includes('zoom') || msg.includes('webcam')) return pick(BOT_RESPONSES.visio);
+  if (msg.includes('privé') || msg.includes('prive') || msg.includes('salle') || msg.includes('attente') || msg.includes('admet') || msg.includes('vendre') || msg.includes('payer mes') || msg.includes('payant')) return pick(BOT_RESPONSES.private);
+  if (msg.includes('enregistr') || msg.includes('record') || msg.includes('télécharg')) return pick(BOT_RESPONSES.record);
+  if (msg.includes('micro') || msg.includes('voix') || msg.includes('parler')) return pick(BOT_RESPONSES.voice);
+  if (msg.includes('commentaire') || msg.includes('like') || msg.includes('aime') || msg.includes('photo')) return pick(BOT_RESPONSES.social);
+  if (msg.includes('vidéo') || msg.includes('video') || msg.includes('youtube') || msg.includes('vimeo') || msg.includes('30s') || msg.includes('30 sec')) return pick(BOT_RESPONSES.video);
+  if (msg.includes('gratuit') || msg.includes('free') || msg.includes('limite')) return pick(BOT_RESPONSES.free);
+  if (msg.includes('prix') || msg.includes('tarif') || msg.includes('abonnement') || msg.includes('pro') || msg.includes('enterprise') || msg.includes('plan')) return pick(BOT_RESPONSES.pricing);
+  if (msg.includes('langue') || msg.includes('anglais') || msg.includes('english') || msg.includes('allemand') || msg.includes('traduc')) return pick(BOT_RESPONSES.lang);
+  if (msg.includes('rejoindre') || msg.includes('lien') || msg.includes('qr') || msg.includes('installer') || msg.includes('mobile')) return pick(BOT_RESPONSES.access);
+  if (msg.includes('session') || msg.includes('créer') || msg.includes('hôte') || msg.includes('synchron')) return pick(BOT_RESPONSES.session);
+  if (msg.includes('aide') || msg.includes('help') || msg.includes('comment') || msg.includes('quoi')) return pick(BOT_RESPONSES.help);
+
+  return pick(BOT_RESPONSES.default);
 }
 
 const ChatBot: React.FC = () => {

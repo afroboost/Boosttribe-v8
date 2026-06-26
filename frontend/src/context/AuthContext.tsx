@@ -32,8 +32,9 @@ export interface AuthContextValue {
   // Role checks
   isAdmin: boolean;
   isSubscribed: boolean;
+  isFree: boolean; // utilisateur gratuit : ni Pro/Enterprise, ni accès offert, ni admin
   hasAcceptedTerms: boolean;
-  
+
   // Limits
   trackLimit: number;
   sessionLimit: number; // POINT 2 : nombre de sessions simultanées autorisées (Infinity = illimité)
@@ -104,6 +105,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 🔒 FIX: Un utilisateur non connecté ou sans profil n'est PAS abonné.
   // Abonné si : admin, OU accès offert actif, OU plan effectif payant (≠ none/trial).
   const isSubscribed = isAdmin || compActive || (profile !== null && effectivePlan !== 'none' && effectivePlan !== 'trial');
+  // Gratuit = pas d'abonnement payant ni admin ni accès offert (les anonymes comptent comme gratuits)
+  const isFree = !isSubscribed;
   const hasAcceptedTerms = isAdmin || (profile?.has_accepted_terms ?? false);
   const trackLimit = isAdmin ? -1 : (TRACK_LIMITS[effectivePlan] ?? TRACK_LIMITS.none);
   const sessionLimit = isAdmin ? Infinity : (SESSION_LIMITS[effectivePlan] ?? SESSION_LIMITS.none);
@@ -611,6 +614,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAuthenticated,
     isAdmin,
     isSubscribed,
+    isFree,
     hasAcceptedTerms,
     trackLimit,
     sessionLimit,

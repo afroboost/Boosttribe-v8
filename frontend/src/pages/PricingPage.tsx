@@ -35,8 +35,9 @@ const BASE_PLANS: Plan[] = [
     features: [
       '1 session active',
       'Audio & vidéo synchronisés',
+      'Partage vidéo : 30s max',
+      'Sans Live Visio',
       'Participants illimités',
-      'Découverte des fonctionnalités',
     ],
     trackLimit: 1,
   },
@@ -47,8 +48,9 @@ const BASE_PLANS: Plan[] = [
     yearlyPrice: 99.99,
     currency: 'EUR',
     features: [
+      'Live Visio (caméras façon Zoom)',
+      'Vidéo complète (jusqu\'à 90 min)',
       'Sessions illimitées',
-      'Audio, vidéo & Live Visio',
       'Micro + voix privée',
       'Enregistrement de session',
       'Participants illimités',

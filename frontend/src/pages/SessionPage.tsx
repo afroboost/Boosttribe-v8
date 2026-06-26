@@ -418,7 +418,7 @@ export const SessionPage: React.FC = () => {
   const { showToast } = useToast();
   const { t } = useI18n();
   const socket = useSocket();
-  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, sessionLimit } = useAuth();
+  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, isFree, sessionLimit } = useAuth();
   
   // ADMIN BYPASS: Check email directly for instant host access
   const userEmail = user?.email?.toLowerCase() || '';
@@ -2262,12 +2262,32 @@ export const SessionPage: React.FC = () => {
                   <Headphones className="w-4 h-4" /> {t('session.mode.listen')}
                 </button>
                 <button
-                  onClick={() => setLiveMode(true)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${liveMode ? 'text-white' : 'text-white/60 hover:text-white'}`}
-                  style={liveMode ? { background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' } : undefined}
+                  onClick={() => {
+                    if (isFree) {
+                      showToast('Live Visio réservé aux membres Pro', 'warning');
+                      navigate('/pricing');
+                      return;
+                    }
+                    setLiveMode(true);
+                  }}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    isFree ? 'text-white/40 cursor-not-allowed' : liveMode ? 'text-white' : 'text-white/60 hover:text-white'
+                  }`}
+                  style={liveMode && !isFree ? { background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' } : undefined}
+                  title={isFree ? 'Live Visio réservé aux membres Pro' : undefined}
                   data-testid="mode-live"
                 >
-                  <Video className="w-4 h-4" /> {t('session.mode.live')}
+                  {isFree ? <Lock className="w-4 h-4" /> : <Video className="w-4 h-4" />} {t('session.mode.live')}
+                </button>
+              </div>
+            )}
+
+            {/* 🔒 Plan gratuit : Live Visio verrouillé → invite Pro */}
+            {isFree && sessionId && (
+              <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
+                <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio réservé aux membres Pro</span>
+                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+                  Passer à Pro
                 </button>
               </div>
             )}
@@ -2402,6 +2422,7 @@ export const SessionPage: React.FC = () => {
                 remote={!canShare ? remoteMediaState : null}
                 onClose={canShare ? handleCloseMedia : undefined}
                 mediaVolume={mixerState.musicVolume}
+                maxSeconds={isFree ? 30 : Infinity}
               />
             )}
 
@@ -2413,6 +2434,7 @@ export const SessionPage: React.FC = () => {
                 showToast={showToast}
                 mode={shareMode}
                 onModeChange={setShareMode}
+                maxVideoSeconds={isFree ? 30 : undefined}
                 audioPanel={canShare ? (
                   <TrackUploader
                     sessionId={sessionId}

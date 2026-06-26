@@ -16,6 +16,7 @@ interface SharedMediaPlayerProps {
   remote?: RemoteMediaState | null;
   onClose?: () => void; // hôte : retirer le média partagé
   mediaVolume?: number;  // 0–1 : "Volume Vidéo" du mixeur → pilote le lecteur courant
+  maxSeconds?: number;   // plan gratuit : coupe la lecture à 30s (émetteur) ; Pro : Infinity
 }
 
 // Extrait l'ID YouTube d'une URL
@@ -47,7 +48,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume }) => {
+export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaVolumeInitRef = useRef(true); // ignorer la 1re valeur (montage) pour ne pas casser l'autoplay muet
@@ -61,6 +62,7 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   // Bug 2 : le participant démarre EN MUET (autoplay muet autorisé par les navigateurs → plus
   // d'écran noir). Un bouton "Activer le son" (geste utilisateur) réactive l'audio.
   const [muted, setMuted] = useState<boolean>(!isHost);
+  const [limitReached, setLimitReached] = useState(false); // plan gratuit : 30s atteints
   // Si l'utilisateur clique "Activer le son" avant que le player soit prêt, on mémorise l'intention
   // et on l'exécute dans onReady (sinon le clic serait perdu).
   const pendingUnmuteRef = useRef(false);
@@ -335,22 +337,34 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   // contradictoires. Les actions (play/pause/seek) émettent en plus immédiatement (handlers ci-dessus).
   useEffect(() => {
     if (!isHost) return;
+    // plan gratuit : couper la lecture à maxSeconds (l'émetteur coupe → la sync arrête tout le monde)
+    const overLimit = (t: number) => Number.isFinite(maxSeconds) && t >= maxSeconds;
     const interval = setInterval(() => {
       try {
         if (media.type === 'youtube') {
           const p = ytPlayerRef.current;
-          if (p?.getPlayerState && p.getCurrentTime) emitHostState(p.getPlayerState() === 1, p.getCurrentTime());
+          if (p?.getPlayerState && p.getCurrentTime) {
+            const t = p.getCurrentTime();
+            if (overLimit(t)) { try { p.pauseVideo(); } catch { /* ignore */ } setLimitReached(true); emitHostState(false, t); }
+            else emitHostState(p.getPlayerState() === 1, t);
+          }
         } else if (media.type === 'video') {
           const v = videoRef.current;
-          if (v && !Number.isNaN(v.currentTime)) emitHostState(!v.paused, v.currentTime);
+          if (v && !Number.isNaN(v.currentTime)) {
+            if (overLimit(v.currentTime)) { try { v.pause(); } catch { /* ignore */ } setLimitReached(true); emitHostState(false, v.currentTime); }
+            else emitHostState(!v.paused, v.currentTime);
+          }
         } else if (media.type === 'vimeo') {
           const p = vimeoPlayerRef.current;
-          if (p) Promise.all([p.getCurrentTime(), p.getPaused()]).then(([t, paused]) => emitHostState(!paused, t)).catch(() => { /* ignore */ });
+          if (p) Promise.all([p.getCurrentTime(), p.getPaused()]).then(([t, paused]) => {
+            if (overLimit(t)) { p.pause().catch(() => { /* ignore */ }); setLimitReached(true); emitHostState(false, t); }
+            else emitHostState(!paused, t);
+          }).catch(() => { /* ignore */ });
         }
       } catch { /* ignore */ }
     }, HOST_EMIT_MS);
     return () => clearInterval(interval);
-  }, [isHost, media.type, emitHostState]);
+  }, [isHost, media.type, emitHostState, maxSeconds]);
 
   // Item 4 : plein écran de l'élément INTÉGRÉ (jamais de redirection vers youtube.com) + paysage mobile.
   const goFullscreen = useCallback(() => {
@@ -566,8 +580,19 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
             Activer le son
           </button>
         )}
+
+        {/* 🔒 Plan gratuit : aperçu limité à 30s */}
+        {limitReached && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-black/75 backdrop-blur-sm text-center p-4">
+            <p className="text-white font-semibold text-sm">Aperçu limité à 30 s</p>
+            <p className="text-white/60 text-xs">Passez à Pro pour la vidéo complète</p>
+            <a href="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+              Passer à Pro
+            </a>
+          </div>
+        )}
       </div>
-      {blockParticipant && (
+      {blockParticipant && !limitReached && (
         <p className="px-4 py-1.5 text-[11px] text-white/40">Lecture synchronisée avec l'hôte</p>
       )}
     </div>

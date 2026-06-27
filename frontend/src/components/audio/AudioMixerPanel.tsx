@@ -19,6 +19,7 @@ interface MixerSliderProps {
   color?: string;
   disabled?: boolean;
   compact?: boolean;
+  maxValue?: number; // 🔊 P4 : plafond du curseur (1 = 100%, 2.5 = 250% pour amplifier les voix)
 }
 
 const MixerSlider: React.FC<MixerSliderProps> = ({
@@ -29,9 +30,11 @@ const MixerSlider: React.FC<MixerSliderProps> = ({
   color = '#8A2EFF',
   disabled = false,
   compact = false,
+  maxValue = 1,
 }) => {
   const percentage = Math.round(value * 100);
-  
+  const fill = Math.min(100, Math.round((value / maxValue) * 100)); // remplissage visuel (0..100%)
+
   return (
     <div className={`flex items-center gap-2 sm:gap-3 ${disabled ? 'opacity-50' : ''}`}>
       {/* Icon - Touch-friendly size */}
@@ -53,14 +56,14 @@ const MixerSlider: React.FC<MixerSliderProps> = ({
         <input
           type="range"
           min="0"
-          max="1"
+          max={maxValue}
           step="0.01"
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           disabled={disabled}
           className={`w-full ${compact ? 'h-2' : 'h-2.5'} rounded-full appearance-none cursor-pointer disabled:cursor-not-allowed touch-manipulation`}
           style={{
-            background: `linear-gradient(to right, ${color} ${percentage}%, rgba(255,255,255,0.1) ${percentage}%)`,
+            background: `linear-gradient(to right, ${color} ${fill}%, rgba(255,255,255,0.1) ${fill}%)`,
             // Touch-friendly: larger touch target
             padding: '8px 0',
             margin: '-8px 0',
@@ -191,7 +194,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                 compact={true}
               />
               
-              {/* Volume Tribu - Host only */}
+              {/* Volume Tribu - Host only — amplifiable jusqu'à 250% (au-dessus de la musique) */}
               <MixerSlider
                 label="Volume Tribu"
                 icon={<Users size={14} className="sm:w-4 sm:h-4" />}
@@ -199,6 +202,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                 onChange={onTribeVolumeChange}
                 color="#F59E0B"
                 compact={true}
+                maxValue={2.5}
               />
             </>
           ) : (
@@ -256,6 +260,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                       onChange={(v) => onRemoteMicVolumeChange(s.userId, v)}
                       color={s.micActive ? '#FF2FB3' : '#666'}
                       compact={true}
+                      maxValue={2.5}
                     />
                   ))}
                 </div>

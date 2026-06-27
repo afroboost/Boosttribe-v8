@@ -48,6 +48,10 @@ export interface UsePeerAudioReturn {
   setPrivateTargets: (userIds: string[] | null) => void;
   // 🔊 POINT B (participant) : volume de la voix d'un AUTRE participant (relayée)
   setRemoteMicVolume: (userId: string, volume: number) => void;
+  // 🔊 P4 (hôte) : volume d'un participant précis (0..2.5) → GainNode Web Audio
+  setTribeUserVolume: (userId: string, volume: number) => void;
+  // 🔇 P4 (hôte) : couper RÉELLEMENT un participant pour tout le monde (gain 0 + relais coupé)
+  setTribeUserMuted: (userId: string, muted: boolean) => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
 }
@@ -97,6 +101,12 @@ function buildIceServers(): RTCIceServer[] {
 
 // Classe commune des éléments audio "tribu" (voix montante des participants chez l'hôte)
 const TRIBE_AUDIO_CLASS = 'bt-tribe-audio';
+
+// 🔊 P4 : amplification réelle des voix distantes via GainNode (au-delà du plafond 1.0 de
+// HTMLAudioElement.volume). Niveaux par défaut RELEVÉS pour passer au-dessus de la musique/vidéo.
+const TRIBE_DEFAULT_GAIN = 1.6; // voix d'un participant entendue par l'hôte
+const RELAY_DEFAULT_GAIN = 1.4; // voix d'un autre participant (relayée) entendue par un participant
+const VOICE_MAX_GAIN = 2.5;     // plafond d'amplification (≈250%)
 
 /**
  * POINT 1.3 : crée/récupère un <audio autoplay playsinline> DÉDIÉ par participant qui parle.
@@ -224,12 +234,52 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const privateTargetsRef = useRef<Set<string> | null>(null); // null = parler à TOUT le monde
   // POINT B (hôte) : relais des voix participants → relayCalls clé `${fromPeerId}__${toPeerId}`
   const relayCallsRef = useRef<Map<string, MediaConnection>>(new Map());
-  // POINT B (participant) : volume choisi par flux relay (userId → 0..1)
+  // POINT B (participant) : volume choisi par flux relay (userId → 0..2.5)
   const relayVolumesRef = useRef<Map<string, number>>(new Map());
+
+  // 🔊 P4 : AudioContext + GainNodes pour amplifier les voix distantes au-delà de 100%.
+  const voiceCtxRef = useRef<AudioContext | null>(null);
+  // Hôte : un nœud par participant qui parle (peerId → source/gain/élément)
+  const tribeNodesRef = useRef<Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; el: HTMLAudioElement }>>(new Map());
+  const tribeUserVolumeRef = useRef<Map<string, number>>(new Map()); // userId → gain 0..2.5
+  const tribeUserMutedRef = useRef<Set<string>>(new Set());          // userId coupés par l'hôte
+  // Participant : un nœud par voix d'autre participant relayée (fromUserId → source/gain/élément)
+  const relayNodesRef = useRef<Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; el: HTMLAudioElement }>>(new Map());
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
     setState(prev => ({ ...prev, ...updates }));
+  }, []);
+
+  // 🔊 P4 : AudioContext partagé (lazy) pour router les voix distantes via GainNode.
+  const ensureVoiceCtx = useCallback((): AudioContext | null => {
+    try {
+      if (!voiceCtxRef.current) {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        voiceCtxRef.current = new Ctx();
+      }
+      if (voiceCtxRef.current.state === 'suspended') voiceCtxRef.current.resume().catch(() => { /* ignore */ });
+      return voiceCtxRef.current;
+    } catch { return null; }
+  }, []);
+
+  // 🔊 P4 (hôte) : gain effectif d'un participant = (coupé ? 0 : son volume) × Volume Tribu maître.
+  const tribeEffectiveGain = useCallback((userId?: string): number => {
+    if (userId && tribeUserMutedRef.current.has(userId)) return 0;
+    const base = (userId && tribeUserVolumeRef.current.has(userId))
+      ? tribeUserVolumeRef.current.get(userId)!
+      : TRIBE_DEFAULT_GAIN;
+    return base * tribeVolumeRef.current;
+  }, []);
+
+  // 🔊 P4 : déconnecte le nœud Web Audio d'un participant (à la fin de sa prise de parole).
+  const cleanupTribeNode = useCallback((peerId: string) => {
+    const node = tribeNodesRef.current.get(peerId);
+    if (node) {
+      try { node.source.disconnect(); } catch { /* ignore */ }
+      try { node.gain.disconnect(); } catch { /* ignore */ }
+      tribeNodesRef.current.delete(peerId);
+    }
   }, []);
 
   // Generate peer ID based on session and role
@@ -381,15 +431,36 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             call.on('stream', (tribeStream) => {
               const el = getOrCreateTribeAudioElement(call.peer);
               el.srcObject = tribeStream;
-              el.volume = tribeVolumeRef.current;
+              const uid = peerIdToUserIdRef.current.get(call.peer);
+              // 🔊 P4 : sortie via Web Audio (gain réglable >100%) ; l'élément reste attaché
+              // (muet) pour maintenir le pipeline WebRTC. Fallback sur el.volume si Web Audio KO.
+              const ctx = ensureVoiceCtx();
+              let routed = false;
+              if (ctx) {
+                try {
+                  const source = ctx.createMediaStreamSource(tribeStream);
+                  const gain = ctx.createGain();
+                  gain.gain.value = tribeEffectiveGain(uid);
+                  source.connect(gain);
+                  gain.connect(ctx.destination);
+                  tribeNodesRef.current.set(call.peer, { source, gain, el });
+                  el.muted = true;
+                  routed = true;
+                } catch { routed = false; }
+              }
+              if (!routed) {
+                el.muted = !!(uid && tribeUserMutedRef.current.has(uid));
+                el.volume = Math.min(1, tribeEffectiveGain(uid));
+              }
               el.play().catch((e) => console.warn('[PEER] tribe autoplay blocked:', e));
               onReceiveTribeAudio?.(tribeStream, call.peer);
-              // 🔊 POINT B : relayer cette voix vers les AUTRES participants (ils s'entendent entre eux)
-              relayStreamToOthers(call.peer, tribeStream);
+              // 🔊 POINT B : relayer cette voix vers les AUTRES participants — sauf si coupé par l'hôte
+              if (!(uid && tribeUserMutedRef.current.has(uid))) relayStreamToOthers(call.peer, tribeStream);
             });
 
             call.on('close', () => {
               tribeCallsRef.current.delete(call.peer);
+              cleanupTribeNode(call.peer);
               removeTribeAudioElement(call.peer);
               closeRelaysFrom(call.peer); // 🔊 POINT B : couper les relais de ce participant
               onTribeAudioEnd?.(call.peer);
@@ -398,6 +469,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             call.on('error', (err) => {
               console.error('[PEER] ❌ Tribe call error:', err);
               tribeCallsRef.current.delete(call.peer);
+              cleanupTribeNode(call.peer);
               removeTribeAudioElement(call.peer);
               closeRelaysFrom(call.peer);
               onTribeAudioEnd?.(call.peer);
@@ -413,13 +485,35 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             call.on('stream', (relayStream) => {
               const el = getOrCreateRelayAudioElement(fromUserId);
               el.srcObject = relayStream;
-              el.volume = relayVolumesRef.current.get(fromUserId) ?? 1;
+              const vol = relayVolumesRef.current.get(fromUserId) ?? RELAY_DEFAULT_GAIN;
+              // 🔊 P4 : amplification réelle via GainNode (au-dessus de la musique), fallback el.volume.
+              const ctx = ensureVoiceCtx();
+              let routed = false;
+              if (ctx) {
+                try {
+                  const source = ctx.createMediaStreamSource(relayStream);
+                  const gain = ctx.createGain();
+                  gain.gain.value = vol;
+                  source.connect(gain);
+                  gain.connect(ctx.destination);
+                  relayNodesRef.current.set(fromUserId, { source, gain, el });
+                  el.muted = true;
+                  routed = true;
+                } catch { routed = false; }
+              }
+              if (!routed) { el.muted = false; el.volume = Math.min(1, vol); }
               el.play().catch(() => { /* autoplay : débloqué par un geste */ });
               setState((prev) => prev.remoteMicUsers.includes(fromUserId)
                 ? prev
                 : { ...prev, remoteMicUsers: [...prev.remoteMicUsers, fromUserId] });
             });
             const cleanupRelay = () => {
+              const node = relayNodesRef.current.get(fromUserId);
+              if (node) {
+                try { node.source.disconnect(); } catch { /* ignore */ }
+                try { node.gain.disconnect(); } catch { /* ignore */ }
+                relayNodesRef.current.delete(fromUserId);
+              }
               removeRelayAudioElement(fromUserId);
               setState((prev) => ({ ...prev, remoteMicUsers: prev.remoteMicUsers.filter((u) => u !== fromUserId) }));
             };
@@ -608,13 +702,54 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     });
   }, []);
 
-  // 🔊 POINT B (participant) : règle le volume de la voix d'un autre participant (relayée)
+  // 🔊 POINT B (participant) : règle le volume de la voix d'un autre participant (relayée).
+  // P4 : agit sur le GainNode (0..250%) → amplification réelle au-dessus de la musique.
   const setRemoteMicVolume = useCallback((userId: string, volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(VOICE_MAX_GAIN, volume));
     relayVolumesRef.current.set(userId, clamped);
-    const el = document.getElementById(`relay-audio-${userId}`) as HTMLAudioElement | null;
-    if (el) el.volume = clamped;
+    const node = relayNodesRef.current.get(userId);
+    if (node) {
+      node.gain.gain.value = clamped;
+    } else {
+      const el = document.getElementById(`relay-audio-${userId}`) as HTMLAudioElement | null;
+      if (el && !el.muted) el.volume = Math.min(1, clamped);
+    }
   }, []);
+
+  // 🔊 P4 (hôte) : volume d'un participant précis (slider "Participants") → GainNode Web Audio.
+  const setTribeUserVolume = useCallback((userId: string, volume: number) => {
+    tribeUserVolumeRef.current.set(userId, Math.max(0, Math.min(VOICE_MAX_GAIN, volume)));
+    tribeNodesRef.current.forEach((node, peerId) => {
+      if (peerIdToUserIdRef.current.get(peerId) === userId) node.gain.gain.value = tribeEffectiveGain(userId);
+    });
+  }, [tribeEffectiveGain]);
+
+  // 🔇 P4 (hôte) : "Couper" coupe RÉELLEMENT ce participant pour TOUT LE MONDE
+  // (gain local à 0 + arrêt du relais vers les autres). "Réactiver" rétablit gain et relais.
+  const setTribeUserMuted = useCallback((userId: string, muted: boolean) => {
+    if (muted) tribeUserMutedRef.current.add(userId); else tribeUserMutedRef.current.delete(userId);
+    // Pour chaque participant (peerId) correspondant à cet userId, appliquer le mute là où il joue.
+    peerIdToUserIdRef.current.forEach((uid, peerId) => {
+      if (uid !== userId) return;
+      const node = tribeNodesRef.current.get(peerId);
+      if (node) {
+        node.gain.gain.value = tribeEffectiveGain(userId); // Web Audio : gain 0 si coupé
+        node.el.muted = true;
+      } else {
+        // Fallback (Web Audio indispo) : couper directement l'élément <audio>
+        const el = document.getElementById(`tribe-audio-${peerId}`) as HTMLAudioElement | null;
+        if (el) { el.muted = muted; el.volume = Math.min(1, tribeEffectiveGain(userId)); }
+      }
+      // Relais vers les autres participants : coupé si muet, rétabli sinon
+      if (muted) {
+        closeRelaysFrom(peerId);
+      } else {
+        const el = document.getElementById(`tribe-audio-${peerId}`) as HTMLAudioElement | null;
+        const s = el?.srcObject as MediaStream | null;
+        if (s) relayStreamToOthers(peerId, s);
+      }
+    });
+  }, [tribeEffectiveGain, closeRelaysFrom, relayStreamToOthers]);
 
   // 🎙️ POINT 3 : applique la sélection privée à UNE connexion (call vers un participant).
   // null = tout le monde entend → on (re)met la piste micro. Sinon, seuls les userId sélectionnés
@@ -742,12 +877,17 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
    * 🔊 POINT 1.6: règle le volume des voix participants (tribu) — direct sur les <audio>.
    */
   const setTribeVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(VOICE_MAX_GAIN, volume)); // P4 : "Volume Tribu" maître 0..250%
     tribeVolumeRef.current = clamped;
-    document.querySelectorAll<HTMLAudioElement>(`.${TRIBE_AUDIO_CLASS}`).forEach((el) => {
-      el.volume = clamped;
+    // Web Audio : recalculer le gain effectif de chaque participant (master × volume × mute)
+    tribeNodesRef.current.forEach((node, peerId) => {
+      node.gain.gain.value = tribeEffectiveGain(peerIdToUserIdRef.current.get(peerId));
     });
-  }, []);
+    // Fallback (Web Audio indispo) : éléments encore audibles via volume direct
+    document.querySelectorAll<HTMLAudioElement>(`.${TRIBE_AUDIO_CLASS}`).forEach((el) => {
+      if (!el.muted) el.volume = Math.min(1, clamped);
+    });
+  }, [tribeEffectiveGain]);
 
   /**
    * 🔊 PARTICIPANT — règle le volume de la VOIX DE L'HÔTE (effet immédiat + mémorisé pour
@@ -790,6 +930,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     }
     tribeCallsRef.current.forEach((call, peerId) => {
       try { call.close(); } catch (e) { /* ignore */ }
+      cleanupTribeNode(peerId);
       removeTribeAudioElement(peerId);
     });
     tribeCallsRef.current.clear();
@@ -797,6 +938,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // 🔊 POINT B : couper tous les relais + supprimer les <audio> relay (anti-fuite)
     relayCallsRef.current.forEach((call) => { try { call.close(); } catch { /* ignore */ } });
     relayCallsRef.current.clear();
+    relayNodesRef.current.forEach((node) => {
+      try { node.source.disconnect(); } catch { /* ignore */ }
+      try { node.gain.disconnect(); } catch { /* ignore */ }
+    });
+    relayNodesRef.current.clear();
     document.querySelectorAll<HTMLAudioElement>(`.${RELAY_AUDIO_CLASS}`).forEach((el) => { el.srcObject = null; el.remove(); });
     setState((prev) => ({ ...prev, remoteMicUsers: [] }));
 
@@ -828,7 +974,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     });
 
     // Production: log removed
-  }, [stopBroadcast, updateState]);
+  }, [stopBroadcast, updateState, cleanupTribeNode]);
 
   // Manual reconnect
   const reconnect = useCallback(async (): Promise<boolean> => {
@@ -847,6 +993,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       if (audioEl) {
         audioEl.remove();
       }
+      // 🔊 P4 : fermer l'AudioContext des voix distantes (anti-fuite)
+      if (voiceCtxRef.current && voiceCtxRef.current.state !== 'closed') {
+        voiceCtxRef.current.close().catch(() => { /* ignore */ });
+        voiceCtxRef.current = null;
+      }
     };
   }, [disconnect]);
 
@@ -862,6 +1013,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     setHostVoiceVolume,
     setPrivateTargets,
     setRemoteMicVolume,
+    setTribeUserVolume,
+    setTribeUserMuted,
     reconnect,
     remoteAudioRef,
   };

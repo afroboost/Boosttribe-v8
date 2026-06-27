@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -473,7 +473,10 @@ export const SessionPage: React.FC = () => {
   
   // Remote mute state (controlled by host)
   const [isRemoteMuted, setIsRemoteMuted] = useState(false);
-  
+
+  // 📱 P2 : menu hamburger de l'en-tête de session (mobile < md)
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+
   // Playlist state - TOUJOURS vide au démarrage, jamais de fallback
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
@@ -605,6 +608,8 @@ export const SessionPage: React.FC = () => {
     setHostVoiceVolume: setHostVoiceAudioVolume,
     setPrivateTargets,
     setRemoteMicVolume,
+    setTribeUserVolume,
+    setTribeUserMuted,
     remoteAudioRef,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
@@ -1354,7 +1359,7 @@ export const SessionPage: React.FC = () => {
         isCurrentUser: false,
         isHost: u.isHost,
         isCoHost: coHostIds.has(u.userId),
-        volume: userVolumes[u.userId] ?? 100,
+        volume: userVolumes[u.userId] ?? 160, // 🔊 P4 : niveau par défaut relevé (gain 1.6) → au-dessus de la musique
         isMuted: mutedUserIds.has(u.userId),
       }));
     setParticipantsState(others);
@@ -1389,7 +1394,7 @@ export const SessionPage: React.FC = () => {
       .map((p) => ({
         userId: p.id,
         name: p.name,
-        volume: remoteMicVolumes[p.id] ?? 1,
+        volume: remoteMicVolumes[p.id] ?? 1.4, // 🔊 P4 : gain par défaut relevé (140%) → voix au-dessus de la musique
         micActive: peerState.remoteMicUsers.includes(p.id),
       })),
     [participantsState, peerState.remoteMicUsers, remoteMicVolumes],
@@ -1429,10 +1434,13 @@ export const SessionPage: React.FC = () => {
   const handleParticipantVolumeChange = useCallback((id: string, volume: number) => {
     setUserVolumes(prev => ({ ...prev, [id]: volume }));
 
+    // 🔊 P4 : le slider (0..250%) pilote RÉELLEMENT le gain Web Audio de la voix de ce participant.
+    setTribeUserVolume(id, volume / 100);
+
     if (isHost) {
       socket.setUserVolume(id, volume);
     }
-  }, [isHost, socket]);
+  }, [isHost, socket, setTribeUserVolume]);
 
   const handleParticipantMuteToggle = useCallback((id: string) => {
     const participant = participantsState.find(p => p.id === id);
@@ -1445,15 +1453,17 @@ export const SessionPage: React.FC = () => {
     });
 
     if (isHost) {
+      // 🔇 P4 : coupe RÉELLEMENT l'audio de ce participant pour tout le monde (gain 0 + relais coupé)
+      setTribeUserMuted(id, newMuted);
       if (newMuted) {
-        socket.muteUser(id);
+        socket.muteUser(id); // signale aussi au participant (courtoisie UX)
         showToast(`${participant?.name || 'Participant'} mis en sourdine`, 'warning');
       } else {
         socket.unmuteUser(id);
         showToast(`${participant?.name || 'Participant'} réactivé`, 'success');
       }
     }
-  }, [isHost, participantsState, mutedUserIds, socket, showToast]);
+  }, [isHost, participantsState, mutedUserIds, socket, showToast, setTribeUserMuted]);
 
   const handleParticipantEject = useCallback((id: string) => {
     const participant = participantsState.find(p => p.id === id);
@@ -2121,8 +2131,8 @@ export const SessionPage: React.FC = () => {
 
   return (
     <div
-      className="min-h-screen"
-      style={{ 
+      className="min-h-screen overflow-x-hidden"
+      style={{
         background: '#000000',
         fontFamily: "'Inter', sans-serif",
       }}
@@ -2202,10 +2212,10 @@ export const SessionPage: React.FC = () => {
         }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link to="/" className="flex items-center gap-2">
-                <div 
+          <div className="flex items-center justify-between h-16 gap-2">
+            <div className="flex items-center gap-4 min-w-0">
+              <Link to="/" className="flex items-center gap-2 flex-shrink-0">
+                <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center"
                   style={{ background: theme.colors.gradient.primary }}
                 >
@@ -2213,7 +2223,7 @@ export const SessionPage: React.FC = () => {
                     <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
                   </svg>
                 </div>
-                <span 
+                <span
                   className="text-xl font-bold hidden sm:block"
                   style={{
                     fontFamily: "'Space Grotesk', sans-serif",
@@ -2225,23 +2235,62 @@ export const SessionPage: React.FC = () => {
                   {theme.name}
                 </span>
               </Link>
-              
-              {/* Role Badge */}
-              <Badge
-                className={`flex items-center gap-1 ${isHost
-                  ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-                  : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
-                }`}
-              >
-                {isHost ? <Radio className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
-                {isHost ? t('session.host') : t('session.participant')}
-              </Badge>
 
-              {/* Subscription Badge — POINT 1: réservé à l'hôte/admin, masqué pour les participants */}
-              {isHost && <SubscriptionBadge />}
+              {/* Badges — desktop uniquement (sur mobile ils passent dans le menu hamburger) */}
+              <div className="hidden md:flex items-center gap-4 min-w-0">
+                {/* Role Badge */}
+                <Badge
+                  className={`flex items-center gap-1 ${isHost
+                    ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                    : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                  }`}
+                >
+                  {isHost ? <Radio className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
+                  {isHost ? t('session.host') : t('session.participant')}
+                </Badge>
+
+                {/* Subscription Badge — POINT 1: réservé à l'hôte/admin, masqué pour les participants */}
+                {isHost && <SubscriptionBadge />}
+              </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            {/* 📱 Bouton hamburger — mobile uniquement */}
+            <button
+              onClick={() => setSessionMenuOpen((v) => !v)}
+              className="md:hidden flex-shrink-0 p-2 rounded-lg text-white/80 hover:bg-white/10 transition-colors"
+              aria-label="Menu de la session"
+              aria-expanded={sessionMenuOpen}
+              data-testid="session-mobile-menu-toggle"
+            >
+              {sessionMenuOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
+
+            {/* Actions de l'en-tête — instance UNIQUE, repositionnée par CSS :
+                desktop → barre inline ; mobile → panneau déroulant sous le hamburger. */}
+            <div
+              className={`
+                ${sessionMenuOpen ? 'flex' : 'hidden'} md:flex
+                flex-col md:flex-row items-stretch md:items-center gap-3
+                absolute md:static left-0 right-0 top-16 md:top-auto
+                z-50 p-4 md:p-0 border-t md:border-0 border-white/10
+                bg-[rgba(8,8,12,0.98)] md:bg-transparent backdrop-blur-xl md:backdrop-blur-none
+              `}
+              data-testid="session-header-actions"
+            >
+              {/* Badges — copie mobile (cachée en desktop, déjà affichés à gauche) */}
+              <div className="flex md:hidden items-center gap-2 flex-wrap">
+                <Badge
+                  className={`flex items-center gap-1 ${isHost
+                    ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
+                    : 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                  }`}
+                >
+                  {isHost ? <Radio className="w-3.5 h-3.5" /> : <Users className="w-3.5 h-3.5" />}
+                  {isHost ? t('session.host') : t('session.participant')}
+                </Badge>
+                {isHost && <SubscriptionBadge />}
+              </div>
+
               {/* PARTIE D : sélecteur de langue (globe) — hôte ET participants */}
               <LanguageSelector />
 
@@ -2253,11 +2302,11 @@ export const SessionPage: React.FC = () => {
                   onStreamReady={setHostMicStream}
                 />
               )}
-              
+
               {/* PARTICIPANT: Voice receiving indicator */}
               {!isHost && peerState.isReceivingVoice && (
                 <span
-                  className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 animate-pulse flex items-center gap-1"
+                  className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 animate-pulse flex items-center gap-1 w-fit"
                   data-testid="voice-receiving-indicator"
                 >
                   <span className="inline-block w-2 h-2 rounded-full bg-purple-400 animate-ping" />
@@ -2265,24 +2314,24 @@ export const SessionPage: React.FC = () => {
                   Voix reçue
                 </span>
               )}
-              
+
               {/* User nickname display */}
               {nickname && (
                 <button
                   onClick={handleChangeNickname}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors w-fit"
                 >
-                  <div 
+                  <div
                     className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-white"
                     style={{ background: theme.colors.gradient.primary }}
                   >
                     {generateAvatar(nickname)}
                   </div>
-                  <span className="text-white/70 text-sm hidden sm:block">{nickname}</span>
+                  <span className="text-white/70 text-sm">{nickname}</span>
                 </button>
               )}
-              <Link to="/">
-                <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10 inline-flex items-center gap-1">
+              <Link to="/" onClick={() => setSessionMenuOpen(false)} className="w-full md:w-auto">
+                <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10 inline-flex items-center justify-center gap-1 w-full md:w-auto">
                   <ArrowLeft className="w-4 h-4" /> Retour
                 </Button>
               </Link>
@@ -2498,6 +2547,7 @@ export const SessionPage: React.FC = () => {
                     currentTrackCount={tracks.length}
                     maxTracks={10}
                     disabled={!canShare}
+                    isSessionHost={isHost}
                     onUpgradeRequest={handleUpgradeRequest}
                   />
                 ) : undefined}

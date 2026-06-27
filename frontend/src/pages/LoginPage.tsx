@@ -176,8 +176,8 @@ const LoginPage: React.FC = () => {
   }
 
   return (
-    <div 
-      className="min-h-screen flex items-center justify-center p-4"
+    <div
+      className="min-h-screen flex flex-col"
       style={{ background: theme.colors.background }}
     >
       {/* Background Effects */}
@@ -192,6 +192,7 @@ const LoginPage: React.FC = () => {
         />
       </div>
 
+      <main className="flex-1 flex items-center justify-center p-4 relative z-10">
       <Card className="w-full max-w-md border-white/10 bg-black/50 backdrop-blur-xl relative z-10">
         <CardHeader className="text-center">
           {/* Logo */}
@@ -492,6 +493,7 @@ const LoginPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
+      </main>
 
       {/* Back to home */}
       <div className="fixed top-4 left-4">

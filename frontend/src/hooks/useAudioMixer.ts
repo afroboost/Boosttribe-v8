@@ -311,9 +311,9 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * Définit le volume de la tribu (participants)
    */
   const setTribeVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(2.5, volume)); // 🔊 P4 : "Volume Tribu" amplifiable jusqu'à 250%
     setState(prev => ({ ...prev, tribeVolume: clamped }));
-    
+
     if (tribeGainRef.current) {
       tribeGainRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
     }

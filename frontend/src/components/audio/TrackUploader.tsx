@@ -11,6 +11,9 @@ interface TrackUploaderProps {
   currentTrackCount: number;
   maxTracks?: number;
   disabled?: boolean;
+  // P3 : hôte de CETTE session (admin réel). Le bandeau "Mode Admin" n'est montré qu'à lui,
+  // jamais à un co-animateur/participant (même si son compte a un flag admin global).
+  isSessionHost?: boolean;
   // POINT 4b: appelé quand un non-abonné atteint sa limite et tente d'ajouter un titre
   onUpgradeRequest?: () => void;
 }
@@ -26,6 +29,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   currentTrackCount,
   maxTracks = 10,
   disabled = false,
+  isSessionHost = false,
   onUpgradeRequest,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -241,8 +245,9 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
         </div>
       )}
 
-      {/* Admin badge */}
-      {isAdmin && status === 'idle' && (
+      {/* Admin badge — P3 : visible UNIQUEMENT par l'admin hôte de la session, jamais par un
+          participant/co-animateur (gate sur isSessionHost en plus de isAdmin) */}
+      {isAdmin && isSessionHost && status === 'idle' && (
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-purple-500/10 border border-purple-500/30">
           <Crown size={14} className="text-purple-400" />
           <span className="text-xs text-purple-400">Mode Admin - Upload illimité</span>
@@ -291,7 +296,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
               </span>
               <span className="text-xs text-white/30">
                 {currentTrackCount}/{effectiveMaxTracks} titres • Max 50 Mo
-                {isAdmin && ' • Admin'}
+                {isAdmin && isSessionHost && ' • Admin'}
               </span>
             </>
           )}

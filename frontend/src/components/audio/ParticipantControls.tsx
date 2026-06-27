@@ -183,8 +183,8 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
             <Slider
               value={[isMuted ? 0 : volume]}
               min={0}
-              max={100}
-              step={1}
+              max={250}
+              step={5}
               onValueChange={([val]) => onVolumeChange(participant.id, val)}
               className="volume-slider-mini flex-1"
             />

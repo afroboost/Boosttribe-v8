@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, MessageCircle } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -38,6 +38,8 @@ import { SessionSocial } from '@/components/session/SessionSocial';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { StageRequestsPanel } from '@/components/session/StageRequestsPanel';
 import type { StageRequest } from '@/components/session/StageRequestsPanel';
+import { ChatPanel } from '@/components/session/ChatPanel';
+import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useVideoMesh } from '@/hooks/useVideoMesh';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
@@ -474,6 +476,9 @@ export const SessionPage: React.FC = () => {
   const userEmail = user?.email?.toLowerCase() || '';
   const isAdminByEmail = userEmail === 'contact.artboost@gmail.com';
   const isAdminUser = isAdminByEmail || isAdmin;
+
+  // 💬 CHAT (Pro uniquement) : Pro/Enterprise/comp-access/admin. Les gratuits voient un cadenas.
+  const isPro = isSubscribed || isAdminUser;
 
   // Audio element ref for remote mute control
   const audioElementRef = useRef<HTMLAudioElement | null>(null);
@@ -1090,6 +1095,23 @@ export const SessionPage: React.FC = () => {
   const navigateRef = useRef(navigate);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
+  // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatTab, setChatTab] = useState<'group' | 'private'>('group');
+  const [chatPartner, setChatPartner] = useState<string | null>(null); // conversation privée ouverte
+  const [groupMessages, setGroupMessages] = useState<ChatMessage[]>([]);
+  const [privateThreads, setPrivateThreads] = useState<Record<string, ChatMessage[]>>({});
+  const [chatUnread, setChatUnread] = useState<Record<string, number>>({}); // clé 'group' | partnerId
+  // Refs lues par les handlers Realtime (souscrits une seule fois) pour décider de l'incrément "non lu".
+  const isProRef = useRef(isPro);
+  useEffect(() => { isProRef.current = isPro; }, [isPro]);
+  const chatOpenRef = useRef(chatOpen);
+  useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
+  const chatViewRef = useRef<string>(''); // conversation actuellement visible : '' | 'group' | partnerId | '__list__'
+  useEffect(() => {
+    chatViewRef.current = !chatOpen ? '' : (chatTab === 'group' ? 'group' : (chatPartner || '__list__'));
+  }, [chatOpen, chatTab, chatPartner]);
+
   // 🔄 SUPABASE REALTIME: Sync playlist changes for participants
   useEffect(() => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
@@ -1409,6 +1431,39 @@ export const SessionPage: React.FC = () => {
           showToastRef.current('Tu n\'es plus à l\'écran', 'warning');
         }
       })
+      // 💬 CHAT GROUPÉ (Pro) — message visible par tout le groupe
+      .on('broadcast', { event: 'CHAT_GROUP' }, (payload) => {
+        if (!isProRef.current || !payload.payload) return;
+        const m = payload.payload as ChatMessage;
+        if (!m.id || !m.text) return;
+        if (m.userId === myUserIdRef.current) return; // self-echo (déjà ajouté localement)
+        setGroupMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
+        if (!chatOpenRef.current || chatViewRef.current !== 'group') {
+          setChatUnread((prev) => ({ ...prev, group: (prev.group || 0) + 1 }));
+        }
+      })
+      // 💬 CHAT PRIVÉ (Pro) — 1-à-1, visible uniquement par expéditeur + destinataire
+      .on('broadcast', { event: 'CHAT_PRIVATE' }, (payload) => {
+        if (!isProRef.current || !payload.payload) return;
+        const m = payload.payload as ChatMessage;
+        if (!m.id || !m.text || !m.fromUserId || !m.toUserId) return;
+        if (m.toUserId !== myUserIdRef.current) return; // destiné à quelqu'un d'autre → ignorer
+        const key = m.fromUserId; // conversation indexée par l'interlocuteur
+        setPrivateThreads((prev) => {
+          const cur = prev[key] || [];
+          if (cur.some((x) => x.id === m.id)) return prev;
+          return { ...prev, [key]: [...cur, m] };
+        });
+        if (!chatOpenRef.current || chatViewRef.current !== key) {
+          setChatUnread((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
+        }
+      })
+      // 💬 MODÉRATION — l'hôte supprime un message groupé pour tous
+      .on('broadcast', { event: 'CHAT_DELETE' }, (payload) => {
+        const p = payload.payload as { id?: string };
+        if (!p?.id) return;
+        setGroupMessages((prev) => prev.filter((x) => x.id !== p.id));
+      })
       .subscribe();
 
     // Handler pour INSERT et UPDATE (playlist seulement)
@@ -1633,6 +1688,57 @@ export const SessionPage: React.FC = () => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
   }, [sessionId]);
+
+  // 💬 CHAT — envoi (ajout optimiste local + diffusion realtime). Pro uniquement.
+  const makeChatId = useCallback(
+    () => `${socket.userId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    [socket.userId],
+  );
+  const handleSendGroupMessage = useCallback((text: string) => {
+    if (!isPro || !text.trim()) return;
+    const m: ChatMessage = {
+      id: makeChatId(), userId: socket.userId, name: nickname || 'Invité',
+      photoUrl: myAvatar || null, text: text.trim(), ts: Date.now(),
+    };
+    setGroupMessages((prev) => [...prev, m]);
+    sendPlaybackEvent('CHAT_GROUP', m);
+  }, [isPro, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
+  const handleSendPrivateMessage = useCallback((partnerId: string, text: string) => {
+    if (!isPro || !partnerId || !text.trim()) return;
+    const m: ChatMessage = {
+      id: makeChatId(), userId: socket.userId, name: nickname || 'Invité',
+      photoUrl: myAvatar || null, text: text.trim(), ts: Date.now(),
+      fromUserId: socket.userId, toUserId: partnerId,
+    };
+    setPrivateThreads((prev) => ({ ...prev, [partnerId]: [...(prev[partnerId] || []), m] }));
+    sendPlaybackEvent('CHAT_PRIVATE', m);
+  }, [isPro, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
+  const handleDeleteGroupMessage = useCallback((id: string) => {
+    if (!isHost) return;
+    setGroupMessages((prev) => prev.filter((x) => x.id !== id));
+    sendPlaybackEvent('CHAT_DELETE', { id });
+  }, [isHost, sendPlaybackEvent]);
+  // Ouverture du chat avec gating Pro (cadenas + "Passer à Pro" pour les gratuits).
+  const handleChatButtonClick = useCallback(() => {
+    if (!isPro) {
+      showToast('Le chat (groupé et privé) est réservé aux membres Pro', 'warning');
+      navigate('/pricing');
+      return;
+    }
+    setChatOpen((o) => !o);
+  }, [isPro, showToast, navigate]);
+  // Marquer comme lue la conversation actuellement visible (à l'ouverture / changement / nouveau message).
+  const activePrivateLen = chatPartner ? (privateThreads[chatPartner]?.length || 0) : 0;
+  useEffect(() => {
+    if (!chatOpen) return;
+    const key = chatTab === 'group' ? 'group' : chatPartner;
+    if (!key) return;
+    setChatUnread((prev) => (prev[key] ? { ...prev, [key]: 0 } : prev));
+  }, [chatOpen, chatTab, chatPartner, groupMessages.length, activePrivateLen]);
+  const chatUnreadTotal = useMemo(
+    () => Object.values(chatUnread).reduce((s, n) => s + (n || 0), 0),
+    [chatUnread],
+  );
 
   // 🎤 SCÈNE — actions (spectateur + hôte)
   // Spectateur : demander à monter en vidéo
@@ -2517,6 +2623,29 @@ export const SessionPage: React.FC = () => {
               {/* PARTIE D : sélecteur de langue (globe) — hôte ET participants */}
               <LanguageSelector />
 
+              {/* 💬 CHAT de session — Pro : ouvre le panneau ; gratuit : cadenas + redirection /pricing */}
+              {sessionId && (
+                <button
+                  onClick={() => { handleChatButtonClick(); setSessionMenuOpen(false); }}
+                  className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors w-full md:w-auto justify-center ${
+                    chatOpen
+                      ? 'bg-[#8A2EFF]/25 border-[#8A2EFF]/50 text-[#c9a3ff]'
+                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
+                  }`}
+                  title={isPro ? 'Chat de la session' : 'Chat réservé aux membres Pro'}
+                  data-testid="session-chat-button"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  <span className="text-sm md:hidden lg:inline">Chat</span>
+                  {!isPro && <Lock className="w-3 h-3 text-white/40" />}
+                  {isPro && !chatOpen && chatUnreadTotal > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
+                      {chatUnreadTotal > 99 ? '99+' : chatUnreadTotal}
+                    </span>
+                  )}
+                </button>
+              )}
+
               {/* Host Microphone Control */}
               {isHost && (
                 <MicrophoneControl
@@ -3360,6 +3489,29 @@ export const SessionPage: React.FC = () => {
           playsInline
           className="hidden"
           data-testid="remote-audio"
+        />
+      )}
+
+      {/* 💬 Panneau de CHAT de session (Pro uniquement) — groupé + privé, realtime éphémère */}
+      {isPro && (
+        <ChatPanel
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+          meUserId={socket.userId}
+          isHost={isHost}
+          participants={participants
+            .filter((p) => !p.isCurrentUser && p.id !== socket.userId)
+            .map((p) => ({ id: p.id, name: p.name, avatarUrl: p.avatarUrl || null }))}
+          tab={chatTab}
+          onTab={setChatTab}
+          partner={chatPartner}
+          onOpenPartner={setChatPartner}
+          groupMessages={groupMessages}
+          privateThreads={privateThreads}
+          unread={chatUnread}
+          onSendGroup={handleSendGroupMessage}
+          onSendPrivate={handleSendPrivateMessage}
+          onDeleteGroup={handleDeleteGroupMessage}
         />
       )}
     </div>

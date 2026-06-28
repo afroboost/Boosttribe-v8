@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Send, Users, MessageCircle, ArrowLeft, Trash2, Lock } from 'lucide-react';
+import { X, Send, Users, MessageCircle, ArrowLeft, Trash2, Lock, Bot } from 'lucide-react';
 import { ProfilePhoto } from '@/components/session/ProfilePhoto';
+import { AssistantChat } from '@/components/AssistantChat';
 
 // 💬 Message de chat (groupé ou privé) — éphémère (realtime uniquement, pas de DB en v1).
 export interface ChatMessage {
@@ -21,14 +22,20 @@ export interface ChatParticipant {
   avatarUrl?: string | null;
 }
 
+export type ChatTab = 'assistant' | 'group' | 'private';
+
 interface ChatPanelProps {
   open: boolean;
+  onToggle: () => void;                      // bouton lanceur (ouvrir/fermer)
   onClose: () => void;
+  isPro: boolean;                            // gating Groupe/Privé + Assistant
+  gradient: string;                          // dégradé du thème
+  unreadTotal: number;                       // badge du lanceur (groupe + privé)
   meUserId: string;
   isHost: boolean;
   participants: ChatParticipant[];           // autres participants (self exclu)
-  tab: 'group' | 'private';
-  onTab: (t: 'group' | 'private') => void;
+  tab: ChatTab;
+  onTab: (t: ChatTab) => void;
   partner: string | null;                    // conversation privée ouverte (userId) ou null = liste
   onOpenPartner: (id: string | null) => void;
   groupMessages: ChatMessage[];
@@ -121,10 +128,30 @@ const Composer: React.FC<{ onSend: (text: string) => void; placeholder: string }
   );
 };
 
-// 💬 Panneau de chat de session (groupé + privé), réservé aux membres Pro.
-// Tiroir : plein écran sur mobile, panneau latéral droit sur desktop.
+// 🔒 Vue verrouillée (gratuit) pour Groupe / Privé.
+const ProLock: React.FC<{ gradient: string }> = ({ gradient }) => (
+  <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+    <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-4">
+      <Lock className="w-8 h-8 text-white/50" />
+    </div>
+    <h3 className="text-white font-semibold mb-2">Le chat (groupé et privé) est réservé aux membres Pro</h3>
+    <p className="text-white/60 text-sm mb-4">Passez à Pro ou Enterprise pour discuter avec le groupe et en privé.</p>
+    <a
+      href="/pricing"
+      className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
+      style={{ background: gradient }}
+    >
+      Passer à Pro
+    </a>
+  </div>
+);
+
+// 💬 Lanceur + panneau de chat de session, regroupés en bas à droite.
+// Onglets : Assistant (bot Boosttribe) · Groupe · Privé. Gating Pro pour les trois.
+// Plein écran sur mobile, carte flottante bas-droite sur desktop.
 export const ChatPanel: React.FC<ChatPanelProps> = ({
-  open, onClose, meUserId, isHost, participants,
+  open, onToggle, onClose, isPro, gradient, unreadTotal,
+  meUserId, isHost, participants,
   tab, onTab, partner, onOpenPartner,
   groupMessages, privateThreads, unread,
   onSendGroup, onSendPrivate, onDeleteGroup,
@@ -139,158 +166,181 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   // Auto-défilement vers le bas à chaque nouveau message / changement de vue.
   useEffect(() => {
-    if (!open) return;
+    if (!open || tab === 'assistant') return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [open, tab, partner, groupMessages, activeThread.length]);
 
-  if (!open) return null;
-
-  const totalGroupUnread = unread['group'] || 0;
-  const totalPrivateUnread = Object.entries(unread)
+  const groupUnread = unread['group'] || 0;
+  const privateUnread = Object.entries(unread)
     .filter(([k]) => k !== 'group')
     .reduce((s, [, n]) => s + (n || 0), 0);
 
+  const TABS: { key: ChatTab; label: string; icon: React.ReactNode; badge: number }[] = [
+    { key: 'assistant', label: 'Assistant', icon: <Bot size={14} />, badge: 0 },
+    { key: 'group', label: 'Groupe', icon: <Users size={14} />, badge: groupUnread },
+    { key: 'private', label: 'Privé', icon: <MessageCircle size={14} />, badge: privateUnread },
+  ];
+
   return (
     <>
-      {/* Fond cliquable (mobile uniquement) */}
-      <div
-        className="fixed inset-0 z-[115] bg-black/60 sm:hidden"
-        onClick={onClose}
-        aria-hidden
-      />
-      <div
-        className="fixed inset-y-0 right-0 z-[120] w-full sm:max-w-[400px] flex flex-col bg-[#0d0d12] border-l border-white/10 shadow-2xl"
-        data-testid="chat-panel"
+      {/* 🚀 Lanceur flottant bas-droite (badge non-lus groupe + privé) */}
+      <button
+        onClick={onToggle}
+        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+        style={{ background: gradient }}
+        data-testid="session-chat-launcher"
+        aria-label="Ouvrir le chat de la session"
       >
-        {/* En-tête */}
-        <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/10 bg-gradient-to-r from-[#8A2EFF]/15 to-[#FF2FB3]/15">
-          <h3 className="flex items-center gap-2 text-white text-sm font-semibold">
-            <MessageCircle className="w-4.5 h-4.5 text-[#FF2FB3]" /> Chat de la session
-          </h3>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
-            title="Fermer"
-            data-testid="chat-close"
+        {open ? <X className="w-6 h-6 text-white" /> : <MessageCircle className="w-6 h-6 text-white" />}
+        {!open && unreadTotal > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0d0d12]">
+            {unreadTotal > 99 ? '99+' : unreadTotal}
+          </span>
+        )}
+      </button>
+
+      {!open ? null : (
+        <>
+          {/* Fond cliquable (mobile uniquement) */}
+          <div className="fixed inset-0 z-[115] bg-black/60 sm:hidden" onClick={onClose} aria-hidden />
+
+          <div
+            className="fixed z-[120] inset-x-0 bottom-0 top-0 flex flex-col bg-[#0d0d12] border border-white/10 shadow-2xl
+                       sm:inset-auto sm:bottom-24 sm:right-6 sm:top-auto sm:w-96 sm:h-[560px] sm:max-h-[80vh] sm:rounded-2xl sm:overflow-hidden"
+            data-testid="chat-panel"
           >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Onglets Groupe / Privé */}
-        <div className="flex items-center gap-1 px-2 pt-2">
-          {([
-            { key: 'group', label: 'Groupe', icon: <Users size={14} />, badge: totalGroupUnread },
-            { key: 'private', label: 'Privé', icon: <MessageCircle size={14} />, badge: totalPrivateUnread },
-          ] as const).map((t) => (
-            <button
-              key={t.key}
-              onClick={() => onTab(t.key)}
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                tab === t.key ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white/80'
-              }`}
-              data-testid={`chat-tab-${t.key}`}
-            >
-              {t.icon} {t.label}
-              {t.badge > 0 && tab !== t.key && (
-                <span className="min-w-[16px] h-4 px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
-                  {t.badge > 99 ? '99+' : t.badge}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Contenu */}
-        {tab === 'group' ? (
-          <>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-              {groupMessages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center text-white/35 px-6">
-                  <Users size={32} className="mb-2 opacity-50" />
-                  <p className="text-sm">Aucun message pour l'instant.</p>
-                  <p className="text-xs mt-1">Lancez la discussion avec le groupe&nbsp;!</p>
-                </div>
-              ) : (
-                groupMessages.map((m) => (
-                  <MessageBubble
-                    key={m.id}
-                    m={m}
-                    mine={m.userId === meUserId}
-                    canDelete={isHost}
-                    onDelete={onDeleteGroup}
-                  />
-                ))
-              )}
-            </div>
-            <Composer onSend={onSendGroup} placeholder="Message au groupe…" />
-          </>
-        ) : partner && partnerInfo ? (
-          <>
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-white/5">
+            {/* En-tête */}
+            <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/10" style={{ background: gradient }}>
+              <h3 className="flex items-center gap-2 text-white text-sm font-semibold">
+                <MessageCircle className="w-4 h-4" /> Chat de la session
+              </h3>
               <button
-                onClick={() => onOpenPartner(null)}
-                className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10"
-                title="Retour aux conversations"
-                data-testid="chat-private-back"
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-white/80 hover:text-white hover:bg-white/15 transition-colors"
+                title="Fermer"
+                data-testid="chat-close"
               >
-                <ArrowLeft size={16} />
+                <X size={18} />
               </button>
-              <ProfilePhoto url={partnerInfo.avatarUrl} name={partnerInfo.name} size={26} />
-              <span className="text-white text-sm font-medium truncate">{partnerInfo.name}</span>
-              <span className="ml-auto flex items-center gap-1 text-[10px] text-white/40">
-                <Lock size={11} /> privé
-              </span>
             </div>
-            <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-              {activeThread.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-center text-white/35 px-6">
-                  <MessageCircle size={32} className="mb-2 opacity-50" />
-                  <p className="text-sm">Conversation privée avec {partnerInfo.name}.</p>
-                  <p className="text-xs mt-1">Vous seuls voyez ces messages.</p>
+
+            {/* Onglets Assistant / Groupe / Privé */}
+            <div className="flex items-center gap-1 px-2 pt-2 flex-shrink-0">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => onTab(t.key)}
+                  className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    tab === t.key ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white/80'
+                  }`}
+                  data-testid={`chat-tab-${t.key}`}
+                >
+                  {t.icon} {t.label}
+                  {t.badge > 0 && tab !== t.key && (
+                    <span className="min-w-[16px] h-4 px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
+                      {t.badge > 99 ? '99+' : t.badge}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Contenu */}
+            {tab === 'assistant' ? (
+              <AssistantChat hasAccess={isPro} gradient={gradient} active={open && tab === 'assistant'} />
+            ) : !isPro ? (
+              <ProLock gradient={gradient} />
+            ) : tab === 'group' ? (
+              <>
+                <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                  {groupMessages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center text-white/35 px-6">
+                      <Users size={32} className="mb-2 opacity-50" />
+                      <p className="text-sm">Aucun message pour l'instant.</p>
+                      <p className="text-xs mt-1">Lancez la discussion avec le groupe&nbsp;!</p>
+                    </div>
+                  ) : (
+                    groupMessages.map((m) => (
+                      <MessageBubble
+                        key={m.id}
+                        m={m}
+                        mine={m.userId === meUserId}
+                        canDelete={isHost}
+                        onDelete={onDeleteGroup}
+                      />
+                    ))
+                  )}
                 </div>
-              ) : (
-                activeThread.map((m) => (
-                  <MessageBubble key={m.id} m={m} mine={m.userId === meUserId} canDelete={false} />
-                ))
-              )}
-            </div>
-            <Composer onSend={(t) => onSendPrivate(partner, t)} placeholder={`Message privé à ${partnerInfo.name}…`} />
-          </>
-        ) : (
-          /* Liste des conversations privées disponibles */
-          <div className="flex-1 overflow-y-auto p-2">
-            <p className="px-2 py-2 text-[11px] uppercase tracking-wide text-white/35">Participants</p>
-            {participants.length === 0 ? (
-              <div className="flex flex-col items-center justify-center text-center text-white/35 px-6 py-10">
-                <Users size={32} className="mb-2 opacity-50" />
-                <p className="text-sm">Aucun autre participant pour l'instant.</p>
-              </div>
-            ) : (
-              participants.map((p) => {
-                const n = unread[p.id] || 0;
-                return (
+                <Composer onSend={onSendGroup} placeholder="Message au groupe…" />
+              </>
+            ) : partner && partnerInfo ? (
+              <>
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10 bg-white/5 flex-shrink-0">
                   <button
-                    key={p.id}
-                    onClick={() => onOpenPartner(p.id)}
-                    className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-white/8 transition-colors text-left"
-                    data-testid="chat-private-open"
+                    onClick={() => onOpenPartner(null)}
+                    className="p-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10"
+                    title="Retour aux conversations"
+                    data-testid="chat-private-back"
                   >
-                    <ProfilePhoto url={p.avatarUrl} name={p.name} size={36} />
-                    <span className="flex-1 min-w-0 text-white/90 text-sm truncate">{p.name}</span>
-                    {n > 0 && (
-                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
-                        {n > 99 ? '99+' : n}
-                      </span>
-                    )}
+                    <ArrowLeft size={16} />
                   </button>
-                );
-              })
+                  <ProfilePhoto url={partnerInfo.avatarUrl} name={partnerInfo.name} size={26} />
+                  <span className="text-white text-sm font-medium truncate">{partnerInfo.name}</span>
+                  <span className="ml-auto flex items-center gap-1 text-[10px] text-white/40">
+                    <Lock size={11} /> privé
+                  </span>
+                </div>
+                <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+                  {activeThread.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center text-white/35 px-6">
+                      <MessageCircle size={32} className="mb-2 opacity-50" />
+                      <p className="text-sm">Conversation privée avec {partnerInfo.name}.</p>
+                      <p className="text-xs mt-1">Vous seuls voyez ces messages.</p>
+                    </div>
+                  ) : (
+                    activeThread.map((m) => (
+                      <MessageBubble key={m.id} m={m} mine={m.userId === meUserId} canDelete={false} />
+                    ))
+                  )}
+                </div>
+                <Composer onSend={(t) => onSendPrivate(partner, t)} placeholder={`Message privé à ${partnerInfo.name}…`} />
+              </>
+            ) : (
+              /* Liste des conversations privées disponibles */
+              <div className="flex-1 overflow-y-auto p-2">
+                <p className="px-2 py-2 text-[11px] uppercase tracking-wide text-white/35">Participants</p>
+                {participants.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center text-center text-white/35 px-6 py-10">
+                    <Users size={32} className="mb-2 opacity-50" />
+                    <p className="text-sm">Aucun autre participant pour l'instant.</p>
+                  </div>
+                ) : (
+                  participants.map((p) => {
+                    const n = unread[p.id] || 0;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => onOpenPartner(p.id)}
+                        className="w-full flex items-center gap-2.5 p-2 rounded-xl hover:bg-white/8 transition-colors text-left"
+                        data-testid="chat-private-open"
+                      >
+                        <ProfilePhoto url={p.avatarUrl} name={p.name} size={36} />
+                        <span className="flex-1 min-w-0 text-white/90 text-sm truncate">{p.name}</span>
+                        {n > 0 && (
+                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
+                            {n > 99 ? '99+' : n}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </>
   );
 };

@@ -9,11 +9,14 @@ interface CameraTileProps {
   isHost?: boolean;
   avatarUrl?: string | null;
   large?: boolean;       // vignette mise en avant (disposition "vidéo en grand")
+  onClick?: () => void;          // clic sur la vignette (ex. agrandir/épingler)
+  className?: string;            // classes additionnelles sur le conteneur
+  topRight?: React.ReactNode;    // emplacement bouton coin haut-droit (ex. Agrandir/Réduire)
 }
 
 // Vignette d'une personne : flux vidéo si caméra allumée, sinon initiales (caméra coupée).
 export const CameraTile: React.FC<CameraTileProps> = ({
-  name, stream, isLocal, micActive, isHost, avatarUrl, large,
+  name, stream, isLocal, micActive, isHost, avatarUrl, large, onClick, className = '', topRight,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -30,9 +33,15 @@ export const CameraTile: React.FC<CameraTileProps> = ({
 
   return (
     <div
-      className={`relative rounded-xl overflow-hidden bg-[#14141A] border border-white/10 ${large ? '' : 'aspect-video'}`}
+      className={`relative rounded-xl overflow-hidden bg-[#14141A] border border-white/10 ${large ? '' : 'aspect-video'} ${onClick ? 'cursor-pointer' : ''} ${className}`}
       data-testid="camera-tile"
+      onClick={onClick}
     >
+      {topRight && (
+        <div className="absolute top-1.5 right-1.5 z-10" onClick={(e) => e.stopPropagation()}>
+          {topRight}
+        </div>
+      )}
       {stream ? (
         <video
           ref={videoRef}

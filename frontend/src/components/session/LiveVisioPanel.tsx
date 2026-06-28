@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2 } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
@@ -40,23 +40,45 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   canManageStage = true, stageRequestPending = false, onRequestStage,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
+  // 🔍 Agrandir (épingler) UNE caméra — action LOCALE (chacun choisit sur SON écran).
+  const [spotlightId, setSpotlightId] = useState<string | null>(null);
 
   const streamFor = (p: VisioParticipant): MediaStream | null => {
     if (p.id === myUserId) return cameraOn ? localStream : null;
     return remoteCameras.find((c) => c.userId === p.id)?.stream || null;
   };
 
-  const tiles = participants.map((p) => (
+  // Bouton coin haut-droit d'une vignette : agrandir (vignette normale) / réduire (grande vue).
+  const pinButton = (active: boolean, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      className="p-1.5 rounded-lg bg-black/50 text-white/80 hover:bg-black/70 hover:text-white transition-colors"
+      title={active ? 'Réduire' : 'Agrandir'}
+      data-testid={active ? 'visio-tile-reduce' : 'visio-tile-enlarge'}
+    >
+      {active ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+    </button>
+  );
+
+  // Rendu d'une vignette cliquable (clic = agrandir ; sur la grande vue, clic = réduire).
+  const tileFor = (p: VisioParticipant, large = false) => (
     <CameraTile
-      key={p.id}
       name={p.name}
       stream={streamFor(p)}
       isLocal={p.id === myUserId}
       micActive={p.isMicActive}
       isHost={p.isHost}
       avatarUrl={p.avatarUrl}
+      large={large}
+      className={large ? 'w-full h-full' : ''}
+      onClick={() => setSpotlightId(large ? null : p.id)}
+      topRight={pinButton(large, () => setSpotlightId(large ? null : p.id))}
     />
-  ));
+  );
+
+  // Participant actuellement agrandi (s'il est toujours présent), + les autres en miniatures.
+  const spotlightP = spotlightId ? participants.find((p) => p.id === spotlightId) || null : null;
+  const otherParticipants = spotlightP ? participants.filter((p) => p.id !== spotlightP.id) : [];
 
   return (
     <div className="rounded-2xl border border-[#8A2EFF]/25 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="live-visio-panel">
@@ -93,24 +115,35 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         </div>
       </div>
 
-      {/* Grille / bandeau de caméras */}
+      {/* Grille / bandeau de caméras — ou vue agrandie (spotlight) si une caméra est épinglée */}
       <div className="p-3">
-        {layout === 'grid' ? (
+        {spotlightP ? (
+          /* 🔍 Vue agrandie : une grande caméra + les autres en miniatures (clic sur une miniature = l'agrandir) */
+          <div className="space-y-2">
+            <div className="relative aspect-video">
+              {tileFor(spotlightP, true)}
+            </div>
+            {otherParticipants.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {otherParticipants.map((p) => (
+                  <div key={p.id} className="w-24 sm:w-32 flex-shrink-0">
+                    {tileFor(p)}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : layout === 'grid' ? (
           <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {tiles}
+            {participants.map((p) => (
+              <div key={p.id}>{tileFor(p)}</div>
+            ))}
           </div>
         ) : (
           <div className="flex gap-2 overflow-x-auto pb-1">
             {participants.map((p) => (
               <div key={p.id} className="w-32 sm:w-40 flex-shrink-0">
-                <CameraTile
-                  name={p.name}
-                  stream={streamFor(p)}
-                  isLocal={p.id === myUserId}
-                  micActive={p.isMicActive}
-                  isHost={p.isHost}
-                  avatarUrl={p.avatarUrl}
-                />
+                {tileFor(p)}
               </div>
             ))}
           </div>

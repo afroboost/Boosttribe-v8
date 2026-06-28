@@ -115,18 +115,35 @@ def _service_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
 
 
 async def get_user_from_token(authorization: Optional[str]) -> Dict[str, Any]:
-    """Vérifie le token d'accès Supabase et renvoie l'utilisateur (id, email)."""
+    """Vérifie le token d'accès Supabase et renvoie l'utilisateur (id, email).
+    Logue la VRAIE raison d'un rejet (config manquante / token expiré / Supabase injoignable)."""
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="Token manquant")
+        raise HTTPException(status_code=401, detail="Token manquant — reconnecte-toi")
     token = authorization.split(" ", 1)[1].strip()
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/auth/v1/user",
-            headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {token}"},
+    # Vérifier la configuration serveur avant tout (cause fréquente de "Token invalide" trompeur).
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        logger.error(
+            "Config Supabase incomplète: SUPABASE_URL=%r, SERVICE_ROLE_KEY défini=%s",
+            SUPABASE_URL, bool(SUPABASE_SERVICE_ROLE_KEY),
         )
+        raise HTTPException(status_code=500, detail="Configuration serveur incomplète (SUPABASE_URL / SERVICE_ROLE_KEY)")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/auth/v1/user",
+                headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {token}"},
+            )
+    except Exception as exc:  # réseau / DNS / TLS → Supabase injoignable
+        logger.error("Supabase injoignable lors de la validation du token (%s): %s", SUPABASE_URL, exc)
+        raise HTTPException(status_code=502, detail="Service d'authentification injoignable")
+
     if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Token invalide")
+        logger.warning("Validation token échouée: HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+        if resp.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Session expirée ou token invalide — reconnecte-toi")
+        raise HTTPException(status_code=401, detail=f"Token rejeté par Supabase (HTTP {resp.status_code})")
     return resp.json()
 
 
@@ -173,7 +190,8 @@ async def require_admin(authorization: Optional[str]) -> Dict[str, Any]:
     user = await get_user_from_token(authorization)
     email = (user.get("email") or "").lower()
     if email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Accès réservé à l'administrateur")
+        logger.warning("Accès admin refusé pour %r (ADMIN_EMAILS=%s)", email or "?", ADMIN_EMAILS)
+        raise HTTPException(status_code=403, detail="Accès réservé à l'administrateur (email non autorisé)")
     return user
 
 
@@ -233,6 +251,62 @@ async def get_profile_by_email(email: str) -> Optional[Dict[str, Any]]:
     if resp.status_code == 200 and resp.json():
         return resp.json()[0]
     return None
+
+
+async def list_auth_users() -> List[Dict[str, Any]]:
+    """Liste TOUS les comptes via l'API admin Supabase (GoTrue, service role).
+    Source de vérité fiable (≠ table profiles qui peut être vide/non peuplée)."""
+    users: List[Dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=20) as client:
+        page = 1
+        while page <= 50:  # garde-fou (50 * 1000 = 50k comptes max)
+            resp = await client.get(
+                f"{SUPABASE_URL}/auth/v1/admin/users",
+                headers=_service_headers(),
+                params={"page": page, "per_page": 1000},
+            )
+            if resp.status_code != 200:
+                logger.error("list_auth_users échec: HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+                break
+            data = resp.json()
+            batch = data.get("users", []) if isinstance(data, dict) else (data or [])
+            if not batch:
+                break
+            users.extend(batch)
+            if len(batch) < 1000:
+                break
+            page += 1
+    return users
+
+
+async def fetch_profiles_map() -> Dict[str, Dict[str, Any]]:
+    """Map {id: profil} pour enrichir la liste des comptes auth (plan, avatar, etc.)."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=_service_headers(),
+            params={"select": "id,email,full_name,avatar_url,subscription_status,comp_access_plan,comp_access_until"},
+        )
+    if resp.status_code != 200:
+        logger.error("fetch_profiles_map échec: HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+        return {}
+    return {row["id"]: row for row in resp.json() if row.get("id")}
+
+
+async def upsert_profile(row: Dict[str, Any]) -> bool:
+    """Insère ou met à jour un profil (merge sur id) — garantit que l'octroi d'accès
+    fonctionne même si la ligne profiles n'existe pas encore."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=representation"}),
+            params={"on_conflict": "id"},
+            json=row,
+        )
+    if resp.status_code not in (200, 201):
+        logger.error("upsert_profile échec: HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+        return False
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -471,15 +545,31 @@ async def grant_access(body: GrantAccessBody, authorization: Optional[str] = Hea
         raise HTTPException(status_code=400, detail="Plan invalide")
 
     user_id = body.user_id
+    target_email = (body.email or "").strip().lower()
     if not user_id:
-        if not body.email:
+        if not target_email:
             raise HTTPException(status_code=400, detail="email ou user_id requis")
-        prof = await get_profile_by_email(body.email.strip().lower())
-        if not prof:
-            raise HTTPException(status_code=404, detail="Compte introuvable pour cet email")
-        user_id = prof["id"]
+        prof = await get_profile_by_email(target_email)
+        if prof:
+            user_id = prof["id"]
+        else:
+            # Repli : retrouver le compte via l'API admin Supabase (profiles peut être vide)
+            au = next(
+                (u for u in await list_auth_users() if (u.get("email") or "").lower() == target_email),
+                None,
+            )
+            if not au:
+                raise HTTPException(status_code=404, detail="Compte introuvable pour cet email")
+            user_id = au["id"]
+            target_email = (au.get("email") or target_email).lower()
 
-    await update_profile(user_id, {"comp_access_plan": body.plan, "comp_access_until": body.until})
+    # Upsert (merge sur id) → fonctionne même si la ligne profiles n'existe pas encore.
+    row: Dict[str, Any] = {"id": user_id, "comp_access_plan": body.plan, "comp_access_until": body.until}
+    if target_email:
+        row["email"] = target_email
+    if not await upsert_profile(row):
+        # Repli ultime : PATCH si l'upsert a échoué (ex. colonnes requises supplémentaires)
+        await update_profile(user_id, {"comp_access_plan": body.plan, "comp_access_until": body.until})
     return {"ok": True, "user_id": user_id, "plan": body.plan, "until": body.until}
 
 
@@ -514,16 +604,26 @@ async def list_granted(authorization: Optional[str] = Header(default=None)):
 @app.get("/admin/users")
 async def list_users(authorization: Optional[str] = Header(default=None)):
     await require_admin(authorization)
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(
-            f"{SUPABASE_URL}/rest/v1/profiles",
-            headers=_service_headers(),
-            params={
-                "select": "id,email,full_name,avatar_url,subscription_status,comp_access_plan,comp_access_until,created_at",
-                "order": "created_at.desc",
-            },
-        )
-    rows = resp.json() if resp.status_code == 200 else []
+    # Source de vérité = API admin Supabase (tous les comptes), enrichie par la table profiles.
+    auth_users = await list_auth_users()
+    profiles = await fetch_profiles_map()
+    rows: List[Dict[str, Any]] = []
+    for u in auth_users:
+        uid = u.get("id")
+        prof = profiles.get(uid, {})
+        meta = u.get("user_metadata") or {}
+        rows.append({
+            "id": uid,
+            "email": u.get("email") or prof.get("email"),
+            "full_name": prof.get("full_name") or meta.get("full_name") or meta.get("name"),
+            "avatar_url": prof.get("avatar_url") or meta.get("avatar_url"),
+            "subscription_status": prof.get("subscription_status"),
+            "comp_access_plan": prof.get("comp_access_plan"),
+            "comp_access_until": prof.get("comp_access_until"),
+            "created_at": u.get("created_at"),
+        })
+    # Tri par date de création décroissante (comptes récents en premier)
+    rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"users": rows}
 
 

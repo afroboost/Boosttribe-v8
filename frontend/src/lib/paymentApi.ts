@@ -6,10 +6,18 @@ const API_URL = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 export type StripePlan = 'pro' | 'enterprise';
 export type StripeInterval = 'month' | 'year';
 
+// 🔑 Toujours renvoyer un token FRAIS : rafraîchit explicitement si la session est
+// absente ou si le token expire dans moins de 60s (évite les "Token invalide" périmés).
 async function getAccessToken(): Promise<string | null> {
   if (!supabase) return null;
   const { data } = await supabase.auth.getSession();
-  return data.session?.access_token ?? null;
+  let session = data.session;
+  const expiresAtMs = session?.expires_at ? session.expires_at * 1000 : 0;
+  if (!session || expiresAtMs - Date.now() < 60_000) {
+    const { data: refreshed } = await supabase.auth.refreshSession();
+    session = refreshed.session ?? session;
+  }
+  return session?.access_token ?? null;
 }
 
 export interface SyncPlanPayload {

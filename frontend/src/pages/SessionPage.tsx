@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, MessageCircle } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -1097,7 +1097,7 @@ export const SessionPage: React.FC = () => {
 
   // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatTab, setChatTab] = useState<'group' | 'private'>('group');
+  const [chatTab, setChatTab] = useState<'assistant' | 'group' | 'private'>('assistant');
   const [chatPartner, setChatPartner] = useState<string | null>(null); // conversation privée ouverte
   const [groupMessages, setGroupMessages] = useState<ChatMessage[]>([]);
   const [privateThreads, setPrivateThreads] = useState<Record<string, ChatMessage[]>>({});
@@ -1109,7 +1109,9 @@ export const SessionPage: React.FC = () => {
   useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
   const chatViewRef = useRef<string>(''); // conversation actuellement visible : '' | 'group' | partnerId | '__list__'
   useEffect(() => {
-    chatViewRef.current = !chatOpen ? '' : (chatTab === 'group' ? 'group' : (chatPartner || '__list__'));
+    chatViewRef.current = !chatOpen
+      ? ''
+      : (chatTab === 'group' ? 'group' : chatTab === 'private' ? (chatPartner || '__list__') : '__assistant__');
   }, [chatOpen, chatTab, chatPartner]);
 
   // 🔄 SUPABASE REALTIME: Sync playlist changes for participants
@@ -1718,20 +1720,13 @@ export const SessionPage: React.FC = () => {
     setGroupMessages((prev) => prev.filter((x) => x.id !== id));
     sendPlaybackEvent('CHAT_DELETE', { id });
   }, [isHost, sendPlaybackEvent]);
-  // Ouverture du chat avec gating Pro (cadenas + "Passer à Pro" pour les gratuits).
-  const handleChatButtonClick = useCallback(() => {
-    if (!isPro) {
-      showToast('Le chat (groupé et privé) est réservé aux membres Pro', 'warning');
-      navigate('/pricing');
-      return;
-    }
-    setChatOpen((o) => !o);
-  }, [isPro, showToast, navigate]);
+  // Lanceur de chat (bas-droite) : ouvre/ferme le panneau (le gating Pro est géré dans les onglets).
+  const toggleChat = useCallback(() => setChatOpen((o) => !o), []);
   // Marquer comme lue la conversation actuellement visible (à l'ouverture / changement / nouveau message).
   const activePrivateLen = chatPartner ? (privateThreads[chatPartner]?.length || 0) : 0;
   useEffect(() => {
     if (!chatOpen) return;
-    const key = chatTab === 'group' ? 'group' : chatPartner;
+    const key = chatTab === 'group' ? 'group' : chatTab === 'private' ? chatPartner : null;
     if (!key) return;
     setChatUnread((prev) => (prev[key] ? { ...prev, [key]: 0 } : prev));
   }, [chatOpen, chatTab, chatPartner, groupMessages.length, activePrivateLen]);
@@ -2622,29 +2617,8 @@ export const SessionPage: React.FC = () => {
 
               {/* PARTIE D : sélecteur de langue (globe) — hôte ET participants */}
               <LanguageSelector />
-
-              {/* 💬 CHAT de session — Pro : ouvre le panneau ; gratuit : cadenas + redirection /pricing */}
-              {sessionId && (
-                <button
-                  onClick={() => { handleChatButtonClick(); setSessionMenuOpen(false); }}
-                  className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors w-full md:w-auto justify-center ${
-                    chatOpen
-                      ? 'bg-[#8A2EFF]/25 border-[#8A2EFF]/50 text-[#c9a3ff]'
-                      : 'bg-white/5 border-white/10 text-white/70 hover:bg-white/10'
-                  }`}
-                  title={isPro ? 'Chat de la session' : 'Chat réservé aux membres Pro'}
-                  data-testid="session-chat-button"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  <span className="text-sm md:hidden lg:inline">Chat</span>
-                  {!isPro && <Lock className="w-3 h-3 text-white/40" />}
-                  {isPro && !chatOpen && chatUnreadTotal > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
-                      {chatUnreadTotal > 99 ? '99+' : chatUnreadTotal}
-                    </span>
-                  )}
-                </button>
-              )}
+              {/* 💬 Le chat de session (Assistant + Groupe + Privé) est désormais un lanceur flottant
+                  en bas à droite — voir <ChatPanel> en bas de page. */}
 
               {/* Host Microphone Control */}
               {isHost && (
@@ -3492,11 +3466,16 @@ export const SessionPage: React.FC = () => {
         />
       )}
 
-      {/* 💬 Panneau de CHAT de session (Pro uniquement) — groupé + privé, realtime éphémère */}
-      {isPro && (
+      {/* 💬 Lanceur + panneau de CHAT de session (bas à droite) — onglets Assistant / Groupe / Privé.
+          Groupe + Privé sont Pro (realtime éphémère) ; l'Assistant reste Pro comme ailleurs. */}
+      {sessionId && (
         <ChatPanel
           open={chatOpen}
+          onToggle={toggleChat}
           onClose={() => setChatOpen(false)}
+          isPro={isPro}
+          gradient={theme.colors.gradient.primary}
+          unreadTotal={chatUnreadTotal}
           meUserId={socket.userId}
           isHost={isHost}
           participants={participants

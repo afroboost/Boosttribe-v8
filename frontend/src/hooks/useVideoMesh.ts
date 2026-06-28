@@ -62,7 +62,9 @@ export interface VideoMeshReturn {
   localStream: MediaStream | null;
   remoteCameras: RemoteCamera[];
   activeCameraCount: number; // locale + distantes
-  startCamera: () => Promise<boolean>;
+  // force = true : l'hôte a validé une prise de parole (et libéré une place si besoin) → on ne
+  // re-bloque PAS sur la limite locale (le décompte distant peut ne pas être encore propagé).
+  startCamera: (force?: boolean) => Promise<boolean>;
   stopCamera: () => void;
   // 🖥️ Partage d'écran (diffusé à tous via le même transport mesh)
   screenOn: boolean;
@@ -244,11 +246,11 @@ export function useVideoMesh(options: VideoMeshOptions): VideoMeshReturn {
     };
   }, [active, sessionId, userId, announce, callPeer, callPeerScreen, setRemote, removeRemote]);
 
-  const startCamera = useCallback(async (): Promise<boolean> => {
+  const startCamera = useCallback(async (force = false): Promise<boolean> => {
     if (cameraOnRef.current) return true;
-    // Limite : nb de caméras actives (la mienne + distantes) < max
+    // Limite : nb de caméras actives (la mienne + distantes) < max — sauf si l'hôte force (place libérée)
     const activeCount = remoteCameras.length + (cameraOnRef.current ? 1 : 0);
-    if (activeCount >= maxCameras) {
+    if (!force && activeCount >= maxCameras) {
       onLimitRef.current?.();
       return false;
     }

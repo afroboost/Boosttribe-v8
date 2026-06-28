@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
@@ -24,6 +24,10 @@ interface LiveVisioPanelProps {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   onLeaveLive: () => void;
+  // 🎤 Scène : l'hôte/co-hôte gère librement sa caméra ; le spectateur DEMANDE à monter.
+  canManageStage?: boolean;
+  stageRequestPending?: boolean;
+  onRequestStage?: () => void;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -33,6 +37,7 @@ type Layout = 'grid' | 'spotlight';
 export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   participants, myUserId, localStream, remoteCameras, cameraOn, activeCameraCount, maxCameras,
   micActive, onToggleMic, onToggleCamera, onLeaveLive,
+  canManageStage = true, stageRequestPending = false, onRequestStage,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
 
@@ -125,16 +130,46 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           <span className="hidden xs:inline">{micActive ? 'Micro' : 'Micro'}</span>
         </button>
 
-        <button
-          onClick={onToggleCamera}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-            cameraOn ? 'bg-[#8A2EFF]/25 text-[#c9a3ff] hover:bg-[#8A2EFF]/35' : 'bg-white/10 text-white/70 hover:bg-white/20'
-          }`}
-          data-testid="visio-camera-toggle"
-        >
-          {cameraOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-          {cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-        </button>
+        {canManageStage ? (
+          /* Hôte / co-hôte : gère librement sa caméra */
+          <button
+            onClick={onToggleCamera}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              cameraOn ? 'bg-[#8A2EFF]/25 text-[#c9a3ff] hover:bg-[#8A2EFF]/35' : 'bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
+            data-testid="visio-camera-toggle"
+          >
+            {cameraOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+            {cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
+          </button>
+        ) : cameraOn ? (
+          /* Spectateur à l'écran : peut quitter la scène lui-même */
+          <button
+            onClick={onToggleCamera}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[#8A2EFF]/25 text-[#c9a3ff] hover:bg-[#8A2EFF]/35 transition-colors"
+            data-testid="visio-leave-stage"
+          >
+            <VideoOff className="w-4 h-4" /> Quitter la scène
+          </button>
+        ) : stageRequestPending ? (
+          /* Spectateur : demande envoyée, en attente de validation */
+          <button
+            disabled
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[#8A2EFF]/15 text-[#c9a3ff]/70 cursor-default"
+            data-testid="visio-request-pending"
+          >
+            <Hand className="w-4 h-4" /> Demande envoyée…
+          </button>
+        ) : (
+          /* Spectateur : demander à monter en vidéo */
+          <button
+            onClick={onRequestStage}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[#8A2EFF]/25 hover:text-[#c9a3ff] transition-colors"
+            data-testid="visio-request-stage"
+          >
+            <Hand className="w-4 h-4" /> Demander à monter en vidéo
+          </button>
+        )}
 
         <button
           onClick={onLeaveLive}

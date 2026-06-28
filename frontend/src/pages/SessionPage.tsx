@@ -36,6 +36,8 @@ import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
+import { StageRequestsPanel } from '@/components/session/StageRequestsPanel';
+import type { StageRequest } from '@/components/session/StageRequestsPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useVideoMesh } from '@/hooks/useVideoMesh';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
@@ -873,6 +875,19 @@ export const SessionPage: React.FC = () => {
     handleToggleTalk();
   }, [isHost, handleToggleTalk, showToast]);
 
+  // 🎤 SCÈNE (Live Visio) — système de prise de parole : un spectateur demande à monter en vidéo,
+  // l'hôte/co-hôte valide. Réutilise le maillage caméra (useVideoMesh) + le Realtime (playback:<id>).
+  const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
+  const [stageRequestPending, setStageRequestPending] = useState(false);  // spectateur : ma demande envoyée
+  // Refs pour piloter la caméra depuis les handlers Realtime (souscrits une seule fois)
+  const startCameraRef = useRef(videoMesh.startCamera);
+  const stopCameraRef = useRef(videoMesh.stopCamera);
+  useEffect(() => { startCameraRef.current = videoMesh.startCamera; stopCameraRef.current = videoMesh.stopCamera; }, [videoMesh.startCamera, videoMesh.stopCamera]);
+  const canManageStageRef = useRef(false);
+  canManageStageRef.current = canShare; // hôte + co-hôtes gèrent les demandes
+  // Quitter le mode Live → réinitialiser ma demande en attente (évite un état "envoyée" fantôme)
+  useEffect(() => { if (!liveMode) setStageRequestPending(false); }, [liveMode]);
+
   // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → fenêtre flottante
   const isDesktop = useMediaQuery('(min-width: 1024px)');
 
@@ -1355,6 +1370,45 @@ export const SessionPage: React.FC = () => {
           setRefused(true);
         }
       })
+      // 🎤 SCÈNE — un spectateur demande à monter en vidéo → l'hôte/co-hôte collecte la demande
+      .on('broadcast', { event: 'STAGE_REQUEST' }, (payload) => {
+        if (!canManageStageRef.current || !payload.payload) return;
+        const p = payload.payload as { userId?: string; name?: string; photoUrl?: string | null };
+        if (!p.userId) return;
+        setStageRequests((prev) => prev.some((r) => r.userId === p.userId)
+          ? prev
+          : [...prev, { userId: p.userId!, name: p.name || 'Invité', photoUrl: p.photoUrl || null }]);
+        showToastRef.current(`${p.name || 'Un participant'} demande à monter en vidéo ✋`, 'default');
+      })
+      // 🎤 SCÈNE — le demandeur accepté : sa caméra s'active (l'hôte a fait la place → force)
+      .on('broadcast', { event: 'STAGE_ACCEPT' }, (payload) => {
+        const p = payload.payload as { userId?: string };
+        if (p?.userId && p.userId === myUserIdRef.current) {
+          setStageRequestPending(false);
+          setLiveMode(true); // s'assurer d'être en Live Visio
+          Promise.resolve(startCameraRef.current?.(true)).then((ok) => {
+            if (ok === false) showToastRef.current('Autorisez la caméra pour monter à l\'écran', 'error');
+            else showToastRef.current('Tu es à l\'écran 🎥', 'success');
+          });
+        }
+      })
+      // 🎤 SCÈNE — le demandeur refusé
+      .on('broadcast', { event: 'STAGE_REFUSE' }, (payload) => {
+        const p = payload.payload as { userId?: string };
+        if (p?.userId && p.userId === myUserIdRef.current) {
+          setStageRequestPending(false);
+          showToastRef.current('Demande refusée', 'warning');
+        }
+      })
+      // 🎤 SCÈNE — le participant retiré : sa caméra est coupée proprement + notification
+      .on('broadcast', { event: 'STAGE_REMOVE' }, (payload) => {
+        const p = payload.payload as { removedUserId?: string };
+        if (p?.removedUserId && p.removedUserId === myUserIdRef.current) {
+          stopCameraRef.current?.();
+          setStageRequestPending(false);
+          showToastRef.current('Tu n\'es plus à l\'écran', 'warning');
+        }
+      })
       .subscribe();
 
     // Handler pour INSERT et UPDATE (playlist seulement)
@@ -1579,6 +1633,47 @@ export const SessionPage: React.FC = () => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
   }, [sessionId]);
+
+  // 🎤 SCÈNE — actions (spectateur + hôte)
+  // Spectateur : demander à monter en vidéo
+  const handleRequestStage = useCallback(() => {
+    if (!sessionId) return;
+    sendPlaybackEvent('STAGE_REQUEST', { userId: socket.userId, name: nickname, photoUrl: myAvatar || null });
+    setStageRequestPending(true);
+    showToast('Demande envoyée à l\'hôte ✋', 'default');
+  }, [sessionId, socket.userId, nickname, myAvatar, sendPlaybackEvent, showToast]);
+
+  // Hôte : accepter (place libre) / refuser
+  const handleAcceptStage = useCallback((userId: string) => {
+    sendPlaybackEvent('STAGE_ACCEPT', { userId });
+    setStageRequests((prev) => prev.filter((r) => r.userId !== userId));
+  }, [sendPlaybackEvent]);
+
+  const handleRefuseStage = useCallback((userId: string) => {
+    sendPlaybackEvent('STAGE_REFUSE', { userId });
+    setStageRequests((prev) => prev.filter((r) => r.userId !== userId));
+  }, [sendPlaybackEvent]);
+
+  // Hôte : scène pleine → retirer un participant choisi, puis faire monter le nouveau (anti-dépassement 6).
+  const handleSwapStage = useCallback((acceptUserId: string, removedUserId: string) => {
+    sendPlaybackEvent('STAGE_REMOVE', { removedUserId });
+    if (removedUserId === socket.userId) videoMesh.stopCamera(); // l'hôte se retire lui-même → coupe localement
+    setStageRequests((prev) => prev.filter((r) => r.userId !== acceptUserId));
+    // Laisser la place se libérer (propagation) avant de faire monter le demandeur.
+    setTimeout(() => sendPlaybackEvent('STAGE_ACCEPT', { userId: acceptUserId }), 800);
+  }, [sendPlaybackEvent, socket.userId, videoMesh]);
+
+  // 🎬 Participants actuellement À L'ÉCRAN (caméra active) — décompte du maillage, synchronisé pour tous.
+  const onStageOccupants = useMemo(() => {
+    const ids = [
+      ...(videoMesh.cameraOn ? [socket.userId] : []),
+      ...videoMesh.remoteCameras.map((c) => c.userId),
+    ];
+    return ids.map((id) => {
+      const p = participants.find((pp) => pp.id === id);
+      return { userId: id, name: p?.name || 'Participant', photoUrl: p?.avatarUrl || null, isSelf: id === socket.userId };
+    });
+  }, [videoMesh.cameraOn, videoMesh.remoteCameras, participants, socket.userId]);
 
   // 🚪 SALLE D'ATTENTE — persistance des admis (survit au reload de l'hôte)
   const admittedStorageKey = sessionId ? `bt_admitted_${sessionId}` : '';
@@ -2224,6 +2319,9 @@ export const SessionPage: React.FC = () => {
       onToggleMic={handleLiveMicToggle}
       onToggleCamera={handleToggleCamera}
       onLeaveLive={() => setLiveMode(false)}
+      canManageStage={canShare}
+      stageRequestPending={stageRequestPending}
+      onRequestStage={handleRequestStage}
     />
   );
 
@@ -2534,6 +2632,19 @@ export const SessionPage: React.FC = () => {
             {/* 🚪 Panneau "Demandes d'accès" — hôte uniquement, visible s'il y a des demandes */}
             {isHost && accessRequests.length > 0 && (
               <AccessRequestsPanel requests={accessRequests} onAdmit={handleAdmit} onRefuse={handleRefuse} />
+            )}
+
+            {/* 🎤 Panneau "Demandes de prise de parole" — hôte + co-hôtes, visible s'il y a des demandes */}
+            {canShare && stageRequests.length > 0 && (
+              <StageRequestsPanel
+                requests={stageRequests}
+                onStage={onStageOccupants}
+                onStageCount={videoMesh.activeCameraCount}
+                maxCameras={MAX_VISIO_CAMERAS}
+                onAccept={handleAcceptStage}
+                onRefuse={handleRefuseStage}
+                onSwap={handleSwapStage}
+              />
             )}
 
             {/* 🎥 Panneau Live Visio : mobile → fenêtre flottante (plus bas) ; desktop → colonne de droite */}

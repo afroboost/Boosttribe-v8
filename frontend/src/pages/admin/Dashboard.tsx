@@ -1388,7 +1388,7 @@ const Dashboard: React.FC = () => {
                 {grantedList.length === 0 ? (
                   <p className="text-white/40 text-sm py-4 text-center">Aucun accès offert actif.</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
                     {grantedList.map((g) => (
                       <div key={g.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
                         <div className="min-w-0">

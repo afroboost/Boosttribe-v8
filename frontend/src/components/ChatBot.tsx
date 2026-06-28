@@ -9,7 +9,7 @@ import { AssistantChat } from '@/components/AssistantChat';
 // Dans une SESSION, ce lanceur est masqué : le chat de session regroupe Assistant + Groupe + Privé
 // dans un seul lanceur (voir SessionChatLauncher). Hors session, ce bouton reste l'assistant.
 const ChatBot: React.FC = () => {
-  const { profile, isSubscribed, isAdmin } = useAuth();
+  const { isSubscribed, isAdmin } = useAuth();
   const { theme } = useTheme();
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
@@ -17,9 +17,8 @@ const ChatBot: React.FC = () => {
   // Masqué sur les pages de session (le lanceur de session prend le relais avec ses onglets).
   const inSession = location.pathname.startsWith('/session');
 
-  // Accès Pro (Pro, Enterprise, ou Admin)
-  const userPlan = profile?.subscription_status || 'free';
-  const hasAccess = isAdmin || isSubscribed || ['pro', 'enterprise'].includes(userPlan);
+  // Accès Pro = abonné payant OU accès offert (comp) actif OU admin — tout est déjà couvert par isSubscribed.
+  const hasAccess = isAdmin || isSubscribed;
 
   if (inSession) return null;
 

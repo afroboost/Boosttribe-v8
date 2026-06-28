@@ -87,6 +87,8 @@ const PricingPage: React.FC = () => {
     profile,
     isAdmin,
     isSubscribed,
+    effectivePlan,
+    compActive,
     hasAcceptedTerms,
     acceptTerms,
     refreshProfile,
@@ -292,8 +294,8 @@ const PricingPage: React.FC = () => {
                   : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
               }`}
             >
-              {isSubscribed 
-                ? `✓ Abonné ${profile.subscription_status}` 
+              {isSubscribed
+                ? `✓ ${compActive ? 'Accès offert' : 'Abonné'} ${effectivePlan}`
                 : '🎵 Version d\'essai'
               }
             </Badge>

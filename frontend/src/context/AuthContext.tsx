@@ -34,6 +34,9 @@ export interface AuthContextValue {
   isSubscribed: boolean;
   isFree: boolean; // utilisateur gratuit : ni Pro/Enterprise, ni accès offert, ni admin
   hasAcceptedTerms: boolean;
+  // POINT 6 : plan EFFECTIF (abonnement payant OU accès offert actif) + accès offert actif
+  effectivePlan: SubscriptionStatus;
+  compActive: boolean;
 
   // Limits
   trackLimit: number;
@@ -86,6 +89,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // ⏱️ Horloge interne : réévalue l'accès offert (expiration) sans rechargement de page.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60_000); // re-check chaque minute
+    return () => clearInterval(id);
+  }, []);
 
   // ADMIN CHECK: By email OR by profile role (email takes priority)
   const isAdminByEmail = user?.email ? ADMIN_EMAILS.includes(user.email.toLowerCase()) : false;
@@ -94,8 +103,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Derived state
   const isAuthenticated = !!user;
 
-  // POINT 6 : accès offert actif (comp_access_until dans le futur) → plan = comp_access_plan
-  const compActive = !!profile?.comp_access_until && new Date(profile.comp_access_until).getTime() > Date.now();
+  // POINT 6 : accès offert actif (comp_access_until dans le futur) → plan = comp_access_plan.
+  // Réévalué via nowTick → à l'expiration, l'utilisateur repasse automatiquement en gratuit.
+  const compUntilMs = profile?.comp_access_until ? new Date(profile.comp_access_until).getTime() : 0;
+  const compActive = !!compUntilMs && !Number.isNaN(compUntilMs) && compUntilMs > nowTick;
   const effectivePlan: SubscriptionStatus = (
     compActive && profile?.comp_access_plan
       ? profile.comp_access_plan
@@ -583,13 +594,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } catch (err) {
           console.warn('[AUTH] Profile fetch failed, using local:', err);
-          // Fallback to local profile on timeout/error
-          const localProfile = createLocalProfile(
-            session.user.id,
-            userEmail,
-            session.user.user_metadata
-          );
-          if (isMounted) setProfile(localProfile);
+          // ⚠️ Ne PAS écraser un profil déjà chargé (qui peut porter l'accès offert comp_access_*)
+          // par un profil local 'trial' sans ces champs. On ne crée un profil local que s'il n'y en a pas.
+          if (isMounted) {
+            setProfile((prev) => prev ?? createLocalProfile(
+              session.user.id,
+              userEmail,
+              session.user.user_metadata,
+            ));
+          }
         }
       } else {
         setProfile(null);
@@ -616,6 +629,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isSubscribed,
     isFree,
     hasAcceptedTerms,
+    effectivePlan,
+    compActive,
     trackLimit,
     sessionLimit,
     canUploadTrack,

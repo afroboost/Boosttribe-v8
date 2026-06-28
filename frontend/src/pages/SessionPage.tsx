@@ -604,20 +604,51 @@ export const SessionPage: React.FC = () => {
     setTribeVolume,
     setHostVoiceVolume,
     connectMicSource,
+    connectMusicSource,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
     },
   });
 
-  // 🎚️ POINT 4: "Volume Musique" du mixeur contrôle réellement le gain de l'élément <audio>
+  // 🎵 Cible l'élément <audio> de la MUSIQUE (et pas les <audio> de voix tribu/relay/hôte).
+  const getMusicEl = useCallback((): HTMLAudioElement | null => {
+    return document.querySelector(
+      'audio:not(.bt-tribe-audio):not(.bt-relay-audio):not(#remote-voice-audio)'
+    ) as HTMLAudioElement | null;
+  }, []);
+
+  // 🎚️ "Volume Musique" : 0..100% via element.volume, 100..200% via le GainNode (boost réel).
+  // Pas de double atténuation : le gain reste ≥ 1.0 (cf. useAudioMixer.setMusicVolume).
   const handleMusicVolumeChange = useCallback((volume: number) => {
-    setMusicVolume(volume);
-    const audioEl = document.querySelector('audio') as HTMLAudioElement | null;
-    if (audioEl) {
-      audioEl.volume = Math.max(0, Math.min(1, volume));
-    }
-  }, [setMusicVolume]);
+    setMusicVolume(volume);                 // état + GainNode de boost (≥ 1.0)
+    const audioEl = getMusicEl();
+    if (audioEl) audioEl.volume = Math.max(0, Math.min(1, volume)); // atténuation 0..100%
+  }, [setMusicVolume, getMusicEl]);
+
+  // 🔊 Router la musique dans le mixeur (Web Audio) → master + compresseur → pleine puissance + headroom.
+  // L'audio de Supabase Storage public est servi en CORS (*) → createMediaElementSource ne "tainte" pas.
+  // Si le routage échoue, element.volume continue de fonctionner (aucune régression).
+  const musicConnectedRef = useRef(false);
+  useEffect(() => {
+    if (!mixerState.isInitialized || musicConnectedRef.current) return;
+    let cancelled = false;
+    let tries = 0;
+    const tryConnect = () => {
+      if (cancelled || musicConnectedRef.current) return;
+      const audioEl = getMusicEl();
+      if (audioEl) {
+        musicConnectedRef.current = true;
+        audioEl.volume = Math.min(1, mixerState.musicVolume); // 100% par défaut (atténuation 0..1)
+        try { connectMusicSource(audioEl); } catch { /* fallback : element.volume continue de marcher */ }
+        return;
+      }
+      // L'élément <audio> de la musique n'est monté qu'après l'entrée en session → on réessaie brièvement.
+      if (tries++ < 40) setTimeout(tryConnect, 250);
+    };
+    tryConnect();
+    return () => { cancelled = true; };
+  }, [mixerState.isInitialized, mixerState.musicVolume, getMusicEl, connectMusicSource]);
 
 
   // Initialiser le mixeur au premier clic (user gesture required)

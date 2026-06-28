@@ -171,7 +171,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
       {/* Sliders - Escamotable */}
       {!isCollapsed && (
         <div className="p-3 sm:p-4 space-y-3 sm:space-y-4">
-          {/* Volume Musique → "Volume Vidéo" si une vidéo est partagée */}
+          {/* Volume Musique → "Volume Vidéo" si une vidéo est partagée — amplifiable jusqu'à 200% */}
           <MixerSlider
             label={isVideoShared ? 'Volume Vidéo' : 'Volume Musique'}
             icon={isVideoShared ? <Video size={14} className="sm:w-4 sm:h-4" /> : <Volume2 size={14} className="sm:w-4 sm:h-4" />}
@@ -179,11 +179,12 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
             onChange={onMusicVolumeChange}
             color="#8A2EFF"
             compact={true}
+            maxValue={2.0}
           />
           
           {isHost ? (
             <>
-              {/* Mon Micro - Host only */}
+              {/* Mon Micro - Host only — marge jusqu'à 150% */}
               <MixerSlider
                 label="Mon Micro"
                 icon={<Mic size={14} className="sm:w-4 sm:h-4" />}
@@ -192,6 +193,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                 color="#10B981"
                 disabled={!isMicActive}
                 compact={true}
+                maxValue={1.5}
               />
               
               {/* Volume Tribu - Host only — amplifiable jusqu'à 250% (au-dessus de la musique) */}
@@ -243,6 +245,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                 onChange={onHostVoiceVolumeChange}
                 color="#8A2EFF"
                 compact={true}
+                maxValue={2.5}
               />
 
               {/* POINT 2 : un curseur par AUTRE participant présent, TOUJOURS visible (scrollable mobile) */}

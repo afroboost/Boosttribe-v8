@@ -106,6 +106,7 @@ const TRIBE_AUDIO_CLASS = 'bt-tribe-audio';
 // HTMLAudioElement.volume). Niveaux par défaut RELEVÉS pour passer au-dessus de la musique/vidéo.
 const TRIBE_DEFAULT_GAIN = 1.6; // voix d'un participant entendue par l'hôte
 const RELAY_DEFAULT_GAIN = 1.4; // voix d'un autre participant (relayée) entendue par un participant
+const HOST_VOICE_DEFAULT_GAIN = 1.4; // voix de l'hôte entendue par les participants (au-dessus de la musique)
 const VOICE_MAX_GAIN = 2.5;     // plafond d'amplification (≈250%)
 
 /**
@@ -224,8 +225,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const tribeCallsRef = useRef<Map<string, MediaConnection>>(new Map());
   // 🔊 POINT 1.6: volume "Volume Tribu" appliqué directement aux <audio> tribu (zéro latence)
   const tribeVolumeRef = useRef<number>(1);
-  // 🔊 "Volume Hôte" (participant) appliqué directement à l'<audio> de la voix de l'hôte
-  const hostVoiceVolumeRef = useRef<number>(1);
+  // 🔊 "Volume Hôte" (participant) : gain de la voix de l'hôte (défaut boosté > 100%)
+  const hostVoiceVolumeRef = useRef<number>(HOST_VOICE_DEFAULT_GAIN);
   // 🎙️ POINT 3 : identité du participant (pour le ciblage "parler en privé")
   const userIdRef = useRef<string | undefined>(userId);
   userIdRef.current = userId;
@@ -245,6 +246,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const tribeUserMutedRef = useRef<Set<string>>(new Set());          // userId coupés par l'hôte
   // Participant : un nœud par voix d'autre participant relayée (fromUserId → source/gain/élément)
   const relayNodesRef = useRef<Map<string, { source: MediaStreamAudioSourceNode; gain: GainNode; el: HTMLAudioElement }>>(new Map());
+  // 🔊 Sortie maître des voix : (gains) → master → compresseur → destination (puissance perçue + headroom)
+  const voiceMasterRef = useRef<GainNode | null>(null);
+  const voiceCompRef = useRef<DynamicsCompressorNode | null>(null);
+  const voiceResumeBoundRef = useRef(false); // listener "reprise au geste" attaché une seule fois
+  // Participant : voix de l'HÔTE routée via GainNode (amplification réelle > 100%)
+  const hostVoiceNodeRef = useRef<{ source: MediaStreamAudioSourceNode; gain: GainNode; el: HTMLAudioElement } | null>(null);
 
   // Update state helper
   const updateState = useCallback((updates: Partial<PeerState>) => {
@@ -252,16 +259,44 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   }, []);
 
   // 🔊 P4 : AudioContext partagé (lazy) pour router les voix distantes via GainNode.
+  // Inclut une sortie maître (gain + compresseur léger) pour une puissance perçue franche sans clipping.
   const ensureVoiceCtx = useCallback((): AudioContext | null => {
     try {
       if (!voiceCtxRef.current) {
         const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
         voiceCtxRef.current = new Ctx();
       }
-      if (voiceCtxRef.current.state === 'suspended') voiceCtxRef.current.resume().catch(() => { /* ignore */ });
-      return voiceCtxRef.current;
+      const ctx = voiceCtxRef.current;
+      if (!voiceMasterRef.current) {
+        const master = ctx.createGain();
+        master.gain.value = 1.25; // léger gain de sortie (makeup)
+        const comp = ctx.createDynamicsCompressor();
+        comp.threshold.value = -18;
+        comp.knee.value = 20;
+        comp.ratio.value = 3;
+        comp.attack.value = 0.003;
+        comp.release.value = 0.25;
+        master.connect(comp);
+        comp.connect(ctx.destination);
+        voiceMasterRef.current = master;
+        voiceCompRef.current = comp;
+      }
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => { /* ignore */ });
+        // Filet de sécurité : reprendre au prochain geste utilisateur (politique autoplay)
+        if (!voiceResumeBoundRef.current) {
+          voiceResumeBoundRef.current = true;
+          const resume = () => { voiceCtxRef.current?.resume().catch(() => { /* ignore */ }); };
+          document.addEventListener('click', resume);
+          document.addEventListener('touchstart', resume, { passive: true });
+        }
+      }
+      return ctx;
     } catch { return null; }
   }, []);
+
+  // Nœud de sortie où brancher les gains de voix (master si dispo, sinon destination directe).
+  const voiceOutput = useCallback((ctx: AudioContext): AudioNode => voiceMasterRef.current || ctx.destination, []);
 
   // 🔊 P4 (hôte) : gain effectif d'un participant = (coupé ? 0 : son volume) × Volume Tribu maître.
   const tribeEffectiveGain = useCallback((userId?: string): number => {
@@ -304,11 +339,33 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const forcePlayRemoteAudio = useCallback(async (audioEl: HTMLAudioElement, stream: MediaStream) => {
     // Production: log removed
     
-    // Attach stream — respecter le "Volume Hôte" choisi par le participant
+    // Attach stream — voix de l'hôte routée via GainNode (amplification réelle > 100%),
+    // fallback element.volume si Web Audio indisponible.
     audioEl.srcObject = stream;
-    audioEl.volume = hostVoiceVolumeRef.current;
-    audioEl.muted = false;
-    
+    const ctx = ensureVoiceCtx();
+    let routed = false;
+    if (ctx) {
+      try {
+        if (hostVoiceNodeRef.current) {
+          try { hostVoiceNodeRef.current.source.disconnect(); } catch { /* ignore */ }
+          try { hostVoiceNodeRef.current.gain.disconnect(); } catch { /* ignore */ }
+          hostVoiceNodeRef.current = null;
+        }
+        const source = ctx.createMediaStreamSource(stream);
+        const gain = ctx.createGain();
+        gain.gain.value = hostVoiceVolumeRef.current;
+        source.connect(gain);
+        gain.connect(voiceOutput(ctx));
+        hostVoiceNodeRef.current = { source, gain, el: audioEl };
+        audioEl.muted = true; // sortie via Web Audio
+        routed = true;
+      } catch { routed = false; }
+    }
+    if (!routed) {
+      audioEl.muted = false;
+      audioEl.volume = Math.min(1, hostVoiceVolumeRef.current);
+    }
+
     // Force play
     try {
       await audioEl.play();
@@ -336,7 +393,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       // Production: log removed
       return false;
     }
-  }, [updateState, onVoiceStart]);
+  }, [updateState, onVoiceStart, ensureVoiceCtx, voiceOutput]);
 
   /**
    * Connect to PeerJS server
@@ -442,7 +499,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
                   const gain = ctx.createGain();
                   gain.gain.value = tribeEffectiveGain(uid);
                   source.connect(gain);
-                  gain.connect(ctx.destination);
+                  gain.connect(voiceOutput(ctx));
                   tribeNodesRef.current.set(call.peer, { source, gain, el });
                   el.muted = true;
                   routed = true;
@@ -495,7 +552,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
                   const gain = ctx.createGain();
                   gain.gain.value = vol;
                   source.connect(gain);
-                  gain.connect(ctx.destination);
+                  gain.connect(voiceOutput(ctx));
                   relayNodesRef.current.set(fromUserId, { source, gain, el });
                   el.muted = true;
                   routed = true;
@@ -542,6 +599,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             updateState({ isReceivingVoice: false });
             onVoiceEnd?.();
 
+            // 🔊 Libérer le nœud Web Audio de la voix hôte
+            if (hostVoiceNodeRef.current) {
+              try { hostVoiceNodeRef.current.source.disconnect(); } catch { /* ignore */ }
+              try { hostVoiceNodeRef.current.gain.disconnect(); } catch { /* ignore */ }
+              hostVoiceNodeRef.current = null;
+            }
             // Clear the audio element
             const audioEl = document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement;
             if (audioEl) {
@@ -894,10 +957,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
    * les prochains flux reçus).
    */
   const setHostVoiceVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(VOICE_MAX_GAIN, volume)); // 0..250% (amplification réelle)
     hostVoiceVolumeRef.current = clamped;
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.volume = clamped;
+    if (hostVoiceNodeRef.current) {
+      hostVoiceNodeRef.current.gain.gain.value = clamped; // Web Audio : gain réel > 100%
+    } else if (remoteAudioRef.current) {
+      remoteAudioRef.current.volume = Math.min(1, clamped); // fallback élément (plafonné à 1.0)
       if (clamped > 0) remoteAudioRef.current.muted = false;
     }
   }, []);
@@ -944,6 +1009,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     });
     relayNodesRef.current.clear();
     document.querySelectorAll<HTMLAudioElement>(`.${RELAY_AUDIO_CLASS}`).forEach((el) => { el.srcObject = null; el.remove(); });
+    // 🔊 Libérer le nœud Web Audio de la voix hôte
+    if (hostVoiceNodeRef.current) {
+      try { hostVoiceNodeRef.current.source.disconnect(); } catch { /* ignore */ }
+      try { hostVoiceNodeRef.current.gain.disconnect(); } catch { /* ignore */ }
+      hostVoiceNodeRef.current = null;
+    }
     setState((prev) => ({ ...prev, remoteMicUsers: [] }));
 
     dataConnectionsRef.current.forEach((conn) => conn.close());
@@ -997,6 +1068,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       if (voiceCtxRef.current && voiceCtxRef.current.state !== 'closed') {
         voiceCtxRef.current.close().catch(() => { /* ignore */ });
         voiceCtxRef.current = null;
+        voiceMasterRef.current = null;
+        voiceCompRef.current = null;
       }
     };
   }, [disconnect]);

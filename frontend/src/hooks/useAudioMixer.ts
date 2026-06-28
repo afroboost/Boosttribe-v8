@@ -39,11 +39,16 @@ export interface UseAudioMixerReturn {
   getContext: () => AudioContext | null;
 }
 
+// 🔊 Plages : 1.0 = pleine puissance ; au-delà = amplification (headroom). Aucun défaut < 1.0.
+const MUSIC_MAX_GAIN = 2.0; // musique amplifiable jusqu'à 200%
+const MIC_MAX_GAIN = 1.5;   // micro hôte : un peu de marge sans saturer la diffusion
+const MASTER_MAKEUP_GAIN = 1.25; // léger gain de sortie maître (compensé par le compresseur → pas de clipping brutal)
+
 const initialState: MixerState = {
-  musicVolume: 0.8,
+  musicVolume: 1.0, // 🔊 plein volume par défaut (avant : 0.8 → atténuation perçue)
   micVolume: 1.0,
   tribeVolume: 1.0,
-  hostVoiceVolume: 1.0,
+  hostVoiceVolume: 1.4, // 🔊 voix de l'hôte au-dessus de la musique par défaut
   isInitialized: false,
 };
 
@@ -64,6 +69,10 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const micGainRef = useRef<GainNode | null>(null);
   const tribeGainRef = useRef<GainNode | null>(null);
   const hostVoiceGainRef = useRef<GainNode | null>(null);
+  // 🔊 Sortie maître : (sources HP) → masterGain → compresseur → destination
+  // → relève la puissance perçue sans clipping brutal (> 1.0).
+  const masterGainRef = useRef<GainNode | null>(null);
+  const compressorRef = useRef<DynamicsCompressorNode | null>(null);
   
   // Source nodes
   const musicSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
@@ -100,29 +109,50 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       if (ctx.state === 'suspended') {
         ctx.resume().catch(() => { /* ignore */ });
       }
-      
+      // Filet de sécurité : reprendre le contexte à chaque geste (survit à un passage en arrière-plan)
+      // → la musique routée via Web Audio ne reste jamais muette après un retour d'onglet.
+      const resumeOnGesture = () => { audioContextRef.current?.resume().catch(() => { /* ignore */ }); };
+      document.addEventListener('click', resumeOnGesture);
+      document.addEventListener('touchstart', resumeOnGesture, { passive: true });
+
+      // 🔊 SORTIE MAÎTRE : masterGain → compresseur → destination.
+      // Le compresseur (léger) augmente la puissance perçue sans distorsion (limite les crêtes),
+      // et le master applique un petit gain de compensation (makeup) → son plus franc.
+      const master = ctx.createGain();
+      master.gain.value = MASTER_MAKEUP_GAIN;
+      const compressor = ctx.createDynamicsCompressor();
+      compressor.threshold.value = -18; // dB : ne comprime que les crêtes
+      compressor.knee.value = 20;
+      compressor.ratio.value = 3;       // compression douce
+      compressor.attack.value = 0.003;
+      compressor.release.value = 0.25;
+      master.connect(compressor);
+      compressor.connect(ctx.destination);
+      masterGainRef.current = master;
+      compressorRef.current = compressor;
+
       // Créer les GainNodes indépendants
-      // 🎵 Canal A: Musique
+      // 🎵 Canal A: Musique → master → compresseur → HP
       musicGainRef.current = ctx.createGain();
-      musicGainRef.current.gain.value = state.musicVolume;
-      musicGainRef.current.connect(ctx.destination);
-      
+      musicGainRef.current.gain.value = Math.max(1, state.musicVolume); // jamais < 1.0 (pas d'atténuation par le gain)
+      musicGainRef.current.connect(master);
+
       // 🎤 Canal B: Micro Hôte → destination de flux UNIQUEMENT (anti-larsen).
-      // ⚠️ POINT 5: micGain n'est PAS connecté à ctx.destination → l'hôte ne s'entend jamais.
+      // ⚠️ POINT 5: micGain n'est PAS connecté à la sortie HP → l'hôte ne s'entend jamais.
       micGainRef.current = ctx.createGain();
       micGainRef.current.gain.value = state.micVolume;
       micStreamDestRef.current = ctx.createMediaStreamDestination();
       micGainRef.current.connect(micStreamDestRef.current);
 
-      // 👥 Canal C: Volume Tribu (participants entrants) → HP de l'hôte
+      // 👥 Canal C: Volume Tribu (participants entrants) → master → HP de l'hôte
       tribeGainRef.current = ctx.createGain();
       tribeGainRef.current.gain.value = state.tribeVolume;
-      tribeGainRef.current.connect(ctx.destination);
-      
-      // 🔊 Canal D: Voix Hôte (pour participants)
+      tribeGainRef.current.connect(master);
+
+      // 🔊 Canal D: Voix Hôte (pour participants) → master → HP
       hostVoiceGainRef.current = ctx.createGain();
       hostVoiceGainRef.current.gain.value = state.hostVoiceVolume;
-      hostVoiceGainRef.current.connect(ctx.destination);
+      hostVoiceGainRef.current.connect(master);
       
       // Message unique de démarrage (production)
       console.log('🚀 Boosttribe Engine Active');
@@ -287,21 +317,23 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * Définit le volume de la musique
    */
   const setMusicVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(MUSIC_MAX_GAIN, volume)); // 🔊 0..200% (affichage + feed vidéo)
     setState(prev => ({ ...prev, musicVolume: clamped }));
-    
+
+    // Le GainNode ne sert QUE de boost (≥ 1.0) : l'atténuation 0..100% reste pilotée par
+    // element.volume (côté SessionPage) → pas de double atténuation, et headroom > 100% réel.
     if (musicGainRef.current) {
-      musicGainRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
+      musicGainRef.current.gain.setValueAtTime(Math.max(1, clamped), audioContextRef.current?.currentTime || 0);
     }
   }, []);
 
   /**
-   * Définit le volume du micro
+   * Définit le volume du micro (avec un peu de marge pour passer au-dessus de la musique)
    */
   const setMicVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(MIC_MAX_GAIN, volume));
     setState(prev => ({ ...prev, micVolume: clamped }));
-    
+
     if (micGainRef.current) {
       micGainRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
     }
@@ -323,18 +355,14 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * Définit le volume de la voix hôte (pour participants)
    */
   const setHostVoiceVolume = useCallback((volume: number) => {
-    const clamped = Math.max(0, Math.min(1, volume));
+    const clamped = Math.max(0, Math.min(2.5, volume)); // 🔊 voix hôte amplifiable jusqu'à 250%
     setState(prev => ({ ...prev, hostVoiceVolume: clamped }));
-    
+
     if (hostVoiceGainRef.current) {
       hostVoiceGainRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
     }
-    
-    // Aussi mettre à jour l'élément audio directement pour le fallback
-    const remoteAudio = document.getElementById('remote-voice-audio') as HTMLAudioElement;
-    if (remoteAudio) {
-      remoteAudio.volume = clamped;
-    }
+    // NB : le gain RÉEL de la voix hôte est piloté par usePeerAudio.setHostVoiceVolume (GainNode dédié).
+    // On NE touche PLUS element.volume ici : l'élément est routé/muet via Web Audio (sinon double contrôle).
   }, []);
 
   /**

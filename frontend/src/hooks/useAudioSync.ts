@@ -85,7 +85,7 @@ const initialAudioState: AudioState = {
   isPlaying: false,
   currentTime: 0,
   duration: 0,
-  volume: 0.8,
+  volume: 1.0, // 🔊 plein volume par défaut (avant : 0.8 → son perçu trop faible)
   isMuted: false,
   isLoading: false,
   isBuffering: false,

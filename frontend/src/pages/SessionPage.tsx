@@ -36,6 +36,7 @@ import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
+import { CameraTile } from '@/components/session/CameraTile';
 import { useVideoMesh } from '@/hooks/useVideoMesh';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -2226,6 +2227,29 @@ export const SessionPage: React.FC = () => {
     />
   );
 
+  // 🎥 Vignettes caméra COMPACTES (hôte + participants) pour la fenêtre flottante de la vue agrandie.
+  const liveCamerasNode = (
+    <div className="grid grid-cols-2 gap-1.5 p-2">
+      {participants.map((p) => {
+        const isMe = p.id === socket.userId;
+        const stream = isMe
+          ? (videoMesh.cameraOn ? videoMesh.localStream : null)
+          : (videoMesh.remoteCameras.find((c) => c.userId === p.id)?.stream || null);
+        return (
+          <CameraTile
+            key={p.id}
+            name={p.name}
+            stream={stream}
+            isLocal={isMe}
+            micActive={isMe ? (isHost ? hostMicActive : isTalking) : peerState.remoteMicUsers.includes(p.id)}
+            isHost={p.isHost}
+            avatarUrl={p.avatarUrl}
+          />
+        );
+      })}
+    </div>
+  );
+
   return (
     <div
       className="min-h-screen overflow-x-hidden"
@@ -2626,6 +2650,7 @@ export const SessionPage: React.FC = () => {
                 onClose={canShare ? handleCloseMedia : undefined}
                 mediaVolume={mixerState.musicVolume}
                 maxSeconds={isFree ? 30 : Infinity}
+                liveCamerasNode={liveCamerasNode}
               />
             )}
 

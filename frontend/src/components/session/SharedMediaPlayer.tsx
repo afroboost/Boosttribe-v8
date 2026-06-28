@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Maximize2, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube, Volume2 } from 'lucide-react';
+import { Maximize2, Minimize2, ArrowLeft, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube, Volume2 } from 'lucide-react';
 import Vimeo from '@vimeo/player';
 import type { SharedMedia } from '@/lib/supabaseClient';
+import { DraggableWindow } from '@/components/session/DraggableWindow';
 
 export interface RemoteMediaState {
   isPlaying: boolean;
@@ -17,6 +18,8 @@ interface SharedMediaPlayerProps {
   onClose?: () => void; // hôte : retirer le média partagé
   mediaVolume?: number;  // 0–1 : "Volume Vidéo" du mixeur → pilote le lecteur courant
   maxSeconds?: number;   // plan gratuit : coupe la lecture à 30s (émetteur) ; Pro : Infinity
+  // 🎥 Vignettes caméra du Live Visio à garder visibles (fenêtre flottante) en vue agrandie.
+  liveCamerasNode?: React.ReactNode;
 }
 
 // Extrait l'ID YouTube d'une URL
@@ -48,8 +51,10 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity }) => {
+export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, liveCamerasNode }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  // 🔍 Agrandissement "plein écran maison" (overlay DANS l'app) → permet de superposer caméras + retour.
+  const [enlarged, setEnlarged] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaVolumeInitRef = useRef(true); // ignorer la 1re valeur (montage) pour ne pas casser l'autoplay muet
 
@@ -366,48 +371,18 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     return () => clearInterval(interval);
   }, [isHost, media.type, emitHostState, maxSeconds]);
 
-  // Item 4 : plein écran de l'élément INTÉGRÉ (jamais de redirection vers youtube.com) + paysage mobile.
-  const goFullscreen = useCallback(() => {
-    const el = containerRef.current as (HTMLElement & {
-      webkitRequestFullscreen?: () => void;
-    }) | null;
-    const vid = videoRef.current as (HTMLVideoElement & {
-      webkitEnterFullscreen?: () => void;
-    }) | null;
-    // Forcer l'orientation PAYSAGE sur mobile (try/catch : non supporté partout, ex. iOS Safari).
-    const lockLandscape = () => {
-      try { (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.('landscape').catch(() => { /* non supporté → l'utilisateur tourne son téléphone */ }); } catch { /* ignore */ }
-    };
-    try {
-      if (el?.requestFullscreen) {
-        el.requestFullscreen().then(lockLandscape).catch(lockLandscape);
-      } else if (el?.webkitRequestFullscreen) {
-        el.webkitRequestFullscreen();
-        lockLandscape();
-      } else if (vid?.webkitEnterFullscreen) {
-        // iOS Safari : seul l'élément <video> natif passe en plein écran (vidéo uploadée)
-        vid.webkitEnterFullscreen();
-      } else {
-        lockLandscape();
-      }
-    } catch { /* ignore */ }
-  }, []);
-
-  // À la sortie du plein écran : déverrouiller l'orientation (retour à l'affichage intégré normal).
+  // 🔍 Vue agrandie (overlay maison) : verrouiller le scroll de fond + sortie au clavier (Échap).
   useEffect(() => {
-    const onFsChange = () => {
-      const fsEl = document.fullscreenElement || (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
-      if (!fsEl) {
-        try { (screen.orientation as unknown as { unlock?: () => void })?.unlock?.(); } catch { /* ignore */ }
-      }
-    };
-    document.addEventListener('fullscreenchange', onFsChange);
-    document.addEventListener('webkitfullscreenchange', onFsChange as EventListener);
+    if (!enlarged) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setEnlarged(false); };
+    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('fullscreenchange', onFsChange);
-      document.removeEventListener('webkitfullscreenchange', onFsChange as EventListener);
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener('keydown', onKey);
     };
-  }, []);
+  }, [enlarged]);
 
   // Bug 2 : geste utilisateur → réactiver le son du lecteur courant, relancer la lecture et
   // resynchroniser à la position de l'hôte. Si le player n'est pas prêt, on mémorise l'intention
@@ -534,27 +509,63 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   }
 
   return (
-    <div className="rounded-2xl overflow-hidden border border-white/10 bg-[rgba(20,20,25,0.95)]">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
-        <div className="flex items-center gap-2 text-white/80 text-sm min-w-0">
-          <span className="text-[#8A2EFF]">{icon}</span>
-          <span className="truncate">{media.title || 'Contenu partagé'}</span>
-        </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          <button onClick={goFullscreen} className="p-1.5 rounded text-white/60 hover:text-white hover:bg-white/10" title="Plein écran" data-testid="media-fullscreen">
-            <Maximize2 className="w-4 h-4" />
+    <div
+      className={
+        enlarged
+          ? 'fixed inset-0 z-[100] bg-black flex flex-col'
+          : 'rounded-2xl overflow-hidden border border-white/10 bg-[rgba(20,20,25,0.95)]'
+      }
+      data-testid="shared-media-root"
+    >
+      {/* Barre supérieure — normale OU vue agrandie (avec "Retour à la session") */}
+      {enlarged ? (
+        <div className="flex items-center justify-between gap-2 px-3 sm:px-4 py-2.5 bg-black/85 border-b border-white/10 z-[105]">
+          <button
+            onClick={() => setEnlarged(false)}
+            className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-white bg-white/10 hover:bg-white/20 border border-white/15 transition-colors"
+            data-testid="media-back-to-session"
+          >
+            <ArrowLeft className="w-4 h-4" /> Retour à la session
           </button>
-          {isHost && onClose && (
-            <button onClick={onClose} className="p-1.5 rounded text-white/60 hover:text-red-400 hover:bg-white/10" title="Retirer" data-testid="media-close">
-              <X className="w-4 h-4" />
-            </button>
-          )}
+          <span className="flex items-center gap-2 text-white/70 text-sm min-w-0">
+            <span className="text-[#8A2EFF]">{icon}</span>
+            <span className="truncate hidden sm:block">{media.title || 'Contenu partagé'}</span>
+          </span>
+          <button
+            onClick={() => setEnlarged(false)}
+            className="p-2 rounded-lg text-white/70 hover:text-white hover:bg-white/10"
+            title="Réduire"
+            data-testid="media-shrink"
+          >
+            <Minimize2 className="w-4 h-4" />
+          </button>
         </div>
-      </div>
-      {/* En plein écran : le conteneur occupe TOUT l'écran (object-contain, fond noir) */}
+      ) : (
+        <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
+          <div className="flex items-center gap-2 text-white/80 text-sm min-w-0">
+            <span className="text-[#8A2EFF]">{icon}</span>
+            <span className="truncate">{media.title || 'Contenu partagé'}</span>
+          </div>
+          <div className="flex items-center gap-1 flex-shrink-0">
+            <button onClick={() => setEnlarged(true)} className="p-1.5 rounded text-white/60 hover:text-white hover:bg-white/10" title="Agrandir" data-testid="media-fullscreen">
+              <Maximize2 className="w-4 h-4" />
+            </button>
+            {isHost && onClose && (
+              <button onClick={onClose} className="p-1.5 rounded text-white/60 hover:text-red-400 hover:bg-white/10" title="Retirer" data-testid="media-close">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {/* Conteneur du média : normal (16:9) OU agrandi (occupe tout l'espace, object-contain) */}
       <div
         ref={containerRef}
-        className="relative w-full aspect-video bg-black [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:aspect-auto [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center"
+        className={
+          enlarged
+            ? 'relative flex-1 min-h-0 bg-black flex items-center justify-center'
+            : 'relative w-full aspect-video bg-black [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:aspect-auto [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center'
+        }
       >
         {body}
         {/* Item 2 : overlay BLOQUANT → capte et neutralise TOUS les clics/taps du participant.
@@ -592,8 +603,16 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
           </div>
         )}
       </div>
-      {blockParticipant && !limitReached && (
+      {!enlarged && blockParticipant && !limitReached && (
         <p className="px-4 py-1.5 text-[11px] text-white/40">Lecture synchronisée avec l'hôte</p>
+      )}
+
+      {/* 🎥 Vue agrandie : caméras live dans une fenêtre FLOTTANTE déplaçable (en haut par défaut),
+          par-dessus la vidéo. La vidéo reste synchronisée et en lecture (pas de remontage). */}
+      {enlarged && liveCamerasNode && (
+        <DraggableWindow title="Caméras live" storageKey="bt_visio_enlarged_pos" defaultWidth={260}>
+          {liveCamerasNode}
+        </DraggableWindow>
       )}
     </div>
   );

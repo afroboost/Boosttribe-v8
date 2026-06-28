@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/components/ui/Toast";
+import { sessionExists } from "@/lib/supabaseClient";
 
 // Interface for particle configuration
 interface Particle {
@@ -50,34 +51,45 @@ export const HeroSection: React.FC = () => {
     }));
   }, [colors.primary, colors.secondary]);
 
+  // Vérifie en base que la session existe AVANT d'y entrer. Si elle n'existe plus
+  // (supprimée par l'hôte / code invalide) : notifier, oublier le code mémorisé, rester sur l'accueil.
+  const checkAndEnter = useCallback(async (code: string) => {
+    const exists = await sessionExists(code);
+    if (exists === false) {
+      showToast("Cette session n'existe plus ou a été supprimée par l'hôte.", "error");
+      try { localStorage.removeItem("bt_last_session_code"); } catch { /* ignore */ }
+      setLastCode("");
+      setSessionCode("");
+      setIsJoining(false);
+      return;
+    }
+    // exists === true (existe) OU null (inconnu : Supabase non configuré / mode démo) → on entre
+    try { localStorage.setItem("bt_last_session_code", code); } catch { /* ignore */ }
+    navigate(`/session/${code}`);
+  }, [navigate, showToast]);
+
   // Handle join session
   const handleJoinSession = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    
+
     const trimmedCode = sessionCode.trim().toUpperCase();
-    
+
     if (!trimmedCode) {
       showToast("Veuillez entrer un code de session", "error");
       return;
     }
-    
+
     setIsJoining(true);
-    // Item 3 : mémoriser le code rejoint
-    try { localStorage.setItem("bt_last_session_code", trimmedCode); } catch { /* ignore */ }
+    checkAndEnter(trimmedCode);
+  }, [sessionCode, showToast, checkAndEnter]);
 
-    // Small delay for UX feedback
-    setTimeout(() => {
-      navigate(`/session/${trimmedCode}`);
-    }, 300);
-  }, [sessionCode, navigate, showToast]);
-
-  // Item 3 : reprendre directement la dernière session mémorisée
+  // Item 3 : reprendre directement la dernière session mémorisée (avec vérification d'existence)
   const handleResumeSession = useCallback(() => {
     const code = lastCode.trim().toUpperCase();
     if (!code) return;
     setIsJoining(true);
-    setTimeout(() => { navigate(`/session/${code}`); }, 200);
-  }, [lastCode, navigate]);
+    checkAndEnter(code);
+  }, [lastCode, checkAndEnter]);
 
   // Handle create new session
   const handleCreateSession = useCallback(() => {

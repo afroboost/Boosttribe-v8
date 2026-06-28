@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -45,6 +45,8 @@ import { Pencil } from 'lucide-react';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
+// P2 : photo de profil (data URL) mémorisée pour les participants anonymes → pré-remplie au prochain join
+const LOCAL_AVATAR_STORAGE_KEY = 'bt_local_avatar';
 
 // Types de payload Realtime (E/F/C) — déclarés hors composant pour éviter les faux positifs
 // de react-hooks/exhaustive-deps (noms de propriétés confondus avec des variables d'état).
@@ -129,6 +131,23 @@ function setStoredNickname(nickname: string): void {
   }
 }
 
+// P2 : mémorisation de la photo de profil locale (participant anonyme)
+function getStoredLocalAvatar(): string | null {
+  try {
+    return localStorage.getItem(LOCAL_AVATAR_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredLocalAvatar(dataUrl: string): void {
+  try {
+    localStorage.setItem(LOCAL_AVATAR_STORAGE_KEY, dataUrl);
+  } catch (error) {
+    console.warn('Failed to store local avatar:', error);
+  }
+}
+
 // POINT 2 : marqueur de "session active" par utilisateur (heartbeat localStorage).
 // Une session est considérée active si son heartbeat date de moins de 90 s.
 const ACTIVE_SESSION_TTL_MS = 90 * 1000;
@@ -183,10 +202,14 @@ interface NicknameModalProps {
   isHost: boolean;
   onSubmit: (nickname: string) => void;
   theme: ReturnType<typeof useTheme>['theme'];
+  // P2 : photo optionnelle pour les participants
+  initialNickname?: string;
+  currentAvatar?: string | null;
+  onAddPhoto?: () => void;
 }
 
-const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit, theme }) => {
-  const [nickname, setNickname] = useState(isHost ? 'Coach' : '');
+const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit, theme, initialNickname, currentAvatar, onAddPhoto }) => {
+  const [nickname, setNickname] = useState(initialNickname || (isHost ? 'Coach' : ''));
   const [error, setError] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -226,13 +249,17 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
         style={{ borderColor: theme.colors.primary }}
       >
         <CardHeader className="text-center pb-4">
-          {/* Avatar preview */}
+          {/* Avatar preview — photo mémorisée si dispo, sinon initiales */}
           <div className="flex justify-center mb-4">
-            <div 
-              className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white"
+            <div
+              className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white overflow-hidden"
               style={{ background: theme.colors.gradient.primary }}
             >
-              {nickname ? generateAvatar(nickname) : '?'}
+              {currentAvatar ? (
+                <img src={currentAvatar} alt="Votre photo" className="w-full h-full object-cover" />
+              ) : (
+                nickname ? generateAvatar(nickname) : '?'
+              )}
             </div>
           </div>
           
@@ -287,6 +314,25 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
               {isHost ? 'Démarrer la session' : "Rejoindre l'écoute"}
             </Button>
           </form>
+
+          {/* P2 : photo OPTIONNELLE pour les participants — conseil non bloquant + ajout rapide */}
+          {!isHost && onAddPhoto && (
+            <div className="mt-4 space-y-3">
+              <button
+                type="button"
+                onClick={onAddPhoto}
+                className="w-full h-11 rounded-xl font-medium text-sm flex items-center justify-center gap-2 border border-white/15 bg-white/5 text-white/80 hover:bg-white/10 transition-colors"
+                data-testid="add-photo-btn"
+              >
+                <Camera className="w-4 h-4" />
+                {currentAvatar ? 'Changer ma photo' : 'Ajouter ma photo (recommandé)'}
+              </button>
+              <p className="flex items-start gap-2 text-amber-300/80 text-xs leading-snug">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <span>Ajoutez votre vraie photo de profil pour une meilleure expérience — sinon l'hôte peut vous éjecter.</span>
+              </p>
+            </div>
+          )}
 
           <p className="mt-4 text-center text-white/40 text-xs">
             Votre pseudo sera visible par tous les participants
@@ -505,7 +551,8 @@ export const SessionPage: React.FC = () => {
   const [userVolumes, setUserVolumes] = useState<Record<string, number>>({});
 
   // B : photo de profil — avatar courant (compte) ou data URL locale (anonyme)
-  const [localAvatar, setLocalAvatar] = useState<string | null>(null);
+  // P2 : pré-remplie depuis le localStorage si une photo a déjà été choisie auparavant
+  const [localAvatar, setLocalAvatar] = useState<string | null>(() => getStoredLocalAvatar());
   const myAvatar = profile?.avatar_url || localAvatar || null;
   const [showAvatarCrop, setShowAvatarCrop] = useState(false);
   const pendingAfterAvatarRef = useRef<(() => void) | null>(null);
@@ -993,6 +1040,8 @@ export const SessionPage: React.FC = () => {
   useEffect(() => { selectedTrackRef.current = selectedTrack; }, [selectedTrack]);
   const showToastRef = useRef(showToast);
   useEffect(() => { showToastRef.current = showToast; }, [showToast]);
+  const navigateRef = useRef(navigate);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
   // 🔄 SUPABASE REALTIME: Sync playlist changes for participants
   useEffect(() => {
@@ -1103,10 +1152,14 @@ export const SessionPage: React.FC = () => {
           filter: `session_id=eq.${sessionId}`,
         },
         (payload) => {
+          // 🗑️ La ligne `playlists` (= la SESSION) a été supprimée → la session n'existe plus.
+          // Pour un participant : notifier clairement, oublier le code mémorisé et revenir à l'accueil.
           if (!isHostRef.current) {
             setTracks([]);
             setSelectedTrack(null);
-            showToastRef.current('La playlist a été supprimée par l\'hôte', 'warning');
+            try { localStorage.removeItem('bt_last_session_code'); } catch { /* ignore */ }
+            showToastRef.current('La session a été fermée par l\'hôte.', 'warning');
+            navigateRef.current('/');
           }
         }
       )
@@ -1809,13 +1862,16 @@ export const SessionPage: React.FC = () => {
       }
     } else {
       setLocalAvatar(url); // participant anonyme : avatar local (présence)
+      setStoredLocalAvatar(url); // P2 : mémorisé pour les prochaines sessions
     }
     const next = pendingAfterAvatarRef.current;
     pendingAfterAvatarRef.current = null;
     if (next) next();
   }, [user?.id, refreshProfile]);
 
-  // Handle nickname submission (B : exige une photo de profil avant de rejoindre)
+  // Handle nickname submission
+  // - HÔTE : photo de profil requise (inchangé) → ensureAvatar avant de démarrer.
+  // - PARTICIPANT (P2) : photo OPTIONNELLE → rejoint immédiatement (avatar = initiales par défaut).
   const handleNicknameSubmit = useCallback((newNickname: string) => {
     const finish = () => {
       setStoredNickname(newNickname);
@@ -1823,8 +1879,18 @@ export const SessionPage: React.FC = () => {
       setShowNicknameModal(false);
       showToast(`Bienvenue ${newNickname} !`, 'success');
     };
-    ensureAvatar(finish);
-  }, [showToast, ensureAvatar]);
+    if (isHost) {
+      ensureAvatar(finish);
+    } else {
+      finish();
+    }
+  }, [isHost, showToast, ensureAvatar]);
+
+  // P2 : le participant ajoute (optionnellement) sa photo depuis le modal de pseudo
+  const handleAddPhotoFromModal = useCallback(() => {
+    pendingAfterAvatarRef.current = null; // ne pas enchaîner le join : on revient au modal avec la photo
+    setShowAvatarCrop(true);
+  }, []);
 
   // Création de session (corps), gardée par l'avatar dans handleCreateSession
   const createSessionNow = useCallback(() => {
@@ -2143,15 +2209,19 @@ export const SessionPage: React.FC = () => {
         isHost={isHost}
         onSubmit={handleNicknameSubmit}
         theme={theme}
+        initialNickname={nickname || getStoredNickname() || ''}
+        currentAvatar={myAvatar}
+        onAddPhoto={handleAddPhotoFromModal}
       />
 
-      {/* B : photo de profil obligatoire (upload + recadrage) */}
+      {/* Photo de profil (upload + recadrage). Hôte : requise. Participant (P2) : optionnelle → annulable. */}
       {showAvatarCrop && (
         <AvatarUploadCrop
           userId={user?.id || null}
           title="Votre photo de profil"
-          subtitle={isHost ? 'Ajoutez une photo pour créer votre session' : 'Ajoutez une photo pour rejoindre la session'}
+          subtitle={isHost ? 'Ajoutez une photo pour créer votre session' : 'Ajoutez votre vraie photo (optionnel, recommandé)'}
           onComplete={handleAvatarComplete}
+          onCancel={isHost ? undefined : () => setShowAvatarCrop(false)}
         />
       )}
 

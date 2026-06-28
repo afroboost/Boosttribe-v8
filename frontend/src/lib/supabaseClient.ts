@@ -634,6 +634,28 @@ export async function savePlaylist(playlist: PlaylistRecord): Promise<boolean> {
 }
 
 /**
+ * Vérifie l'EXISTENCE d'une session en base (ligne `playlists` pour ce session_id).
+ * Retourne :
+ *   - true  → la session existe
+ *   - false → la session n'existe pas / plus (supprimée par l'hôte, code invalide)
+ *   - null  → impossible de savoir (Supabase non configuré, erreur réseau/RLS) → NE PAS bloquer l'entrée
+ */
+export async function sessionExists(sessionId: string): Promise<boolean | null> {
+  if (!supabase) return null;
+  try {
+    const { count, error } = await supabase
+      .from('playlists')
+      .select('session_id', { count: 'exact', head: true })
+      .eq('session_id', sessionId);
+
+    if (error) return null; // en cas d'erreur on n'empêche pas l'entrée (tolérant)
+    return (count ?? 0) > 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Load playlist from database
  */
 export async function loadPlaylist(sessionId: string): Promise<PlaylistRecord | null> {

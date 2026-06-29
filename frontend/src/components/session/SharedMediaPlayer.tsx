@@ -18,6 +18,9 @@ interface SharedMediaPlayerProps {
   onClose?: () => void; // hôte : retirer le média partagé
   mediaVolume?: number;  // 0–1 : "Volume Vidéo" du mixeur → pilote le lecteur courant
   maxSeconds?: number;   // plan gratuit : coupe la lecture à 30s (émetteur) ; Pro : Infinity
+  // 💬 Chat ouvert : la vue agrandie laisse la place au chat (panneau latéral desktop / feuille basse mobile)
+  //    et on évite le plein écran NATIF (qui masquerait tout) → overlay CSS qui coexiste avec le chat.
+  chatOpen?: boolean;
   // 🎥 Vignettes caméra du Live Visio à garder visibles (fenêtre flottante) en vue agrandie.
   liveCamerasNode?: React.ReactNode;
 }
@@ -51,7 +54,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, liveCamerasNode }) => {
+export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, chatOpen = false, liveCamerasNode }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // 🔍 Racine du lecteur : c'est ELLE qu'on passe en plein écran (contient vidéo + overlay caméras + bouton Retour).
   const rootRef = useRef<HTMLDivElement>(null);
@@ -398,8 +401,14 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   // 🔍 Entrer en plein écran : on demande le plein écran sur le CONTENEUR (root) — pas sur l'iframe —
   // pour que les caméras live (déplaçables) ET le bouton Retour (enfants du conteneur) restent visibles,
   // tout en permettant le verrouillage paysage. Fallback overlay CSS si l'API n'est pas dispo (iOS div).
+  const chatOpenRef = useRef(chatOpen);
+  chatOpenRef.current = chatOpen;
+  const keepEnlargedRef = useRef(false); // sortie de plein écran NATIF voulue (chat) → garder l'overlay CSS
+
   const handleEnlarge = useCallback(() => {
     setEnlarged(true);
+    // 💬 Chat ouvert → pas de plein écran NATIF (il masquerait le chat). Overlay CSS qui coexiste.
+    if (chatOpenRef.current) { lockLandscape(); return; }
     const el = rootRef.current as (HTMLElement & { webkitRequestFullscreen?: () => void }) | null;
     try {
       if (el?.requestFullscreen) {
@@ -412,6 +421,17 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       }
     } catch { /* ignore */ }
   }, [lockLandscape]);
+
+  // 💬 Si le chat s'ouvre PENDANT un plein écran natif → en sortir tout en GARDANT la vue agrandie
+  //    (overlay CSS) pour que vidéo et chat coexistent. keepEnlargedRef empêche onFsChange de fermer.
+  useEffect(() => {
+    if (!chatOpen) return;
+    const d = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
+    if (d.fullscreenElement || d.webkitFullscreenElement) {
+      keepEnlargedRef.current = true;
+      try { (d.exitFullscreen?.() || d.webkitExitFullscreen?.()); } catch { /* ignore */ }
+    }
+  }, [chatOpen]);
 
   // 🔍 Sortir : déverrouiller l'orientation + quitter le vrai plein écran s'il est actif
   // (sinon simplement refermer l'overlay CSS). fullscreenchange refermera aussi l'overlay.
@@ -433,6 +453,8 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       const fsEl = document.fullscreenElement || (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
       if (!fsEl) {
         unlockOrientation();
+        // 💬 Sortie de plein écran VOULUE pour laisser place au chat → garder l'overlay CSS agrandi.
+        if (keepEnlargedRef.current) { keepEnlargedRef.current = false; return; }
         if (enlargedRef.current) setEnlarged(false); // sortie du plein écran natif → fermer la vue agrandie
       }
     };
@@ -574,7 +596,11 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       ref={rootRef}
       className={
         enlarged
-          ? 'fixed inset-0 z-[100] bg-black flex flex-col'
+          // 💬 Vue agrandie (overlay CSS) : quand le chat est ouvert, on laisse la place au panneau
+          //    (372px à droite sur desktop, 58vh en bas sur mobile) → vidéo + chat visibles ensemble.
+          ? `fixed z-[100] bg-black flex flex-col ${
+              chatOpen ? 'inset-0 bottom-[58vh] lg:bottom-0 lg:right-[372px]' : 'inset-0'
+            }`
           : 'rounded-2xl overflow-hidden border border-white/10 bg-[rgba(20,20,25,0.95)]'
       }
       data-testid="shared-media-root"

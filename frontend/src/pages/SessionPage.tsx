@@ -2741,7 +2741,10 @@ export const SessionPage: React.FC = () => {
 
   return (
     <div
-      className="min-h-screen overflow-x-hidden"
+      // 💬 Quand le chat est ouvert, on libère 372px à droite sur desktop (lg+) → tout le contenu
+      //    de session (vidéo/visio inclus) se redimensionne pour COEXISTER avec le panneau latéral.
+      //    Sur mobile, le chat est une feuille basse → pas de décalage (la vidéo reste visible au-dessus).
+      className={`min-h-screen overflow-x-hidden transition-[padding] duration-200 ${chatOpen ? 'lg:pr-[372px]' : ''}`}
       style={{
         background: '#000000',
         fontFamily: "'Inter', sans-serif",
@@ -3500,6 +3503,7 @@ export const SessionPage: React.FC = () => {
                 onClose={canShare ? handleCloseMedia : undefined}
                 mediaVolume={mixerState.musicVolume}
                 maxSeconds={isFree ? 30 : Infinity}
+                chatOpen={chatOpen}
                 liveCamerasNode={liveCamerasNode}
               />
               </div>

@@ -184,30 +184,35 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
 
   return (
     <>
-      {/* 🚀 Lanceur flottant bas-droite (badge non-lus groupe + privé) */}
-      <button
-        onClick={onToggle}
-        className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
-        style={{ background: gradient }}
-        data-testid="session-chat-launcher"
-        aria-label="Ouvrir le chat de la session"
-      >
-        {open ? <X className="w-6 h-6 text-white" /> : <MessageCircle className="w-6 h-6 text-white" />}
-        {!open && unreadTotal > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0d0d12]">
-            {unreadTotal > 99 ? '99+' : unreadTotal}
-          </span>
-        )}
-      </button>
+      {/* 🚀 Lanceur flottant bas-droite (badge non-lus groupe + privé) — masqué quand le chat est ouvert
+          (le panneau a son propre bouton « fermer ») pour ne pas chevaucher le panneau ancré. */}
+      {!open && (
+        <button
+          onClick={onToggle}
+          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+          style={{ background: gradient }}
+          data-testid="session-chat-launcher"
+          aria-label="Ouvrir le chat de la session"
+        >
+          <MessageCircle className="w-6 h-6 text-white" />
+          {unreadTotal > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0d0d12]">
+              {unreadTotal > 99 ? '99+' : unreadTotal}
+            </span>
+          )}
+        </button>
+      )}
 
       {!open ? null : (
         <>
-          {/* Fond cliquable (mobile uniquement) */}
-          <div className="fixed inset-0 z-[115] bg-black/60 sm:hidden" onClick={onClose} aria-hidden />
-
+          {/* 💬 Chat COEXISTANT avec la vidéo/visio (jamais plein écran, pas de fond opaque qui masque) :
+              • Mobile/tablette : feuille BASSE (~58vh) ancrée en bas → la vidéo/visio reste visible au-dessus.
+              • Desktop (lg) : panneau LATÉRAL droit pleine hauteur, compact → la page se redimensionne à côté
+                (cf. padding droit appliqué au conteneur de session quand le chat est ouvert). */}
           <div
-            className="fixed z-[120] inset-x-0 bottom-0 top-0 flex flex-col bg-[#0d0d12] border border-white/10 shadow-2xl
-                       sm:inset-auto sm:bottom-24 sm:right-6 sm:top-auto sm:w-96 sm:h-[560px] sm:max-h-[80vh] sm:rounded-2xl sm:overflow-hidden"
+            className="fixed z-[120] inset-x-0 bottom-0 h-[58vh] max-h-[62vh] rounded-t-2xl border-t border-white/10
+                       lg:inset-y-0 lg:left-auto lg:right-0 lg:h-screen lg:w-[372px] lg:max-h-none lg:rounded-t-none lg:border-t-0 lg:border-l
+                       flex flex-col bg-[#0d0d12] shadow-2xl overflow-hidden"
             data-testid="chat-panel"
           >
             {/* En-tête */}

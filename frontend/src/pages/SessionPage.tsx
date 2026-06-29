@@ -1103,25 +1103,34 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, socket.userId, nickname, isHost]);
 
-  // 💳 Débit du crédit pour REJOINDRE (participant CONNECTÉ non admin), idempotent par session.
-  //    Les participants anonymes (lien/QR, sans compte) rejoignent librement — pas de régression.
-  //    L'hôte est débité séparément (cost_host) lors de la revendication de session.
+  // 💳 ACCÈS « Ouverte (crédits) » : le contenu (playlist/lecteur/live) est BLOQUÉ tant que le
+  //    participant n'a pas payé son crédit. Le débit est idempotent par session (déjà payé = OK,
+  //    pas de re-débit). Exceptions : hôte / admin / coach illimité / privée / payante (billet).
+  //    L'enforcement réel est côté BACKEND (RLS sur playlists) ; ici on gère l'UX (paywall + reload).
+  const [playlistReloadKey, setPlaylistReloadKey] = useState(0);
   const joinDebitedRef = useRef<string | null>(null);
   useEffect(() => {
     if (isHost || isAdminUser) return;
-    if (!sessionId || !user?.id || !nickname) return;
-    if (!accessInfo) return;                       // attendre le mode d'accès (open/paid/private)
-    if (accessInfo.mode === 'paid') return;        // 🎟️ payant → billet requis (pas de débit crédit)
+    if (!sessionId) return;
+    if (!accessInfo) return;                          // attendre le mode d'accès (open/paid/private)
+    if (accessInfo.mode !== 'open') return;           // seul « open » est gaté ici (privée/payante ailleurs)
+    // Mode « Ouverte (crédits) » : 1 crédit requis pour accéder au contenu.
+    if (!user?.id) {                                  // anonyme → doit se connecter + se procurer un crédit
+      setCreditsBlocked('join');                      // paywall À LA PLACE du contenu
+      return;
+    }
+    if (!nickname) return;                            // attendre le pseudo
     if (joinDebitedRef.current === sessionId) return;
     joinDebitedRef.current = sessionId;
     (async () => {
       const res = await spendCredit('join', sessionId);
       if (res.insufficient) {
-        // Paywall clair (pas de redirection brutale) : on laisse l'utilisateur acheter un pack.
-        joinDebitedRef.current = null; // permet une nouvelle tentative après achat
-        setCreditsBlocked('join');
+        joinDebitedRef.current = null;                // permet une nouvelle tentative après achat
+        setCreditsBlocked('join');                    // paywall À LA PLACE du contenu
       } else if (res.ok) {
+        setCreditsBlocked(null);
         refreshCredits();
+        setPlaylistReloadKey((k) => k + 1);           // recharge la playlist désormais accessible (RLS)
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1733,6 +1742,27 @@ export const SessionPage: React.FC = () => {
     // Les valeurs changeantes (isHost, selectedTrack, tracks, showToast) sont lues via refs ci-dessus.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // 💳 Après paiement du crédit (session « Ouverte »), la playlist devient lisible (RLS) :
+  //    on la recharge une fois, sans toucher aux canaux Realtime existants.
+  useEffect(() => {
+    if (playlistReloadKey === 0 || !sessionId || !supabase || !isSupabaseConfigured) return;
+    (async () => {
+      try {
+        const { data } = await supabase
+          .from('playlists')
+          .select('tracks, description, shared_media')
+          .eq('session_id', sessionId)
+          .maybeSingle();
+        if (data?.tracks && Array.isArray(data.tracks)) {
+          setTracks(data.tracks as Track[]);
+          if (!selectedTrackRef.current && data.tracks.length) setSelectedTrack(data.tracks[0] as Track);
+        }
+        if (typeof data?.description === 'string') setDescription(data.description);
+      } catch { /* ignore */ }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playlistReloadKey]);
 
   // 📸 PARTIE 2 : photos de profil des participants chargées depuis la table `profiles`
   // (la presence ne transporte pas toujours l'avatar) → affichées dans la liste Participants.
@@ -2762,16 +2792,30 @@ export const SessionPage: React.FC = () => {
                 ? "Il te faut 1 crédit pour animer ce live."
                 : creditsBlocked === 'record'
                   ? "Tu n'as pas assez de crédits pour activer l'enregistrement + transcription IA."
-                  : "Il te faut 1 crédit pour rejoindre ce live."}
+                  : !user?.id
+                    ? "Cette session « Ouverte » nécessite 1 crédit. Connecte-toi pour y accéder."
+                    : "Il te faut 1 crédit pour accéder à cette session « Ouverte »."}
             </p>
             <p className="text-white/50 text-xs mb-6">
-              Achète un pack pour continuer. 🎁 Ton 1er cours est offert à l'inscription.
+              {!user?.id
+                ? "Connecte-toi puis procure-toi un crédit. 🎁 Ton 1er cours est offert à l'inscription."
+                : "Achète un pack pour continuer. 🎁 Ton 1er cours est offert à l'inscription."}
             </p>
             <div className="flex flex-col gap-2">
+              {!user?.id && creditsBlocked !== 'record' && (
+                <button
+                  onClick={() => navigate('/login', { state: { from: window.location.pathname } })}
+                  className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
+                  style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                  data-testid="credits-paywall-login"
+                >
+                  <Lock className="w-5 h-5" /> Se connecter
+                </button>
+              )}
               <button
                 onClick={() => navigate('/pricing')}
-                className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
-                style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                className={`w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] ${!user?.id && creditsBlocked !== 'record' ? 'bg-white/10' : ''}`}
+                style={!user?.id && creditsBlocked !== 'record' ? {} : { background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
                 data-testid="credits-paywall-buy"
               >
                 <Coins className="w-5 h-5" /> Acheter des crédits

@@ -37,13 +37,28 @@ export const HeroSection: React.FC = () => {
   const [sessionCode, setSessionCode] = useState<string>("");
   const [isJoining, setIsJoining] = useState<boolean>(false);
 
-  // Item 3 : dernier code de session rejoint (mémorisé en localStorage) → reprise rapide
+  // Item 3 : dernier code de session rejoint (mémorisé en localStorage) → reprise rapide.
+  // 🧹 BUG « code fantôme » : à l'ouverture, on VÉRIFIE en DB que la session existe encore.
+  //    Si elle n'existe plus → on efface le code, on ne propose pas « Reprendre », on notifie.
   const [lastCode, setLastCode] = useState<string>("");
   React.useEffect(() => {
-    try {
-      const saved = localStorage.getItem("bt_last_session_code");
-      if (saved) { setLastCode(saved); setSessionCode(saved); }
-    } catch { /* ignore */ }
+    let saved: string | null = null;
+    try { saved = localStorage.getItem("bt_last_session_code"); } catch { /* ignore */ }
+    if (!saved) return;
+    (async () => {
+      const exists = await sessionExists(saved);
+      if (exists === false) {
+        try { localStorage.removeItem("bt_last_session_code"); } catch { /* ignore */ }
+        setLastCode("");
+        setSessionCode("");
+        showToast("Cette session n'existe plus.", "default");
+        return;
+      }
+      // existe (true) ou inconnu (null : Supabase non configuré / mode démo) → reprise possible
+      setLastCode(saved!);
+      setSessionCode(saved!);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Generate particles with memoization to prevent re-renders

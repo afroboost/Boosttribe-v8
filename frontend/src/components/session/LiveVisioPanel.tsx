@@ -28,10 +28,6 @@ interface LiveVisioPanelProps {
   canManageStage?: boolean;
   stageRequestPending?: boolean;
   onRequestStage?: () => void;
-  // 🔍 Spotlight CONTRÔLÉ par le parent (persiste même si ce panneau est remonté/repositionné
-  //    entre la fenêtre flottante mobile et la colonne desktop). Optionnel : repli en interne.
-  spotlightId?: string | null;
-  onSpotlightChange?: (id: string | null) => void;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -42,17 +38,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   participants, myUserId, localStream, remoteCameras, cameraOn, activeCameraCount, maxCameras,
   micActive, onToggleMic, onToggleCamera, onLeaveLive,
   canManageStage = true, stageRequestPending = false, onRequestStage,
-  spotlightId: spotlightIdProp, onSpotlightChange,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🔍 Agrandir (épingler) UNE caméra — action LOCALE (chacun choisit sur SON écran).
-  // Contrôlé par le parent si fourni (persiste au remontage) ; sinon état interne (repli).
-  const [spotlightInternal, setSpotlightInternal] = useState<string | null>(null);
-  const spotlightId = spotlightIdProp !== undefined ? spotlightIdProp : spotlightInternal;
-  const setSpotlightId = (id: string | null) => {
-    if (onSpotlightChange) onSpotlightChange(id);
-    else setSpotlightInternal(id);
-  };
+  const [spotlightId, setSpotlightId] = useState<string | null>(null);
 
   const streamFor = (p: VisioParticipant): MediaStream | null => {
     if (p.id === myUserId) return cameraOn ? localStream : null;

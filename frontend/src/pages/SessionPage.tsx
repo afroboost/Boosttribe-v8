@@ -886,9 +886,6 @@ export const SessionPage: React.FC = () => {
 
   // 🎤 SCÈNE (Live Visio) — système de prise de parole : un spectateur demande à monter en vidéo,
   // l'hôte/co-hôte valide. Réutilise le maillage caméra (useVideoMesh) + le Realtime (playback:<id>).
-  // 🔍 Spotlight Live Visio remonté au niveau page → persiste quel que soit l'emplacement du panneau
-  //    (fenêtre flottante mobile / colonne desktop) et survit aux re-rendus fréquents de la session.
-  const [visioSpotlightId, setVisioSpotlightId] = useState<string | null>(null);
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
   const [stageRequestPending, setStageRequestPending] = useState(false);  // spectateur : ma demande envoyée
   // Refs pour piloter la caméra depuis les handlers Realtime (souscrits une seule fois)
@@ -898,7 +895,7 @@ export const SessionPage: React.FC = () => {
   const canManageStageRef = useRef(false);
   canManageStageRef.current = canShare; // hôte + co-hôtes gèrent les demandes
   // Quitter le mode Live → réinitialiser ma demande en attente (évite un état "envoyée" fantôme)
-  useEffect(() => { if (!liveMode) { setStageRequestPending(false); setVisioSpotlightId(null); } }, [liveMode]);
+  useEffect(() => { if (!liveMode) setStageRequestPending(false); }, [liveMode]);
 
   // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → fenêtre flottante
   const isDesktop = useMediaQuery('(min-width: 1024px)');
@@ -1114,10 +1111,6 @@ export const SessionPage: React.FC = () => {
   // (sinon : chaque setTracks/setSelectedTrack relançait le fetch → tempête de requêtes playlists).
   const isHostRef = useRef(isHost);
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
-  // 📡 Canal Realtime "playback:<id>" ABONNÉ (source fiable d'envoi/réception des broadcasts).
-  //    On envoie via CE canal (push WebSocket garanti) plutôt que via un canal jetable non-abonné
-  //    (qui retombe sur un broadcast HTTP peu fiable en self-hosted → demandes de scène perdues).
-  const playbackChannelRef = useRef<ReturnType<NonNullable<typeof supabase>['channel']> | null>(null);
   const myUserIdRef = useRef(socket.userId);
   useEffect(() => { myUserIdRef.current = socket.userId; }, [socket.userId]);
   const selectedTrackRef = useRef(selectedTrack);
@@ -1499,8 +1492,6 @@ export const SessionPage: React.FC = () => {
         setGroupMessages((prev) => prev.filter((x) => x.id !== p.id));
       })
       .subscribe();
-    // 📡 mémorise le canal ABONNÉ pour des envois fiables (push WS) via sendPlaybackEvent.
-    playbackChannelRef.current = playbackChannel;
 
     // Handler pour INSERT et UPDATE (playlist seulement)
     function handlePlaylistUpdate(payload: unknown) {
@@ -1542,7 +1533,6 @@ export const SessionPage: React.FC = () => {
 
     return () => {
       setIsSyncActive(false);
-      playbackChannelRef.current = null;
       if (supabase) {
         supabase.removeChannel(channel);
         supabase.removeChannel(playbackChannel);
@@ -1723,11 +1713,7 @@ export const SessionPage: React.FC = () => {
 
   const sendPlaybackEvent = useCallback((event: string, payload: unknown) => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
-    // ✅ Fiabilité : envoyer via le canal ABONNÉ (push WebSocket garanti vers tous les abonnés,
-    //    dont l'hôte). Repli sur un canal jetable (broadcast HTTP) seulement si pas encore abonné.
-    const ch = playbackChannelRef.current;
-    if (ch) ch.send({ type: 'broadcast', event, payload });
-    else supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
+    supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
   }, [sessionId]);
 
   // 💬 CHAT — envoi (ajout optimiste local + diffusion realtime). Pro uniquement.
@@ -2479,8 +2465,6 @@ export const SessionPage: React.FC = () => {
       canManageStage={canShare}
       stageRequestPending={stageRequestPending}
       onRequestStage={handleRequestStage}
-      spotlightId={visioSpotlightId}
-      onSpotlightChange={setVisioSpotlightId}
     />
   );
 

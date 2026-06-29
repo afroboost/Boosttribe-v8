@@ -666,7 +666,9 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       {/* 🎥 Vue agrandie : caméras live dans une fenêtre FLOTTANTE déplaçable (en haut par défaut),
           par-dessus la vidéo. La vidéo reste synchronisée et en lecture (pas de remontage). */}
       {enlarged && liveCamerasNode && (
-        <DraggableWindow title="Caméras live" storageKey="bt_visio_enlarged_pos" defaultWidth={260}>
+        /* z-[110] : TOUJOURS au-dessus des barres du lecteur plein écran (root z-[100], barre z-[105])
+           → la fenêtre caméras ne se coince jamais sous la barre « Contenu partagé ». */
+        <DraggableWindow title="Caméras live" storageKey="bt_visio_enlarged_pos" defaultWidth={260} zClass="z-[110]">
           {liveCamerasNode}
         </DraggableWindow>
       )}

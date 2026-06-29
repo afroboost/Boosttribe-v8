@@ -46,7 +46,7 @@ import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
-import { Pencil } from 'lucide-react';
+import { Pencil, Maximize2, Minimize2, Coins } from 'lucide-react';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -886,6 +886,11 @@ export const SessionPage: React.FC = () => {
 
   // 🎤 SCÈNE (Live Visio) — système de prise de parole : un spectateur demande à monter en vidéo,
   // l'hôte/co-hôte valide. Réutilise le maillage caméra (useVideoMesh) + le Realtime (playback:<id>).
+  // 🔍 Spotlight Live Visio remonté au niveau page (UI pure) → persiste quel que soit l'emplacement
+  //    du panneau (fenêtre flottante mobile / colonne desktop / fenêtre plein écran) et survit aux re-rendus.
+  const [visioSpotlightId, setVisioSpotlightId] = useState<string | null>(null);
+  // 💳 Paywall « crédits insuffisants » (remplace la redirection brutale vers /pricing).
+  const [creditsBlocked, setCreditsBlocked] = useState<null | 'join' | 'host'>(null);
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
   const [stageRequestPending, setStageRequestPending] = useState(false);  // spectateur : ma demande envoyée
   // Refs pour piloter la caméra depuis les handlers Realtime (souscrits une seule fois)
@@ -895,7 +900,7 @@ export const SessionPage: React.FC = () => {
   const canManageStageRef = useRef(false);
   canManageStageRef.current = canShare; // hôte + co-hôtes gèrent les demandes
   // Quitter le mode Live → réinitialiser ma demande en attente (évite un état "envoyée" fantôme)
-  useEffect(() => { if (!liveMode) setStageRequestPending(false); }, [liveMode]);
+  useEffect(() => { if (!liveMode) { setStageRequestPending(false); setVisioSpotlightId(null); } }, [liveMode]);
 
   // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → fenêtre flottante
   const isDesktop = useMediaQuery('(min-width: 1024px)');
@@ -1022,8 +1027,9 @@ export const SessionPage: React.FC = () => {
     (async () => {
       const res = await spendCredit('join', sessionId);
       if (res.insufficient) {
-        showToast('Crédits insuffisants pour rejoindre ce live', 'warning');
-        navigate('/pricing');
+        // Paywall clair (pas de redirection brutale) : on laisse l'utilisateur acheter un pack.
+        joinDebitedRef.current = null; // permet une nouvelle tentative après achat
+        setCreditsBlocked('join');
       } else if (res.ok) {
         refreshCredits();
       }
@@ -2207,8 +2213,9 @@ export const SessionPage: React.FC = () => {
       if (isAdminUser) return;  // admin : accès illimité, jamais débité
       const res = await spendCredit('host', sessionId);
       if (res.insufficient) {
-        showToast('Crédits insuffisants pour animer ce live', 'warning');
-        navigate('/pricing');
+        // Paywall clair (pas de redirection brutale).
+        claimedSessionRef.current = null; // permet une nouvelle tentative après achat
+        setCreditsBlocked('host');
       } else if (res.ok) {
         refreshCredits();
       }
@@ -2465,29 +2472,62 @@ export const SessionPage: React.FC = () => {
       canManageStage={canShare}
       stageRequestPending={stageRequestPending}
       onRequestStage={handleRequestStage}
+      spotlightId={visioSpotlightId}
+      onSpotlightChange={setVisioSpotlightId}
     />
   );
 
   // 🎥 Vignettes caméra COMPACTES (hôte + participants) pour la fenêtre flottante de la vue agrandie.
-  const liveCamerasNode = (
+  //    + bouton « agrandir » (spotlight) par tuile — UI uniquement (même état que le panneau visio).
+  const liveCamerasParticipants = participants;
+  const liveCamerasSpotlight = visioSpotlightId
+    ? liveCamerasParticipants.find((p) => p.id === visioSpotlightId) || null
+    : null;
+  const streamForCam = (p: { id: string }) => {
+    const isMe = p.id === socket.userId;
+    return isMe
+      ? (videoMesh.cameraOn ? videoMesh.localStream : null)
+      : (videoMesh.remoteCameras.find((c) => c.userId === p.id)?.stream || null);
+  };
+  const camTile = (p: typeof participants[number], large = false) => (
+    <CameraTile
+      name={p.name}
+      stream={streamForCam(p)}
+      isLocal={p.id === socket.userId}
+      micActive={p.id === socket.userId ? (isHost ? hostMicActive : isTalking) : peerState.remoteMicUsers.includes(p.id)}
+      isHost={p.isHost}
+      avatarUrl={p.avatarUrl}
+      large={large}
+      className={large ? 'w-full h-full' : ''}
+      onClick={() => setVisioSpotlightId(large ? null : p.id)}
+      topRight={
+        <button
+          onClick={() => setVisioSpotlightId(large ? null : p.id)}
+          className="p-1.5 rounded-lg bg-black/50 text-white/80 hover:bg-black/70 hover:text-white transition-colors"
+          title={large ? 'Réduire' : 'Agrandir'}
+          data-testid={large ? 'cam-tile-reduce' : 'cam-tile-enlarge'}
+        >
+          {large ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
+      }
+    />
+  );
+  const liveCamerasNode = liveCamerasSpotlight ? (
+    <div className="space-y-1.5 p-2">
+      <div className="relative aspect-video">{camTile(liveCamerasSpotlight, true)}</div>
+      {liveCamerasParticipants.filter((p) => p.id !== liveCamerasSpotlight.id).length > 0 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {liveCamerasParticipants.filter((p) => p.id !== liveCamerasSpotlight.id).map((p) => (
+            <div key={p.id} className="w-20 flex-shrink-0">{camTile(p)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : (
     <div className="grid grid-cols-2 gap-1.5 p-2">
-      {participants.map((p) => {
-        const isMe = p.id === socket.userId;
-        const stream = isMe
-          ? (videoMesh.cameraOn ? videoMesh.localStream : null)
-          : (videoMesh.remoteCameras.find((c) => c.userId === p.id)?.stream || null);
-        return (
-          <CameraTile
-            key={p.id}
-            name={p.name}
-            stream={stream}
-            isLocal={isMe}
-            micActive={isMe ? (isHost ? hostMicActive : isTalking) : peerState.remoteMicUsers.includes(p.id)}
-            isHost={p.isHost}
-            avatarUrl={p.avatarUrl}
-          />
-        );
-      })}
+      {liveCamerasParticipants.map((p) => (
+        <div key={p.id}>{camTile(p)}</div>
+      ))}
     </div>
   );
 
@@ -2519,6 +2559,44 @@ export const SessionPage: React.FC = () => {
           onComplete={handleAvatarComplete}
           onCancel={isHost ? undefined : () => setShowAvatarCrop(false)}
         />
+      )}
+
+      {/* 💳 Paywall « crédits insuffisants » — remplace la redirection brutale. Clair + CTA d'achat. */}
+      {creditsBlocked && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+              <Coins className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Crédits insuffisants
+            </h2>
+            <p className="text-white/70 text-sm mb-1">
+              {creditsBlocked === 'host'
+                ? "Il te faut 1 crédit pour animer ce live."
+                : "Il te faut 1 crédit pour rejoindre ce live."}
+            </p>
+            <p className="text-white/50 text-xs mb-6">
+              Achète un pack pour continuer. 🎁 Ton 1er cours est offert à l'inscription.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => navigate('/pricing')}
+                className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
+                style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                data-testid="credits-paywall-buy"
+              >
+                <Coins className="w-5 h-5" /> Acheter des crédits
+              </button>
+              <button
+                onClick={() => { setCreditsBlocked(null); navigate('/'); }}
+                className="w-full py-2.5 rounded-xl text-white/60 hover:text-white text-sm transition-colors"
+              >
+                Retour à l'accueil
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* 🔊 BUG 1: Overlay d'activation du son (autoplay bloqué côté participant) */}

@@ -6,12 +6,13 @@ interface DraggableWindowProps {
   storageKey?: string;       // mémorise la dernière position
   defaultWidth?: number;
   children: React.ReactNode;
+  zClass?: string;           // couche d'empilement (ex. au-dessus des barres du lecteur plein écran)
 }
 
 // 🪟 Fenêtre flottante déplaçable (doigt + souris) contrainte dans le viewport,
 // avec poignée de déplacement et bouton réduire/agrandir. Utilisée sur mobile pour le Live Visio.
 export const DraggableWindow: React.FC<DraggableWindowProps> = ({
-  title, storageKey, defaultWidth = 280, children,
+  title, storageKey, defaultWidth = 280, children, zClass = 'z-[80]',
 }) => {
   const winRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number }>(() => {
@@ -67,29 +68,38 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
     return () => window.removeEventListener('resize', onResize);
   }, [clamp]);
 
+  // 🧷 Au montage : re-clamper la position (stockée/défaut) pour qu'elle soit TOUJOURS dans
+  //    l'écran visible (jamais hors champ ni coincée), donc toujours attrapable.
+  useEffect(() => {
+    setPos((p) => clamp(p.x, p.y));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div
       ref={winRef}
-      className="fixed z-[80] rounded-2xl border border-[#8A2EFF]/40 bg-[rgba(15,15,20,0.97)] shadow-2xl shadow-[#8A2EFF]/20 backdrop-blur-sm overflow-hidden"
+      className={`fixed ${zClass} rounded-2xl border border-[#8A2EFF]/40 bg-[rgba(15,15,20,0.97)] shadow-2xl shadow-[#8A2EFF]/20 backdrop-blur-sm overflow-hidden`}
       style={{ left: pos.x, top: pos.y, width: defaultWidth, maxWidth: 'calc(100vw - 16px)' }}
       data-testid="draggable-window"
     >
-      {/* Poignée de déplacement */}
+      {/* Poignée de déplacement — TOUTE la barre d'en-tête est préhensible (souris + tactile) */}
       <div
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        className="flex items-center justify-between gap-2 px-3 py-2 cursor-move touch-none select-none border-b border-white/10"
-        style={{ background: 'linear-gradient(135deg, rgba(138,46,255,0.25) 0%, rgba(255,47,179,0.18) 100%)' }}
+        className="flex items-center justify-between gap-2 px-3 py-2.5 cursor-grab active:cursor-grabbing touch-none select-none border-b border-white/10"
+        style={{ background: 'linear-gradient(135deg, rgba(138,46,255,0.30) 0%, rgba(255,47,179,0.22) 100%)' }}
         data-testid="drag-handle"
+        title="Glissez pour déplacer"
       >
-        <span className="flex items-center gap-1.5 text-white text-xs font-semibold truncate">
-          <Move className="w-3.5 h-3.5 flex-shrink-0" /> {title}
+        <span className="flex items-center gap-1.5 text-white text-xs font-semibold truncate pointer-events-none">
+          <Move className="w-4 h-4 flex-shrink-0" /> {title}
         </span>
         <button
           onClick={() => setMinimized((m) => !m)}
-          className="p-1 rounded text-white/70 hover:text-white hover:bg-white/10 flex-shrink-0"
+          onPointerDown={(e) => e.stopPropagation()}
+          className="p-1.5 rounded text-white/70 hover:text-white hover:bg-white/10 flex-shrink-0"
           title={minimized ? 'Agrandir' : 'Réduire'}
           data-testid="window-toggle-size"
         >

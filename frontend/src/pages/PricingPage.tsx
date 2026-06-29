@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
-  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2,
+  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2, FileText,
 } from 'lucide-react';
 
 // 🎨 Couleurs Afroboost
@@ -324,6 +324,23 @@ const PricingPage: React.FC = () => {
         </div>
       )}
 
+      {/* 🔴 Option premium : Enregistrement complet + Transcription IA */}
+      <div className="max-w-4xl mx-auto mt-2 mb-8 px-1">
+        <div className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6">
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 text-white" style={{ background: AFRO.gradient }}>
+            <FileText className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-white font-semibold">Option premium — Enregistrement + Transcription IA</h3>
+            <p className="text-white/60 text-sm mt-1">
+              Enregistre toute la session (toutes les voix + la musique) et reçois une transcription en français
+              + un résumé / notes de cours, téléchargeables depuis ton Espace Coach.
+              {config?.cost_record_transcribe ? ` Coût : ${config.cost_record_transcribe} crédit${config.cost_record_transcribe > 1 ? 's' : ''} par session (offert pour les coachs abonnés).` : ' Quelques crédits par session (offert pour les coachs abonnés).'}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* 💎 Section COACHS — abonnement illimité (point d'entrée visible) */}
       <div className="max-w-4xl mx-auto mt-6 mb-10 px-1">
         <div
@@ -337,10 +354,12 @@ const PricingPage: React.FC = () => {
             Tu es coach ou animateur&nbsp;?
           </h2>
           <p className="text-white/70 max-w-2xl mx-auto mb-1">
-            Anime tes propres sessions sur BoostTribe et encaisse tes ventes de billets.
+            Anime tes propres sessions sur BoostTribe : modes Ouverte (crédits), Payante (billet CHF) ou Privée (lien/QR).
           </p>
           <p className="text-white/60 text-sm max-w-2xl mx-auto mb-5">
-            <span className="font-semibold text-white">Abonnement Illimité</span> : crédits illimités + 0% de commission sur tes ventes.
+            <span className="font-semibold text-white">Abonnement Illimité</span> : crédits illimités + 0% de commission —
+            tu encaisses tes élèves toi-même via ton lien/QR privé. (Sur demande, l'admin peut t'activer le mode
+            commission : billets payants encaissés via la plateforme, virements par IBAN.)
           </p>
           <div className="flex flex-col items-center gap-3">
             <div className="text-white">

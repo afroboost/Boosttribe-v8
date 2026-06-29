@@ -13,30 +13,36 @@ interface Message {
 // Les textes "crédits/tarifs" sont enrichis dynamiquement depuis la config admin (getCreditsConfig).
 const BOT_RESPONSES: Record<string, string[]> = {
   default: [
-    "Bonjour ! Je suis l'assistant BoostTribe 👋 Je peux vous parler des sessions audio/vidéo synchronisées, du Live Visio, du micro, de l'enregistrement, des sessions privées ou des crédits.",
-    "BoostTribe permet d'animer des lives où tout le monde écoute/regarde la même chose, parfaitement synchronisé. Posez-moi votre question !",
+    "Bonjour ! Je suis l'assistant BoostTribe 👋 Je peux vous parler des sessions synchronisées, du Live Visio, du chat en direct, du micro, de l'enregistrement + transcription IA, des modes de session (ouverte / payante / privée), de l'Espace Coach et des crédits.",
+    "BoostTribe permet d'animer des lives où tout le monde écoute/regarde la même chose, parfaitement synchronisé, avec visio, chat et transcription IA. Posez-moi votre question !",
   ],
   session: [
     "Pour créer une session : cliquez sur « Créer ma session ». Vous partagez ensuite un lien ou un QR code, et vos participants rejoignent en un clic — audio ET vidéo restent synchronisés pour tout le monde.",
-    "Dans une session, l'hôte contrôle la lecture pour tous : musique, vidéo uploadée ou lien YouTube/Vimeo, tout est synchronisé au même instant.",
+    "Dans une session, l'hôte contrôle la lecture pour tous : musique, vidéo uploadée ou lien YouTube/Vimeo, tout est synchronisé au même instant. Trois modes d'accès : Ouverte (crédits), Payante (billet CHF) ou Privée (lien/QR).",
+  ],
+  modes: [
+    "Trois modes d'accès au choix de l'hôte : 🟢 Ouverte — le public dépense 1 crédit pour rejoindre ; 💳 Payante — billet en CHF (réservée aux coachs en mode commission) ; 🔒 Privée — accès gratuit sur invitation via lien/QR, avec salle d'attente.",
   ],
   video: [
     "BoostTribe synchronise aussi la VIDÉO : partagez une vidéo uploadée ou un lien YouTube/Vimeo, et tous les participants la voient au même instant (l'hôte pilote play/pause/seek).",
   ],
   visio: [
-    "Le Live Visio, c'est la visio façon Zoom DANS la session : activez votre caméra et voyez les autres en direct (jusqu'à 6 caméras), tout en gardant la vidéo partagée. Le lecteur est même déplaçable sur l'écran. 🎥",
+    "Le Live Visio, c'est la visio façon Zoom DANS la session : activez votre caméra et voyez les autres en direct, tout en gardant la vidéo partagée. Scène jusqu'à 10 intervenants, « lever la main » pour demander à monter, spotlight pour épingler une caméra, et partage d'écran. Le lecteur est même déplaçable. 🎥",
   ],
   voice: [
     "Côté voix : prenez le micro pour guider votre audience, parlez à tout le groupe ou en privé à un ou plusieurs participants choisis. Chaque participant peut aussi régler le volume des autres.",
   ],
   record: [
-    "L'hôte peut enregistrer les VOIX de la session (micro + participants) en un clic, puis télécharger l'audio — idéal pour créer du contenu pour vos réseaux. Un bandeau prévient tout le monde quand l'enregistrement est actif.",
+    "Option premium : l'hôte peut lancer l'ENREGISTREMENT COMPLET de la session (toutes les voix + la musique) puis obtenir automatiquement une TRANSCRIPTION IA en français + un résumé / notes de cours. L'audio et la transcription sont téléchargeables dans l'Espace Coach. Un avis de consentement et un bandeau préviennent les participants. L'option coûte quelques crédits (réglable par l'admin).",
   ],
-  social: [
-    "Pendant une session : likes et commentaires en direct, photos de profil, et partage de vidéo, image ou lien. Une vraie expérience de groupe. 💬",
+  chat: [
+    "Un CHAT en direct accompagne chaque session : messages au groupe, échanges privés et assistant intégré. Likes, commentaires, photos de profil et partage de vidéo/image/lien complètent l'expérience de groupe. 💬",
+  ],
+  coach: [
+    "Espace Coach : deviens coach pour animer tes propres sessions. L'Abonnement Illimité (99,99 CHF/mois) te donne des crédits illimités et 0% de commission — tu encaisses tes élèves toi-même via ton lien/QR privé. Sur demande, l'admin peut te passer en mode commission (billets payants en CHF encaissés via la plateforme, virements par IBAN). Rends-toi sur la page Tarifs → « Devenir Coach ».",
   ],
   private: [
-    "Les sessions privées ont une SALLE D'ATTENTE : même si le lien fuite, l'hôte admet (ou refuse) chaque participant manuellement. Parfait pour vendre vos lives et ne laisser entrer que ceux qui ont payé.",
+    "Les sessions privées ont une SALLE D'ATTENTE : même si le lien fuite, l'hôte admet (ou refuse) chaque participant manuellement. Parfait pour réserver tes lives à tes invités.",
   ],
   lang: [
     "L'application est multilingue : Français, Anglais et Allemand (bouton globe 🌐). Le français est la langue par défaut.",
@@ -45,7 +51,7 @@ const BOT_RESPONSES: Record<string, string[]> = {
     "Rejoindre une session est ultra simple : un lien ou un QR code, aucune application à installer, compatible tous appareils (et installable en PWA).",
   ],
   help: [
-    "Je peux vous expliquer : les crédits, les sessions synchronisées, le Live Visio, le micro & la voix privée, l'enregistrement, les sessions privées (salle d'attente), le partage vidéo/image/lien et les langues. Que voulez-vous savoir ?",
+    "Je peux vous expliquer : les crédits (1er cours offert), les sessions synchronisées, le Live Visio (scène jusqu'à 10, lever la main, spotlight, partage d'écran), le chat en direct, le micro & la voix privée, l'enregistrement + transcription IA, les modes de session (ouverte/payante/privée), l'Espace Coach (abonnement 99,99/mois) et les langues. Que voulez-vous savoir ?",
   ],
 };
 
@@ -78,16 +84,21 @@ function getBotResponse(userMessage: string, cfg: CreditsConfig | null): string 
   const msg = userMessage.toLowerCase();
   const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
 
+  // Coach / abonnement : prioritaire sur « crédits » pour bien orienter vers l'Espace Coach.
+  if (msg.includes('coach') || msg.includes('abonn') || msg.includes('illimité') || msg.includes('illimite') ||
+      msg.includes('commission') || msg.includes('animateur') || msg.includes('99'))
+    return pick(BOT_RESPONSES.coach);
   if (msg.includes('crédit') || msg.includes('credit') || msg.includes('prix') || msg.includes('tarif') ||
       msg.includes('coût') || msg.includes('cout') || msg.includes('payer') || msg.includes('acheter') ||
-      msg.includes('pack') || msg.includes('abonnement') || msg.includes('gratuit') || msg.includes('free') ||
+      msg.includes('pack') || msg.includes('gratuit') || msg.includes('free') ||
       msg.includes('plan') || msg.includes('chf'))
     return buildCreditsText(cfg);
-  if (msg.includes('visio') || msg.includes('caméra') || msg.includes('camera') || msg.includes('zoom') || msg.includes('webcam')) return pick(BOT_RESPONSES.visio);
-  if (msg.includes('privé') || msg.includes('prive') || msg.includes('salle') || msg.includes('attente') || msg.includes('admet') || msg.includes('vendre') || msg.includes('payant')) return pick(BOT_RESPONSES.private);
-  if (msg.includes('enregistr') || msg.includes('record') || msg.includes('télécharg')) return pick(BOT_RESPONSES.record);
+  if (msg.includes('transcri') || msg.includes('enregistr') || msg.includes('record') || msg.includes('résumé') || msg.includes('resume') || msg.includes('télécharg')) return pick(BOT_RESPONSES.record);
+  if (msg.includes('visio') || msg.includes('caméra') || msg.includes('camera') || msg.includes('zoom') || msg.includes('webcam') || msg.includes('main') || msg.includes('spotlight') || msg.includes('écran') || msg.includes('ecran') || msg.includes('scène') || msg.includes('scene')) return pick(BOT_RESPONSES.visio);
+  if (msg.includes('mode') || msg.includes('ouverte') || msg.includes('accès') || msg.includes('acces')) return pick(BOT_RESPONSES.modes);
+  if (msg.includes('privé') || msg.includes('prive') || msg.includes('salle') || msg.includes('attente') || msg.includes('admet') || msg.includes('payant')) return pick(BOT_RESPONSES.private);
+  if (msg.includes('chat') || msg.includes('message') || msg.includes('commentaire') || msg.includes('like') || msg.includes('aime') || msg.includes('photo')) return pick(BOT_RESPONSES.chat);
   if (msg.includes('micro') || msg.includes('voix') || msg.includes('parler')) return pick(BOT_RESPONSES.voice);
-  if (msg.includes('commentaire') || msg.includes('like') || msg.includes('aime') || msg.includes('photo')) return pick(BOT_RESPONSES.social);
   if (msg.includes('vidéo') || msg.includes('video') || msg.includes('youtube') || msg.includes('vimeo')) return pick(BOT_RESPONSES.video);
   if (msg.includes('langue') || msg.includes('anglais') || msg.includes('english') || msg.includes('allemand') || msg.includes('traduc')) return pick(BOT_RESPONSES.lang);
   if (msg.includes('rejoindre') || msg.includes('lien') || msg.includes('qr') || msg.includes('installer') || msg.includes('mobile')) return pick(BOT_RESPONSES.access);

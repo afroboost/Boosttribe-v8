@@ -1,11 +1,19 @@
 import React, { useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { Radio, Video, FileText } from "lucide-react";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Input } from "@/components/ui/input";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/components/ui/Toast";
 import { sessionExists } from "@/lib/supabaseClient";
+
+// ✅ Bénéfices honnêtes (remplacent des stats peu crédibles).
+const HERO_BENEFITS = [
+  { icon: Radio, label: "Sessions synchronisées en temps réel" },
+  { icon: Video, label: "Live visio & chat en direct" },
+  { icon: FileText, label: "Transcription IA des sessions" },
+];
 
 // Interface for particle configuration
 interface Particle {
@@ -23,7 +31,7 @@ export const HeroSection: React.FC = () => {
   const { theme } = useTheme();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const { name, slogan, description, badge, colors, fonts, buttons, stats, scrollIndicator } = theme;
+  const { name, slogan, description, badge, colors, fonts, buttons, scrollIndicator } = theme;
 
   // Session code input state
   const [sessionCode, setSessionCode] = useState<string>("");
@@ -40,10 +48,10 @@ export const HeroSection: React.FC = () => {
 
   // Generate particles with memoization to prevent re-renders
   const particles = useMemo<Particle[]>(() => {
-    return Array.from({ length: 20 }, (_, i) => ({
+    return Array.from({ length: 10 }, (_, i) => ({
       id: i,
       color: i % 2 === 0 ? colors.primary : colors.secondary,
-      opacity: Math.random() * 0.5 + 0.2,
+      opacity: Math.random() * 0.3 + 0.12,
       left: `${Math.random() * 100}%`,
       top: `${Math.random() * 100}%`,
       duration: 3 + Math.random() * 4,
@@ -113,25 +121,18 @@ export const HeroSection: React.FC = () => {
     >
       {/* Background Glow Effects */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {/* Primary violet glow - top left */}
-        <div 
-          className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-30 blur-3xl"
+        {/* Primary violet glow - top left (discret) */}
+        <div
+          className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-[0.12] blur-3xl"
           style={{
             background: `radial-gradient(circle, ${colors.primary} 0%, transparent 70%)`,
           }}
         />
-        {/* Secondary rose glow - bottom right */}
-        <div 
-          className="absolute -bottom-1/4 -right-1/4 w-1/2 h-1/2 rounded-full opacity-25 blur-3xl"
+        {/* Secondary rose glow - bottom right (discret) */}
+        <div
+          className="absolute -bottom-1/4 -right-1/4 w-1/2 h-1/2 rounded-full opacity-[0.10] blur-3xl"
           style={{
             background: `radial-gradient(circle, ${colors.secondary} 0%, transparent 70%)`,
-          }}
-        />
-        {/* Center subtle glow behind title */}
-        <div 
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl h-64 rounded-full opacity-20 blur-3xl"
-          style={{
-            background: `radial-gradient(ellipse, ${colors.primary} 0%, ${colors.secondary} 50%, transparent 80%)`,
           }}
         />
       </div>
@@ -231,6 +232,20 @@ export const HeroSection: React.FC = () => {
           }}
         >
           {t('hero.subtitle')}
+        </p>
+
+        {/* Ligne de valeur — nouveautés (discrète) */}
+        <p
+          className="text-sm sm:text-base max-w-xl mx-auto mb-10 opacity-0"
+          style={{
+            fontFamily: fonts.body,
+            color: colors.text.muted,
+            animation: "bt-fade-in 0.8s ease-out 0.9s forwards",
+          }}
+        >
+          Lives synchronisés, <span style={{ color: colors.text.secondary }}>Live visio</span>,
+          {" "}<span style={{ color: colors.text.secondary }}>chat en direct</span> et
+          {" "}<span style={{ color: colors.text.secondary }}>transcription IA</span> — tout au même endroit.
         </p>
 
         {/* Session Join Form */}
@@ -354,36 +369,20 @@ export const HeroSection: React.FC = () => {
           </button>
         </div>
 
-        {/* Stats - Dynamic from theme */}
-        <div 
-          className="grid grid-cols-3 gap-8 mt-16 pt-8 border-t border-white/10 max-w-lg mx-auto opacity-0"
-          style={{
-            animation: "bt-fade-in 0.8s ease-out 1.2s forwards",
-          }}
+        {/* Bénéfices honnêtes (remplacent les anciennes stats) */}
+        <div
+          className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mt-14 pt-8 border-t border-white/10 max-w-2xl mx-auto opacity-0"
+          style={{ animation: "bt-fade-in 0.8s ease-out 1.2s forwards" }}
         >
-          {stats.map((stat, index) => (
-            <div key={index} className="text-center">
-              <p 
-                className="text-2xl sm:text-3xl font-bold"
-                style={{
-                  fontFamily: fonts.heading,
-                  background: colors.gradient.primary,
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                }}
-              >
-                {stat.value}
-              </p>
-              <p 
-                className="text-xs sm:text-sm mt-1"
-                style={{
-                  fontFamily: fonts.body,
-                  color: colors.text.muted,
-                }}
-              >
-                {stat.label}
-              </p>
+          {HERO_BENEFITS.map(({ icon: Icon, label }, index) => (
+            <div
+              key={index}
+              className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-white/10 bg-white/[0.03] w-full sm:w-auto"
+            >
+              <Icon size={16} style={{ color: colors.secondary }} className="flex-shrink-0" />
+              <span className="text-sm" style={{ fontFamily: fonts.body, color: colors.text.secondary }}>
+                {label}
+              </span>
             </div>
           ))}
         </div>

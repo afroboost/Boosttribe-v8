@@ -4,65 +4,87 @@ import { useTheme } from "@/context/ThemeContext";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { MobileMenu } from "@/components/layout/MobileMenu";
 import {
-  Dumbbell,
+  Radio,
   Video,
   Mic,
-  Radio,
+  MessageCircle,
+  FileText,
+  Coins,
+  Crown,
   Smartphone,
-  Heart,
   ArrowRight,
   CheckCircle2
 } from "lucide-react";
 
-// Feature data with icons and descriptions
+// 🎨 Palette Afroboost (cohérente, premium) — magenta / rose, accents sobres.
+const MAGENTA = "#D91CD2";
+const PINK = "#FF2DAA";
+
+// Feature data — reflète TOUTES les nouveautés de BoostTribe.
 const FEATURES = [
   {
     id: 1,
-    icon: Dumbbell,
-    title: "Séances sport & danse synchronisées",
-    description: "Animez vos cours collectifs avec une vidéo ou une musique parfaitement synchronisée pour tous les participants. Chacun suit le même rythme, au même instant.",
-    benefits: ["Synchronisation temps réel", "Audio ET vidéo", "Aucun décalage"],
-    color: "#8A2EFF",
+    icon: Radio,
+    title: "Sessions d'écoute synchronisées",
+    description: "Animez des lives où tout le monde écoute et regarde la même chose, au même instant. Musique, vidéo uploadée ou lien YouTube/Vimeo : l'hôte pilote la lecture pour tous, sans décalage.",
+    benefits: ["Synchronisation temps réel", "Audio ET vidéo", "L'hôte contrôle la lecture"],
+    color: MAGENTA,
   },
   {
     id: 2,
     icon: Video,
-    title: "Visio en direct façon Zoom",
-    description: "Activez la caméra et voyez vos participants en direct pendant la séance, tout en partageant la même vidéo. Le lecteur est déplaçable où vous voulez.",
-    benefits: ["Caméras en direct", "Vidéo partagée synchronisée", "Lecteur déplaçable"],
-    color: "#FF2FB3",
+    title: "Live Visio façon Zoom",
+    description: "Activez la caméra et voyez les participants en direct pendant la session. Une scène jusqu'à 10 intervenants, le « lever la main » pour monter, le spotlight pour épingler une caméra et le partage d'écran.",
+    benefits: ["Scène jusqu'à 10 caméras", "Lever la main + spotlight", "Partage d'écran"],
+    color: PINK,
   },
   {
     id: 3,
     icon: Mic,
-    title: "Micro et voix privée",
-    description: "Prenez le micro et guidez votre audience. Parlez à tout le groupe, ou en privé à un ou plusieurs participants sélectionnés.",
+    title: "Micro & voix privée",
+    description: "Prenez le micro pour guider votre audience. Parlez à tout le groupe, ou en privé à un ou plusieurs participants choisis. Un seul bouton micro clair pour parler en live.",
     benefits: ["Voix en direct", "Conversation privée", "Volume par participant"],
-    color: "#00D4FF",
+    color: MAGENTA,
   },
   {
     id: 4,
-    icon: Radio,
-    title: "Enregistrement & contenu réseaux",
-    description: "Enregistrez les voix de votre session et créez du contenu engageant pour vos réseaux. Téléchargement de l'audio en un clic.",
-    benefits: ["Enregistrement des voix", "Téléchargement direct", "Bandeau de transparence"],
-    color: "#00FF88",
+    icon: MessageCircle,
+    title: "Chat en direct",
+    description: "Un chat intégré pour échanger pendant la session : messages au groupe, échanges privés et assistant BoostTribe. Likes, commentaires et partage de vidéo, image ou lien complètent l'expérience.",
+    benefits: ["Messages groupe & privés", "Assistant intégré", "Likes & partages"],
+    color: PINK,
   },
   {
     id: 5,
-    icon: Smartphone,
-    title: "Accès simple depuis son smartphone",
-    description: "Aucune application à installer. Vos participants rejoignent en un clic via un lien ou un QR code. Compatible tous appareils.",
-    benefits: ["Lien ou QR code", "Pas d'installation", "PWA installable"],
-    color: "#FFB800",
+    icon: FileText,
+    title: "Enregistrement complet + Transcription IA",
+    description: "Option premium : enregistrez toute la session (toutes les voix + la musique), puis obtenez automatiquement une transcription en français et un résumé / notes de cours. Audio et texte téléchargeables.",
+    benefits: ["Capte toutes les voix", "Transcription FR + résumé", "Consentement & téléchargement"],
+    color: MAGENTA,
   },
   {
     id: 6,
-    icon: Heart,
-    title: "Interaction & communauté",
-    description: "Likes et commentaires en direct, photos de profil, partage de vidéo, image ou lien. Une vraie expérience de groupe.",
-    benefits: ["Likes & commentaires", "Partage audio/vidéo/image/lien", "Profils participants"],
-    color: "#FF6B6B",
+    icon: Coins,
+    title: "Crédits simples, sans abonnement",
+    description: "1 crédit = 1 accès à un live. Pas d'abonnement : vous payez ce que vous utilisez. Votre 1er cours est offert à l'inscription, et les crédits achetés restent valables plusieurs mois.",
+    benefits: ["1 crédit = 1 accès live", "1er cours offert", "Crédits valables dans le temps"],
+    color: PINK,
+  },
+  {
+    id: 7,
+    icon: Crown,
+    title: "Espace Coach",
+    description: "Animez vos propres sessions et choisissez votre modèle. L'Abonnement Illimité (99,99 CHF/mois) offre des crédits illimités et 0% de commission ; vous encaissez vos élèves vous-même via votre lien/QR privé.",
+    benefits: ["Abonnement illimité 99,99/mois", "0% de commission", "Modes ouverte / payante / privée"],
+    color: MAGENTA,
+  },
+  {
+    id: 8,
+    icon: Smartphone,
+    title: "Accès simple, partout",
+    description: "Aucune application à installer. Vos participants rejoignent en un clic via un lien ou un QR code, sur tous les appareils. Installable en PWA pour un accès immédiat.",
+    benefits: ["Lien ou QR code", "Pas d'installation", "PWA installable"],
+    color: PINK,
   },
 ];
 
@@ -227,7 +249,7 @@ const FeaturesPage: React.FC = () => {
               opacity: 0,
             }}
           >
-            Une plateforme complète pour créer des expériences audio partagées inoubliables.
+            Lives synchronisés, Live Visio, chat en direct et transcription IA — une plateforme complète pour animer et partager vos sessions.
           </p>
         </div>
       </section>
@@ -258,7 +280,7 @@ const FeaturesPage: React.FC = () => {
             Prêt à créer votre première session ?
           </h2>
           <p className="text-white/60 mb-8 text-lg">
-            Rejoignez des milliers d'animateurs qui utilisent Boosttribe pour leurs événements.
+            Votre 1er cours est offert. Créez une session en quelques secondes — aucune installation requise.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link to="/session">

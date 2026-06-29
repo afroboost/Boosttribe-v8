@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
-import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera } from 'lucide-react';
+import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet } from 'lucide-react';
 import { ProfilePhotoModal } from '@/components/profile/ProfilePhotoEditor';
 
 /**
@@ -68,6 +68,11 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
             <Link to="/pricing" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
               <Tag size={18} /> Tarifs
             </Link>
+            {isAuthenticated && (
+              <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
+                <Wallet size={18} /> Portefeuille
+              </Link>
+            )}
             {!isAuthenticated && (
               <button onClick={() => go('/login')} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10 text-left">
                 <User size={18} /> {buttons.login}

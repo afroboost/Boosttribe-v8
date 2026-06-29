@@ -1161,6 +1161,452 @@ async def admin_save_pricing_settings(body: PricingSettingsBody, authorization: 
     return {"ok": True, "settings": await get_pricing_settings()}
 
 
+# =========================================================================== #
+# 🎟️ BILLETTERIE COACH — sessions payantes (CHF) + PORTEFEUILLE (style Spordateur)
+#   Coexiste avec les crédits. Les billets sont payés sur le compte plateforme
+#   (PAS de Stripe Connect). La part coach (prix - commission) alimente son SOLDE ;
+#   le coach renseigne son IBAN et DEMANDE des virements, l'admin les traite à la main.
+#   Commission/offre/prix ENTIÈREMENT éditables par l'admin.
+# =========================================================================== #
+class SessionConfigBody(BaseModel):
+    session_id: str
+    mode: str                        # open | paid | private
+    price_chf: Optional[float] = None
+    capacity: Optional[int] = None
+
+class BuyTicketBody(BaseModel):
+    session_id: str
+
+class CoachBankBody(BaseModel):
+    iban: str
+    holder: str
+
+class CommissionSettingsBody(BaseModel):
+    commission_percent: Optional[float] = None
+    fees_included: Optional[bool] = None
+    launch_offer: Optional[Dict[str, Any]] = None
+    price_min_chf: Optional[float] = None
+    price_max_chf: Optional[float] = None
+
+
+_COMMISSION_DEFAULTS = {
+    "commission_percent": 15, "fees_included": True,
+    "launch_offer": {"active": True, "percent": 0, "scope": "first_month", "days": 30},
+    "price_min_chf": 5, "price_max_chf": 500, "currency": "CHF",
+}
+
+async def get_commission_settings() -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/commission_settings",
+                                headers=_service_headers(), params={"id": "eq.default", "select": "*"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return dict(_COMMISSION_DEFAULTS)
+
+async def get_coach_wallet(uid: str) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/coach_wallet",
+                                headers=_service_headers(), params={"user_id": f"eq.{uid}", "select": "*"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return {"user_id": uid, "balance_chf": 0, "total_revenue_chf": 0, "first_sale_at": None}
+
+async def get_coach_bank(uid: str) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/coach_bank",
+                                headers=_service_headers(), params={"user_id": f"eq.{uid}", "select": "*"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+async def wallet_add(uid: str, delta: float, reason: str, ref: Optional[str], is_revenue: bool) -> None:
+    """Mouvement de portefeuille atomique + idempotent (via RPC wallet_add)."""
+    await _rpc("wallet_add", {"p_user": uid, "p_delta": round(delta, 2),
+                              "p_reason": reason, "p_ref": ref, "p_is_revenue": is_revenue})
+
+async def get_session_row(session_id: str) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                                params={"session_id": f"eq.{session_id}",
+                                        "select": "session_id,host_id,mode,price_chf,capacity"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+async def count_paid_tickets(session_id: str) -> int:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/tickets",
+                                headers=_service_headers({"Prefer": "count=exact"}),
+                                params={"session_id": f"eq.{session_id}", "status": "eq.paid",
+                                        "select": "id", "limit": "1"})
+    rng = resp.headers.get("content-range", "")
+    if "/" in rng:
+        try:
+            return int(rng.split("/")[-1])
+        except Exception:  # noqa: BLE001
+            pass
+    return len(resp.json()) if resp.status_code == 200 else 0
+
+async def has_valid_ticket(session_id: str, uid: str) -> bool:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
+                                params={"session_id": f"eq.{session_id}", "buyer_user_id": f"eq.{uid}",
+                                        "status": "eq.paid", "select": "id", "limit": "1"})
+    return resp.status_code == 200 and bool(resp.json())
+
+async def pending_payout_total(uid: str) -> float:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/payout_requests", headers=_service_headers(),
+                                params={"user_id": f"eq.{uid}", "status": "eq.requested",
+                                        "select": "amount_chf"})
+    rows = resp.json() if resp.status_code == 200 else []
+    return round(sum(float(r.get("amount_chf") or 0) for r in rows), 2)
+
+def _launch_active(settings: Dict[str, Any], wallet: Dict[str, Any]) -> bool:
+    """Offre de lancement active pour CE coach (ex. 0% pendant ses 30 premiers jours)."""
+    lo = settings.get("launch_offer") or {}
+    if not lo.get("active"):
+        return False
+    days = int(lo.get("days") or 30)
+    first = (wallet or {}).get("first_sale_at")
+    if not first:
+        return True  # avant la 1re vente → dans la fenêtre
+    try:
+        start = datetime.fromisoformat(str(first).replace("Z", "+00:00"))
+        return datetime.now(timezone.utc) < start + timedelta(days=days)
+    except Exception:  # noqa: BLE001
+        return True
+
+async def compute_commission(price_chf: float, coach_uid: str) -> Dict[str, Any]:
+    settings = await get_commission_settings()
+    wallet = await get_coach_wallet(coach_uid)
+    pct = float(settings.get("commission_percent") or 0)
+    if _launch_active(settings, wallet):
+        pct = float((settings.get("launch_offer") or {}).get("percent") or 0)
+    commission = round(price_chf * pct / 100.0, 2)
+    return {"percent": pct, "commission_chf": commission, "net_chf": round(price_chf - commission, 2),
+            "fees_included": bool(settings.get("fees_included", True))}
+
+async def _create_ticket_from_session(obj: Dict[str, Any], meta: Dict[str, Any], event_id: Optional[str]) -> None:
+    """Billet 'paid' depuis un Checkout terminé (idempotent) + crédite le SOLDE du coach."""
+    if obj.get("payment_status") not in ("paid", None):
+        return
+    stripe_session_id = obj.get("id")
+    coach_uid = meta.get("coach_user_id")
+    price = float(meta.get("price_chf") or 0)
+    commission = float(meta.get("commission_chf") or 0)
+    net = round(price - commission, 2)
+    cust = obj.get("customer_details") if isinstance(obj.get("customer_details"), dict) else None
+    row = {
+        "session_id": meta.get("session_id"),
+        "buyer_user_id": obj.get("client_reference_id") or meta.get("buyer_user_id"),
+        "buyer_email": (cust or {}).get("email") or obj.get("customer_email"),
+        "coach_user_id": coach_uid,
+        "stripe_session_id": stripe_session_id,
+        "stripe_payment_intent": obj.get("payment_intent"),
+        "amount_chf": price,
+        "commission_chf": commission,
+        "commission_percent": float(meta.get("commission_percent") or 0),
+        "status": "paid",
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/tickets",
+            headers=_service_headers({"Prefer": "resolution=ignore-duplicates,return=minimal"}),
+            params={"on_conflict": "stripe_session_id"}, json=row)
+    # Crédite le portefeuille du coach (net = prix - commission), idempotent sur l'event Stripe.
+    if coach_uid and net > 0 and resp.status_code in (200, 201, 204):
+        await wallet_add(coach_uid, net, "sale", f"sale:{stripe_session_id}", True)
+    elif resp.status_code not in (200, 201, 204, 409):
+        logger.error("insert billet HTTP %s: %s", resp.status_code, (resp.text or "")[:300])
+
+
+@app.get("/billetterie/config")
+async def billetterie_config():
+    """Réglages publics (devise, garde-fous prix) pour l'UI coach."""
+    s = await get_commission_settings()
+    return {"currency": s.get("currency", "CHF"),
+            "price_min_chf": s.get("price_min_chf", 5),
+            "price_max_chf": s.get("price_max_chf", 500),
+            "commission_percent": s.get("commission_percent", 15)}
+
+@app.get("/session/info/{session_id}")
+async def session_info(session_id: str):
+    """Infos d'accès publiques d'une session (mode/prix/capacité/places restantes)."""
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    row = await get_session_row(session_id)
+    mode = (row or {}).get("mode") or "open"
+    price = (row or {}).get("price_chf")
+    capacity = (row or {}).get("capacity")
+    sold = await count_paid_tickets(session_id) if mode == "paid" else 0
+    sold_out = bool(capacity) and mode == "paid" and sold >= int(capacity)
+    return {"mode": mode, "price_chf": price, "capacity": capacity,
+            "sold": sold, "sold_out": sold_out, "currency": "CHF"}
+
+# ---- Coach : PORTEFEUILLE (solde / revenus / IBAN / demandes de virement) ----
+@app.get("/coach/wallet")
+async def coach_wallet(authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    w = await get_coach_wallet(uid)
+    bank = await get_coach_bank(uid)
+    pending = await pending_payout_total(uid)
+    async with httpx.AsyncClient(timeout=10) as client:
+        pr = await client.get(f"{SUPABASE_URL}/rest/v1/payout_requests", headers=_service_headers(),
+                              params={"user_id": f"eq.{uid}", "select": "*",
+                                      "order": "created_at.desc", "limit": "100"})
+        lg = await client.get(f"{SUPABASE_URL}/rest/v1/wallet_ledger", headers=_service_headers(),
+                              params={"user_id": f"eq.{uid}", "select": "*",
+                                      "order": "created_at.desc", "limit": "100"})
+    requests = pr.json() if pr.status_code == 200 else []
+    balance = round(float(w.get("balance_chf") or 0), 2)
+    available = round(balance - pending, 2)
+    return {
+        "balance_chf": balance,
+        "available_chf": max(available, 0),
+        "total_revenue_chf": round(float(w.get("total_revenue_chf") or 0), 2),
+        "pending_chf": pending,
+        "payout_count": len(requests),
+        "iban": (bank or {}).get("iban"),
+        "holder": (bank or {}).get("holder"),
+        "has_iban": bool((bank or {}).get("iban")),
+        "requests": requests,
+        "ledger": lg.json() if lg.status_code == 200 else [],
+    }
+
+@app.post("/coach/bank")
+async def coach_bank_save(body: CoachBankBody, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    iban = re.sub(r"\s+", "", body.iban or "").upper()
+    if len(iban) < 15 or len(iban) > 34 or not re.match(r"^[A-Z]{2}[0-9A-Z]+$", iban):
+        raise HTTPException(status_code=400, detail="IBAN invalide")
+    if not (body.holder or "").strip():
+        raise HTTPException(status_code=400, detail="Titulaire du compte requis")
+    patch = {"user_id": uid, "iban": iban, "holder": body.holder.strip(),
+             "updated_at": datetime.now(timezone.utc).isoformat()}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{SUPABASE_URL}/rest/v1/coach_bank",
+                                 headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                                 params={"on_conflict": "user_id"}, json=patch)
+    if resp.status_code not in (200, 201, 204):
+        raise HTTPException(status_code=500, detail="Échec d'enregistrement de l'IBAN")
+    return {"ok": True, "iban": iban, "holder": patch["holder"]}
+
+@app.post("/coach/payout-request")
+async def coach_payout_request(authorization: Optional[str] = Header(default=None)):
+    """Le coach demande un virement de tout son solde disponible (traité ensuite par l'admin)."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    bank = await get_coach_bank(uid)
+    if not bank or not bank.get("iban"):
+        raise HTTPException(status_code=400, detail="Renseignez d'abord votre IBAN")
+    w = await get_coach_wallet(uid)
+    pending = await pending_payout_total(uid)
+    available = round(float(w.get("balance_chf") or 0) - pending, 2)
+    if available <= 0:
+        raise HTTPException(status_code=400, detail="Aucun solde à virer")
+    row = {"user_id": uid, "amount_chf": available, "iban": bank["iban"], "status": "requested",
+           "created_at": datetime.now(timezone.utc).isoformat()}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{SUPABASE_URL}/rest/v1/payout_requests",
+                                 headers=_service_headers({"Prefer": "return=representation"}), json=row)
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Échec de la demande de virement")
+    return {"ok": True, "amount_chf": available}
+
+@app.get("/coach/sales")
+async def coach_sales(authorization: Optional[str] = Header(default=None)):
+    """Ventes du coach : billets vendus + totaux."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
+                                params={"coach_user_id": f"eq.{uid}", "select": "*",
+                                        "order": "created_at.desc", "limit": "300"})
+    rows = resp.json() if resp.status_code == 200 else []
+    paid = [t for t in rows if t.get("status") == "paid"]
+    gross = round(sum(float(t.get("amount_chf") or 0) for t in paid), 2)
+    commission = round(sum(float(t.get("commission_chf") or 0) for t in paid), 2)
+    return {"tickets": rows, "count_paid": len(paid), "gross_chf": gross,
+            "commission_chf": commission, "net_chf": round(gross - commission, 2)}
+
+# ---- Configuration d'accès d'une session (hôte) ----------------------------
+@app.post("/session/configure")
+async def session_configure(body: SessionConfigBody, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if body.mode not in ("open", "paid", "private"):
+        raise HTTPException(status_code=400, detail="Mode invalide")
+    row = await get_session_authz(body.session_id)
+    if row and row.get("host_id") and row.get("host_id") != uid:
+        raise HTTPException(status_code=403, detail="Seul l'hôte peut configurer la session")
+    patch: Dict[str, Any] = {"mode": body.mode}
+    if body.mode == "paid":
+        s = await get_commission_settings()
+        if body.price_chf is None:
+            raise HTTPException(status_code=400, detail="Prix requis")
+        pmin, pmax = float(s.get("price_min_chf") or 0), float(s.get("price_max_chf") or 1e9)
+        if not (pmin <= float(body.price_chf) <= pmax):
+            raise HTTPException(status_code=400, detail=f"Prix hors limites ({pmin}–{pmax} CHF)")
+        patch["price_chf"] = round(float(body.price_chf), 2)
+        patch["capacity"] = int(body.capacity) if body.capacity else None
+    else:
+        patch["price_chf"] = None
+        patch["capacity"] = None
+    if not (row and row.get("host_id")):
+        patch["host_id"] = uid
+    await upsert_playlist_fields(body.session_id, patch)
+    return {"ok": True, "mode": body.mode, "price_chf": patch.get("price_chf"), "capacity": patch.get("capacity")}
+
+# ---- Participant : achat d'une place (billet) — Checkout compte plateforme ---
+@app.post("/tickets/buy")
+async def buy_ticket(body: BuyTicketBody, authorization: Optional[str] = Header(default=None)):
+    if not await apply_stripe_key():
+        raise HTTPException(status_code=500, detail="Stripe non configuré")
+    user = await get_user_from_token(authorization)
+    uid, email = user.get("id"), user.get("email")
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    row = await get_session_row(body.session_id)
+    if not row or row.get("mode") != "paid":
+        raise HTTPException(status_code=400, detail="Cette session n'est pas payante")
+    if await has_valid_ticket(body.session_id, uid):
+        return {"already": True}
+    capacity = row.get("capacity")
+    if capacity and await count_paid_tickets(body.session_id) >= int(capacity):
+        raise HTTPException(status_code=409, detail="Complet (toutes les places sont vendues)")
+    coach_uid = row.get("host_id")
+    price = float(row.get("price_chf") or 0)
+    if price <= 0 or not coach_uid:
+        raise HTTPException(status_code=400, detail="Session payante mal configurée")
+    comm = await compute_commission(price, coach_uid)
+    amount_cents = round(price * 100)
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{"price_data": {"currency": "chf", "unit_amount": amount_cents,
+                                    "product_data": {"name": f"Place — live BoostTribe ({body.session_id})"}},
+                     "quantity": 1}],
+        success_url=f"{FRONTEND_URL}/session/{body.session_id}?ticket=success",
+        cancel_url=f"{FRONTEND_URL}/session/{body.session_id}?ticket=canceled",
+        client_reference_id=uid,
+        customer_email=email,
+        metadata={"kind": "ticket", "session_id": body.session_id, "buyer_user_id": uid,
+                  "coach_user_id": coach_uid, "price_chf": str(price),
+                  "commission_chf": str(comm["commission_chf"]), "commission_percent": str(comm["percent"])},
+    )
+    return {"url": session.url}
+
+@app.get("/tickets/check/{session_id}")
+async def ticket_check(session_id: str, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    return {"has_ticket": await has_valid_ticket(session_id, user.get("id"))}
+
+@app.get("/tickets/me")
+async def tickets_me(authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
+                                params={"buyer_user_id": f"eq.{user.get('id')}", "select": "*",
+                                        "order": "created_at.desc", "limit": "200"})
+    return {"tickets": resp.json() if resp.status_code == 200 else []}
+
+# ---- Admin : Billetterie & Commission --------------------------------------
+@app.get("/admin/commission-config")
+async def admin_commission_config(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    return {"settings": await get_commission_settings()}
+
+@app.post("/admin/commission-settings")
+async def admin_save_commission(body: CommissionSettingsBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    patch: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    for k in ("commission_percent", "fees_included", "launch_offer", "price_min_chf", "price_max_chf"):
+        v = getattr(body, k)
+        if v is not None:
+            patch[k] = v
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.patch(f"{SUPABASE_URL}/rest/v1/commission_settings",
+                                  headers=_service_headers({"Prefer": "return=representation"}),
+                                  params={"id": "eq.default"}, json=patch)
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Échec d'enregistrement")
+    return {"ok": True, "settings": await get_commission_settings()}
+
+@app.get("/admin/billetterie/sales")
+async def admin_billetterie_sales(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
+                                params={"select": "*", "order": "created_at.desc", "limit": "500"})
+    rows = resp.json() if resp.status_code == 200 else []
+    profiles = await fetch_profiles_map()
+    for r in rows:
+        r["coach_email"] = (profiles.get(r.get("coach_user_id")) or {}).get("email")
+        r["buyer_email_resolved"] = r.get("buyer_email") or (profiles.get(r.get("buyer_user_id")) or {}).get("email")
+    paid = [t for t in rows if t.get("status") == "paid"]
+    return {"sales": rows, "count_paid": len(paid),
+            "gross_chf": round(sum(float(t.get("amount_chf") or 0) for t in paid), 2),
+            "commission_chf": round(sum(float(t.get("commission_chf") or 0) for t in paid), 2)}
+
+# ---- Admin : VIREMENTS (payouts) -------------------------------------------
+@app.get("/admin/payouts")
+async def admin_payouts(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/payout_requests", headers=_service_headers(),
+                                params={"select": "*", "order": "created_at.desc", "limit": "500"})
+    rows = resp.json() if resp.status_code == 200 else []
+    profiles = await fetch_profiles_map()
+    for r in rows:
+        prof = profiles.get(r.get("user_id")) or {}
+        r["coach_email"] = prof.get("email")
+        r["coach_name"] = prof.get("full_name")
+    return {"payouts": rows,
+            "pending_total_chf": round(sum(float(r.get("amount_chf") or 0)
+                                           for r in rows if r.get("status") == "requested"), 2)}
+
+@app.post("/admin/payouts/{payout_id}/pay")
+async def admin_payout_pay(payout_id: int, authorization: Optional[str] = Header(default=None)):
+    """Marque un virement comme payé → déduit le solde du coach (mouvement withdrawal)."""
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/payout_requests", headers=_service_headers(),
+                                params={"id": f"eq.{payout_id}", "select": "*"})
+    rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Demande introuvable")
+    pr = rows[0]
+    if pr.get("status") != "requested":
+        raise HTTPException(status_code=400, detail="Demande déjà traitée")
+    await wallet_add(pr["user_id"], -float(pr["amount_chf"]), "withdrawal", f"payout:{payout_id}", False)
+    async with httpx.AsyncClient(timeout=10) as client:
+        upd = await client.patch(f"{SUPABASE_URL}/rest/v1/payout_requests",
+                                 headers=_service_headers({"Prefer": "return=minimal"}),
+                                 params={"id": f"eq.{payout_id}"},
+                                 json={"status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()})
+    if upd.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Échec de la mise à jour")
+    return {"ok": True}
+
+@app.post("/admin/payouts/{payout_id}/reject")
+async def admin_payout_reject(payout_id: int, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        upd = await client.patch(f"{SUPABASE_URL}/rest/v1/payout_requests",
+                                 headers=_service_headers({"Prefer": "return=minimal"}),
+                                 params={"id": f"eq.{payout_id}", "status": "eq.requested"},
+                                 json={"status": "rejected"})
+    if upd.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Échec de la mise à jour")
+    return {"ok": True}
+
+
 # --------------------------------------------------------------------------- #
 # E : upload vidéo de session (hôte) + nettoyage auto 24h
 # --------------------------------------------------------------------------- #
@@ -1364,6 +1810,12 @@ async def stripe_webhook(request: Request):
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("crédit achat échoué (user=%s): %s", user_id, exc)
+            # 🎟️ BILLETTERIE : achat d'une PLACE payante (destination charge vers le coach).
+            if meta.get("kind") == "ticket":
+                try:
+                    await _create_ticket_from_session(obj, meta, event.get("id"))
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("billet création échouée (session=%s): %s", meta.get("session_id"), exc)
             # (Ancien modèle abonnement — conservé pour compat, plus utilisé par le front)
             plan = meta.get("plan")
             if user_id and plan in PLANS and not credits:
@@ -1410,6 +1862,26 @@ async def stripe_webhook(request: Request):
                 user_id = prof.get("id") if prof else None
             if user_id:
                 await update_profile(user_id, {"subscription_status": "none"})
+
+        elif etype == "charge.refunded":
+            # 🎟️ Remboursement → billet invalidé + ajustement du solde coach (net retiré).
+            pi = obj.get("payment_intent")
+            if pi:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    look = await client.get(
+                        f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
+                        params={"stripe_payment_intent": f"eq.{pi}", "status": "eq.paid", "select": "*"})
+                    tkts = look.json() if look.status_code == 200 else []
+                    if tkts:
+                        await client.patch(
+                            f"{SUPABASE_URL}/rest/v1/tickets",
+                            headers=_service_headers({"Prefer": "return=minimal"}),
+                            params={"stripe_payment_intent": f"eq.{pi}", "status": "eq.paid"},
+                            json={"status": "refunded"})
+                for t in tkts:
+                    net = round(float(t.get("amount_chf") or 0) - float(t.get("commission_chf") or 0), 2)
+                    if t.get("coach_user_id") and net:
+                        await wallet_add(t["coach_user_id"], -net, "refund", f"refund:{pi}:{t.get('id')}", True)
 
     except Exception as exc:  # noqa: BLE001
         # On log mais on répond 200 pour éviter les replays Stripe en boucle

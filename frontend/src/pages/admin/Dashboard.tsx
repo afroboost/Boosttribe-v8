@@ -10,6 +10,11 @@ import {
   offerCredits, listCreditOffers, getCreditAdminConfig, saveCreditPack, deleteCreditPack, savePricingSettings,
   type CreditOfferRow, type CreditPack, type PricingSettings,
 } from "@/lib/paymentApi";
+import {
+  getCommissionConfig, saveCommissionSettings, getBilletterieSales,
+  getAdminPayouts, markPayoutPaid, rejectPayout,
+  type CommissionSettings, type TicketRow, type PayoutRow,
+} from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -46,7 +51,9 @@ import {
   Search,
   Download,
   Coins,
-  Plus
+  Plus,
+  Ticket,
+  Percent
 } from "lucide-react";
 
 // Site settings interface - matches Supabase table
@@ -186,7 +193,7 @@ const Dashboard: React.FC = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
-  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'credits' | 'access' | 'users'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'credits' | 'billetterie' | 'access' | 'users'>('identity');
 
   // D : liste de tous les utilisateurs
   const [usersList, setUsersList] = useState<AdminUser[]>([]);
@@ -283,6 +290,56 @@ const Dashboard: React.FC = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const blankPack: Partial<CreditPack> = { name: '', credits: 1, price_chf: 9, is_highlighted: false, audience: 'participant', sort: 0, active: true };
   const [packDraft, setPackDraft] = useState<Partial<CreditPack>>(blankPack);
+
+  // 🎟️ Billetterie & Commission + Virements
+  const [commission, setCommission] = useState<CommissionSettings | null>(null);
+  const [billLoading, setBillLoading] = useState(false);
+  const [savingCommission, setSavingCommission] = useState(false);
+  const [sales, setSales] = useState<TicketRow[]>([]);
+  const [salesTotals, setSalesTotals] = useState<{ count_paid: number; gross_chf: number; commission_chf: number }>({ count_paid: 0, gross_chf: 0, commission_chf: 0 });
+  const [payouts, setPayouts] = useState<PayoutRow[]>([]);
+  const [payoutsPending, setPayoutsPending] = useState(0);
+
+  const refreshBilletterie = useCallback(async () => {
+    setBillLoading(true);
+    try {
+      const [cfg, sale, pay] = await Promise.all([getCommissionConfig(), getBilletterieSales(), getAdminPayouts()]);
+      if (cfg.settings) setCommission(cfg.settings);
+      if (cfg.error) showToast(`Commission : ${cfg.error}`, 'error');
+      setSales(sale.sales || []);
+      setSalesTotals({ count_paid: sale.count_paid, gross_chf: sale.gross_chf, commission_chf: sale.commission_chf });
+      setPayouts(pay.payouts || []);
+      setPayoutsPending(pay.pending_total_chf || 0);
+    } finally {
+      setBillLoading(false);
+    }
+  }, [showToast]);
+
+  const handleSaveCommission = useCallback(async () => {
+    if (!commission) return;
+    setSavingCommission(true);
+    try {
+      const { ok, settings, error } = await saveCommissionSettings(commission);
+      if (ok) { if (settings) setCommission(settings); showToast('Réglages billetterie enregistrés', 'success'); }
+      else showToast(error || 'Échec', 'error');
+    } finally {
+      setSavingCommission(false);
+    }
+  }, [commission, showToast]);
+
+  const handleMarkPayoutPaid = useCallback(async (p: PayoutRow) => {
+    if (!window.confirm(`Marquer comme PAYÉ le virement de ${p.amount_chf} CHF à ${p.coach_email || p.user_id} ?\nLe solde du coach sera déduit d'autant.`)) return;
+    const { ok, error } = await markPayoutPaid(p.id);
+    if (ok) { showToast('Virement marqué payé', 'success'); await refreshBilletterie(); }
+    else showToast(error || 'Échec', 'error');
+  }, [refreshBilletterie, showToast]);
+
+  const handleRejectPayout = useCallback(async (p: PayoutRow) => {
+    if (!window.confirm(`Rejeter la demande de virement de ${p.amount_chf} CHF ?`)) return;
+    const { ok, error } = await rejectPayout(p.id);
+    if (ok) { showToast('Demande rejetée', 'success'); await refreshBilletterie(); }
+    else showToast(error || 'Échec', 'error');
+  }, [refreshBilletterie, showToast]);
 
   const refreshCreditConfig = useCallback(async () => {
     setCreditCfgLoading(true);
@@ -404,9 +461,10 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     if (activeTab === 'access') { refreshCreditOffers(); refreshUsers(); }
     if (activeTab === 'credits') refreshCreditConfig();
+    if (activeTab === 'billetterie') refreshBilletterie();
     if (activeTab === 'users') refreshUsers();
     if (activeTab === 'stripe') loadStripeKeys();
-  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshUsers, loadStripeKeys]);
+  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -852,6 +910,7 @@ const Dashboard: React.FC = () => {
             { id: 'buttons', label: 'Boutons & Stats', icon: <Settings size={16} /> },
             { id: 'stripe', label: 'Clés Stripe', icon: <CreditCard size={16} /> },
             { id: 'credits', label: 'Crédits & Tarifs', icon: <Coins size={16} /> },
+            { id: 'billetterie', label: 'Billetterie & Virements', icon: <Ticket size={16} /> },
             { id: 'access', label: 'Crédits offerts', icon: <Gift size={16} /> },
             { id: 'users', label: 'Utilisateurs', icon: <Users size={16} /> },
           ].map(tab => (
@@ -1559,6 +1618,202 @@ const Dashboard: React.FC = () => {
                     </div>
                   )}
                 </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* 🎟️ Billetterie & Commission + Virements (admin) */}
+        {activeTab === 'billetterie' && (
+          <div className="space-y-6">
+            {/* Réglages commission */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Percent size={20} style={{ color: '#FF2DAA' }} /> Billetterie & Commission
+                </CardTitle>
+                <CardDescription className="text-white/60">
+                  Réglages des sessions payantes. Modifiable sans code — s'applique en direct.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {billLoading && !commission ? (
+                  <p className="text-white/50 text-sm">Chargement…</p>
+                ) : commission ? (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-white/80">Commission plateforme (%)</Label>
+                        <Input type="number" min={0} max={100} step={0.5}
+                          value={commission.commission_percent}
+                          onChange={(e) => setCommission({ ...commission, commission_percent: Number(e.target.value) })}
+                          className="bg-black/30 border-white/15 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/80">Devise</Label>
+                        <Input value={commission.currency || 'CHF'} disabled
+                          className="bg-black/20 border-white/10 text-white/60" />
+                      </div>
+                      <div>
+                        <Label className="text-white/80">Prix minimum (CHF)</Label>
+                        <Input type="number" min={0} step={1}
+                          value={commission.price_min_chf}
+                          onChange={(e) => setCommission({ ...commission, price_min_chf: Number(e.target.value) })}
+                          className="bg-black/30 border-white/15 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/80">Prix maximum (CHF)</Label>
+                        <Input type="number" min={0} step={1}
+                          value={commission.price_max_chf}
+                          onChange={(e) => setCommission({ ...commission, price_max_chf: Number(e.target.value) })}
+                          className="bg-black/30 border-white/15 text-white" />
+                      </div>
+                    </div>
+
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={commission.fees_included}
+                        onChange={(e) => setCommission({ ...commission, fees_included: e.target.checked })}
+                        className="w-4 h-4 accent-[#D91CD2]" />
+                      <span className="text-white/80 text-sm">
+                        « Tout compris » — les frais Stripe sont absorbés par la commission (le coach reçoit prix − commission)
+                      </span>
+                    </label>
+
+                    {/* Offre de lancement */}
+                    <div className="rounded-xl border border-white/10 p-4 space-y-3" style={{ background: 'rgba(217,28,210,0.06)' }}>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" checked={commission.launch_offer?.active}
+                          onChange={(e) => setCommission({ ...commission, launch_offer: { ...commission.launch_offer, active: e.target.checked } })}
+                          className="w-4 h-4 accent-[#D91CD2]" />
+                        <span className="text-white font-medium text-sm">Offre de lancement (commission réduite pour les nouveaux coachs)</span>
+                      </label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                          <Label className="text-white/80">Commission pendant l'offre (%)</Label>
+                          <Input type="number" min={0} max={100} step={0.5}
+                            value={commission.launch_offer?.percent ?? 0}
+                            onChange={(e) => setCommission({ ...commission, launch_offer: { ...commission.launch_offer, percent: Number(e.target.value) } })}
+                            className="bg-black/30 border-white/15 text-white" />
+                        </div>
+                        <div>
+                          <Label className="text-white/80">Durée (jours depuis la 1re vente)</Label>
+                          <Input type="number" min={1} step={1}
+                            value={commission.launch_offer?.days ?? 30}
+                            onChange={(e) => setCommission({ ...commission, launch_offer: { ...commission.launch_offer, days: Number(e.target.value) } })}
+                            className="bg-black/30 border-white/15 text-white" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <PrimaryButton onClick={handleSaveCommission} disabled={savingCommission}>
+                      <Save size={16} className="mr-2" />
+                      {savingCommission ? 'Enregistrement…' : 'Enregistrer les réglages'}
+                    </PrimaryButton>
+                  </>
+                ) : (
+                  <p className="text-white/50 text-sm">Réglages indisponibles.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Virements demandés */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <DollarSign size={20} style={{ color: '#FF2DAA' }} /> Virements demandés
+                  {payoutsPending > 0 && (
+                    <Badge className="ml-2" style={{ background: '#D91CD2', color: '#fff' }}>
+                      {payoutsPending.toFixed(2)} CHF en attente
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription className="text-white/60">
+                  « Marquer comme payé » déduit le solde du coach après votre virement bancaire manuel.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {payouts.length === 0 ? (
+                  <p className="text-white/50 text-sm">Aucune demande de virement.</p>
+                ) : (
+                  <div className="max-h-96 overflow-y-auto space-y-2">
+                    {payouts.map((p) => (
+                      <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                        <div className="min-w-0">
+                          <p className="text-white text-sm font-medium truncate">{p.coach_email || p.coach_name || p.user_id}</p>
+                          <p className="text-white/50 text-xs">
+                            {new Date(p.created_at).toLocaleString('fr-CH')} · IBAN {p.iban || '—'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-white font-semibold">{Number(p.amount_chf).toFixed(2)} CHF</span>
+                          {p.status === 'requested' ? (
+                            <>
+                              <Button size="sm" onClick={() => handleMarkPayoutPaid(p)}
+                                className="bg-green-600 hover:bg-green-700 text-white">
+                                <Check size={14} className="mr-1" /> Payé
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => handleRejectPayout(p)}
+                                className="border-white/20 text-white/70 hover:bg-red-500/20 hover:text-red-300">
+                                <X size={14} />
+                              </Button>
+                            </>
+                          ) : (
+                            <Badge className={p.status === 'paid' ? 'bg-green-600 text-white' : 'bg-white/15 text-white/70'}>
+                              {p.status === 'paid' ? `Payé${p.paid_at ? ' · ' + new Date(p.paid_at).toLocaleDateString('fr-CH') : ''}` : 'Rejeté'}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Ventes & commissions encaissées */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Ticket size={20} style={{ color: '#FF2DAA' }} /> Ventes & commissions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-center">
+                    <p className="text-2xl font-bold text-white">{salesTotals.count_paid}</p>
+                    <p className="text-white/50 text-xs">Billets vendus</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-center">
+                    <p className="text-2xl font-bold text-white">{salesTotals.gross_chf.toFixed(0)}</p>
+                    <p className="text-white/50 text-xs">CHF encaissés</p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 p-3 text-center" style={{ background: 'rgba(217,28,210,0.10)' }}>
+                    <p className="text-2xl font-bold" style={{ color: '#FF2DAA' }}>{salesTotals.commission_chf.toFixed(0)}</p>
+                    <p className="text-white/50 text-xs">CHF commissions</p>
+                  </div>
+                </div>
+                {sales.length === 0 ? (
+                  <p className="text-white/50 text-sm">Aucune vente pour l'instant.</p>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto space-y-2">
+                    {sales.map((t) => (
+                      <div key={t.id} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-2.5 text-sm">
+                        <div className="min-w-0">
+                          <p className="text-white truncate">{t.buyer_email_resolved || t.buyer_user_id || '—'}</p>
+                          <p className="text-white/50 text-xs truncate">
+                            {new Date(t.created_at).toLocaleDateString('fr-CH')} · coach {t.coach_email || '—'} · session {t.session_id}
+                          </p>
+                        </div>
+                        <div className="text-right whitespace-nowrap">
+                          <span className={t.status === 'refunded' ? 'text-white/40 line-through' : 'text-white'}>
+                            {Number(t.amount_chf).toFixed(2)} CHF
+                          </span>
+                          <span className="text-white/40 text-xs block">comm. {Number(t.commission_chf).toFixed(2)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

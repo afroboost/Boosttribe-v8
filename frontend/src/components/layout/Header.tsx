@@ -109,13 +109,22 @@ export const Header: React.FC = () => {
             >
               Fonctionnalités
             </Link>
-            <Link 
+            <Link
               to="/pricing"
               className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
               style={{ fontFamily: fonts.body }}
             >
               Tarifs
             </Link>
+            {isAuthenticated && (
+              <Link
+                to="/wallet"
+                className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
+                style={{ fontFamily: fonts.body }}
+              >
+                Portefeuille
+              </Link>
+            )}
           </nav>
 
           {/* CTA Buttons */}

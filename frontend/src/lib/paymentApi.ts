@@ -270,6 +270,291 @@ export async function savePricingSettings(settings: Partial<PricingSettings>): P
   return { ok: !!data?.ok, settings: data?.settings };
 }
 
+// ===========================================================================
+// 🎟️ BILLETTERIE COACH — sessions payantes (CHF) + PORTEFEUILLE IBAN (Spordateur)
+//   PAS de Stripe Connect : paiement sur le compte plateforme, part coach (prix -
+//   commission) créditée au SOLDE, IBAN + demandes de virement traitées par l'admin.
+// ===========================================================================
+export interface SessionAccessInfo {
+  mode: 'open' | 'paid' | 'private';
+  price_chf: number | null;
+  capacity: number | null;
+  sold: number;
+  sold_out: boolean;
+  currency: string;
+}
+
+export interface BilletterieConfig {
+  currency: string;
+  price_min_chf: number;
+  price_max_chf: number;
+  commission_percent: number;
+}
+
+export interface TicketRow {
+  id: number;
+  session_id: string;
+  buyer_user_id: string | null;
+  buyer_email: string | null;
+  coach_user_id: string | null;
+  amount_chf: number;
+  commission_chf: number;
+  commission_percent: number | null;
+  status: 'paid' | 'refunded';
+  created_at: string;
+  coach_email?: string | null;
+  buyer_email_resolved?: string | null;
+}
+
+export interface CoachSales {
+  tickets: TicketRow[];
+  count_paid: number;
+  gross_chf: number;
+  commission_chf: number;
+  net_chf: number;
+}
+
+export interface WalletLedgerRow {
+  id: number;
+  delta_chf: number;
+  reason: 'sale' | 'commission' | 'withdrawal' | 'refund';
+  ref: string | null;
+  created_at: string;
+}
+
+export interface PayoutRow {
+  id: number;
+  user_id: string;
+  amount_chf: number;
+  iban: string | null;
+  status: 'requested' | 'paid' | 'rejected';
+  created_at: string;
+  paid_at: string | null;
+  coach_email?: string | null;
+  coach_name?: string | null;
+}
+
+export interface CoachWallet {
+  balance_chf: number;
+  available_chf: number;
+  total_revenue_chf: number;
+  pending_chf: number;
+  payout_count: number;
+  iban: string | null;
+  holder: string | null;
+  has_iban: boolean;
+  requests: PayoutRow[];
+  ledger: WalletLedgerRow[];
+}
+
+export interface CommissionSettings {
+  commission_percent: number;
+  fees_included: boolean;
+  launch_offer: { active: boolean; percent: number; scope: string; days: number };
+  price_min_chf: number;
+  price_max_chf: number;
+  currency: string;
+}
+
+/** Réglages publics (devise + garde-fous de prix) pour l'UI coach. */
+export async function getBilletterieConfig(): Promise<{ data?: BilletterieConfig; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  try {
+    const res = await fetch(`${API_URL}/billetterie/config`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as BilletterieConfig };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Infos d'accès publiques d'une session (mode/prix/capacité/places restantes). */
+export async function getSessionAccessInfo(sessionId: string): Promise<{ data?: SessionAccessInfo; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  try {
+    const res = await fetch(`${API_URL}/session/info/${encodeURIComponent(sessionId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as SessionAccessInfo };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Coach : portefeuille complet (solde dispo, revenus, IBAN, demandes, historique). */
+export async function getCoachWallet(): Promise<{ data?: CoachWallet; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/coach/wallet`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as CoachWallet };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Coach : enregistre/maj son IBAN + titulaire. */
+export async function saveCoachBank(iban: string, holder: string): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/coach/bank`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ iban, holder }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: !!data?.ok };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Coach : demande un virement de tout son solde disponible. */
+export async function requestPayout(): Promise<{ ok: boolean; amount_chf?: number; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/coach/payout-request`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: !!data?.ok, amount_chf: data?.amount_chf };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Coach : tableau de bord des ventes (billets + totaux). */
+export async function getCoachSales(): Promise<{ data?: CoachSales; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/coach/sales`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as CoachSales };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Hôte : configure le mode d'accès d'une session (ouverte / payante / privée). */
+export async function configureSession(payload: {
+  session_id: string;
+  mode: 'open' | 'paid' | 'private';
+  price_chf?: number | null;
+  capacity?: number | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/session/configure`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: !!data?.ok };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Participant : achète une place → URL Stripe Checkout (CHF). */
+export async function buyTicket(sessionId: string): Promise<{ url?: string; already?: boolean; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous pour acheter votre place' };
+  try {
+    const res = await fetch(`${API_URL}/tickets/buy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { url: data.url, already: data.already };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Participant : a-t-il un billet valide pour cette session ? */
+export async function checkTicket(sessionId: string): Promise<{ has_ticket: boolean; error?: string }> {
+  if (!API_URL) return { has_ticket: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { has_ticket: false };
+  try {
+    const res = await fetch(`${API_URL}/tickets/check/${encodeURIComponent(sessionId)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { has_ticket: false, error: data?.detail || `Erreur ${res.status}` };
+    return { has_ticket: !!data.has_ticket };
+  } catch (e) {
+    return { has_ticket: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+// ---- Admin : Billetterie & Commission --------------------------------------
+export async function getCommissionConfig(): Promise<{ settings?: CommissionSettings; error?: string }> {
+  const { data, error } = await adminFetch('/admin/commission-config', { method: 'GET' });
+  if (error) return { error };
+  return { settings: data?.settings as CommissionSettings };
+}
+
+export async function saveCommissionSettings(settings: Partial<CommissionSettings>): Promise<{ ok: boolean; settings?: CommissionSettings; error?: string }> {
+  const { data, error } = await adminFetch('/admin/commission-settings', {
+    method: 'POST',
+    body: JSON.stringify(settings),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok, settings: data?.settings };
+}
+
+export async function getBilletterieSales(): Promise<{ sales: TicketRow[]; count_paid: number; gross_chf: number; commission_chf: number; error?: string }> {
+  const { data, error } = await adminFetch('/admin/billetterie/sales', { method: 'GET' });
+  if (error) return { sales: [], count_paid: 0, gross_chf: 0, commission_chf: 0, error };
+  return {
+    sales: (data?.sales || []) as TicketRow[],
+    count_paid: data?.count_paid || 0,
+    gross_chf: data?.gross_chf || 0,
+    commission_chf: data?.commission_chf || 0,
+  };
+}
+
+// ---- Admin : Virements (payouts) -------------------------------------------
+export async function getAdminPayouts(): Promise<{ payouts: PayoutRow[]; pending_total_chf: number; error?: string }> {
+  const { data, error } = await adminFetch('/admin/payouts', { method: 'GET' });
+  if (error) return { payouts: [], pending_total_chf: 0, error };
+  return { payouts: (data?.payouts || []) as PayoutRow[], pending_total_chf: data?.pending_total_chf || 0 };
+}
+
+export async function markPayoutPaid(payoutId: number): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch(`/admin/payouts/${payoutId}/pay`, { method: 'POST' });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
+}
+
+export async function rejectPayout(payoutId: number): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch(`/admin/payouts/${payoutId}/reject`, { method: 'POST' });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
+}
+
 // ---------------------------------------------------------------------------
 // POINT 6 : accès offerts (admin) — DÉPRÉCIÉ (conservé pour compat)
 // ---------------------------------------------------------------------------

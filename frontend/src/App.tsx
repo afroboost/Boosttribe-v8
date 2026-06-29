@@ -14,6 +14,7 @@ import Header from "@/components/layout/Header";
 import HeroSection from "@/components/sections/HeroSection";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import SessionPage from "@/pages/SessionPage";
+import WalletPage from "@/pages/WalletPage";
 import PricingPage from "@/pages/PricingPage";
 import FeaturesPage from "@/pages/FeaturesPage";
 import LoginPage from "@/pages/LoginPage";
@@ -129,9 +130,17 @@ const App: React.FC = () => {
                           </RequireAuth>
                         } 
                       />
-                      <Route 
-                        path="/session/:sessionId" 
-                        element={<SessionPage />} 
+                      <Route
+                        path="/session/:sessionId"
+                        element={<SessionPage />}
+                      />
+                      <Route
+                        path="/wallet"
+                        element={
+                          <RequireAuth>
+                            <WalletPage />
+                          </RequireAuth>
+                        }
                       />
                       <Route 
                         path="/admin" 

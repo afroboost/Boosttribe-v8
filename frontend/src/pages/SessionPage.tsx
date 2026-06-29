@@ -46,7 +46,11 @@ import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
-import { Pencil, Maximize2, Minimize2, Coins } from 'lucide-react';
+import {
+  getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket,
+  type SessionAccessInfo,
+} from '@/lib/paymentApi';
+import { Pencil, Maximize2, Minimize2, Coins, Ticket } from 'lucide-react';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -891,6 +895,15 @@ export const SessionPage: React.FC = () => {
   const [visioSpotlightId, setVisioSpotlightId] = useState<string | null>(null);
   // 💳 Paywall « crédits insuffisants » (remplace la redirection brutale vers /pricing).
   const [creditsBlocked, setCreditsBlocked] = useState<null | 'join' | 'host'>(null);
+  // 🎟️ Billetterie : infos d'accès de la session + état du billet du participant.
+  const [accessInfo, setAccessInfo] = useState<SessionAccessInfo | null>(null);
+  const [hasTicket, setHasTicket] = useState<boolean | null>(null);   // null = inconnu ; gating après vérif
+  const [ticketBusy, setTicketBusy] = useState(false);
+  // Réglages billetterie pour le configurateur hôte (garde-fous de prix).
+  const [billConfig, setBillConfig] = useState<{ price_min_chf: number; price_max_chf: number } | null>(null);
+  const [savingMode, setSavingMode] = useState(false);
+  const [modeDraft, setModeDraft] = useState<{ mode: 'open' | 'paid' | 'private'; price: string; capacity: string }>({ mode: 'open', price: '', capacity: '' });
+  const [showSessionSettings, setShowSessionSettings] = useState(false);
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
   const [stageRequestPending, setStageRequestPending] = useState(false);  // spectateur : ma demande envoyée
   // Refs pour piloter la caméra depuis les handlers Realtime (souscrits une seule fois)
@@ -1022,6 +1035,8 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (isHost || isAdminUser) return;
     if (!sessionId || !user?.id || !nickname) return;
+    if (!accessInfo) return;                       // attendre le mode d'accès (open/paid/private)
+    if (accessInfo.mode === 'paid') return;        // 🎟️ payant → billet requis (pas de débit crédit)
     if (joinDebitedRef.current === sessionId) return;
     joinDebitedRef.current = sessionId;
     (async () => {
@@ -1035,7 +1050,99 @@ export const SessionPage: React.FC = () => {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, user?.id, nickname, isHost, isAdminUser]);
+  }, [sessionId, user?.id, nickname, isHost, isAdminUser, accessInfo]);
+
+  // 🎟️ Infos d'accès de la session (mode/prix/capacité) — publiques, pour tous.
+  const refreshAccess = useCallback(async () => {
+    if (!sessionId) return;
+    const { data } = await getSessionAccessInfo(sessionId);
+    if (data) setAccessInfo(data);
+  }, [sessionId]);
+  useEffect(() => { refreshAccess(); }, [refreshAccess]);
+
+  // 🎟️ Session payante : le participant non-hôte a besoin d'un billet valide pour accéder au live.
+  useEffect(() => {
+    if (isHost || isAdminUser) { setHasTicket(true); return; }
+    if (!accessInfo) return;
+    if (accessInfo.mode !== 'paid') { setHasTicket(true); return; }
+    if (!sessionId || !user?.id) { setHasTicket(false); return; }   // anonyme → doit se connecter + acheter
+    (async () => {
+      const { has_ticket } = await checkTicket(sessionId);
+      setHasTicket(has_ticket);
+    })();
+  }, [accessInfo, isHost, isAdminUser, user?.id, sessionId]);
+
+  // 🎟️ Retour de Stripe (?ticket=success) → re-vérifie le billet (le webhook peut avoir un léger délai).
+  useEffect(() => {
+    if (!sessionId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('ticket') !== 'success') return;
+    showToast('Paiement reçu — accès en cours d\'activation…', 'success');
+    let tries = 0;
+    const tick = async () => {
+      tries += 1;
+      const { has_ticket } = await checkTicket(sessionId);
+      if (has_ticket) { setHasTicket(true); refreshAccess(); return; }
+      if (tries < 6) setTimeout(tick, 1500);
+    };
+    tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // 🎟️ Achat d'une place → redirection Stripe Checkout.
+  const handleBuyTicket = useCallback(async () => {
+    if (!sessionId) return;
+    setTicketBusy(true);
+    try {
+      const { url, already, error } = await buyTicket(sessionId);
+      if (already) { setHasTicket(true); showToast('Tu as déjà ta place 🎟️', 'success'); return; }
+      if (url) { window.location.href = url; return; }
+      showToast(error || 'Achat impossible', 'error');
+    } finally {
+      setTicketBusy(false);
+    }
+  }, [sessionId, showToast]);
+
+  // 🎟️ Hôte : configurateur du mode d'accès (charge garde-fous + pré-remplit depuis l'état actuel).
+  useEffect(() => {
+    if (!isHost) return;
+    getBilletterieConfig().then(({ data }) => {
+      if (data) setBillConfig({ price_min_chf: data.price_min_chf, price_max_chf: data.price_max_chf });
+    });
+  }, [isHost]);
+  const modeInitRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isHost || !accessInfo || !sessionId) return;
+    if (modeInitRef.current === sessionId) return;  // n'écrase pas les éditions en cours de l'hôte
+    modeInitRef.current = sessionId;
+    setModeDraft({
+      mode: accessInfo.mode,
+      price: accessInfo.price_chf != null ? String(accessInfo.price_chf) : '',
+      capacity: accessInfo.capacity != null ? String(accessInfo.capacity) : '',
+    });
+  }, [isHost, accessInfo, sessionId]);
+
+  const handleSaveMode = useCallback(async () => {
+    if (!sessionId) return;
+    setSavingMode(true);
+    try {
+      const { ok, error } = await configureSession({
+        session_id: sessionId,
+        mode: modeDraft.mode,
+        price_chf: modeDraft.mode === 'paid' ? Number(modeDraft.price) : null,
+        capacity: modeDraft.mode === 'paid' && modeDraft.capacity ? Number(modeDraft.capacity) : null,
+      });
+      if (ok) {
+        showToast('Mode d\'accès enregistré', 'success');
+        setShowSessionSettings(false);
+        await refreshAccess();
+      } else {
+        showToast(error || 'Échec', 'error');
+      }
+    } finally {
+      setSavingMode(false);
+    }
+  }, [sessionId, modeDraft, refreshAccess, showToast]);
 
   // Listen for remote mute commands (for participants)
   useEffect(() => {
@@ -2599,6 +2706,131 @@ export const SessionPage: React.FC = () => {
         </div>
       )}
 
+      {/* 🎟️ Paywall « place payante » — participant sans billet sur une session payante. */}
+      {accessInfo?.mode === 'paid' && !isHost && !isAdminUser && hasTicket === false && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+              <Ticket className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Session payante
+            </h2>
+            {accessInfo.sold_out ? (
+              <p className="text-white/70 text-sm mb-6">Désolé, toutes les places sont vendues (complet).</p>
+            ) : (
+              <>
+                <p className="text-white/70 text-sm mb-1">
+                  Réserve ta place pour accéder à ce live.
+                </p>
+                <p className="text-3xl font-bold text-white mb-6">
+                  {Number(accessInfo.price_chf || 0).toFixed(2)} <span className="text-lg text-white/60">CHF</span>
+                  {accessInfo.capacity ? (
+                    <span className="block text-xs font-normal text-white/40 mt-1">
+                      {Math.max(0, accessInfo.capacity - accessInfo.sold)} place(s) restante(s)
+                    </span>
+                  ) : null}
+                </p>
+              </>
+            )}
+            <div className="flex flex-col gap-2">
+              {!accessInfo.sold_out && (
+                <button
+                  onClick={handleBuyTicket}
+                  disabled={ticketBusy || !user?.id}
+                  className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] disabled:opacity-60"
+                  style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                  data-testid="ticket-paywall-buy"
+                >
+                  <Ticket className="w-5 h-5" />
+                  {!user?.id ? 'Connecte-toi pour acheter' : ticketBusy ? 'Redirection…' : `Acheter ma place (${Number(accessInfo.price_chf || 0).toFixed(2)} CHF)`}
+                </button>
+              )}
+              {!user?.id && !accessInfo.sold_out && (
+                <button
+                  onClick={() => navigate('/login', { state: { from: window.location.pathname } })}
+                  className="w-full py-2.5 rounded-xl text-white/80 hover:text-white text-sm transition-colors border border-white/15"
+                >
+                  Se connecter
+                </button>
+              )}
+              <button
+                onClick={() => navigate('/')}
+                className="w-full py-2.5 rounded-xl text-white/60 hover:text-white text-sm transition-colors"
+              >
+                Retour à l'accueil
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🎟️ Hôte : configurateur du mode d'accès (ouverte / payante / privée). */}
+      {showSessionSettings && isHost && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/40 bg-[#15151b] p-6 shadow-2xl">
+            <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              <Ticket size={20} style={{ color: '#FF2DAA' }} /> Mode d'accès de la session
+            </h2>
+            <p className="text-white/50 text-sm mb-4">Choisis comment les participants accèdent à ce live.</p>
+            <div className="space-y-2 mb-4">
+              {([
+                { v: 'open', label: 'Ouverte (crédits)', desc: 'Le public dépense 1 crédit pour rejoindre.' },
+                { v: 'paid', label: 'Payante (billet CHF)', desc: 'Tu fixes un prix par place ; billet requis.' },
+                { v: 'private', label: 'Privée (lien/QR)', desc: 'Invités gratuits via le lien.' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.v}
+                  onClick={() => setModeDraft((d) => ({ ...d, mode: opt.v }))}
+                  className={`w-full text-left p-3 rounded-xl border transition-colors ${
+                    modeDraft.mode === opt.v ? 'border-[#D91CD2] bg-[#D91CD2]/10' : 'border-white/15 hover:bg-white/5'
+                  }`}
+                >
+                  <span className="text-white font-medium text-sm">{opt.label}</span>
+                  <span className="block text-white/50 text-xs">{opt.desc}</span>
+                </button>
+              ))}
+            </div>
+            {modeDraft.mode === 'paid' && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="text-white/80 text-xs">Prix / place (CHF)</label>
+                  <input type="number" min={billConfig?.price_min_chf ?? 0} max={billConfig?.price_max_chf ?? undefined}
+                    value={modeDraft.price}
+                    onChange={(e) => setModeDraft((d) => ({ ...d, price: e.target.value }))}
+                    className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm" />
+                  {billConfig && (
+                    <span className="text-white/40 text-[11px]">{billConfig.price_min_chf}–{billConfig.price_max_chf} CHF</span>
+                  )}
+                </div>
+                <div>
+                  <label className="text-white/80 text-xs">Capacité (vide = illimité)</label>
+                  <input type="number" min={1} value={modeDraft.capacity}
+                    onChange={(e) => setModeDraft((d) => ({ ...d, capacity: e.target.value }))}
+                    className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm" />
+                </div>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={handleSaveMode}
+                disabled={savingMode}
+                className="flex-1 py-2.5 rounded-xl text-white font-semibold disabled:opacity-60"
+                style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+              >
+                {savingMode ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+              <button
+                onClick={() => setShowSessionSettings(false)}
+                className="px-4 py-2.5 rounded-xl text-white/60 hover:text-white text-sm border border-white/15"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 🔊 BUG 1: Overlay d'activation du son (autoplay bloqué côté participant) */}
       {audioBlocked && !isHost && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 bg-black/90 backdrop-blur-sm">
@@ -2775,6 +3007,20 @@ export const SessionPage: React.FC = () => {
                   </div>
                   <span className="text-white/70 text-sm">{nickname}</span>
                 </button>
+              )}
+              {/* 🎟️ Hôte : configurer le mode d'accès (ouverte / payante / privée) */}
+              {isHost && (
+                <Button
+                  variant="outline" size="sm"
+                  onClick={() => { setShowSessionSettings(true); setSessionMenuOpen(false); }}
+                  className="border-[#D91CD2]/40 text-white/80 hover:bg-[#D91CD2]/15 inline-flex items-center justify-center gap-1 w-full md:w-auto"
+                  data-testid="session-access-mode"
+                >
+                  <Ticket className="w-4 h-4" />
+                  {accessInfo?.mode === 'paid'
+                    ? `Payante · ${Number(accessInfo.price_chf || 0).toFixed(0)} CHF`
+                    : accessInfo?.mode === 'private' ? 'Privée' : 'Mode d\'accès'}
+                </Button>
               )}
               <Link to="/" onClick={() => setSessionMenuOpen(false)} className="w-full md:w-auto">
                 <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10 inline-flex items-center justify-center gap-1 w-full md:w-auto">

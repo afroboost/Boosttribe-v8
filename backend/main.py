@@ -549,7 +549,9 @@ async def record_start(body: RecordStartBody, authorization: Optional[str] = Hea
     await _record_authz(body.session_id, uid)
     settings = await get_pricing_settings()
     cost = int(settings.get("cost_record_transcribe", 4) or 0)
-    unlimited = await is_coach_unlimited(uid)
+    # 💳 Jamais débité ni bloqué : ADMIN (crédits illimités) ou COACH abonné « illimité ».
+    is_admin = (user.get("email") or "").strip().lower() in ADMIN_EMAILS
+    unlimited = is_admin or await is_coach_unlimited(uid)
     spent = 0
     if not unlimited and cost > 0:
         bal = await _spend_credits(uid, cost, "spend_record",

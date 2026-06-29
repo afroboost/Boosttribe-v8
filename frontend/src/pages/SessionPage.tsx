@@ -897,7 +897,7 @@ export const SessionPage: React.FC = () => {
   //    du panneau (fenêtre flottante mobile / colonne desktop / fenêtre plein écran) et survit aux re-rendus.
   const [visioSpotlightId, setVisioSpotlightId] = useState<string | null>(null);
   // 💳 Paywall « crédits insuffisants » (remplace la redirection brutale vers /pricing).
-  const [creditsBlocked, setCreditsBlocked] = useState<null | 'join' | 'host'>(null);
+  const [creditsBlocked, setCreditsBlocked] = useState<null | 'join' | 'host' | 'record'>(null);
   // 🎟️ Billetterie : infos d'accès de la session + état du billet du participant.
   const [accessInfo, setAccessInfo] = useState<SessionAccessInfo | null>(null);
   const [hasTicket, setHasTicket] = useState<boolean | null>(null);   // null = inconnu ; gating après vérif
@@ -1012,8 +1012,13 @@ export const SessionPage: React.FC = () => {
 
   const handleStartPremiumRec = useCallback(async () => {
     if (!sessionId) return;
-    const { ok, cost, error } = await startRecording(sessionId);
-    if (!ok) { showToast(error || 'Activation impossible (crédits ?)', 'error'); return; }
+    const { ok, cost, insufficient, error } = await startRecording(sessionId);
+    if (!ok) {
+      // Crédits insuffisants → paywall avec lien « Acheter des crédits » (admin/coach illimité ne passent jamais ici).
+      if (insufficient || /insuffisant/i.test(error || '')) { setCreditsBlocked('record'); return; }
+      showToast(error || 'Activation impossible', 'error');
+      return;
+    }
     if (!premiumRec.start()) { showToast('Enregistrement non supporté par ce navigateur', 'error'); return; }
     setPremiumRecActive(true);
     setRecResult(null);
@@ -2755,7 +2760,9 @@ export const SessionPage: React.FC = () => {
             <p className="text-white/70 text-sm mb-1">
               {creditsBlocked === 'host'
                 ? "Il te faut 1 crédit pour animer ce live."
-                : "Il te faut 1 crédit pour rejoindre ce live."}
+                : creditsBlocked === 'record'
+                  ? "Tu n'as pas assez de crédits pour activer l'enregistrement + transcription IA."
+                  : "Il te faut 1 crédit pour rejoindre ce live."}
             </p>
             <p className="text-white/50 text-xs mb-6">
               Achète un pack pour continuer. 🎁 Ton 1er cours est offert à l'inscription.
@@ -2770,10 +2777,10 @@ export const SessionPage: React.FC = () => {
                 <Coins className="w-5 h-5" /> Acheter des crédits
               </button>
               <button
-                onClick={() => { setCreditsBlocked(null); navigate('/'); }}
+                onClick={() => { const wasRecord = creditsBlocked === 'record'; setCreditsBlocked(null); if (!wasRecord) navigate('/'); }}
                 className="w-full py-2.5 rounded-xl text-white/60 hover:text-white text-sm transition-colors"
               >
-                Retour à l'accueil
+                {creditsBlocked === 'record' ? 'Fermer' : "Retour à l'accueil"}
               </button>
             </div>
           </div>
@@ -3082,14 +3089,7 @@ export const SessionPage: React.FC = () => {
               {/* 💬 Le chat de session (Assistant + Groupe + Privé) est désormais un lanceur flottant
                   en bas à droite — voir <ChatPanel> en bas de page. */}
 
-              {/* Host Microphone Control */}
-              {isHost && (
-                <MicrophoneControl
-                  isHost={true}
-                  onMicActive={setHostMicActive}
-                  onStreamReady={setHostMicStream}
-                />
-              )}
+              {/* 🎤 Le micro hôte est désormais SUR LE LECTEUR (barre d'actions hôte), plus dans le hamburger. */}
 
               {/* PARTICIPANT: Voice receiving indicator */}
               {!isHost && peerState.isReceivingVoice && (
@@ -3304,69 +3304,75 @@ export const SessionPage: React.FC = () => {
             )}
 
             {/* Session Title */}
-            <div className="bt-tab-diffusion flex items-start justify-between gap-3 flex-wrap">
-              <div>
-                <h1
-                  className="text-2xl sm:text-3xl font-bold text-white mb-2"
-                  style={{ fontFamily: "'Space Grotesk', sans-serif" }}
-                >
-                  {t('session.title')}
-                </h1>
-                <p className="text-white/60 text-sm sm:text-base">
-                  {isHost
-                    ? (isAdminUser
-                        ? 'Mode Admin - Contrôle total de la session.'
-                        : t('session.subtitle.host'))
-                    : t('session.subtitle.listen')
-                  }
-                </p>
-              </div>
-
-              {/* 🔴 Barre d'actions HÔTE — enregistrement (discrète, premium) */}
-              {isHost && (
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  {/* Principal : enregistrement complet + transcription IA */}
-                  {!premiumRecActive ? (
-                    <button
-                      onClick={handleStartPremiumRec}
-                      disabled={recProcessing}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-transform hover:scale-105 active:scale-95"
-                      style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
-                      title={`Enregistrer la session (toutes les voix) + transcription IA${isAdminUser ? '' : ` — ${recCost} crédit${recCost > 1 ? 's' : ''}`}`}
-                      data-testid="premium-record-start"
-                    >
-                      <Radio className="w-3.5 h-3.5" />
-                      {recProcessing ? 'Traitement…' : `Enregistrer + IA${isAdminUser ? '' : ` (${recCost} cr.)`}`}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleStopPremiumRec}
-                      className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30"
-                      data-testid="premium-record-stop"
-                    >
-                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" /> Arrêter
-                    </button>
-                  )}
-                  {/* Secondaire (discret) : enregistrement des voix en téléchargement local */}
-                  {!premiumRecActive && (
-                    <button
-                      onClick={handleToggleRecording}
-                      className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${
-                        recorder.isRecording
-                          ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
-                          : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
-                      }`}
-                      title={recorder.isRecording ? 'Arrêter l\'enregistrement local des voix' : 'Enregistrer seulement les voix (téléchargement local, sans IA)'}
-                      data-testid="record-toggle"
-                    >
-                      {recorder.isRecording
-                        ? <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-                        : <Mic className="w-4 h-4" />}
-                    </button>
-                  )}
-                </div>
-              )}
+            <div className="bt-tab-diffusion">
+              <h1
+                className="text-2xl sm:text-3xl font-bold text-white mb-2"
+                style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+              >
+                {t('session.title')}
+              </h1>
+              <p className="text-white/60 text-sm sm:text-base">
+                {isHost
+                  ? (isAdminUser
+                      ? 'Mode Admin - Contrôle total de la session.'
+                      : t('session.subtitle.host'))
+                  : t('session.subtitle.listen')
+                }
+              </p>
             </div>
+
+            {/* 🎛️ Barre d'actions HÔTE — TOUJOURS visible (pas d'onglet) : micro SUR LE LECTEUR + enregistrement.
+                Un seul bouton micro clair, là où se passe le live (réutilisable sur tous les onglets). */}
+            {isHost && (
+              <div className="flex items-center gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10">
+                {/* 🎤 Micro hôte (toggle local d'activation — ne touche PAS LiveKit) */}
+                <MicrophoneControl
+                  isHost={true}
+                  onMicActive={setHostMicActive}
+                  onStreamReady={setHostMicStream}
+                />
+                <span className="w-px h-6 bg-white/10 mx-1 hidden sm:block" />
+                {/* Principal : enregistrement complet + transcription IA */}
+                {!premiumRecActive ? (
+                  <button
+                    onClick={handleStartPremiumRec}
+                    disabled={recProcessing}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-transform hover:scale-105 active:scale-95"
+                    style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                    title={`Enregistrer la session (toutes les voix) + transcription IA${isAdminUser ? '' : ` — ${recCost} crédit${recCost > 1 ? 's' : ''}`}`}
+                    data-testid="premium-record-start"
+                  >
+                    <Radio className="w-3.5 h-3.5" />
+                    {recProcessing ? 'Traitement…' : `Enregistrer + IA${isAdminUser ? '' : ` (${recCost} cr.)`}`}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleStopPremiumRec}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30"
+                    data-testid="premium-record-stop"
+                  >
+                    <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" /> Arrêter
+                  </button>
+                )}
+                {/* Secondaire (discret) : enregistrement des voix en téléchargement local */}
+                {!premiumRecActive && (
+                  <button
+                    onClick={handleToggleRecording}
+                    className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${
+                      recorder.isRecording
+                        ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
+                        : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
+                    }`}
+                    title={recorder.isRecording ? 'Arrêter l\'enregistrement local des voix' : 'Enregistrer seulement les voix (téléchargement local, sans IA)'}
+                    data-testid="record-toggle"
+                  >
+                    {recorder.isRecording
+                      ? <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                      : <Mic className="w-4 h-4" />}
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* 🔴 Enregistrement premium : état/résultat — panneau discret (hôte) */}
             {isHost && (recProcessing || (recResult && (recResult.summary || recResult.transcript))) && (

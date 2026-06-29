@@ -597,7 +597,7 @@ export async function checkTicket(sessionId: string): Promise<{ has_ticket: bool
 
 // ---- 🔴 Enregistrement complet + transcription IA (option premium crédits) ----
 /** Hôte : active l'option (débite les crédits sauf abo illimité + active le consentement). */
-export async function startRecording(sessionId: string): Promise<{ ok: boolean; cost?: number; error?: string }> {
+export async function startRecording(sessionId: string): Promise<{ ok: boolean; cost?: number; insufficient?: boolean; error?: string }> {
   if (!API_URL) return { ok: false, error: 'API non configurée' };
   const token = await getAccessToken();
   if (!token) return { ok: false, error: 'Connectez-vous' };
@@ -608,7 +608,7 @@ export async function startRecording(sessionId: string): Promise<{ ok: boolean; 
       body: JSON.stringify({ session_id: sessionId }),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    if (!res.ok) return { ok: false, insufficient: res.status === 402, error: data?.detail || `Erreur ${res.status}` };
     return { ok: true, cost: data.cost };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };

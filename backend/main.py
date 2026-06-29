@@ -514,6 +514,24 @@ async def _openai_refine(raw_text: str, key: str) -> Dict[str, str]:
     except Exception:  # noqa: BLE001
         return {"transcript": raw_text, "summary": content}
 
+async def _sign_recording_url(path: Optional[str], expires: int = 3600) -> Optional[str]:
+    """URL signée (temporaire) vers un enregistrement du bucket PRIVÉ. None si échec/chemin absent."""
+    if not path:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{SUPABASE_URL}/storage/v1/object/sign/{RECORDINGS_BUCKET}/{path}",
+                headers=_service_headers(), json={"expiresIn": expires})
+        if resp.status_code == 200:
+            body = resp.json()
+            signed = body.get("signedURL") or body.get("signedUrl")
+            if signed:
+                return f"{SUPABASE_URL}/storage/v1{signed}"
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
 async def _record_authz(session_id: str, uid: str) -> None:
     authz = await get_session_authz(session_id)
     host_id = authz.get("host_id") if authz else None
@@ -567,8 +585,15 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
         raise HTTPException(status_code=400, detail="Fichier audio vide")
     if len(data) > 300 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Enregistrement trop volumineux (max 300 Mo)")
-    content_type = file.content_type or "audio/webm"
-    ext = "webm" if "webm" in content_type else "m4a" if "mp4" in content_type or "m4a" in content_type else "ogg" if "ogg" in content_type else "webm"
+    # 🔒 On NE fait JAMAIS confiance au Content-Type du client (sinon text/html/svg → XSS stocké
+    #     servi depuis l'origine du stockage). On force un type audio canonique selon l'extension.
+    raw_ct = (file.content_type or "").split(";")[0].strip().lower()
+    if "ogg" in raw_ct:
+        ext, content_type = "ogg", "audio/ogg"
+    elif "mp4" in raw_ct or "m4a" in raw_ct or "aac" in raw_ct:
+        ext, content_type = "m4a", "audio/mp4"
+    else:
+        ext, content_type = "webm", "audio/webm"
     ts = int(datetime.now(timezone.utc).timestamp())
     storage_path = f"{session_id}/{uid}/{ts}.{ext}"
     async with httpx.AsyncClient(timeout=300) as client:
@@ -580,13 +605,14 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
     if up.status_code not in (200, 201):
         logger.error("recording upload échec: %s %s", up.status_code, (up.text or "")[:200])
         raise HTTPException(status_code=500, detail="Upload de l'enregistrement échoué")
-    audio_url = f"{SUPABASE_URL}/storage/v1/object/public/{RECORDINGS_BUCKET}/{storage_path}"
+    # 🔒 Bucket privé : pas d'URL publique. On stocke seulement le chemin et on sert via URL signée.
+    audio_url = await _sign_recording_url(storage_path)
     # crée la ligne (processing)
     async with httpx.AsyncClient(timeout=10) as client:
         ins = await client.post(f"{SUPABASE_URL}/rest/v1/session_recordings",
                                 headers=_service_headers({"Prefer": "return=representation"}),
                                 json={"session_id": session_id, "host_id": uid, "audio_path": storage_path,
-                                      "audio_url": audio_url, "status": "processing"})
+                                      "status": "processing"})
     rec = ins.json()[0] if ins.status_code in (200, 201) and ins.json() else {"id": None}
     rec_id = rec.get("id")
     # transcription + résumé
@@ -617,7 +643,11 @@ async def session_recordings(authorization: Optional[str] = Header(default=None)
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/session_recordings", headers=_service_headers(),
                                 params={"host_id": f"eq.{user.get('id')}", "select": "*",
                                         "order": "created_at.desc", "limit": "100"})
-    return {"recordings": resp.json() if resp.status_code == 200 else []}
+    rows = resp.json() if resp.status_code == 200 else []
+    # 🔒 Bucket privé : on (re)génère une URL signée temporaire pour chaque enregistrement.
+    for r in rows:
+        r["audio_url"] = await _sign_recording_url(r.get("audio_path"))
+    return {"recordings": rows}
 
 
 class GrantAccessBody(BaseModel):

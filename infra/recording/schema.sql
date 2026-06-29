@@ -39,10 +39,11 @@ create table if not exists public.ai_secrets (
   updated_at           timestamptz not null default now()
 );
 
--- 5) Bucket de stockage des enregistrements (public en lecture pour téléchargement)
+-- 5) Bucket de stockage des enregistrements — PRIVÉ (contenu sensible : voix + transcription).
+--    L'accès se fait uniquement via des URL signées temporaires générées côté backend (service_role).
 insert into storage.buckets (id, name, public)
-  values ('session-recordings', 'session-recordings', true)
-  on conflict (id) do nothing;
+  values ('session-recordings', 'session-recordings', false)
+  on conflict (id) do update set public = false;
 
 -- 6) RLS
 alter table public.session_recordings enable row level security;

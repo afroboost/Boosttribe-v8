@@ -45,6 +45,7 @@ import { useLiveKitStage } from '@/hooks/useLiveKitStage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
+import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket,
   type SessionAccessInfo,
@@ -969,6 +970,62 @@ export const SessionPage: React.FC = () => {
     return () => clearInterval(t);
   }, [isHost, recorder.isRecording, sessionId]);
 
+  // 🔴 OPTION PREMIUM : enregistrement COMPLET (toutes voix + visio + musique) + transcription IA.
+  const [recCost, setRecCost] = useState(4);
+  const [premiumRecActive, setPremiumRecActive] = useState(false);
+  const [recProcessing, setRecProcessing] = useState(false);
+  const [recResult, setRecResult] = useState<{ id?: number; transcript?: string; summary?: string } | null>(null);
+  const [recConsentAck, setRecConsentAck] = useState(false);
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = sessionId;
+  useEffect(() => { getCreditsConfig().then(({ data }) => { if (data?.cost_record_transcribe != null) setRecCost(data.cost_record_transcribe); }); }, []);
+
+  // Recorder premium : micro hôte + voix tribu (WebRTC) + audio visio LiveKit + musique (best-effort).
+  const premiumRec = useSessionRecorder({
+    getLocalStream: () => hostMicStream,
+    getRemoteStreams: () => {
+      const tribe = Array.from(document.querySelectorAll<HTMLAudioElement>('.bt-tribe-audio'))
+        .map((el) => el.srcObject as MediaStream | null);
+      const visio = videoMesh.remoteCameras.map((c) => c.stream);
+      let music: MediaStream | null = null;
+      try {
+        const el = getMusicEl() as (HTMLAudioElement & { captureStream?: () => MediaStream }) | null;
+        music = el?.captureStream ? el.captureStream() : null;
+      } catch { /* ignore */ }
+      return [...tribe, ...visio, music].filter((s): s is MediaStream => !!s);
+    },
+    download: false,
+    onComplete: (blob, ext) => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      setRecProcessing(true);
+      uploadRecording(sid, blob, ext).then((r) => {
+        setRecProcessing(false);
+        if (r.ok) { setRecResult({ id: r.id, transcript: r.transcript, summary: r.summary }); refreshCredits(); showToast('Transcription IA prête ✅', 'success'); }
+        else { showToast(r.error || 'Transcription échouée', 'error'); }
+      });
+    },
+  });
+
+  const handleStartPremiumRec = useCallback(async () => {
+    if (!sessionId) return;
+    const { ok, cost, error } = await startRecording(sessionId);
+    if (!ok) { showToast(error || 'Activation impossible (crédits ?)', 'error'); return; }
+    if (!premiumRec.start()) { showToast('Enregistrement non supporté par ce navigateur', 'error'); return; }
+    setPremiumRecActive(true);
+    setRecResult(null);
+    broadcastRecording(true);   // avis "enregistrement" diffusé à tous (consentement)
+    showToast(cost ? `🔴 Enregistrement complet + IA (${cost} crédits)` : '🔴 Enregistrement complet + IA activé', 'success');
+  }, [sessionId, premiumRec, broadcastRecording, showToast]);
+
+  const handleStopPremiumRec = useCallback(() => {
+    premiumRec.stop();           // déclenche onComplete → upload + transcription
+    setPremiumRecActive(false);
+    broadcastRecording(false);
+    if (sessionId) stopRecording(sessionId);
+    showToast('Enregistrement arrêté — transcription en cours…', 'success');
+  }, [premiumRec, broadcastRecording, sessionId, showToast]);
+
   // Auto-play effect: when a new track is set via autoplay, force play
   useEffect(() => {
     if (autoPlayPending && selectedTrack && selectedTrack.src === autoPlayPending) {
@@ -1506,6 +1563,7 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as { active?: boolean };
         setRecordingActive(!!p.active);
+        if (!p.active) setRecConsentAck(false); // ré-affiche le consentement si réactivé plus tard
       })
       // 🖥️ partage écran : le participant active son Peer visio pour recevoir le flux
       .on('broadcast', { event: 'SCREEN_SHARE_STATE' }, (payload) => {
@@ -2877,9 +2935,41 @@ export const SessionPage: React.FC = () => {
         </div>
       )}
 
+      {/* 🔴 POINT D : consentement obligatoire — avis "session enregistrée + transcrite" aux participants */}
+      {recordingActive && !isHost && !isAdminUser && !recConsentAck && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm" data-testid="recording-consent-modal">
+          <div className="max-w-sm w-full rounded-2xl bg-[#0A0A0F] border border-red-500/40 p-6 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center bg-red-500/15">
+              <Radio className="w-8 h-8 text-red-400" />
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Session enregistrée
+            </h2>
+            <p className="text-white/70 text-sm mb-6">
+              Cette session est <strong>enregistrée et transcrite</strong> (audio + voix) afin de générer une transcription
+              et un résumé pour l'organisateur. En continuant, tu acceptes cet enregistrement.
+            </p>
+            <button
+              onClick={() => setRecConsentAck(true)}
+              className="w-full h-12 rounded-xl text-white font-bold flex items-center justify-center gap-2 transition-transform hover:scale-105 active:scale-95"
+              style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+              data-testid="recording-consent-accept"
+            >
+              <Check className="w-5 h-5" /> J'ai compris, continuer
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="w-full h-10 mt-2 rounded-xl text-white/60 text-sm hover:text-white"
+            >
+              Quitter la session
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Background Effects */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div 
+        <div
           className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-20 blur-3xl"
           style={{ background: `radial-gradient(circle, ${theme.colors.primary} 0%, transparent 70%)` }}
         />
@@ -3275,6 +3365,67 @@ export const SessionPage: React.FC = () => {
                           <Pencil className="w-4 h-4" />
                         </button>
                       )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 🔴 Option premium : enregistrement complet + transcription IA (hôte) */}
+            {isHost && sessionId && (
+              <Card className="bt-tab-diffusion border-[#D91CD2]/30 bg-white/5">
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                      <h3 className="text-white font-semibold flex items-center gap-2">
+                        <Radio className="w-4 h-4 text-[#FF2DAA]" /> Enregistrement complet + Transcription IA
+                      </h3>
+                      <p className="text-white/50 text-xs mt-0.5">
+                        Capte toutes les voix + la visio, puis génère la transcription FR et un résumé.
+                        {isAdminUser ? '' : ` ${recCost} crédit${recCost > 1 ? 's' : ''}.`}
+                      </p>
+                    </div>
+                    {!premiumRecActive ? (
+                      <button
+                        onClick={handleStartPremiumRec}
+                        disabled={recProcessing}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60 flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                        data-testid="premium-record-start"
+                      >
+                        <Radio className="w-4 h-4" /> {recProcessing ? 'Traitement…' : `Démarrer${isAdminUser ? '' : ` (${recCost} cr.)`}`}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleStopPremiumRec}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30 flex-shrink-0"
+                        data-testid="premium-record-stop"
+                      >
+                        <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" /> Arrêter
+                      </button>
+                    )}
+                  </div>
+                  {recProcessing && (
+                    <p className="text-white/60 text-xs flex items-center gap-2">
+                      <span className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-[#FF2DAA] animate-spin" />
+                      Transcription IA en cours…
+                    </p>
+                  )}
+                  {recResult && (recResult.summary || recResult.transcript) && (
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2 max-h-72 overflow-y-auto">
+                      {recResult.summary && (
+                        <div>
+                          <p className="text-[#FF2DAA] text-xs font-semibold mb-1">Résumé / notes</p>
+                          <p className="text-white/80 text-xs whitespace-pre-wrap">{recResult.summary}</p>
+                        </div>
+                      )}
+                      {recResult.transcript && (
+                        <details>
+                          <summary className="text-white/70 text-xs cursor-pointer">Transcription complète</summary>
+                          <p className="text-white/70 text-xs whitespace-pre-wrap mt-1">{recResult.transcript}</p>
+                        </details>
+                      )}
+                      <p className="text-white/40 text-[11px]">Retrouve tes enregistrements dans l'Espace Coach (Portefeuille).</p>
                     </div>
                   )}
                 </CardContent>

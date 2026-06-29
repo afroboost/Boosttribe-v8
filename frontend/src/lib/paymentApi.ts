@@ -115,6 +115,7 @@ export interface CreditsConfig {
   offers: Record<string, any>;
   cost_join: number;
   cost_host: number;
+  cost_record_transcribe: number;
   credit_validity_months: number;
   signup_free_credits: number;
   currency: string;
@@ -252,6 +253,7 @@ export interface PricingSettings {
   offers: Record<string, any>;
   cost_join: number;
   cost_host: number;
+  cost_record_transcribe: number;
   credit_validity_months: number;
   signup_free_credits: number;
 }
@@ -298,6 +300,18 @@ export interface SessionAccessInfo {
   sold: number;
   sold_out: boolean;
   currency: string;
+  record_enabled?: boolean;
+}
+
+export interface RecordingRow {
+  id: number;
+  session_id: string;
+  audio_url: string | null;
+  transcript: string | null;
+  summary: string | null;
+  status: 'processing' | 'done' | 'error';
+  error: string | null;
+  created_at: string;
 }
 
 export interface BilletterieConfig {
@@ -579,6 +593,96 @@ export async function checkTicket(sessionId: string): Promise<{ has_ticket: bool
   } catch (e) {
     return { has_ticket: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
+}
+
+// ---- 🔴 Enregistrement complet + transcription IA (option premium crédits) ----
+/** Hôte : active l'option (débite les crédits sauf abo illimité + active le consentement). */
+export async function startRecording(sessionId: string): Promise<{ ok: boolean; cost?: number; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/session/record/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: true, cost: data.cost };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Hôte : désactive le consentement d'enregistrement. */
+export async function stopRecording(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false };
+  try {
+    const res = await fetch(`${API_URL}/session/record/stop`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    return { ok: res.ok };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Hôte : envoie l'audio complet → transcription FR + résumé (synchrone). */
+export async function uploadRecording(sessionId: string, blob: Blob, ext = 'webm'): Promise<{ ok: boolean; id?: number; transcript?: string; summary?: string; status?: string; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Connectez-vous' };
+  try {
+    const form = new FormData();
+    form.append('file', blob, `session.${ext}`);
+    form.append('session_id', sessionId);
+    const res = await fetch(`${API_URL}/session/record/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: !!data.ok, id: data.id, transcript: data.transcript, summary: data.summary, status: data.status, error: data.error };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Hôte : liste de ses enregistrements + transcriptions. */
+export async function getRecordings(): Promise<{ recordings: RecordingRow[]; error?: string }> {
+  if (!API_URL) return { recordings: [], error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { recordings: [] };
+  try {
+    const res = await fetch(`${API_URL}/session/recordings`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { recordings: [], error: data?.detail || `Erreur ${res.status}` };
+    return { recordings: (data.recordings || []) as RecordingRow[] };
+  } catch (e) {
+    return { recordings: [], error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+// ---- Admin : clé IA (OpenAI) -----------------------------------------------
+export async function getAiKeys(): Promise<{ configured: boolean; last4: string; source: string; error?: string }> {
+  const { data, error } = await adminFetch('/admin/ai-keys', { method: 'GET' });
+  if (error) return { configured: false, last4: '', source: 'none', error };
+  return { configured: !!data?.configured, last4: data?.last4 || '', source: data?.source || 'none' };
+}
+
+export async function saveAiKey(openaiKey: string): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch('/admin/ai-keys', {
+    method: 'POST',
+    body: JSON.stringify({ openai_key: openaiKey }),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
 }
 
 // ---- Admin : Billetterie & Commission --------------------------------------

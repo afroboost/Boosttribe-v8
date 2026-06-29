@@ -417,6 +417,209 @@ async def get_stripe_keys(reveal: bool = False, authorization: Optional[str] = H
     return out
 
 
+# =========================================================================== #
+# 🤖 CLÉ API IA (OpenAI) — chiffrée au repos (comme la clé Stripe), jamais en dur.
+# =========================================================================== #
+OPENAI_API_KEY_ENV = os.environ.get("OPENAI_API_KEY", "")
+
+class AiKeyBody(BaseModel):
+    openai_key: Optional[str] = None
+
+async def get_ai_secret_record() -> Optional[str]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/ai_secrets", headers=_service_headers(),
+                                params={"id": "eq.default", "select": "encrypted_openai_key"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0].get("encrypted_openai_key")
+    return None
+
+async def store_ai_secret(encrypted: str) -> bool:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{SUPABASE_URL}/rest/v1/ai_secrets",
+                                 headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                                 params={"on_conflict": "id"},
+                                 json={"id": "default", "encrypted_openai_key": encrypted,
+                                       "updated_at": datetime.now(timezone.utc).isoformat()})
+    return resp.status_code in (200, 201, 204)
+
+async def get_openai_key() -> Optional[str]:
+    """Clé OpenAI effective : DB chiffrée en priorité, sinon variable d'env."""
+    return decrypt_secret(await get_ai_secret_record()) or OPENAI_API_KEY_ENV or None
+
+@app.post("/admin/ai-keys")
+async def set_ai_keys(body: AiKeyBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    if body.openai_key:
+        k = body.openai_key.strip()
+        if not k.startswith("sk-"):
+            raise HTTPException(status_code=400, detail="La clé OpenAI doit commencer par sk-")
+        if not await store_ai_secret(encrypt_secret(k)):
+            raise HTTPException(status_code=500, detail="Échec de l'enregistrement de la clé IA")
+    return {"ok": True}
+
+@app.get("/admin/ai-keys")
+async def get_ai_keys(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    plain = decrypt_secret(await get_ai_secret_record())
+    effective = plain or OPENAI_API_KEY_ENV
+    return {"configured": bool(effective), "last4": effective[-4:] if effective else "",
+            "source": "db" if plain else ("env" if OPENAI_API_KEY_ENV else "none")}
+
+
+# =========================================================================== #
+# 🔴 ENREGISTREMENT COMPLET + 🤖 TRANSCRIPTION IA (FR) + RÉSUMÉ — option premium
+#   Coûte cost_record_transcribe crédits (admin-éditable, défaut 4), débités à l'hôte
+#   (sauf coach abonné « illimité »). Consentement via playlists.record_enabled.
+# =========================================================================== #
+RECORDINGS_BUCKET = "session-recordings"
+TRANSCRIBE_MODEL = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
+SUMMARY_MODEL = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
+
+class RecordStartBody(BaseModel):
+    session_id: str
+
+async def _openai_transcribe(audio: bytes, filename: str, content_type: str, key: str) -> str:
+    data = {"model": TRANSCRIBE_MODEL, "language": "fr", "response_format": "text"}
+    files = {"file": (filename or "audio.webm", audio, content_type or "audio/webm")}
+    async with httpx.AsyncClient(timeout=600) as client:
+        resp = await client.post("https://api.openai.com/v1/audio/transcriptions",
+                                 headers={"Authorization": f"Bearer {key}"}, data=data, files=files)
+    if resp.status_code != 200:
+        raise RuntimeError(f"transcription HTTP {resp.status_code}: {(resp.text or '')[:300]}")
+    return (resp.text or "").strip()
+
+async def _openai_refine(raw_text: str, key: str) -> Dict[str, str]:
+    """Réécrit proprement en FR + génère un résumé / notes de cours. Renvoie {transcript, summary}."""
+    if not raw_text.strip():
+        return {"transcript": "", "summary": ""}
+    sys = ("Tu es un assistant qui met en forme la transcription d'une session live (cours/coaching) en français. "
+           "Corrige la ponctuation et les fautes, structure par moments/sujets, sans inventer de contenu. "
+           "Réponds en JSON strict avec deux clés : \"transcript\" (texte propre et structuré) et "
+           "\"summary\" (résumé + notes de cours en points clés, en markdown).")
+    payload = {"model": SUMMARY_MODEL, "temperature": 0.3, "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": sys},
+                            {"role": "user", "content": raw_text[:120000]}]}
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post("https://api.openai.com/v1/chat/completions",
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                                 json=payload)
+    if resp.status_code != 200:
+        # repli : on garde au moins le texte brut
+        return {"transcript": raw_text, "summary": ""}
+    import json as _json
+    content = resp.json()["choices"][0]["message"]["content"]
+    try:
+        obj = _json.loads(content)
+        return {"transcript": obj.get("transcript") or raw_text, "summary": obj.get("summary") or ""}
+    except Exception:  # noqa: BLE001
+        return {"transcript": raw_text, "summary": content}
+
+async def _record_authz(session_id: str, uid: str) -> None:
+    authz = await get_session_authz(session_id)
+    host_id = authz.get("host_id") if authz else None
+    cohosts = (authz.get("cohosts") if authz else None) or []
+    if uid != host_id and uid not in cohosts:
+        raise HTTPException(status_code=403, detail="Réservé à l'hôte de la session")
+
+@app.post("/session/record/start")
+async def record_start(body: RecordStartBody, authorization: Optional[str] = Header(default=None)):
+    """Active l'option premium : débite les crédits à l'hôte (sauf abo illimité) + active le consentement."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    await _record_authz(body.session_id, uid)
+    settings = await get_pricing_settings()
+    cost = int(settings.get("cost_record_transcribe", 4) or 0)
+    unlimited = await is_coach_unlimited(uid)
+    spent = 0
+    if not unlimited and cost > 0:
+        bal = await _spend_credits(uid, cost, "spend_record",
+                                   ref=f"record:{body.session_id}:{uid}", note=f"record+IA {body.session_id}")
+        spent = cost
+        balance = bal
+    else:
+        balance = await get_balance(uid)
+    await upsert_playlist_fields(body.session_id, {"record_enabled": True})
+    return {"ok": True, "cost": spent, "balance": balance, "unlimited": unlimited}
+
+@app.post("/session/record/stop")
+async def record_stop(body: RecordStartBody, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    await _record_authz(body.session_id, uid)
+    await upsert_playlist_fields(body.session_id, {"record_enabled": False})
+    return {"ok": True}
+
+@app.post("/session/record/upload")
+async def record_upload(file: UploadFile = File(...), session_id: str = Form(...),
+                        authorization: Optional[str] = Header(default=None)):
+    """Reçoit l'audio complet (toutes voix + musique), le stocke, transcrit (FR) + résume."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    await _record_authz(session_id, uid)
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Fichier audio vide")
+    if len(data) > 300 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Enregistrement trop volumineux (max 300 Mo)")
+    content_type = file.content_type or "audio/webm"
+    ext = "webm" if "webm" in content_type else "m4a" if "mp4" in content_type or "m4a" in content_type else "ogg" if "ogg" in content_type else "webm"
+    ts = int(datetime.now(timezone.utc).timestamp())
+    storage_path = f"{session_id}/{uid}/{ts}.{ext}"
+    async with httpx.AsyncClient(timeout=300) as client:
+        up = await client.post(
+            f"{SUPABASE_URL}/storage/v1/object/{RECORDINGS_BUCKET}/{storage_path}",
+            headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                     "Content-Type": content_type, "x-upsert": "true"},
+            content=data)
+    if up.status_code not in (200, 201):
+        logger.error("recording upload échec: %s %s", up.status_code, (up.text or "")[:200])
+        raise HTTPException(status_code=500, detail="Upload de l'enregistrement échoué")
+    audio_url = f"{SUPABASE_URL}/storage/v1/object/public/{RECORDINGS_BUCKET}/{storage_path}"
+    # crée la ligne (processing)
+    async with httpx.AsyncClient(timeout=10) as client:
+        ins = await client.post(f"{SUPABASE_URL}/rest/v1/session_recordings",
+                                headers=_service_headers({"Prefer": "return=representation"}),
+                                json={"session_id": session_id, "host_id": uid, "audio_path": storage_path,
+                                      "audio_url": audio_url, "status": "processing"})
+    rec = ins.json()[0] if ins.status_code in (200, 201) and ins.json() else {"id": None}
+    rec_id = rec.get("id")
+    # transcription + résumé
+    key = await get_openai_key()
+    patch: Dict[str, Any] = {}
+    if not key:
+        patch = {"status": "error", "error": "Clé OpenAI non configurée (admin → Clés IA)"}
+    else:
+        try:
+            raw = await _openai_transcribe(data, f"{session_id}.{ext}", content_type, key)
+            refined = await _openai_refine(raw, key)
+            patch = {"status": "done", "transcript": refined["transcript"], "summary": refined["summary"]}
+        except Exception as exc:  # noqa: BLE001
+            logger.error("transcription échec (rec=%s): %s", rec_id, exc)
+            patch = {"status": "error", "error": str(exc)[:500]}
+    if rec_id is not None:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.patch(f"{SUPABASE_URL}/rest/v1/session_recordings",
+                               headers=_service_headers({"Prefer": "return=minimal"}),
+                               params={"id": f"eq.{rec_id}"}, json=patch)
+    return {"ok": patch.get("status") == "done", "id": rec_id, "audio_url": audio_url, **patch}
+
+@app.get("/session/recordings")
+async def session_recordings(authorization: Optional[str] = Header(default=None)):
+    """Enregistrements + transcriptions de l'hôte (consultation + téléchargement)."""
+    user = await get_user_from_token(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/session_recordings", headers=_service_headers(),
+                                params={"host_id": f"eq.{user.get('id')}", "select": "*",
+                                        "order": "created_at.desc", "limit": "100"})
+    return {"recordings": resp.json() if resp.status_code == 200 else []}
+
+
 class GrantAccessBody(BaseModel):
     email: Optional[str] = None
     user_id: Optional[str] = None
@@ -882,6 +1085,7 @@ class PricingSettingsBody(BaseModel):
     offers: Optional[Dict[str, Any]] = None
     cost_join: Optional[int] = None
     cost_host: Optional[int] = None
+    cost_record_transcribe: Optional[int] = None
     credit_validity_months: Optional[int] = None
     signup_free_credits: Optional[int] = None
 
@@ -896,7 +1100,8 @@ async def get_pricing_settings() -> Dict[str, Any]:
         return resp.json()[0]
     # repli défauts si la table n'est pas encore initialisée
     return {"services_shown": ["live", "visio", "stage", "chat"], "offers": {},
-            "cost_join": 1, "cost_host": 1, "credit_validity_months": 12, "signup_free_credits": 1}
+            "cost_join": 1, "cost_host": 1, "cost_record_transcribe": 4,
+            "credit_validity_months": 12, "signup_free_credits": 1}
 
 async def _credit_validity_months() -> int:
     try:
@@ -969,6 +1174,7 @@ async def credits_config():
         "offers": settings.get("offers") or {},
         "cost_join": settings.get("cost_join", 1),
         "cost_host": settings.get("cost_host", 1),
+        "cost_record_transcribe": settings.get("cost_record_transcribe", 4),
         "credit_validity_months": settings.get("credit_validity_months", 12),
         "signup_free_credits": settings.get("signup_free_credits", 1),
         "currency": "CHF",
@@ -1151,7 +1357,7 @@ async def admin_delete_pack(pack_id: int, authorization: Optional[str] = Header(
 async def admin_save_pricing_settings(body: PricingSettingsBody, authorization: Optional[str] = Header(default=None)):
     await require_admin(authorization)
     patch: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    for k in ("services_shown", "offers", "cost_join", "cost_host", "credit_validity_months", "signup_free_credits"):
+    for k in ("services_shown", "offers", "cost_join", "cost_host", "cost_record_transcribe", "credit_validity_months", "signup_free_credits"):
         v = getattr(body, k)
         if v is not None:
             patch[k] = v
@@ -1302,7 +1508,7 @@ async def get_session_row(session_id: str) -> Optional[Dict[str, Any]]:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}",
-                                        "select": "session_id,host_id,mode,price_chf,capacity"})
+                                        "select": "session_id,host_id,mode,price_chf,capacity,record_enabled"})
     if resp.status_code == 200 and resp.json():
         return resp.json()[0]
     return None
@@ -1421,7 +1627,8 @@ async def session_info(session_id: str):
     sold = await count_paid_tickets(session_id) if mode == "paid" else 0
     sold_out = bool(capacity) and mode == "paid" and sold >= int(capacity)
     return {"mode": mode, "price_chf": price, "capacity": capacity,
-            "sold": sold, "sold_out": sold_out, "currency": "CHF"}
+            "sold": sold, "sold_out": sold_out, "currency": "CHF",
+            "record_enabled": bool((row or {}).get("record_enabled"))}
 
 # ---- Coach : PLAN (type de paiement + abonnement « Coach Illimité ») ----------
 @app.get("/coach/plan")

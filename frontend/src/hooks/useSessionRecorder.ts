@@ -14,9 +14,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export interface SessionRecorderOptions {
   // Renvoie le flux micro local de l'hôte (ou null)
   getLocalStream: () => MediaStream | null;
-  // Renvoie les flux audio distants (voix des participants) à l'instant T
+  // Renvoie les flux audio distants (voix des participants + visio LiveKit) à l'instant T
   getRemoteStreams: () => MediaStream[];
   fileBaseName?: string;
+  // Si false : ne télécharge PAS le fichier à l'arrêt (utilisé par l'option premium qui l'envoie au serveur)
+  download?: boolean;
+  // Callback à l'arrêt avec le blob enregistré (pour upload + transcription IA)
+  onComplete?: (blob: Blob, ext: string) => void;
 }
 
 export interface SessionRecorderReturn {
@@ -94,6 +98,9 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
       const blob = new Blob(chunksRef.current, { type });
       chunksRef.current = [];
       const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+      // Premium : remonter le blob (pour upload + transcription IA) sans forcément télécharger.
+      try { optionsRef.current.onComplete?.(blob, ext); } catch { /* ignore */ }
+      if (optionsRef.current.download === false) return;
       const d = new Date();
       const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
       const url = URL.createObjectURL(blob);

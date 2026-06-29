@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
-import { syncPlan, listUsers, AdminUser, getStripeKeys, saveStripeKeys } from "@/lib/paymentApi";
+import { syncPlan, listUsers, AdminUser, getStripeKeys, saveStripeKeys, getAiKeys, saveAiKey } from "@/lib/paymentApi";
 import {
   offerCredits, listCreditOffers, getCreditAdminConfig, saveCreditPack, deleteCreditPack, savePricingSettings,
   type CreditOfferRow, type CreditPack, type PricingSettings,
@@ -248,6 +248,30 @@ const Dashboard: React.FC = () => {
     else showToast(error || 'Clé secrète non configurée', 'warning');
   }, [revealedSecret, showToast]);
 
+  // Clé IA (OpenAI) — transcription + résumé. Chiffrée côté serveur, jamais exposée.
+  const [aiKeyInput, setAiKeyInput] = useState('');
+  const [aiKeyConfigured, setAiKeyConfigured] = useState(false);
+  const [aiKeyLast4, setAiKeyLast4] = useState('');
+  const [aiKeySource, setAiKeySource] = useState('');
+  const [aiKeySaving, setAiKeySaving] = useState(false);
+
+  const loadAiKey = useCallback(async () => {
+    const { configured, last4, source, error } = await getAiKeys();
+    if (error) { showToast(error, 'error'); return; }
+    setAiKeyConfigured(configured);
+    setAiKeyLast4(last4);
+    setAiKeySource(source);
+  }, [showToast]);
+
+  const handleSaveAiKey = useCallback(async () => {
+    if (!aiKeyInput.trim()) return;
+    setAiKeySaving(true);
+    const { ok, error } = await saveAiKey(aiKeyInput.trim());
+    if (ok) { showToast('Clé IA enregistrée', 'success'); setAiKeyInput(''); await loadAiKey(); }
+    else showToast(error || 'Échec de l\'enregistrement de la clé IA', 'error');
+    setAiKeySaving(false);
+  }, [aiKeyInput, showToast, loadAiKey]);
+
   // ===========================================================================
   // 💳 CRÉDITS OFFERTS (admin) — remplace "Accès offerts"
   // ===========================================================================
@@ -398,6 +422,7 @@ const Dashboard: React.FC = () => {
         cost_host: pricingSettings.cost_host,
         credit_validity_months: pricingSettings.credit_validity_months,
         signup_free_credits: pricingSettings.signup_free_credits,
+        cost_record_transcribe: pricingSettings.cost_record_transcribe,
         services_shown: pricingSettings.services_shown,
         offers: pricingSettings.offers,
       });
@@ -473,8 +498,8 @@ const Dashboard: React.FC = () => {
     if (activeTab === 'credits') refreshCreditConfig();
     if (activeTab === 'billetterie') refreshBilletterie();
     if (activeTab === 'users') refreshUsers();
-    if (activeTab === 'stripe') loadStripeKeys();
-  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys]);
+    if (activeTab === 'stripe') { loadStripeKeys(); loadAiKey(); }
+  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys, loadAiKey]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -1168,6 +1193,48 @@ const Dashboard: React.FC = () => {
             </CardContent>
           </Card>
 
+          {/* Clé IA (OpenAI) — transcription + résumé des enregistrements */}
+          <Card className="border-white/10 bg-white/5">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <KeyRound size={20} />
+                Clé IA (OpenAI) — Transcription
+              </CardTitle>
+              <CardDescription className="text-white/50">
+                Utilisée pour transcrire et résumer les sessions enregistrées. La clé (sk-…) est chiffrée et
+                stockée côté serveur — jamais exposée au navigateur.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-white/70 flex items-center gap-2">
+                  Clé OpenAI (sk-…)
+                  {aiKeyConfigured && (
+                    <span className="flex items-center gap-1 text-green-400 text-xs"><ShieldCheck size={13} /> Configurée{aiKeySource === 'env' ? ' (env)' : ''}{aiKeyLast4 ? ` ••••${aiKeyLast4}` : ''}</span>
+                  )}
+                </Label>
+                <Input
+                  type="password"
+                  value={aiKeyInput}
+                  onChange={(e) => setAiKeyInput(e.target.value)}
+                  placeholder={aiKeyConfigured ? `sk-••••${aiKeyLast4}` : 'sk-...'}
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm"
+                  autoComplete="off"
+                />
+                <p className="text-white/30 text-[11px]">La clé n'est jamais stockée dans le navigateur ni renvoyée en clair.</p>
+              </div>
+              <Button
+                onClick={handleSaveAiKey}
+                disabled={aiKeySaving || !aiKeyInput.trim()}
+                className="text-white border-none"
+                style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+              >
+                <Save size={16} className="mr-1.5" />
+                {aiKeySaving ? 'Enregistrement…' : 'Enregistrer la clé IA'}
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card className="border-white/10 bg-white/5">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
@@ -1470,6 +1537,12 @@ const Dashboard: React.FC = () => {
                         <Label className="text-white/70">1er cours offert</Label>
                         <Input type="number" min={0} value={pricingSettings.signup_free_credits}
                           onChange={(e) => setPricingSettings({ ...pricingSettings, signup_free_credits: parseInt(e.target.value) || 0 })}
+                          className="bg-white/5 border-white/10 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/70">Enregistrement + IA (crédits)</Label>
+                        <Input type="number" min={0} value={pricingSettings.cost_record_transcribe}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, cost_record_transcribe: parseInt(e.target.value) || 0 })}
                           className="bg-white/5 border-white/10 text-white" />
                       </div>
                     </div>

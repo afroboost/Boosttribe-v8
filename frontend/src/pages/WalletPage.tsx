@@ -5,8 +5,8 @@ import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, subscribeCoach,
-  type CoachWallet, type CoachPlan,
+  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, subscribeCoach, getRecordings,
+  type CoachWallet, type CoachPlan, type RecordingRow,
 } from '@/lib/paymentApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import {
   ArrowLeft, Wallet, TrendingUp, Send, CheckCircle2, Landmark, Loader2, Crown, Infinity as InfinityIcon,
+  Radio, Download, FileText,
 } from 'lucide-react';
 
 // 🎨 Couleurs Afroboost
@@ -42,9 +43,10 @@ const WalletPage: React.FC = () => {
   const [savingBank, setSavingBank] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
+  const [recordings, setRecordings] = useState<RecordingRow[]>([]);
 
   const refresh = useCallback(async () => {
-    const [w, p] = await Promise.all([getCoachWallet(), getCoachPlan()]);
+    const [w, p, rec] = await Promise.all([getCoachWallet(), getCoachPlan(), getRecordings()]);
     if (w.error) { showToast(w.error, 'error'); }
     if (w.data) {
       setWallet(w.data);
@@ -52,6 +54,7 @@ const WalletPage: React.FC = () => {
       setHolder(w.data.holder || '');
     }
     if (p.data) setPlan(p.data);
+    setRecordings(rec.recordings || []);
     setLoading(false);
   }, [showToast]);
 
@@ -296,6 +299,73 @@ const WalletPage: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 🔴 Mes enregistrements + transcriptions IA */}
+            {recordings.length > 0 && (
+              <Card className="bg-white/5 border-white/10 mt-6">
+                <CardHeader>
+                  <CardTitle className="text-white text-lg flex items-center gap-2">
+                    <Radio size={20} style={{ color: AFRO.pink }} /> Mes enregistrements
+                  </CardTitle>
+                  <p className="text-white/50 text-sm">Audio complet (toutes les voix) + transcription FR et résumé.</p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {recordings.map((r) => (
+                    <details key={r.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                      <summary className="flex items-center justify-between gap-3 cursor-pointer text-sm">
+                        <span className="text-white/80">{new Date(r.created_at).toLocaleString('fr-CH')}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs ${
+                          r.status === 'done' ? 'bg-green-500/20 text-green-400'
+                          : r.status === 'error' ? 'bg-red-500/20 text-red-300'
+                          : 'bg-white/15 text-white/70'
+                        }`}>
+                          {r.status === 'done' ? 'Prêt' : r.status === 'error' ? 'Erreur' : 'En cours…'}
+                        </span>
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        {r.audio_url && (
+                          <div className="flex flex-wrap items-center gap-3">
+                            <audio controls src={r.audio_url} className="max-w-full" />
+                            <a href={r.audio_url} download
+                              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/20 text-white/80 hover:bg-white/10">
+                              <Download size={14} /> Télécharger l'audio
+                            </a>
+                          </div>
+                        )}
+                        {r.summary && (
+                          <div>
+                            <p className="text-[#FF2DAA] text-xs font-semibold mb-1 flex items-center gap-1"><FileText size={13} /> Résumé / notes</p>
+                            <p className="text-white/80 text-sm whitespace-pre-wrap">{r.summary}</p>
+                          </div>
+                        )}
+                        {r.transcript && (
+                          <div>
+                            <p className="text-white/60 text-xs font-semibold mb-1">Transcription complète</p>
+                            <p className="text-white/70 text-sm whitespace-pre-wrap max-h-60 overflow-y-auto">{r.transcript}</p>
+                            <button
+                              onClick={() => {
+                                const blob = new Blob([(r.summary ? `RÉSUMÉ\n\n${r.summary}\n\n---\n\n` : '') + (r.transcript || '')], { type: 'text/plain;charset=utf-8' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url; a.download = `transcription-${r.id}.txt`;
+                                document.body.appendChild(a); a.click(); a.remove();
+                                setTimeout(() => URL.revokeObjectURL(url), 2000);
+                              }}
+                              className="mt-2 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-white/20 text-white/80 hover:bg-white/10"
+                            >
+                              <Download size={14} /> Télécharger la transcription
+                            </button>
+                          </div>
+                        )}
+                        {r.status === 'error' && r.error && (
+                          <p className="text-red-300/80 text-xs">{r.error}</p>
+                        )}
+                      </div>
+                    </details>
+                  ))}
                 </CardContent>
               </Card>
             )}

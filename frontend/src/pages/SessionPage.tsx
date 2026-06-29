@@ -42,7 +42,6 @@ import { ChatPanel } from '@/components/session/ChatPanel';
 import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
-import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
@@ -824,6 +823,9 @@ export const SessionPage: React.FC = () => {
   // N'altère rien de l'audio/mixeur/synchro existants : purement additif.
   const MAX_VISIO_CAMERAS = 10; // 🎥 scène LiveKit : 10 publishers max
   const [liveMode, setLiveMode] = useState(false);
+  // 📱 MOBILE UNIQUEMENT : 4 onglets. Le contenu est MASQUÉ/AFFICHÉ en CSS (jamais démonté) ;
+  //    le desktop (≥1024px) n'est PAS affecté (la règle CSS est sous @media max-width:1023px).
+  const [mobileTab, setMobileTab] = useState<'diffusion' | 'access' | 'mixer' | 'live'>('diffusion');
   const [screenSharing, setScreenSharing] = useState(false); // 🖥️ l'hôte/co-hôte partage son écran
   const [remoteScreenActive, setRemoteScreenActive] = useState(false); // un AUTRE partage son écran
   // 🎥 LiveKit (SFU) — remplace le mesh PeerJS pour les caméras/écran. Interface identique à useVideoMesh.
@@ -915,8 +917,16 @@ export const SessionPage: React.FC = () => {
   // Quitter le mode Live → réinitialiser ma demande en attente (évite un état "envoyée" fantôme)
   useEffect(() => { if (!liveMode) { setStageRequestPending(false); setVisioSpotlightId(null); } }, [liveMode]);
 
-  // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → fenêtre flottante
+  // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → onglet "Live"
   const isDesktop = useMediaQuery('(min-width: 1024px)');
+
+  // 📱 Mobile : ouvrir l'onglet "Live" active la Live Visio (sauf plan gratuit verrouillé).
+  //    On n'éteint JAMAIS liveMode au changement d'onglet → la connexion LiveKit reste montée.
+  useEffect(() => {
+    if (isDesktop) return;
+    if (mobileTab === 'live' && sessionId && !isFree && !liveMode) setLiveMode(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mobileTab, isDesktop, sessionId]);
 
   // 🔴 POINT 3 — Enregistrement audio (hôte uniquement) : micro local + voix participants (DOM tribu).
   // N'inclut PAS l'audio de la vidéo partagée. + bandeau de consentement diffusé à tous (realtime).
@@ -3033,13 +3043,48 @@ export const SessionPage: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
+      <main data-mtab={mobileTab} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 relative z-10">
+        {/* 📱 MOBILE UNIQUEMENT — bascule d'onglets. Masque/affiche les blocs en CSS (jamais de
+            démontage) ; ne s'applique PAS au desktop (≥1024px). Voir le <style> ci-dessous. */}
+        <style>{`
+          @media (max-width: 1023px) {
+            [data-mtab]:not([data-mtab="diffusion"]) .bt-tab-diffusion,
+            [data-mtab]:not([data-mtab="access"]) .bt-tab-access,
+            [data-mtab]:not([data-mtab="mixer"]) .bt-tab-mixer,
+            [data-mtab]:not([data-mtab="live"]) .bt-tab-live { display: none !important; }
+          }
+        `}</style>
+        <nav className="lg:hidden flex items-stretch gap-1 mb-6 overflow-x-auto -mx-1 px-1" data-testid="mobile-session-tabs">
+          {([
+            { id: 'diffusion', label: 'Diffusion' },
+            { id: 'access', label: 'Accès & Tribu' },
+            { id: 'mixer', label: 'Mixeur' },
+            { id: 'live', label: 'Live' },
+          ] as const).map((tab) => {
+            const isActive = mobileTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setMobileTab(tab.id)}
+                className="flex-1 whitespace-nowrap px-3 py-2.5 text-sm font-medium border-b-2 transition-colors"
+                style={{
+                  color: isActive ? '#FFFFFF' : '#A9A9A9',
+                  borderColor: isActive ? '#D91CD2' : 'transparent',
+                  textShadow: isActive ? '0 0 8px rgba(217,28,210,0.6)' : 'none',
+                }}
+                data-testid={`mobile-tab-${tab.id}`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Player */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className={`${mobileTab === 'mixer' ? 'hidden' : ''} lg:block lg:col-span-2 space-y-6`}>
             {/* 🎥 Interrupteur de mode : Écoute seule / Live Visio (additif, n'altère pas l'existant) */}
             {sessionId && (
-              <div className="flex items-center gap-1.5 p-1 rounded-xl border border-white/10 bg-white/5 w-fit">
+              <div className="hidden lg:flex items-center gap-1.5 p-1 rounded-xl border border-white/10 bg-white/5 w-fit">
                 <button
                   onClick={() => setLiveMode(false)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[#8A2EFF] text-white' : 'text-white/60 hover:text-white'}`}
@@ -3070,7 +3115,7 @@ export const SessionPage: React.FC = () => {
 
             {/* 🔒 Plan gratuit : Live Visio verrouillé → invite Pro */}
             {isFree && sessionId && (
-              <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
+              <div className="bt-tab-diffusion flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
                 <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio : nécessite des crédits</span>
                 <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
                   Acheter des crédits
@@ -3082,7 +3127,7 @@ export const SessionPage: React.FC = () => {
             {canShare && sessionId && (
               <button
                 onClick={handleTogglePrivacy}
-                className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium w-fit transition-colors ${
+                className={`bt-tab-access flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium w-fit transition-colors ${
                   isPrivate
                     ? 'bg-[#8A2EFF]/15 border-[#8A2EFF]/40 text-[#c9a3ff]'
                     : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
@@ -3100,7 +3145,9 @@ export const SessionPage: React.FC = () => {
 
             {/* 🚪 Panneau "Demandes d'accès" — hôte uniquement, visible s'il y a des demandes */}
             {isHost && accessRequests.length > 0 && (
-              <AccessRequestsPanel requests={accessRequests} onAdmit={handleAdmit} onRefuse={handleRefuse} />
+              <div className="bt-tab-access">
+                <AccessRequestsPanel requests={accessRequests} onAdmit={handleAdmit} onRefuse={handleRefuse} />
+              </div>
             )}
 
             {/* 🎤 Panneau "Demandes de prise de parole" — hôte + co-hôtes, visible s'il y a des demandes.
@@ -3120,16 +3167,34 @@ export const SessionPage: React.FC = () => {
               </div>
             )}
 
-            {/* 🎥 Panneau Live Visio : mobile → fenêtre flottante (plus bas) ; desktop → colonne de droite */}
-            {liveMode && sessionId && !isDesktop && (
-              <DraggableWindow title="Live Visio" storageKey="bt_visio_pos" defaultWidth={300}>
+            {/* 🎥 Live Visio — desktop : colonne de droite (inchangé) ; mobile : onglet « Live »
+                (monté en permanence, masqué en CSS hors onglet → la connexion LiveKit ne se coupe pas). */}
+            {!isDesktop && liveMode && sessionId && (
+              <div className="bt-tab-live lg:hidden">
                 {liveVisioNode}
-              </DraggableWindow>
+              </div>
+            )}
+            {/* 📱 Onglet « Live » sans visio active (mobile) : invite à démarrer / message plan gratuit. */}
+            {!isDesktop && !(liveMode && sessionId) && (
+              <div className="bt-tab-live lg:hidden rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+                <p className="text-white/70 text-sm mb-3">
+                  {isFree ? 'La Live Visio nécessite des crédits.' : 'Active la Live Visio pour afficher les caméras.'}
+                </p>
+                {isFree ? (
+                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+                    Acheter des crédits
+                  </button>
+                ) : (
+                  <button onClick={() => sessionId && setLiveMode(true)} className="px-4 py-2 rounded-lg text-white text-sm font-medium inline-flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+                    <Video className="w-4 h-4" /> Démarrer la Live Visio
+                  </button>
+                )}
+              </div>
             )}
 
             {/* 🔴 POINT 3 : bandeau de transparence — visible par TOUS pendant l'enregistrement */}
             {recordingActive && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-sm" data-testid="recording-banner">
+              <div className="bt-tab-diffusion flex items-center gap-2 px-3 py-2 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-sm" data-testid="recording-banner">
                 <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
@@ -3139,7 +3204,7 @@ export const SessionPage: React.FC = () => {
             )}
 
             {/* Session Title */}
-            <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="bt-tab-diffusion flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h1
                   className="text-2xl sm:text-3xl font-bold text-white mb-2"
@@ -3177,7 +3242,7 @@ export const SessionPage: React.FC = () => {
 
             {/* C : Description de session (modifiable par l'hôte) */}
             {(isHost || description) && (
-              <Card className="border-white/10 bg-white/5">
+              <Card className="bt-tab-diffusion border-white/10 bg-white/5">
                 <CardContent className="p-4">
                   {editingDesc ? (
                     <div className="space-y-2">
@@ -3218,14 +3283,19 @@ export const SessionPage: React.FC = () => {
 
             {/* 🖥️ Partage d'écran en direct (au-dessus du média partagé) */}
             {videoMesh.localScreen && (
-              <ScreenShareView stream={videoMesh.localScreen} isLocal onStop={handleToggleScreenShare} />
+              <div className="bt-tab-diffusion">
+                <ScreenShareView stream={videoMesh.localScreen} isLocal onStop={handleToggleScreenShare} />
+              </div>
             )}
             {!videoMesh.localScreen && videoMesh.remoteScreen && (
-              <ScreenShareView stream={videoMesh.remoteScreen.stream} hostName="l'hôte" />
+              <div className="bt-tab-diffusion">
+                <ScreenShareView stream={videoMesh.remoteScreen.stream} hostName="l'hôte" />
+              </div>
             )}
 
             {/* E : Média partagé (vidéo/image/lien) — affiché UNIQUEMENT hors mode audio */}
             {shareMode !== 'audio' && sharedMedia && (
+              <div className="bt-tab-diffusion">
               <SharedMediaPlayer
                 media={sharedMedia}
                 isHost={canShare}
@@ -3236,10 +3306,12 @@ export const SessionPage: React.FC = () => {
                 maxSeconds={isFree ? 30 : Infinity}
                 liveCamerasNode={liveCamerasNode}
               />
+              </div>
             )}
 
             {/* E + item 6 : Panneau de partage (Audio | Vidéo | Image | Lien) — hôte + co-animateurs */}
             {canShare && sessionId && (
+              <div className="bt-tab-diffusion">
               <MediaShareControls
                 sessionId={sessionId}
                 onShare={handleShareMedia}
@@ -3262,11 +3334,12 @@ export const SessionPage: React.FC = () => {
                   />
                 ) : undefined}
               />
+              </div>
             )}
 
             {/* Share Link Card (Host only) — Item 2 : repliable */}
             {isHost && sessionId && (
-              <Card className="border-white/10 bg-white/5">
+              <Card className="bt-tab-access border-white/10 bg-white/5">
                 <CardHeader className="p-0">
                   <button
                     type="button"
@@ -3384,7 +3457,7 @@ export const SessionPage: React.FC = () => {
 
             {/* Audio Player - Only show if there's a track selected */}
             {/* Item 6 : lecteur audio + playlist UNIQUEMENT en mode audio */}
-            {shareMode === 'audio' && (selectedTrack ? (
+            {shareMode === 'audio' && (<div className="bt-tab-diffusion">{selectedTrack ? (
               <>
                 {/* Free Trial Timer Indicator */}
                 {isFreeTrial && !trialLimitReached && (
@@ -3540,11 +3613,11 @@ export const SessionPage: React.FC = () => {
                   </p>
                 </CardContent>
               </Card>
-            ))}
+            )}</div>)}
 
             {/* Track Selection (Host only) */}
             {shareMode === 'audio' && isHost && (
-              <Card className="border-white/10 bg-white/5">
+              <Card className="bt-tab-diffusion border-white/10 bg-white/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-white text-lg">
                     Playlist
@@ -3579,7 +3652,7 @@ export const SessionPage: React.FC = () => {
 
             {/* Playlist View (Participant - Read Only) */}
             {shareMode === 'audio' && !isHost && tracks.length > 0 && (
-              <Card className="border-white/10 bg-white/5">
+              <Card className="bt-tab-diffusion border-white/10 bg-white/5">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-white text-lg flex items-center gap-2">
                     <Radio className="w-4 h-4 text-green-400" />
@@ -3617,12 +3690,12 @@ export const SessionPage: React.FC = () => {
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6">
+          <div className={`${mobileTab === 'diffusion' || mobileTab === 'live' ? 'hidden' : ''} lg:block space-y-6`}>
             {/* 🎥 Desktop : Live Visio à côté de la vidéo partagée (en haut de la colonne de droite) */}
             {liveMode && sessionId && isDesktop && liveVisioNode}
 
             {/* Session Info — Item 2 : repliable */}
-            <Card className="border-white/10 bg-white/5">
+            <Card className="bt-tab-access border-white/10 bg-white/5">
               <CardHeader className="p-0">
                 <button
                   type="button"
@@ -3719,6 +3792,7 @@ export const SessionPage: React.FC = () => {
             </Card>
 
             {/* 🎧 Audio Mixer Panel - Escamotable sur mobile */}
+            <div className="bt-tab-mixer">
             <AudioMixerPanel
               isHost={isHost}
               musicVolume={mixerState.musicVolume}
@@ -3739,9 +3813,10 @@ export const SessionPage: React.FC = () => {
               onParticipantMicToggle={handleToggleTalk}
               onParticipantMicVolumeChange={(v) => participantMic.setVolume(Math.round(v * 100))}
             />
+            </div>
 
             {/* Participants */}
-            <Card className="border-white/10 bg-white/5">
+            <Card className="bt-tab-access border-white/10 bg-white/5">
               <CardHeader className="pb-3">
                 <CardTitle className="text-white text-lg">
                   Participants ({participants.length})
@@ -3784,10 +3859,10 @@ export const SessionPage: React.FC = () => {
             </Card>
 
             {/* Item 8 : Likes + commentaires de session (temps réel) */}
-            {sessionId && <SessionSocial sessionId={sessionId} />}
+            {sessionId && <div className="bt-tab-access"><SessionSocial sessionId={sessionId} /></div>}
 
             {/* Instructions — Item 2 : repliable */}
-            <Card className="border-white/10 bg-white/5">
+            <Card className="bt-tab-access border-white/10 bg-white/5">
               <CardHeader className="p-0">
                 <button
                   type="button"

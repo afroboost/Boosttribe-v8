@@ -1,0 +1,20 @@
+# MODÈLE de configuration LiveKit — À COPIER vers /etc/livekit/livekit.yaml SUR L'HÔTE
+# (le fichier réel contient le SECRET et NE doit JAMAIS être committé).
+#
+#   mkdir -p /etc/livekit
+#   cp livekit.yaml.example /etc/livekit/livekit.yaml
+#   # remplacer __REPLACE_WITH_64_HEX_SECRET__ par : openssl rand -hex 32
+#   chmod 600 /etc/livekit/livekit.yaml
+#
+# Le MÊME secret doit être mis dans le backend (LIVEKIT_API_SECRET), clé = APIboosttribe.
+
+port: 7880                 # signaling WS (proxifié en TLS -> wss://livekit.boosttribe.pro)
+log_level: info
+
+rtc:
+  tcp_port: 7881           # RTC over TCP (fallback réseaux restrictifs)
+  udp_port: 7882           # RTC over UDP : PORT MUX UNIQUE (un seul port UDP à ouvrir)
+  use_external_ip: true    # advertise l'IP publique (NAT/cloud)
+
+keys:
+  APIboosttribe: __REPLACE_WITH_64_HEX_SECRET__

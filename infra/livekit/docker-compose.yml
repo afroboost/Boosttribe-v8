@@ -1,0 +1,28 @@
+# LiveKit SFU auto-hébergé (Hetzner + Coolify) — wss://livekit.boosttribe.pro
+#
+# Méthode FIABLE (évite le mangling de variables Coolify) :
+#   - la config COMPLÈTE (avec le secret) vit dans un FICHIER hôte HORS-GIT : /etc/livekit/livekit.yaml
+#   - on la monte en lecture seule et on la passe via `--config` (args ajoutés à l'ENTRYPOINT
+#     `/livekit-server` de l'image → PAS d'override d'entrypoint, donc plus de "livekit-server: not found")
+#   - AUCUNE variable d'env pour le secret → Coolify ne peut rien déformer.
+#
+# Ports :
+#   - 7880 (signaling WS) : NON publié → proxifié en TLS par Coolify/Traefik (domaine :7880 dans l'UI)
+#   - 7881/tcp + 7882/udp : publiés vers l'hôte (RTC). udp 7882 = port "mux" unique.
+#
+# Pré-requis hôte (voir README.md) : créer /etc/livekit/livekit.yaml (secret réel, chmod 600).
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit
+    restart: unless-stopped
+    # Args ajoutés à l'entrypoint d'origine (/livekit-server) → pas d'override du binaire.
+    command: ["--config", "/etc/livekit/livekit.yaml"]
+    volumes:
+      - /etc/livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
+    expose:
+      - "7880"            # signaling interne (proxifié par Coolify, pas publié)
+    ports:
+      - "7881:7881"       # RTC over TCP (fallback)
+      - "7882:7882/udp"   # RTC over UDP (port mux unique)

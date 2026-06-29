@@ -45,20 +45,28 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const connectedRef = useRef<Set<string>>(new Set()); // stream.id déjà connectés
+  const clonedTracksRef = useRef<MediaStreamTrack[]>([]); // clones indépendants (à stopper à l'arrêt)
   const rescanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mimeRef = useRef<string>('');
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
+  // ⚠️ NON INTRUSIF : on ne branche JAMAIS le flux LiveKit/micro d'origine sur l'AudioContext
+  // (createMediaStreamSource « capte » la piste et peut couper/verrouiller sa lecture côté visio).
+  // On CLONE les pistes audio → pistes indépendantes : la visio et le micro du live ne sont jamais touchés.
   const connectStream = useCallback((stream: MediaStream | null) => {
     const ctx = ctxRef.current;
     const dest = destRef.current;
     if (!ctx || !dest || !stream) return;
     if (connectedRef.current.has(stream.id)) return;
-    if (stream.getAudioTracks().length === 0) return;
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0) return;
     try {
-      const src = ctx.createMediaStreamSource(stream);
+      const clones = audioTracks.map((t) => t.clone());            // copie indépendante (tee)
+      clonedTracksRef.current.push(...clones);
+      const cloned = new MediaStream(clones);
+      const src = ctx.createMediaStreamSource(cloned);             // on tape la copie, jamais l'original
       src.connect(dest);
       connectedRef.current.add(stream.id);
     } catch { /* ignore */ }
@@ -81,6 +89,7 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
     const dest = ctx.createMediaStreamDestination();
     destRef.current = dest;
     connectedRef.current = new Set();
+    clonedTracksRef.current = [];
 
     // Connecter le micro local + les voix participants présentes
     rescanSources();
@@ -129,11 +138,13 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
       try { recorder.stop(); } catch { /* ignore */ }
     }
     recorderRef.current = null;
-    // Libérer les nœuds audio
+    // Libérer les nœuds audio + STOPPER les clones (jamais les pistes d'origine du live)
     try { ctxRef.current?.close(); } catch { /* ignore */ }
     ctxRef.current = null;
     destRef.current = null;
     connectedRef.current.clear();
+    clonedTracksRef.current.forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+    clonedTracksRef.current = [];
     setIsRecording(false);
   }, []);
 
@@ -143,6 +154,7 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
       if (rescanRef.current) clearInterval(rescanRef.current);
       try { recorderRef.current?.stop(); } catch { /* ignore */ }
       try { ctxRef.current?.close(); } catch { /* ignore */ }
+      clonedTracksRef.current.forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
     };
   }, []);
 

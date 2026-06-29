@@ -22,6 +22,8 @@ interface LiveVisioPanelProps {
   maxCameras: number;
   micActive: boolean;
   onToggleMic: () => void;
+  // Masque le bouton micro du panneau (ex. hôte : un seul micro, celui de l'en-tête de session).
+  hideMicButton?: boolean;
   onToggleCamera: () => void;
   onLeaveLive: () => void;
   // 🎤 Scène : l'hôte/co-hôte gère librement sa caméra ; le spectateur DEMANDE à monter.
@@ -40,7 +42,7 @@ type Layout = 'grid' | 'spotlight';
 // Additif : ne touche PAS la vidéo partagée (qui reste affichée/synchronisée à sa place).
 export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   participants, myUserId, localStream, remoteCameras, cameraOn, activeCameraCount, maxCameras,
-  micActive, onToggleMic, onToggleCamera, onLeaveLive,
+  micActive, onToggleMic, hideMicButton = false, onToggleCamera, onLeaveLive,
   canManageStage = true, stageRequestPending = false, onRequestStage,
   spotlightId: spotlightIdProp, onSpotlightChange,
 }) => {
@@ -163,16 +165,18 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
 
       {/* Barre de contrôle — accessible au pouce sur mobile */}
       <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-2.5 border-t border-white/10 bg-black/20">
-        <button
-          onClick={onToggleMic}
-          className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-            micActive ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-white/10 text-white/70 hover:bg-white/20'
-          }`}
-          data-testid="visio-mic-toggle"
-        >
-          {micActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-          <span className="hidden xs:inline">{micActive ? 'Micro' : 'Micro'}</span>
-        </button>
+        {!hideMicButton && (
+          <button
+            onClick={onToggleMic}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              micActive ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
+            data-testid="visio-mic-toggle"
+          >
+            {micActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+            <span className="hidden xs:inline">Micro</span>
+          </button>
+        )}
 
         {canManageStage ? (
           /* Hôte / co-hôte : gère librement sa caméra */

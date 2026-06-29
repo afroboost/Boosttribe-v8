@@ -457,6 +457,53 @@ class LiveKitTokenBody(BaseModel):
     role: str = "viewer"  # "stage" | "viewer"
 
 
+class LiveKitParticipantBody(BaseModel):
+    session_id: str
+    identity: str  # identité LiveKit du participant ciblé (promotion / rétrogradation)
+
+
+def _require_livekit_ready() -> None:
+    """Vérifie SDK + configuration LiveKit ; lève une 500 claire sinon."""
+    if livekit_api is None:
+        logger.error("livekit-api non importable: %s", _LIVEKIT_IMPORT_ERROR)
+        raise HTTPException(status_code=500, detail="SDK LiveKit indisponible côté serveur")
+    if not LIVEKIT_URL or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="LiveKit non configuré (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)",
+        )
+
+
+def _sanitize_identity(raw: Optional[str]) -> str:
+    """Ne garde que des caractères sûrs (anti-collision/usurpation), tronqué."""
+    return re.sub(r"[^A-Za-z0-9_-]", "", (raw or ""))[:64]
+
+
+def _clean_name(raw: Optional[str], fallback: str) -> str:
+    name = re.sub(r"[\x00-\x1f\x7f]", "", (raw or "")).strip()[:80]
+    return name or fallback
+
+
+async def _optional_user(authorization: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Résout l'utilisateur Supabase si un token valide est fourni, sinon None (best-effort)."""
+    if not authorization:
+        return None
+    try:
+        return await get_user_from_token(authorization)
+    except Exception:
+        return None
+
+
+async def _is_host_or_cohost(session_id: str, user_id: Optional[str]) -> bool:
+    if not user_id:
+        return False
+    authz = await get_session_authz(session_id)
+    if not authz:
+        return False
+    cohosts = authz.get("cohosts") or []
+    return user_id == authz.get("host_id") or user_id in cohosts
+
+
 async def _count_livekit_publishers(session_id: str) -> int:
     """Compte les participants pouvant PUBLIER déjà présents dans la room.
     Si la room n'existe pas encore (ou service injoignable) → 0 (best-effort)."""
@@ -481,48 +528,128 @@ async def _count_livekit_publishers(session_id: str) -> int:
             pass
 
 
-@app.post("/livekit/token")
-async def livekit_token(body: LiveKitTokenBody):
-    # SDK indisponible (dépendance non installée) → erreur claire, app intacte
-    if livekit_api is None:
-        logger.error("livekit-api non importable: %s", _LIVEKIT_IMPORT_ERROR)
-        raise HTTPException(status_code=500, detail="SDK LiveKit indisponible côté serveur")
-    if not LIVEKIT_URL or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
-        raise HTTPException(
-            status_code=500,
-            detail="LiveKit non configuré (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)",
+async def _set_livekit_publish(session_id: str, identity: str, can_publish: bool) -> None:
+    """(Hôte) accorde/retire le droit de publier à un participant déjà dans la room (RoomService)."""
+    lkapi = livekit_api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+    try:
+        await lkapi.room.update_participant(
+            livekit_api.UpdateParticipantRequest(
+                room=session_id,
+                identity=identity,
+                permission=livekit_api.ParticipantPermission(
+                    can_subscribe=True,
+                    can_publish=can_publish,
+                    can_publish_data=can_publish,
+                ),
+            )
         )
+    except Exception as exc:
+        logger.warning("LiveKit update_participant(%s, %s) échec: %s", session_id, identity, exc)
+        raise HTTPException(status_code=404, detail="participant_not_found")
+    finally:
+        try:
+            await lkapi.aclose()
+        except Exception:  # pragma: no cover
+            pass
+
+
+@app.post("/livekit/token")
+async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = Header(default=None)):
+    """Émet un token LiveKit.
+    - role="stage" : RÉSERVÉ à l'hôte/co-hôte authentifié (publie caméra/micro/écran), cap 10.
+      L'identité est FORCÉE à l'user_id vérifié (anti-usurpation / anti-élévation de privilège).
+    - role="viewer" : lecture seule. Jonction anonyme autorisée (lien/QR) ; si un token Supabase
+      valide est fourni, l'identité est liée au compte, sinon préfixée "anon-".
+    """
+    _require_livekit_ready()
 
     session_id = (body.session_id or "").strip()
-    identity = (body.identity or "").strip()
-    if not session_id or not identity:
-        raise HTTPException(status_code=400, detail="session_id et identity requis")
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
 
-    role = body.role if body.role in ("stage", "viewer") else "viewer"
-    can_publish = role == "stage"
+    requested_role = body.role if body.role in ("stage", "viewer") else "viewer"
+    user = await _optional_user(authorization)
+    user_id = (user or {}).get("id")
 
-    # Limite scène : refuser un nouveau publisher si la room est déjà pleine (10 max).
-    if can_publish:
-        publishers = await _count_livekit_publishers(session_id)
-        if publishers >= MAX_LIVEKIT_STAGE:
+    if requested_role == "stage":
+        # 🔒 Publier = être hôte/co-hôte authentifié de CETTE session (anti token-minting).
+        if not user_id:
+            raise HTTPException(status_code=401, detail="authentification requise pour publier")
+        if not await _is_host_or_cohost(session_id, user_id):
+            raise HTTPException(status_code=403, detail="stage_reserved_to_host")
+        # Limite scène : refuser un nouveau publisher si la room est déjà pleine (10 max).
+        if await _count_livekit_publishers(session_id) >= MAX_LIVEKIT_STAGE:
             raise HTTPException(status_code=409, detail="stage_full")
+        can_publish = True
+        identity = str(user_id)
+        meta = (user or {}).get("user_metadata") or {}
+        name = _clean_name(meta.get("full_name") or body.name or (user or {}).get("email"), identity)
+    else:
+        # Viewer : lecture seule. Identité liée au compte si authentifié, sinon anonyme préfixée.
+        can_publish = False
+        if user_id:
+            identity = str(user_id)
+            meta = (user or {}).get("user_metadata") or {}
+            name = _clean_name(meta.get("full_name") or body.name or (user or {}).get("email"), identity)
+        else:
+            safe = _sanitize_identity(body.identity) or os.urandom(4).hex()
+            identity = f"anon-{safe}"
+            name = _clean_name(body.name, "Invité")
 
     grants = livekit_api.VideoGrants(
         room_join=True,
         room=session_id,
         can_subscribe=True,
         can_publish=can_publish,
-        can_publish_data=True,
+        can_publish_data=can_publish,  # données réservées aux publishers (viewer = lecture seule)
     )
     token = (
         livekit_api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
         .with_identity(identity)
-        .with_name(body.name or identity)
+        .with_name(name)
         .with_grants(grants)
         .with_ttl(timedelta(hours=6))
         .to_jwt()
     )
-    return {"token": token, "url": LIVEKIT_URL}
+    return {"token": token, "url": LIVEKIT_URL, "identity": identity, "role": "stage" if can_publish else "viewer"}
+
+
+@app.post("/livekit/promote")
+async def livekit_promote(body: LiveKitParticipantBody, authorization: Optional[str] = Header(default=None)):
+    """(Hôte/co-hôte) promeut un viewer en stage — accorde le droit de publier (cap 10)."""
+    _require_livekit_ready()
+    user = await get_user_from_token(authorization)  # 401 si token invalide
+    uid = user.get("id")
+    session_id = (body.session_id or "").strip()
+    target = (body.identity or "").strip()
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if not target:
+        raise HTTPException(status_code=400, detail="identity requis")
+    if not await _is_host_or_cohost(session_id, uid):
+        raise HTTPException(status_code=403, detail="host_only")
+    if await _count_livekit_publishers(session_id) >= MAX_LIVEKIT_STAGE:
+        raise HTTPException(status_code=409, detail="stage_full")
+    await _set_livekit_publish(session_id, target, True)
+    return {"ok": True, "identity": target, "role": "stage"}
+
+
+@app.post("/livekit/demote")
+async def livekit_demote(body: LiveKitParticipantBody, authorization: Optional[str] = Header(default=None)):
+    """(Hôte/co-hôte) retire un participant de la scène — lui retire le droit de publier."""
+    _require_livekit_ready()
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    session_id = (body.session_id or "").strip()
+    target = (body.identity or "").strip()
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if not target:
+        raise HTTPException(status_code=400, detail="identity requis")
+    if not await _is_host_or_cohost(session_id, uid):
+        raise HTTPException(status_code=403, detail="host_only")
+    await _set_livekit_publish(session_id, target, False)
+    return {"ok": True, "identity": target, "role": "viewer"}
 
 
 @app.post("/stripe/sync-plan")

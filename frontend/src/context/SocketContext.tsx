@@ -128,7 +128,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   });
 
   // Debug logging - only in development
-  const isDev = process.env.NODE_ENV === 'development';
+  const isDev = import.meta.env.DEV;
 
   // Handle incoming messages
   const handleMessage = useCallback((payload: RealtimePayload) => {

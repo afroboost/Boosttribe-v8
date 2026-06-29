@@ -2,9 +2,9 @@ import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabas
 import * as tus from 'tus-js-client';
 
 // Environment variables
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
-const storageBucket = process.env.REACT_APP_SUPABASE_BUCKET || 'audio-tracks';
+const supabaseUrl = import.meta.env.REACT_APP_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.REACT_APP_SUPABASE_ANON_KEY;
+const storageBucket = import.meta.env.REACT_APP_SUPABASE_BUCKET || 'audio-tracks';
 
 // Check if Supabase is configured
 export const isSupabaseConfigured = Boolean(

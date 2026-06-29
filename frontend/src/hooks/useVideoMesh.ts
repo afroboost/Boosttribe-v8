@@ -26,12 +26,12 @@ function buildIceServers(): RTCIceServer[] {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
   ];
-  const turnUrl = process.env.REACT_APP_TURN_URL;
+  const turnUrl = import.meta.env.REACT_APP_TURN_URL;
   if (turnUrl) {
     iceServers.push({
       urls: turnUrl,
-      username: process.env.REACT_APP_TURN_USERNAME,
-      credential: process.env.REACT_APP_TURN_CREDENTIAL,
+      username: import.meta.env.REACT_APP_TURN_USERNAME,
+      credential: import.meta.env.REACT_APP_TURN_CREDENTIAL,
     });
   }
   return iceServers;

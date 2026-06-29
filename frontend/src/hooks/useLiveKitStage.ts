@@ -26,7 +26,7 @@ import type { RemoteCamera } from '@/hooks/useVideoMesh';
  * L'identité LiveKit = userId applicatif (socket userId) → la grille caméra mappe les pistes par cet id.
  */
 
-const API_URL = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '');
+const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 const MAX_STAGE = 10;
 
 export interface LiveKitStageOptions {

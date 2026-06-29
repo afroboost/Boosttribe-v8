@@ -1,7 +1,7 @@
 import supabase from '@/lib/supabaseClient';
 
 // Base de l'API de paiement (backend Stripe) — ex. https://pay.boosttribe.pro
-const API_URL = (process.env.REACT_APP_API_URL || '').replace(/\/$/, '');
+const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 
 export type StripePlan = 'pro' | 'enterprise';
 export type StripeInterval = 'month' | 'year';

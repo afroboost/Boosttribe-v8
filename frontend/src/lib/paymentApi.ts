@@ -305,6 +305,7 @@ export interface BilletterieConfig {
   price_min_chf: number;
   price_max_chf: number;
   commission_percent: number;
+  coach_sub_price_chf: number;
 }
 
 export interface TicketRow {

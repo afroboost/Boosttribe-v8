@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
-import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet } from 'lucide-react';
+import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet, Crown } from 'lucide-react';
 import { ProfilePhotoModal } from '@/components/profile/ProfilePhotoEditor';
 
 /**
@@ -67,6 +67,10 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
             </Link>
             <Link to="/pricing" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
               <Tag size={18} /> Tarifs
+            </Link>
+            {/* 💎 Point d'entrée VISIBLE vers l'espace coach / abonnement */}
+            <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/10" style={{ color: '#FF2DAA' }}>
+              <Crown size={18} /> {isAuthenticated ? 'Espace Coach' : 'Devenir Coach'}
             </Link>
             {isAuthenticated && (
               <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">

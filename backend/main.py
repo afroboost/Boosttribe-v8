@@ -1406,7 +1406,8 @@ async def billetterie_config():
     return {"currency": s.get("currency", "CHF"),
             "price_min_chf": s.get("price_min_chf", 5),
             "price_max_chf": s.get("price_max_chf", 500),
-            "commission_percent": s.get("commission_percent", 15)}
+            "commission_percent": s.get("commission_percent", 15),
+            "coach_sub_price_chf": s.get("coach_sub_price_chf", 99.99)}
 
 @app.get("/session/info/{session_id}")
 async def session_info(session_id: str):

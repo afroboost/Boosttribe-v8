@@ -116,15 +116,14 @@ export const Header: React.FC = () => {
             >
               Tarifs
             </Link>
-            {isAuthenticated && (
-              <Link
-                to="/wallet"
-                className="text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
-                style={{ fontFamily: fonts.body }}
-              >
-                Portefeuille
-              </Link>
-            )}
+            {/* 💎 Point d'entrée VISIBLE vers l'espace coach / abonnement (tout le monde) */}
+            <Link
+              to="/wallet"
+              className="text-sm font-medium transition-colors duration-200 hover:opacity-90"
+              style={{ fontFamily: fonts.body, color: '#FF2DAA' }}
+            >
+              {isAuthenticated ? 'Espace Coach' : 'Devenir Coach'}
+            </Link>
           </nav>
 
           {/* CTA Buttons */}

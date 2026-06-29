@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Footer } from '@/components/layout/Footer';
 import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
-import { getCreditsConfig, buyCredits, type CreditsConfig, type CreditPack } from '@/lib/paymentApi';
+import { getCreditsConfig, buyCredits, getBilletterieConfig, type CreditsConfig, type CreditPack } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -46,6 +46,14 @@ const PricingPage: React.FC = () => {
   const [config, setConfig] = useState<CreditsConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [buyingPackId, setBuyingPackId] = useState<number | null>(null);
+  // 💎 Prix de l'abonnement coach (lu depuis la config admin, exposé publiquement).
+  const [coachSubPrice, setCoachSubPrice] = useState<number>(99.99);
+
+  // 💎 Devenir coach : connecté → espace coach ; sinon → connexion puis retour vers /wallet.
+  const goCoach = useCallback(() => {
+    if (isAuthenticated) navigate('/wallet');
+    else navigate('/login', { state: { from: '/wallet' } });
+  }, [isAuthenticated, navigate]);
 
   const [termsChecked, setTermsChecked] = useState(hasAcceptedTerms);
   const [isAccepting, setIsAccepting] = useState(false);
@@ -57,6 +65,8 @@ const PricingPage: React.FC = () => {
     setLoading(true);
     const { data } = await getCreditsConfig();
     if (data) setConfig(data);
+    const bill = await getBilletterieConfig();
+    if (bill.data?.coach_sub_price_chf) setCoachSubPrice(bill.data.coach_sub_price_chf);
     setLoading(false);
   }, []);
 
@@ -313,6 +323,45 @@ const PricingPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* 💎 Section COACHS — abonnement illimité (point d'entrée visible) */}
+      <div className="max-w-4xl mx-auto mt-6 mb-10 px-1">
+        <div
+          className="rounded-2xl border p-6 sm:p-8 text-center"
+          style={{ borderColor: 'rgba(217,28,210,0.4)', background: 'linear-gradient(135deg, rgba(217,28,210,0.14), rgba(255,45,170,0.10))' }}
+        >
+          <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold mb-3" style={{ background: AFRO.gradient, color: '#fff' }}>
+            <Star size={14} /> Espace Coach
+          </span>
+          <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2" style={{ fontFamily: theme.fonts.heading }}>
+            Tu es coach ou animateur&nbsp;?
+          </h2>
+          <p className="text-white/70 max-w-2xl mx-auto mb-1">
+            Anime tes propres sessions sur BoostTribe et encaisse tes ventes de billets.
+          </p>
+          <p className="text-white/60 text-sm max-w-2xl mx-auto mb-5">
+            <span className="font-semibold text-white">Abonnement Illimité</span> : crédits illimités + 0% de commission sur tes ventes.
+          </p>
+          <div className="flex flex-col items-center gap-3">
+            <div className="text-white">
+              <span className="text-4xl font-bold">{coachSubPrice.toFixed(2)}</span>
+              <span className="text-white/60 text-base ml-1">CHF / mois</span>
+            </div>
+            <button
+              onClick={goCoach}
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold transition-transform hover:scale-[1.02] w-full sm:w-auto"
+              style={{ background: AFRO.gradient }}
+              data-testid="become-coach-cta"
+            >
+              <Star size={18} />
+              {isAuthenticated ? 'Devenir Coach — m\'abonner' : 'Devenir Coach'}
+            </button>
+            <p className="text-white/40 text-xs">
+              {isAuthenticated ? 'Gère ton abonnement et tes virements dans ton Espace Coach.' : 'Connexion requise — tu seras redirigé vers ton Espace Coach.'}
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* CGU Modal */}
       {showTermsModal && (

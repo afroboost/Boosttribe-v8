@@ -1,118 +1,125 @@
 # LiveKit SFU auto-hébergé (Hetzner + Coolify)
 
-Serveur LiveKit auto-hébergé pour BoostTribe, accessible en `wss://livekit.boosttribe.pro`,
-en remplacement de LiveKit Cloud.
+Serveur LiveKit auto-hébergé pour BoostTribe — `wss://livekit.boosttribe.pro` — en remplacement
+de LiveKit Cloud. **Déployé et vérifié OK** (logs propres, handshake réel 101, end-to-end backend).
 
-## Méthode (fiable face au mangling de variables Coolify)
+---
 
-La config **complète, avec le secret**, vit dans un **fichier hôte hors-git** monté en lecture seule
-et passé via `--config`. Aucune variable d'environnement pour le secret → Coolify ne peut rien déformer.
-On n'override PAS l'entrypoint de l'image (`/livekit-server`), on lui ajoute seulement des args
-→ plus d'erreur `livekit-server: not found`.
+## ✅ Méthode réellement déployée (service Coolify `livekit`)
 
-## 1) Préparer le fichier de config sur l'HÔTE (secret réel, hors-git)
+Le service Coolify (type docker-compose, image `livekit/livekit-server:latest`) utilise un
+**entrypoint qui écrit la config dans un fichier puis exec le binaire** — méthode fiable qui
+évite le mangling de variables Coolify et l'erreur `livekit-server: not found` :
 
-```bash
-mkdir -p /etc/livekit
-
-# Générer un secret de 64 hex (ou réutiliser LK_SECRET déjà présent dans Coolify)
-SECRET=$(openssl rand -hex 32)
-
-cat > /etc/livekit/livekit.yaml <<EOF
-port: 7880
-log_level: info
-rtc:
-  tcp_port: 7881
-  udp_port: 7882
-  use_external_ip: true
-keys:
-  APIboosttribe: ${SECRET}
-EOF
-
-chmod 600 /etc/livekit/livekit.yaml
-echo "SECRET = ${SECRET}"   # à reporter dans le backend (LIVEKIT_API_SECRET)
+```yaml
+entrypoint:
+  - /bin/sh
+  - -c
+  - 'printf ''port: 7880\nrtc:\n  tcp_port: 7881\n  udp_port: 7882\n  use_external_ip: true\nkeys:\n  APIboosttribe: %s\n'' "${LK_SECRET}" > /etc/lk.yaml && exec /livekit-server --config /etc/lk.yaml'
+environment:
+  LK_SECRET: '${LK_SECRET}'   # variable Coolify SIMPLE (64 hex) — pas de ':' ni d'accolades
+ports:
+  - '7881:7881'        # RTC/TCP
+  - '7882:7882/udp'    # RTC/UDP (port mux unique)
 ```
 
-## 2) Pare-feu hôte (si ufw actif)
+- Le secret est une variable Coolify **`LK_SECRET`** (64 hex, hors-git). `${LK_SECRET}` est
+  interpolé par Coolify au déploiement → écrit dans `/etc/lk.yaml`. Clé = `APIboosttribe`.
+- 7880 (signaling) n'est pas publié : proxifié en TLS par Traefik (domaine Coolify
+  `https://livekit.boosttribe.pro:7880`, certrésolveur Let's Encrypt).
 
-```bash
-ufw status | head -1
-# si "Status: active" :
-ufw allow 7881/tcp
-ufw allow 7882/udp
-ufw reload
-```
+### ⚠️ Le bug qui faisait boucler / "secret is too short"
 
-## 3) Déployer via Coolify
-
-Service de type **docker-compose** pointant sur `infra/livekit/` de ce dépôt.
-
-- **Domaine** du service : `https://livekit.boosttribe.pro:7880` (le `:7880` indique à Coolify le
-  port interne à proxifier), **TLS activé** (Let's Encrypt).
-- Coolify ajoute automatiquement les labels Traefik à partir de ce domaine.
-- Déployer.
-
-> Le port 7880 n'est PAS publié vers l'hôte (il passe par le proxy). Seuls 7881/tcp et 7882/udp
-> sont publiés (voir docker-compose.yml).
-
-## 4) Vérifier le démarrage (logs)
-
-```bash
-docker logs --tail=50 livekit
-```
-
-Attendu (PAS d'erreur "secret is too short" ni "livekit-server: not found") :
+Le `.env` du service contenait **en plus** une variable parasite :
 
 ```
-starting LiveKit server   version: x.y.z ...
-using single-node routing
-rtc tcp_port=7881 udp_port=7882 ...
+LIVEKIT_CONFIG='{port: 7880, rtc: {...}, keys: {APIboosttribe: REMPLACERMOI}}'
 ```
 
-## 5) Test réel (handshake)
+`livekit-server` lit `LIVEKIT_CONFIG` (env) **en priorité sur `--config`**, donc le secret
+effectif devenait `REMPLACERMOI` (11 car.) → `secret is too short` et tokens rejetés.
 
-```bash
-# Depuis l'hôte : le signaling répond (HTTP 200 + "OK" sur la racine HTTP de LiveKit)
-curl -sS http://127.0.0.1:7880/ | head -c 100 ; echo
+**Correctif (durable) : supprimer la variable `LIVEKIT_CONFIG`** du service livekit.
+- Côté UI : Service `livekit` → Environment Variables → supprimer `LIVEKIT_CONFIG`.
+- Fait ici directement dans la base Coolify (source de vérité) : suppression de la ligne
+  `environment_variables` (key=`LIVEKIT_CONFIG`, `App\Models\Service` id 2), + retrait de la
+  ligne du `.env` rendu, puis `docker compose up -d --force-recreate` dans
+  `/data/coolify/services/o7itj8knw8zg2mo2jirp55uy/`.
 
-# Public, en TLS via le proxy (doit renvoyer une réponse HTTP, pas une erreur TLS)
-curl -sSI https://livekit.boosttribe.pro/ | head -5
+Après ça, `/etc/lk.yaml` (vrai `LK_SECRET`) redevient autoritaire → logs propres.
 
-# Token + connexion réelle : générer un token via le backend puis se connecter
-#   (lk CLI : https://github.com/livekit/livekit-cli)
-lk room join --url wss://livekit.boosttribe.pro --api-key APIboosttribe \
-  --api-secret "<SECRET>" --identity test test-room
-```
-
-## 6) Basculer le backend sur l'auto-hébergé (Coolify, app bnzkkhur7dn8utsk9qyz15gy)
+### Vérifications effectuées (preuves)
 
 ```
-LIVEKIT_URL=wss://livekit.boosttribe.pro
+# Logs (docker logs livekit-o7itj8knw8zg2mo2jirp55uy) :
+INFO  livekit  using single-node routing
+INFO  livekit  found external IP via STUN  externalIP=178.105.201.62
+INFO  livekit  starting LiveKit server  version=1.13.2 portHttp=7880 rtc.portTCP=7881 rtc.portUDP=7882
+# (plus aucune ligne "secret is too short" ni "livekit-server: not found")
+
+# Auth + TLS de bout en bout :
+curl https://livekit.boosttribe.pro/rtc/validate?access_token=<jwt APIboosttribe/LK_SECRET>  -> "success" HTTP 200
+
+# Handshake WebSocket réel :
+curl --http1.1 -H 'Upgrade: websocket' ... https://livekit.boosttribe.pro/rtc?access_token=<jwt>
+  -> HTTP/1.1 101 Switching Protocols + message de signaling (join response)
+
+# End-to-end via le backend :
+POST https://<backend>/livekit/token {role:viewer} -> {url:"wss://livekit.boosttribe.pro", token:...}
+  puis /rtc/validate de ce token -> "success" HTTP 200
+```
+
+---
+
+## Bascule du backend (app Coolify `bnzkkhur7dn8utsk9qyz15gy`)
+
+Variables (durable en base Coolify + appliquées au container) :
+
+```
+LIVEKIT_URL=wss://livekit.boosttribe.pro     # le SDK serveur accepte wss:// pour le RoomService (count/promote/demote)
 LIVEKIT_API_KEY=APIboosttribe
-LIVEKIT_API_SECRET=<le même secret>
+LIVEKIT_API_SECRET=<LK_SECRET 64 hex>
 ```
-Puis redéployer le backend.
 
-## Rollback (retour LiveKit Cloud en ~2 min)
+Appliqué via : update des lignes `environment_variables` (App id 5, chiffrées avec la `Crypt`
+Laravel de Coolify) + `docker compose up -d --force-recreate` dans
+`/data/coolify/applications/bnzkkhur7dn8utsk9qyz15gy/`.
 
-Remettre dans le backend les anciennes valeurs Cloud puis redéployer :
+## 🔙 Rollback LiveKit Cloud (~2 min)
+
+Remettre dans le backend (UI Coolify ou base) puis redéployer :
 
 ```
 LIVEKIT_URL=wss://boosttribe-pcdutwzc.livekit.cloud
-LIVEKIT_API_KEY=<clé Cloud>
-LIVEKIT_API_SECRET=<secret Cloud>
+LIVEKIT_API_KEY=APIVt3b9yBoeTRS
+LIVEKIT_API_SECRET=0UiwdAt5wI7fuBLAQlXZHnTwEnZek8aFPP419vAti4p
 ```
+
+Sauvegardes `.env` créées sur le serveur (pour restauration rapide) :
+- `/data/coolify/services/o7itj8knw8zg2mo2jirp55uy/.env.bak.*`
+- `/data/coolify/applications/bnzkkhur7dn8utsk9qyz15gy/.env.bak.*`
+
+## Pare-feu / ports
+
+- `ufw` : **inactif** sur l'hôte, pas de firewall Hetzner Cloud → rien à ouvrir.
+- Si ufw est activé un jour : `ufw allow 7881/tcp && ufw allow 7882/udp`.
 
 ## (Optionnel) TURN si le média ne passe pas en 4G
 
-Ajouter dans `/etc/livekit/livekit.yaml` :
+Un `coturn` tourne déjà sur l'hôte. Sinon, activer le TURN intégré LiveKit dans la config :
 
 ```yaml
 turn:
   enabled: true
   domain: livekit.boosttribe.pro
   tls_port: 5349
-  # cert_file / key_file si TLS géré par LiveKit, sinon terminaison TLS au proxy
 ```
+puis ouvrir 5349/tcp (proxy + `ufw allow 5349/tcp` si actif).
 
-Puis publier/ouvrir le port TURN (5349/tcp) côté hôte + Coolify, et `ufw allow 5349/tcp`.
+---
+
+## Annexe — alternative autonome (hors Coolify)
+
+`docker-compose.yml` + `livekit.yaml.example` de ce dossier décrivent une variante **standalone**
+(config montée depuis un fichier hôte `/etc/livekit/livekit.yaml`, passée via `--config`), utile
+pour un déploiement sans Coolify. La prod utilise la méthode Coolify ci-dessus.

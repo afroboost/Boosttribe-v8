@@ -2746,17 +2746,21 @@ export const SessionPage: React.FC = () => {
               <AccessRequestsPanel requests={accessRequests} onAdmit={handleAdmit} onRefuse={handleRefuse} />
             )}
 
-            {/* 🎤 Panneau "Demandes de prise de parole" — hôte + co-hôtes, visible s'il y a des demandes */}
+            {/* 🎤 Panneau "Demandes de prise de parole" — hôte + co-hôtes, visible s'il y a des demandes.
+                📱 Mobile : épinglé en haut, AU-DESSUS de la visio flottante (z-[90] > DraggableWindow z-[80])
+                pour rester lisible et cliquable. Desktop (lg) : flux normal dans la colonne (inchangé). */}
             {canShare && stageRequests.length > 0 && (
-              <StageRequestsPanel
-                requests={stageRequests}
-                onStage={onStageOccupants}
-                onStageCount={videoMesh.activeCameraCount}
-                maxCameras={MAX_VISIO_CAMERAS}
-                onAccept={handleAcceptStage}
-                onRefuse={handleRefuseStage}
-                onSwap={handleSwapStage}
-              />
+              <div className="fixed inset-x-2 top-16 z-[90] max-h-[80vh] overflow-y-auto rounded-2xl shadow-2xl shadow-black/40 lg:static lg:inset-x-auto lg:top-auto lg:z-auto lg:max-h-none lg:overflow-visible lg:rounded-none lg:shadow-none">
+                <StageRequestsPanel
+                  requests={stageRequests}
+                  onStage={onStageOccupants}
+                  onStageCount={videoMesh.activeCameraCount}
+                  maxCameras={MAX_VISIO_CAMERAS}
+                  onAccept={handleAcceptStage}
+                  onRefuse={handleRefuseStage}
+                  onSwap={handleSwapStage}
+                />
+              </div>
             )}
 
             {/* 🎥 Panneau Live Visio : mobile → fenêtre flottante (plus bas) ; desktop → colonne de droite */}

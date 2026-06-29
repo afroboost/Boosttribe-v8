@@ -532,12 +532,17 @@ async def _sign_recording_url(path: Optional[str], expires: int = 3600) -> Optio
         pass
     return None
 
-async def _record_authz(session_id: str, uid: str) -> None:
+async def _record_authz(session_id: str, uid: str, is_admin: bool = False) -> None:
+    if is_admin:
+        return  # 💳 l'admin a un contrôle total : jamais bloqué
     authz = await get_session_authz(session_id)
     host_id = authz.get("host_id") if authz else None
     cohosts = (authz.get("cohosts") if authz else None) or []
     if uid != host_id and uid not in cohosts:
         raise HTTPException(status_code=403, detail="Réservé à l'hôte de la session")
+
+def _is_admin_email(user: Dict[str, Any]) -> bool:
+    return (user.get("email") or "").strip().lower() in ADMIN_EMAILS
 
 @app.post("/session/record/start")
 async def record_start(body: RecordStartBody, authorization: Optional[str] = Header(default=None)):
@@ -546,11 +551,11 @@ async def record_start(body: RecordStartBody, authorization: Optional[str] = Hea
     uid = user.get("id")
     if not SESSION_ID_RE.match(body.session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    await _record_authz(body.session_id, uid)
+    # 💳 Jamais débité ni bloqué : ADMIN (crédits illimités) ou COACH abonné « illimité ».
+    is_admin = _is_admin_email(user)
+    await _record_authz(body.session_id, uid, is_admin)
     settings = await get_pricing_settings()
     cost = int(settings.get("cost_record_transcribe", 4) or 0)
-    # 💳 Jamais débité ni bloqué : ADMIN (crédits illimités) ou COACH abonné « illimité ».
-    is_admin = (user.get("email") or "").strip().lower() in ADMIN_EMAILS
     unlimited = is_admin or await is_coach_unlimited(uid)
     spent = 0
     if not unlimited and cost > 0:
@@ -569,7 +574,7 @@ async def record_stop(body: RecordStartBody, authorization: Optional[str] = Head
     uid = user.get("id")
     if not SESSION_ID_RE.match(body.session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    await _record_authz(body.session_id, uid)
+    await _record_authz(body.session_id, uid, _is_admin_email(user))
     await upsert_playlist_fields(body.session_id, {"record_enabled": False})
     return {"ok": True}
 
@@ -581,7 +586,7 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
     uid = user.get("id")
     if not session_id or not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    await _record_authz(session_id, uid)
+    await _record_authz(session_id, uid, _is_admin_email(user))
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Fichier audio vide")

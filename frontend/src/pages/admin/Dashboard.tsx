@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { MobileMenu } from "@/components/layout/MobileMenu";
 import supabase, { isSupabaseConfigured } from "@/lib/supabaseClient";
 import {
   KeyRound,
@@ -662,19 +663,19 @@ const Dashboard: React.FC = () => {
         style={{ background: "rgba(0, 0, 0, 0.9)", backdropFilter: "blur(20px)" }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link to="/" className="flex items-center gap-2">
-                <div 
-                  className="w-8 h-8 rounded-lg flex items-center justify-center"
+          <div className="flex items-center justify-between h-16 gap-2">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              <Link to="/" className="flex items-center gap-2 min-w-0">
+                <div
+                  className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                   style={{ background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)` }}
                 >
                   <svg viewBox="0 0 24 24" className="w-5 h-5 text-white" fill="currentColor">
                     <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
                   </svg>
                 </div>
-                <span 
-                  className="text-xl font-bold"
+                <span
+                  className="text-lg sm:text-xl font-bold truncate"
                   style={{
                     fontFamily: theme.fonts.heading,
                     background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
@@ -685,47 +686,52 @@ const Dashboard: React.FC = () => {
                   {settings.site_name}
                 </span>
               </Link>
-              <Separator orientation="vertical" className="h-6 bg-white/20" />
-              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">
+              <Separator orientation="vertical" className="h-6 bg-white/20 hidden md:block" />
+              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 hidden md:inline-flex">
                 ⚙️ CMS Admin
               </Badge>
-              
-              {/* DB Status */}
-              {dbStatus === 'connected' ? (
-                <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
-                  <Check size={12} className="mr-1" /> Supabase
-                </Badge>
-              ) : dbStatus === 'offline' ? (
-                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
-                  💾 Mode local
-                </Badge>
-              ) : (
-                <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
-                  <RefreshCw size={12} className="mr-1 animate-spin" /> Connexion...
-                </Badge>
-              )}
+
+              {/* DB Status — masqué sur petit écran pour éviter le débordement */}
+              <span className="hidden lg:inline-flex">
+                {dbStatus === 'connected' ? (
+                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30">
+                    <Check size={12} className="mr-1" /> Supabase
+                  </Badge>
+                ) : dbStatus === 'offline' ? (
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                    💾 Mode local
+                  </Badge>
+                ) : (
+                  <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30">
+                    <RefreshCw size={12} className="mr-1 animate-spin" /> Connexion...
+                  </Badge>
+                )}
+              </span>
             </div>
-            
-            <div className="flex items-center gap-3">
+
+            <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
               {hasChanges && (
-                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 hidden sm:inline-flex">
                   ⚠️ Non sauvegardé
                 </Badge>
               )}
               {/* Language Selector - Visible en mode Admin */}
               <LanguageSelector className="flex" />
-              <Link to="/" target="_blank">
+              {/* Actions desktop : masquées sur mobile (disponibles via le menu hamburger) */}
+              <Link to="/" target="_blank" className="hidden md:block">
                 <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10">
                   <Eye size={16} className="mr-2" />
                   Prévisualiser
                 </Button>
               </Link>
-              <Link to="/">
+              <Link to="/" className="hidden md:block">
                 <Button variant="outline" size="sm" className="border-white/20 text-white/70 hover:bg-white/10">
                   <ArrowLeft size={16} className="mr-2" />
                   Retour
                 </Button>
               </Link>
+              {/* 📱 Menu hamburger réutilisé (mobile) — barre admin h-16 → dropdown top-16 */}
+              <MobileMenu dropdownTopClass="top-16" />
             </div>
           </div>
         </div>
@@ -746,16 +752,16 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* Page Title */}
-        <div className="flex items-start justify-between mb-8">
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-white mb-2" style={{ fontFamily: theme.fonts.heading }}>
+            <h1 className="text-2xl sm:text-3xl font-bold text-white mb-2" style={{ fontFamily: theme.fonts.heading }}>
               👑 Gestion du Site (CMS)
             </h1>
-            <p className="text-white/60">
+            <p className="text-white/60 text-sm sm:text-base">
               Modifiez l'identité, les couleurs et les textes.
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-2 sm:gap-3 sm:flex-shrink-0">
             <Button
               variant="outline"
               onClick={handleResetDefaults}
@@ -775,9 +781,9 @@ const Dashboard: React.FC = () => {
                 Annuler
               </Button>
             )}
-            <PrimaryButton 
-              onClick={handleSave} 
-              disabled={!hasChanges || isSaving} 
+            <PrimaryButton
+              onClick={handleSave}
+              disabled={!hasChanges || isSaving}
               size="sm"
             >
               {isSaving ? (
@@ -792,36 +798,38 @@ const Dashboard: React.FC = () => {
 
         {/* Live Preview Card */}
         <Card className="border-white/10 bg-white/5 mb-8">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-6">
-              <div 
-                className="w-16 h-16 rounded-xl flex items-center justify-center"
-                style={{ background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)` }}
-              >
-                {settings.favicon_url ? (
-                  <img src={settings.favicon_url} alt="Favicon" className="w-8 h-8" onError={(e) => e.currentTarget.style.display = 'none'} />
-                ) : (
-                  <svg viewBox="0 0 24 24" className="w-8 h-8 text-white" fill="currentColor">
-                    <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                  </svg>
-                )}
-              </div>
-              <div className="flex-1">
-                <h2 
-                  className="text-2xl font-bold"
-                  style={{
-                    background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                  }}
+          <CardContent className="p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
+              <div className="flex items-center gap-4 min-w-0">
+                <div
+                  className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl flex items-center justify-center flex-shrink-0"
+                  style={{ background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)` }}
                 >
-                  {settings.site_name}
-                </h2>
-                <p className="text-white/70">{settings.site_slogan}</p>
-                <Badge className="mt-2 bg-white/10 text-white/60">{settings.site_badge}</Badge>
+                  {settings.favicon_url ? (
+                    <img src={settings.favicon_url} alt="Favicon" className="w-8 h-8" onError={(e) => e.currentTarget.style.display = 'none'} />
+                  ) : (
+                    <svg viewBox="0 0 24 24" className="w-8 h-8 text-white" fill="currentColor">
+                      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+                    </svg>
+                  )}
+                </div>
+                <div className="min-w-0 sm:flex-1">
+                  <h2
+                    className="text-xl sm:text-2xl font-bold truncate"
+                    style={{
+                      background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
+                      WebkitBackgroundClip: "text",
+                      WebkitTextFillColor: "transparent",
+                    }}
+                  >
+                    {settings.site_name}
+                  </h2>
+                  <p className="text-white/70 text-sm sm:text-base truncate">{settings.site_slogan}</p>
+                  <Badge className="mt-2 bg-white/10 text-white/60">{settings.site_badge}</Badge>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <Button 
+              <div className="flex gap-2 sm:ml-auto flex-shrink-0">
+                <Button
                   className="text-white"
                   style={{ background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)` }}
                   size="sm"

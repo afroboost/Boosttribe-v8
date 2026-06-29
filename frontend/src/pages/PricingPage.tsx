@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { Footer } from '@/components/layout/Footer';
+import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
 import { getCreditsConfig, buyCredits, type CreditsConfig, type CreditPack } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
@@ -209,10 +210,14 @@ const PricingPage: React.FC = () => {
   return (
     <div className="min-h-screen py-12 px-4" style={{ background: AFRO.dark }}>
       <div className="max-w-6xl mx-auto mb-10">
-        <Link to="/" className="inline-flex items-center gap-2 text-white/60 hover:text-white mb-8 transition-colors">
-          <ArrowLeft size={20} />
-          Retour à l'accueil
-        </Link>
+        <div className="flex items-center justify-between gap-2 mb-8">
+          <Link to="/" className="inline-flex items-center gap-2 text-white/60 hover:text-white transition-colors">
+            <ArrowLeft size={20} />
+            Retour à l'accueil
+          </Link>
+          {/* 📱 Menu hamburger réutilisé (mobile) */}
+          <MobileMenu dropdownTopClass="top-0" />
+        </div>
 
         <div className="text-center">
           <h1 className="text-4xl md:text-5xl font-bold text-white mb-4" style={{ fontFamily: theme.fonts.heading }}>
@@ -328,18 +333,20 @@ const PricingPage: React.FC = () => {
               <h3 className="text-white font-semibold">5. Protection des données</h3>
               <p>Nous collectons uniquement les données nécessaires au fonctionnement du service.</p>
             </div>
-            <div className="p-6 border-t border-white/10 flex items-center justify-between">
-              <label className="flex items-center gap-2 cursor-pointer">
+            {/* Barre d'actions responsive : case sur sa propre ligne, boutons empilés en mobile
+                (pleine largeur) et côte à côte en desktop — tout reste visible et cliquable. */}
+            <div className="p-4 sm:p-6 border-t border-white/10 space-y-4">
+              <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={termsChecked}
                   onChange={(e) => setTermsChecked(e.target.checked)}
-                  className="w-4 h-4 rounded border-white/30 bg-transparent"
+                  className="mt-0.5 w-4 h-4 rounded border-white/30 bg-transparent flex-shrink-0"
                 />
                 <span className="text-white/80 text-sm">J'ai lu et j'accepte les CGU</span>
               </label>
-              <div className="flex gap-3">
-                <Button variant="outline" onClick={() => setShowTermsModal(false)} className="border-white/20 text-white/70">
+              <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
+                <Button variant="outline" onClick={() => setShowTermsModal(false)} className="w-full sm:w-auto border-white/20 text-white/70">
                   Fermer
                 </Button>
                 <Button
@@ -350,7 +357,7 @@ const PricingPage: React.FC = () => {
                     if (pendingPack) { const p = pendingPack; setPendingPack(null); await startCheckout(p); }
                   }}
                   disabled={!termsChecked || isAccepting}
-                  className="text-white border-0"
+                  className="w-full sm:w-auto text-white border-0"
                   style={{ background: AFRO.gradient }}
                 >
                   {isAccepting ? 'Enregistrement…' : 'Accepter et continuer'}

@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { useTheme } from "@/context/ThemeContext";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { MobileMenu } from "@/components/layout/MobileMenu";
 import {
   Dumbbell,
   Video,
@@ -172,15 +173,17 @@ const FeaturesPage: React.FC = () => {
               </span>
             </Link>
             
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 sm:gap-4">
               <Link to="/pricing" className="text-white/70 hover:text-white text-sm hidden sm:block">
                 Tarifs
               </Link>
-              <Link to="/session">
+              <Link to="/session" className="hidden sm:block">
                 <PrimaryButton size="sm">
                   Commencer
                 </PrimaryButton>
               </Link>
+              {/* 📱 Menu hamburger réutilisé (mobile) */}
+              <MobileMenu />
             </div>
           </div>
         </div>

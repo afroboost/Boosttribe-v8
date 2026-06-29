@@ -8,16 +8,32 @@ export type StripeInterval = 'month' | 'year';
 
 // 🔑 Toujours renvoyer un token FRAIS : rafraîchit explicitement si la session est
 // absente ou si le token expire dans moins de 60s (évite les "Token invalide" périmés).
-async function getAccessToken(): Promise<string | null> {
-  if (!supabase) return null;
-  const { data } = await supabase.auth.getSession();
-  let session = data.session;
-  const expiresAtMs = session?.expires_at ? session.expires_at * 1000 : 0;
-  if (!session || expiresAtMs - Date.now() < 60_000) {
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    session = refreshed.session ?? session;
-  }
-  return session?.access_token ?? null;
+//
+// ⚠️ CONCURRENCE : plusieurs sections admin chargent en parallèle (Promise.all). Si
+// chacune appelait refreshSession() en même temps, la rotation simultanée du refresh-token
+// invaliderait les autres → "Session expirée / token invalide". On SÉRIALISE donc la
+// récupération du token via une promesse partagée : un seul refresh à la fois, réutilisé
+// par tous les appels concurrents.
+let _tokenInFlight: Promise<string | null> | null = null;
+
+async function getAccessToken(forceRefresh = false): Promise<string | null> {
+  // Un refresh est déjà en cours → on le réutilise (sauf si on EXIGE un token tout frais).
+  if (_tokenInFlight && !forceRefresh) return _tokenInFlight;
+  const run = (async () => {
+    // Si on force, on attend d'abord la fin d'un éventuel refresh en cours (sérialisation).
+    if (forceRefresh && _tokenInFlight) { try { await _tokenInFlight; } catch { /* ignore */ } }
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    let session = data.session;
+    const expiresAtMs = session?.expires_at ? session.expires_at * 1000 : 0;
+    if (forceRefresh || !session || expiresAtMs - Date.now() < 60_000) {
+      const { data: refreshed } = await supabase.auth.refreshSession();
+      session = refreshed.session ?? session;
+    }
+    return session?.access_token ?? null;
+  })();
+  _tokenInFlight = run.finally(() => { if (_tokenInFlight === run) _tokenInFlight = null; });
+  return _tokenInFlight;
 }
 
 export interface SyncPlanPayload {
@@ -636,15 +652,24 @@ export interface GrantedRow {
   comp_access_until: string | null;
 }
 
+// 🔐 Helper CENTRAL de TOUS les appels admin : envoie un token FRAIS, et si le backend
+// renvoie 401 (token rejeté/périmé), force un refresh et réessaie UNE fois. Toutes les
+// sections admin passent par ici → le bug "token invalide" ne peut plus se répéter.
 async function adminFetch(path: string, init?: RequestInit): Promise<{ data?: any; error?: string }> {
   if (!API_URL) return { error: 'API non configurée (REACT_APP_API_URL)' };
-  const token = await getAccessToken();
+  let token = await getAccessToken();
   if (!token) return { error: 'Session expirée, reconnectez-vous' };
+  const doFetch = (tok: string) => fetch(`${API_URL}${path}`, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tok}`, ...(init?.headers || {}) },
+  });
   try {
-    const res = await fetch(`${API_URL}${path}`, {
-      ...init,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
-    });
+    let res = await doFetch(token);
+    if (res.status === 401) {
+      // Token rejeté par le backend → on force un token tout neuf et on réessaie une fois.
+      const fresh = await getAccessToken(true);
+      if (fresh) { token = fresh; res = await doFetch(token); }
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
     return { data };

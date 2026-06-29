@@ -47,6 +47,7 @@
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
+    "livekit-client": "^2.20.0",
     "lucide-react": "^0.507.0",
     "next-themes": "^0.4.6",
     "peerjs": "^1.5.5",

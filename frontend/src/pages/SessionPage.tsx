@@ -41,7 +41,7 @@ import type { StageRequest } from '@/components/session/StageRequestsPanel';
 import { ChatPanel } from '@/components/session/ChatPanel';
 import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
-import { useVideoMesh } from '@/hooks/useVideoMesh';
+import { useLiveKitStage } from '@/hooks/useLiveKitStage';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
@@ -818,17 +818,21 @@ export const SessionPage: React.FC = () => {
 
   // 🎥 MODE LIVE / VISIO (Zoom-like) — module ISOLÉ (son propre Peer + canal de signaling).
   // N'altère rien de l'audio/mixeur/synchro existants : purement additif.
-  const MAX_VISIO_CAMERAS = 6;
+  const MAX_VISIO_CAMERAS = 10; // 🎥 scène LiveKit : 10 publishers max
   const [liveMode, setLiveMode] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false); // 🖥️ l'hôte/co-hôte partage son écran
   const [remoteScreenActive, setRemoteScreenActive] = useState(false); // un AUTRE partage son écran
-  const videoMesh = useVideoMesh({
+  // 🎥 LiveKit (SFU) — remplace le mesh PeerJS pour les caméras/écran. Interface identique à useVideoMesh.
+  const videoMesh = useLiveKitStage({
     sessionId: sessionId || '',
     userId: socket.userId,
-    // le Peer visio doit être actif pour le Live Visio, le partage d'écran émis OU reçu
+    name: nickname || undefined,
+    // la room doit être active pour le Live Visio, le partage d'écran émis OU reçu
     active: (liveMode || screenSharing || remoteScreenActive) && !!sessionId,
+    canPublish: canShare, // hôte/co-hôtes publient ; les autres sont viewers (promus par l'hôte si acceptés)
     maxCameras: MAX_VISIO_CAMERAS,
-    onLimit: () => showToast(`Limite de ${MAX_VISIO_CAMERAS} caméras atteinte (version actuelle)`, 'warning'),
+    onLimit: () => showToast(`Limite de ${MAX_VISIO_CAMERAS} caméras atteinte`, 'warning'),
+    onStageFull: () => showToast('Scène pleine (10 max)', 'warning'),
   });
   const handleToggleCamera = useCallback(async () => {
     if (videoMesh.cameraOn) {
@@ -1744,25 +1748,30 @@ export const SessionPage: React.FC = () => {
     showToast('Demande envoyée à l\'hôte ✋', 'default');
   }, [sessionId, socket.userId, nickname, myAvatar, sendPlaybackEvent, showToast]);
 
-  // Hôte : accepter (place libre) / refuser
-  const handleAcceptStage = useCallback((userId: string) => {
+  // Hôte : accepter (place libre) / refuser. Promotion LiveKit (droit de publier) AVANT l'accept Realtime.
+  const handleAcceptStage = useCallback(async (userId: string) => {
+    const res = await videoMesh.promote(userId);
+    if (res === 'stage_full') { showToast('Scène pleine (10 max)', 'warning'); return; }
     sendPlaybackEvent('STAGE_ACCEPT', { userId });
     setStageRequests((prev) => prev.filter((r) => r.userId !== userId));
-  }, [sendPlaybackEvent]);
+  }, [videoMesh, sendPlaybackEvent, showToast]);
 
   const handleRefuseStage = useCallback((userId: string) => {
     sendPlaybackEvent('STAGE_REFUSE', { userId });
     setStageRequests((prev) => prev.filter((r) => r.userId !== userId));
   }, [sendPlaybackEvent]);
 
-  // Hôte : scène pleine → retirer un participant choisi, puis faire monter le nouveau (anti-dépassement 6).
-  const handleSwapStage = useCallback((acceptUserId: string, removedUserId: string) => {
+  // Hôte : scène pleine → retirer un participant choisi, puis faire monter le nouveau (anti-dépassement 10).
+  const handleSwapStage = useCallback(async (acceptUserId: string, removedUserId: string) => {
+    await videoMesh.demote(removedUserId);                         // retire le droit de publier côté SFU
     sendPlaybackEvent('STAGE_REMOVE', { removedUserId });
-    if (removedUserId === socket.userId) videoMesh.stopCamera(); // l'hôte se retire lui-même → coupe localement
+    if (removedUserId === socket.userId) videoMesh.stopCamera();   // l'hôte se retire lui-même → coupe localement
     setStageRequests((prev) => prev.filter((r) => r.userId !== acceptUserId));
-    // Laisser la place se libérer (propagation) avant de faire monter le demandeur.
-    setTimeout(() => sendPlaybackEvent('STAGE_ACCEPT', { userId: acceptUserId }), 800);
-  }, [sendPlaybackEvent, socket.userId, videoMesh]);
+    // Laisser la place se libérer avant de faire monter le demandeur.
+    const res = await videoMesh.promote(acceptUserId);
+    if (res === 'stage_full') { showToast('Scène pleine (10 max)', 'warning'); return; }
+    setTimeout(() => sendPlaybackEvent('STAGE_ACCEPT', { userId: acceptUserId }), 400);
+  }, [sendPlaybackEvent, socket.userId, videoMesh, showToast]);
 
   // 🎬 Participants actuellement À L'ÉCRAN (caméra active) — décompte du maillage, synchronisé pour tous.
   const onStageOccupants = useMemo(() => {

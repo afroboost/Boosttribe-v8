@@ -571,8 +571,18 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
     user = await _optional_user(authorization)
     user_id = (user or {}).get("id")
 
+    # L'identité de la room = l'identifiant applicatif du participant (socket userId, unique PAR onglet).
+    # Indispensable : (a) la grille caméra du front mappe les pistes par cet id ; (b) deux onglets d'un
+    # même compte ne doivent pas partager la même identité (LiveKit déconnecte les doublons d'identité).
+    # L'AUTORISATION de publier (rôle stage) reste, elle, vérifiée via le JWT Supabase (hôte/co-hôte).
+    identity = _sanitize_identity(body.identity)
+    if not identity:
+        raise HTTPException(status_code=400, detail="identity requis")
+    meta = (user or {}).get("user_metadata") or {}
+    name = _clean_name(meta.get("full_name") or body.name or (user or {}).get("email"), identity)
+
     if requested_role == "stage":
-        # 🔒 Publier = être hôte/co-hôte authentifié de CETTE session (anti token-minting).
+        # 🔒 Publier = être hôte/co-hôte authentifié de CETTE session (anti token-minting / anti self-élévation).
         if not user_id:
             raise HTTPException(status_code=401, detail="authentification requise pour publier")
         if not await _is_host_or_cohost(session_id, user_id):
@@ -581,20 +591,8 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
         if await _count_livekit_publishers(session_id) >= MAX_LIVEKIT_STAGE:
             raise HTTPException(status_code=409, detail="stage_full")
         can_publish = True
-        identity = str(user_id)
-        meta = (user or {}).get("user_metadata") or {}
-        name = _clean_name(meta.get("full_name") or body.name or (user or {}).get("email"), identity)
     else:
-        # Viewer : lecture seule. Identité liée au compte si authentifié, sinon anonyme préfixée.
         can_publish = False
-        if user_id:
-            identity = str(user_id)
-            meta = (user or {}).get("user_metadata") or {}
-            name = _clean_name(meta.get("full_name") or body.name or (user or {}).get("email"), identity)
-        else:
-            safe = _sanitize_identity(body.identity) or os.urandom(4).hex()
-            identity = f"anon-{safe}"
-            name = _clean_name(body.name, "Invité")
 
     grants = livekit_api.VideoGrants(
         room_join=True,

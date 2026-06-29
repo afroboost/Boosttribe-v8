@@ -1808,9 +1808,13 @@ async def session_configure(body: SessionConfigBody, authorization: Optional[str
     patch: Dict[str, Any] = {"mode": body.mode}
     if body.mode == "paid":
         s = await get_commission_settings()
-        # 💎 Coach au type « abonnement » : l'hébergement payant nécessite un abo actif.
-        if await get_coach_payment_type(uid) == "subscription" and not _subscription_active(await get_coach_subscription(uid)):
-            raise HTTPException(status_code=402, detail="Abonnez-vous à « Coach Illimité » pour créer des sessions payantes")
+        # 💳 Les sessions « Payante (billet CHF) » (argent via la plateforme) sont réservées aux coachs
+        #    en mode COMMISSION. En « abonnement », le coach encaisse ses élèves lui-même (hors plateforme)
+        #    via son lien/QR privé → mode Payante interdit.
+        if await get_coach_payment_type(uid) != "commission":
+            raise HTTPException(status_code=403,
+                                detail="Les sessions payantes (billet CHF) sont réservées au mode commission. "
+                                       "En abonnement, encaisse tes élèves via ton lien/QR privé (session privée).")
         if body.price_chf is None:
             raise HTTPException(status_code=400, detail="Prix requis")
         pmin, pmax = float(s.get("price_min_chf") or 0), float(s.get("price_max_chf") or 1e9)

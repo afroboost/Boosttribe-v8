@@ -112,6 +112,9 @@ const WalletPage: React.FC = () => {
 
   const available = wallet?.available_chf ?? 0;
   const canRequest = wallet?.has_iban && available > 0;
+  // 💳 Le solde / IBAN / virement n'ont de sens qu'en mode COMMISSION (argent via la plateforme).
+  //    En « abonnement » (défaut), le coach encaisse ses élèves lui-même → on masque ces blocs.
+  const isCommission = plan?.payment_type === 'commission';
 
   return (
     <div className="min-h-screen py-12 px-4" style={{ background: AFRO.dark }}>
@@ -128,7 +131,9 @@ const WalletPage: React.FC = () => {
           <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 flex items-center gap-3" style={{ fontFamily: 'inherit' }}>
             <Wallet style={{ color: AFRO.pink }} /> Portefeuille
           </h1>
-          <p className="text-white/60">Gère tes revenus et tes virements vers ton compte bancaire.</p>
+          <p className="text-white/60">{isCommission
+            ? 'Gère tes revenus et tes virements vers ton compte bancaire.'
+            : 'Gère ton abonnement coach et retrouve tes enregistrements.'}</p>
         </div>
 
         {loading ? (
@@ -139,7 +144,8 @@ const WalletPage: React.FC = () => {
           <p className="text-white/60">Connecte-toi pour accéder à ton portefeuille.</p>
         ) : (
           <>
-            {/* 3 cartes */}
+            {/* 3 cartes — uniquement en mode commission (revenus encaissés via la plateforme) */}
+            {isCommission && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
               <Card className="border-white/10" style={{ background: AFRO.gradient }}>
                 <CardContent className="p-5">
@@ -169,6 +175,7 @@ const WalletPage: React.FC = () => {
                 </CardContent>
               </Card>
             </div>
+            )}
 
             {/* 💎 Abonnement « Coach Illimité » / modèle commission */}
             {plan && (
@@ -186,7 +193,8 @@ const WalletPage: React.FC = () => {
                 </CardHeader>
                 <CardContent>
                   {plan.payment_type === 'subscription' ? (
-                    plan.subscription_active ? (
+                    <>
+                    {plan.subscription_active ? (
                       <div className="text-white/70 text-sm space-y-1">
                         <p className="flex items-center gap-2 text-green-400"><CheckCircle2 size={16} /> Crédits illimités + 0% de commission sur tes ventes.</p>
                         {plan.current_period_end && (
@@ -204,7 +212,12 @@ const WalletPage: React.FC = () => {
                           S'abonner
                         </PrimaryButton>
                       </div>
-                    )
+                    )}
+                    <p className="mt-3 text-white/50 text-xs border-t border-white/10 pt-3">
+                      💡 Tu encaisses tes élèves toi-même (hors plateforme), via ton lien/QR privé.
+                      Aucun solde ni virement à gérer ici.
+                    </p>
+                    </>
                   ) : (
                     <p className="text-white/70 text-sm">
                       Tu es en <strong>modèle commission</strong> : commission de {plan.commission_percent}% sur tes ventes,
@@ -215,7 +228,8 @@ const WalletPage: React.FC = () => {
               </Card>
             )}
 
-            {/* Coordonnées bancaires */}
+            {/* Coordonnées bancaires — uniquement en mode commission */}
+            {isCommission && (
             <Card className="bg-white/5 border-white/10 mb-6">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
@@ -250,8 +264,10 @@ const WalletPage: React.FC = () => {
                 </Button>
               </CardContent>
             </Card>
+            )}
 
-            {/* Demande de virement */}
+            {/* Demande de virement — uniquement en mode commission */}
+            {isCommission && (
             <Card className="bg-white/5 border-white/10 mb-6">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
@@ -274,9 +290,10 @@ const WalletPage: React.FC = () => {
                 )}
               </CardContent>
             </Card>
+            )}
 
-            {/* Historique des virements */}
-            {wallet && wallet.requests.length > 0 && (
+            {/* Historique des virements — uniquement en mode commission */}
+            {isCommission && wallet && wallet.requests.length > 0 && (
               <Card className="bg-white/5 border-white/10">
                 <CardHeader>
                   <CardTitle className="text-white text-lg">Historique des virements</CardTitle>

@@ -47,7 +47,7 @@ import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
 import {
-  getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket,
+  getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   type SessionAccessInfo,
 } from '@/lib/paymentApi';
 import { Pencil, Maximize2, Minimize2, Coins, Ticket } from 'lucide-react';
@@ -907,6 +907,8 @@ export const SessionPage: React.FC = () => {
   const [savingMode, setSavingMode] = useState(false);
   const [modeDraft, setModeDraft] = useState<{ mode: 'open' | 'paid' | 'private'; price: string; capacity: string }>({ mode: 'open', price: '', capacity: '' });
   const [showSessionSettings, setShowSessionSettings] = useState(false);
+  // Type de paiement du coach hôte ('subscription' par défaut → mode Payante masqué).
+  const [coachPaymentType, setCoachPaymentType] = useState<'subscription' | 'commission'>('subscription');
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
   const [stageRequestPending, setStageRequestPending] = useState(false);  // spectateur : ma demande envoyée
   // Refs pour piloter la caméra depuis les handlers Realtime (souscrits une seule fois)
@@ -1176,6 +1178,8 @@ export const SessionPage: React.FC = () => {
     getBilletterieConfig().then(({ data }) => {
       if (data) setBillConfig({ price_min_chf: data.price_min_chf, price_max_chf: data.price_max_chf });
     });
+    // 💳 Type de paiement du coach : en « abonnement », pas de mode Payante (il encaisse hors plateforme).
+    getCoachPlan().then(({ data }) => { if (data) setCoachPaymentType(data.payment_type); });
   }, [isHost]);
   const modeInitRef = useRef<string | null>(null);
   useEffect(() => {
@@ -2842,11 +2846,15 @@ export const SessionPage: React.FC = () => {
             </h2>
             <p className="text-white/50 text-sm mb-4">Choisis comment les participants accèdent à ce live.</p>
             <div className="space-y-2 mb-4">
-              {([
+              {(([
                 { v: 'open', label: 'Ouverte (crédits)', desc: 'Le public dépense 1 crédit pour rejoindre.' },
-                { v: 'paid', label: 'Payante (billet CHF)', desc: 'Tu fixes un prix par place ; billet requis.' },
+                // 💳 « Payante (billet CHF) » réservée aux coachs en mode commission (argent via la plateforme).
+                //    En abonnement, le coach encaisse lui-même via son lien/QR privé → on masque l'option.
+                ...(coachPaymentType === 'commission'
+                  ? [{ v: 'paid', label: 'Payante (billet CHF)', desc: 'Tu fixes un prix par place ; billet requis.' }]
+                  : []),
                 { v: 'private', label: 'Privée (lien/QR)', desc: 'Invités gratuits via le lien.' },
-              ] as const).map((opt) => (
+              ]) as { v: 'open' | 'paid' | 'private'; label: string; desc: string }[]).map((opt) => (
                 <button
                   key={opt.v}
                   onClick={() => setModeDraft((d) => ({ ...d, mode: opt.v }))}

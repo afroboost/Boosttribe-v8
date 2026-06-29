@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, AlertCircle, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, AlertCircle, CheckCircle, Gift } from 'lucide-react';
 import { isSupabaseConfigured } from '@/lib/supabaseClient';
+import { getCreditsConfig } from '@/lib/paymentApi';
 
 type AuthMode = 'login' | 'signup' | 'forgot';
 
@@ -29,6 +30,9 @@ const LoginPage: React.FC = () => {
   const from = (location.state as { from?: string })?.from || '/session';
 
   const [mode, setMode] = useState<AuthMode>('login');
+  // 🎁 Essai gratuit : nombre de crédits offerts à l'inscription (admin-éditable, défaut 1).
+  const [freeCredits, setFreeCredits] = useState(1);
+  useEffect(() => { getCreditsConfig().then(({ data }) => { if (data?.signup_free_credits != null) setFreeCredits(data.signup_free_credits); }); }, []);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -302,6 +306,20 @@ const LoginPage: React.FC = () => {
           {/* Signup Form */}
           {mode === 'signup' && (
             <form onSubmit={handleSignup} className="space-y-4">
+              {freeCredits > 0 && (
+                <div className="flex items-center gap-3 rounded-xl border border-[#FF2DAA]/40 bg-[#D91CD2]/10 p-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
+                       style={{ background: theme.colors.gradient.primary }}>
+                    <Gift size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-white text-sm font-semibold">🎁 1er cours offert — Essai gratuit</p>
+                    <p className="text-white/60 text-xs">
+                      {freeCredits} crédit{freeCredits > 1 ? 's' : ''} offert{freeCredits > 1 ? 's' : ''} à l'inscription pour rejoindre un live sans payer.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="fullName" className="text-white/70">Nom complet</Label>
                 <div className="relative">

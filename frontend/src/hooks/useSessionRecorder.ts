@@ -16,11 +16,21 @@ export interface SessionRecorderOptions {
   getLocalStream: () => MediaStream | null;
   // Renvoie les flux audio distants (voix des participants + visio LiveKit) à l'instant T
   getRemoteStreams: () => MediaStream[];
+  // 🔴 Flux de la MUSIQUE déjà mixé (son réel) — fourni par le mixeur (getMusicStream).
+  // Préféré à element.captureStream() qui est MUET quand l'élément est routé via createMediaElementSource.
+  getMusicStream?: () => MediaStream | null;
   fileBaseName?: string;
   // Si false : ne télécharge PAS le fichier à l'arrêt (utilisé par l'option premium qui l'envoie au serveur)
   download?: boolean;
-  // Callback à l'arrêt avec le blob enregistré (pour upload + transcription IA)
-  onComplete?: (blob: Blob, ext: string) => void;
+  // Callback à l'arrêt avec le blob enregistré (pour upload + transcription IA).
+  // meta.peak = niveau crête capté (0..1), meta.silent = true si aucun son détecté, meta.durationMs = durée.
+  onComplete?: (blob: Blob, ext: string, meta: RecordingMeta) => void;
+}
+
+export interface RecordingMeta {
+  durationMs: number;
+  peak: number;     // niveau crête (0..1)
+  silent: boolean;  // true si rien d'audible n'a été capté
 }
 
 export interface SessionRecorderReturn {
@@ -28,6 +38,9 @@ export interface SessionRecorderReturn {
   start: () => boolean;
   stop: () => void;
 }
+
+// Seuil en-dessous duquel on considère l'enregistrement SILENCIEUX (bruit de fond / aucun signal).
+const SILENCE_PEAK_THRESHOLD = 0.012;
 
 function pickMime(): string {
   const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
@@ -49,6 +62,12 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
   const rescanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mimeRef = useRef<string>('');
 
+  // 🎚️ Métrologie — PREUVE que l'enregistrement capte du SON (niveau crête + durée).
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const meterRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const peakRef = useRef<number>(0);     // niveau crête observé (0..1)
+  const startTsRef = useRef<number>(0);  // Date.now() au démarrage
+
   const optionsRef = useRef(options);
   optionsRef.current = options;
 
@@ -68,6 +87,7 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
       const cloned = new MediaStream(clones);
       const src = ctx.createMediaStreamSource(cloned);             // on tape la copie, jamais l'original
       src.connect(dest);
+      if (analyserRef.current) src.connect(analyserRef.current);   // 🎚️ alimente le VU-mètre (preuve)
       connectedRef.current.add(stream.id);
     } catch { /* ignore */ }
   }, []);
@@ -75,6 +95,8 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
   const rescanSources = useCallback(() => {
     connectStream(optionsRef.current.getLocalStream());
     optionsRef.current.getRemoteStreams().forEach((s) => connectStream(s));
+    // 🎵 Musique : flux post-gain du mixeur (son RÉEL ; element.captureStream() serait muet).
+    try { connectStream(optionsRef.current.getMusicStream?.() ?? null); } catch { /* ignore */ }
   }, [connectStream]);
 
   const start = useCallback((): boolean => {
@@ -91,7 +113,14 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
     connectedRef.current = new Set();
     clonedTracksRef.current = [];
 
-    // Connecter le micro local + les voix participants présentes
+    // 🎚️ VU-mètre : chaque source est aussi branchée sur l'analyseur (sans toucher la sortie).
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyserRef.current = analyser;
+    peakRef.current = 0;
+    startTsRef.current = Date.now();
+
+    // Connecter le micro local + les voix participants + la musique présents
     rescanSources();
 
     if (dest.stream.getAudioTracks().length === 0) {
@@ -107,8 +136,14 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
       const blob = new Blob(chunksRef.current, { type });
       chunksRef.current = [];
       const ext = type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm';
+      // 🎚️ PREUVE : durée + niveau crête capté. silent=true si rien d'audible n'a été détecté.
+      const durationMs = startTsRef.current ? Date.now() - startTsRef.current : 0;
+      const peak = peakRef.current;
+      const silent = peak < SILENCE_PEAK_THRESHOLD;
+      const meta = { durationMs, peak: Math.round(peak * 1000) / 1000, silent };
+      console.log(`[REC] terminé — durée=${(durationMs / 1000).toFixed(1)}s niveau_crête=${meta.peak} ${silent ? '⚠️ SILENCIEUX (aucun son capté)' : '✅ son capté'} taille=${blob.size}o`);
       // Premium : remonter le blob (pour upload + transcription IA) sans forcément télécharger.
-      try { optionsRef.current.onComplete?.(blob, ext); } catch { /* ignore */ }
+      try { optionsRef.current.onComplete?.(blob, ext, meta); } catch { /* ignore */ }
       if (optionsRef.current.download === false) return;
       const d = new Date();
       const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}_${String(d.getHours()).padStart(2, '0')}h${String(d.getMinutes()).padStart(2, '0')}`;
@@ -126,6 +161,20 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
     recorder.start(1000); // chunks réguliers
     setIsRecording(true);
 
+    // 🎚️ Échantillonnage du niveau crête (RMS/peak) → preuve de captation + détection du silence.
+    const buf = new Uint8Array(analyser.fftSize);
+    meterRef.current = setInterval(() => {
+      const a = analyserRef.current;
+      if (!a) return;
+      a.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = Math.abs(buf[i] - 128) / 128; // 0..1 autour du zéro (128)
+        if (v > peak) peak = v;
+      }
+      if (peak > peakRef.current) peakRef.current = peak;
+    }, 200);
+
     // re-scan périodique pour les participants qui rejoignent pendant l'enregistrement
     rescanRef.current = setInterval(rescanSources, 1500);
     return true;
@@ -133,6 +182,7 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
 
   const stop = useCallback(() => {
     if (rescanRef.current) { clearInterval(rescanRef.current); rescanRef.current = null; }
+    if (meterRef.current) { clearInterval(meterRef.current); meterRef.current = null; }
     const recorder = recorderRef.current;
     if (recorder && recorder.state !== 'inactive') {
       try { recorder.stop(); } catch { /* ignore */ }
@@ -142,6 +192,7 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
     try { ctxRef.current?.close(); } catch { /* ignore */ }
     ctxRef.current = null;
     destRef.current = null;
+    analyserRef.current = null;
     connectedRef.current.clear();
     clonedTracksRef.current.forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
     clonedTracksRef.current = [];
@@ -152,6 +203,7 @@ export function useSessionRecorder(options: SessionRecorderOptions): SessionReco
   useEffect(() => {
     return () => {
       if (rescanRef.current) clearInterval(rescanRef.current);
+      if (meterRef.current) clearInterval(meterRef.current);
       try { recorderRef.current?.stop(); } catch { /* ignore */ }
       try { ctxRef.current?.close(); } catch { /* ignore */ }
       clonedTracksRef.current.forEach((t) => { try { t.stop(); } catch { /* ignore */ } });

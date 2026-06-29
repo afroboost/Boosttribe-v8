@@ -617,6 +617,8 @@ export const SessionPage: React.FC = () => {
     setHostVoiceVolume,
     connectMicSource,
     connectMusicSource,
+    getMusicStream,
+    setSelfMonitor,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -931,46 +933,15 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobileTab, isDesktop, sessionId]);
 
-  // 🔴 POINT 3 — Enregistrement audio (hôte uniquement) : micro local + voix participants (DOM tribu).
-  // N'inclut PAS l'audio de la vidéo partagée. + bandeau de consentement diffusé à tous (realtime).
+  // 🔴 POINT 3 — Bandeau de consentement « enregistrement » diffusé à tous (realtime).
+  //    UN SEUL enregistrement : l'option complète (toutes voix + musique) + transcription IA (premiumRec).
   const [recordingActive, setRecordingActive] = useState(false); // état "vu par tous" (bandeau)
-  const recorder = useSessionRecorder({
-    getLocalStream: () => hostMicStream,
-    getRemoteStreams: () => Array.from(document.querySelectorAll<HTMLAudioElement>('.bt-tribe-audio'))
-      .map((el) => el.srcObject as MediaStream | null)
-      .filter((s): s is MediaStream => !!s),
-    fileBaseName: 'boosttribe-session',
-  });
   const broadcastRecording = useCallback((active: boolean) => {
     setRecordingActive(active);
     if (sessionId && supabase && isSupabaseConfigured) {
       supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'RECORDING_STATE', payload: { active } });
     }
   }, [sessionId]);
-  const handleToggleRecording = useCallback(() => {
-    if (!isHost) return;
-    if (recorder.isRecording) {
-      recorder.stop();
-      broadcastRecording(false);
-      showToast('Enregistrement arrêté — téléchargement du fichier…', 'success');
-    } else {
-      const ok = recorder.start();
-      if (ok) {
-        broadcastRecording(true);
-        showToast('🔴 Enregistrement des voix démarré', 'success');
-      } else {
-        showToast('Enregistrement non supporté par ce navigateur', 'error');
-      }
-    }
-  }, [isHost, recorder, broadcastRecording, showToast]);
-  // Heartbeat de l'état d'enregistrement (late-join : un participant qui arrive voit le bandeau)
-  useEffect(() => {
-    if (!isHost || !recorder.isRecording || !sessionId || !supabase || !isSupabaseConfigured) return;
-    const t = setInterval(() => {
-      supabase!.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'RECORDING_STATE', payload: { active: true } });
-    }, 5000);
-    return () => clearInterval(t);
-  }, [isHost, recorder.isRecording, sessionId]);
 
   // 🔴 OPTION PREMIUM : enregistrement COMPLET (toutes voix + visio + musique) + transcription IA.
   const [recCost, setRecCost] = useState(4);
@@ -987,20 +958,23 @@ export const SessionPage: React.FC = () => {
   //  capter là, donc on ne s'y connecte pas du tout — la visio reste totalement intacte.)
   const premiumRec = useSessionRecorder({
     getLocalStream: () => hostMicStream,
-    getRemoteStreams: () => {
-      const tribe = Array.from(document.querySelectorAll<HTMLAudioElement>('.bt-tribe-audio'))
-        .map((el) => el.srcObject as MediaStream | null);
-      let music: MediaStream | null = null;
-      try {
-        const el = getMusicEl() as (HTMLAudioElement & { captureStream?: () => MediaStream }) | null;
-        music = el?.captureStream ? el.captureStream() : null;
-      } catch { /* ignore */ }
-      return [...tribe, music].filter((s): s is MediaStream => !!s);
-    },
+    getRemoteStreams: () => Array.from(document.querySelectorAll<HTMLAudioElement>('.bt-tribe-audio'))
+      .map((el) => el.srcObject as MediaStream | null)
+      .filter((s): s is MediaStream => !!s),
+    // 🎵 Musique : flux post-gain du mixeur (son RÉEL). element.captureStream() est MUET car l'élément
+    //    est routé via createMediaElementSource → c'était la cause de l'enregistrement silencieux.
+    getMusicStream: () => getMusicStream(),
     download: false,
-    onComplete: (blob, ext) => {
+    onComplete: (blob, ext, meta) => {
       const sid = sessionIdRef.current;
       if (!sid) return;
+      // 🚫 Aucun son capté → on n'upload PAS (évite une transcription Whisper hallucinée sur du silence).
+      if (meta.silent) {
+        setRecProcessing(false);
+        setRecResult({ transcript: '', summary: '⚠️ Aucun audio capté pendant l\'enregistrement (niveau sonore nul). Vérifiez que votre micro est activé et que la musique joue, puis réessayez.' });
+        showToast('Aucun audio capté — rien à transcrire', 'error');
+        return;
+      }
       setRecProcessing(true);
       uploadRecording(sid, blob, ext).then((r) => {
         setRecProcessing(false);
@@ -1033,6 +1007,24 @@ export const SessionPage: React.FC = () => {
     if (sessionId) stopRecording(sessionId);
     showToast('Enregistrement arrêté — transcription en cours…', 'success');
   }, [premiumRec, broadcastRecording, sessionId, showToast]);
+
+  // Heartbeat du bandeau d'enregistrement (late-join : un participant qui arrive voit l'avis de consentement).
+  useEffect(() => {
+    if (!isHost || !premiumRecActive || !sessionId || !supabase || !isSupabaseConfigured) return;
+    const t = setInterval(() => {
+      supabase!.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'RECORDING_STATE', payload: { active: true } });
+    }, 5000);
+    return () => clearInterval(t);
+  }, [isHost, premiumRecActive, sessionId]);
+
+  // 🔊 « M'entendre » (#6) : monitoring local de la voix de l'hôte (anti-larsen, on/off).
+  const [selfMonitorOn, setSelfMonitorOn] = useState(false);
+  const handleToggleSelfMonitor = useCallback(() => {
+    const next = !selfMonitorOn;
+    setSelfMonitorOn(next);
+    setSelfMonitor(next);
+    showToast(next ? '🎧 Monitoring activé — vous vous entendez (attention au larsen)' : 'Monitoring désactivé', 'default');
+  }, [selfMonitorOn, setSelfMonitor, showToast]);
 
   // Auto-play effect: when a new track is set via autoplay, force play
   useEffect(() => {
@@ -3398,23 +3390,20 @@ export const SessionPage: React.FC = () => {
                     <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" /> Arrêter
                   </button>
                 )}
-                {/* Secondaire (discret) : enregistrement des voix en téléchargement local */}
-                {!premiumRecActive && (
-                  <button
-                    onClick={handleToggleRecording}
-                    className={`flex items-center justify-center w-9 h-9 rounded-lg transition-colors ${
-                      recorder.isRecording
-                        ? 'bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30'
-                        : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
-                    }`}
-                    title={recorder.isRecording ? 'Arrêter l\'enregistrement local des voix' : 'Enregistrer seulement les voix (téléchargement local, sans IA)'}
-                    data-testid="record-toggle"
-                  >
-                    {recorder.isRecording
-                      ? <span className="inline-block w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
-                      : <Mic className="w-4 h-4" />}
-                  </button>
-                )}
+                {/* 🔊 « M'entendre » : monitoring local de sa propre voix (anti-larsen, on/off) */}
+                <button
+                  onClick={handleToggleSelfMonitor}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                    selfMonitorOn
+                      ? 'bg-[#8A2EFF]/25 text-[#C9A7FF] border border-[#8A2EFF]/50 hover:bg-[#8A2EFF]/35'
+                      : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
+                  }`}
+                  title={selfMonitorOn ? 'Couper le monitoring de ma voix' : 'M\'entendre (écouter ma propre voix — attention au larsen)'}
+                  data-testid="self-monitor-toggle"
+                >
+                  <Headphones className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">M'entendre</span>
+                </button>
               </div>
             )}
 

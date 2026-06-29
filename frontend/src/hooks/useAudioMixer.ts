@@ -37,6 +37,11 @@ export interface UseAudioMixerReturn {
   disconnectMusic: () => void;
   disconnectMic: () => void;
   getContext: () => AudioContext | null;
+  // 🔴 Flux de la musique (son RÉEL post-gain) pour l'enregistrement — jamais muet contrairement à
+  //    element.captureStream() (l'élément est routé via createMediaElementSource).
+  getMusicStream: () => MediaStream | null;
+  // 🔊 « M'entendre » : l'hôte s'écoute (monitoring local, anti-larsen, on/off).
+  setSelfMonitor: (on: boolean) => void;
 }
 
 // 🔊 Plages : 1.0 = pleine puissance ; au-delà = amplification (headroom). Aucun défaut < 1.0.
@@ -83,6 +88,15 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const micStreamDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   // 👥 POINT 5: sources des micros participants entrants (mixés via tribeGain → HP hôte)
   const tribeSourcesRef = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map());
+
+  // 🔴 ENREGISTREMENT — dérivation SÉPARÉE du chemin principal (cf. demande : "source → gain →
+  //    destination plein volume ET dérivation séparée vers le recorder, SANS réduire le chemin principal").
+  //    Capte la MUSIQUE post-gain (élément routé via createMediaElementSource → captureStream() serait MUET).
+  //    La voix de l'hôte et des participants est captée séparément par le recorder (clone micro + flux tribu).
+  const musicTapDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  // 🔊 MONITORING « M'entendre » (#6) : micSource → monitorGain(0 par défaut) → master.
+  //    Activable par l'hôte pour s'écouter (anti-larsen : gain 0 tant que désactivé).
+  const monitorGainRef = useRef<GainNode | null>(null);
 
   // Track connected elements
   const connectedMusicElement = useRef<HTMLAudioElement | null>(null);
@@ -132,17 +146,30 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       compressorRef.current = compressor;
 
       // Créer les GainNodes indépendants
-      // 🎵 Canal A: Musique → master → compresseur → HP
+      // 🔴 Dérivation d'enregistrement de la MUSIQUE (séparée du chemin HP).
+      //    UNIQUEMENT la musique : la voix de l'hôte et les participants sont captés séparément par
+      //    le recorder (clone du micro + flux tribu) → pas de double-captation/écho de la voix de l'hôte.
+      const recTap = ctx.createMediaStreamDestination();
+      musicTapDestRef.current = recTap;
+
+      // 🎵 Canal A: Musique → master → compresseur → HP. + dérivation → recTap (enregistrement réel).
       musicGainRef.current = ctx.createGain();
       musicGainRef.current.gain.value = Math.max(1, state.musicVolume); // jamais < 1.0 (pas d'atténuation par le gain)
       musicGainRef.current.connect(master);
+      musicGainRef.current.connect(recTap); // 🔴 capte la musique pour l'enregistrement (son réel, pas muet)
 
       // 🎤 Canal B: Micro Hôte → destination de flux UNIQUEMENT (anti-larsen).
-      // ⚠️ POINT 5: micGain n'est PAS connecté à la sortie HP → l'hôte ne s'entend jamais.
+      // ⚠️ POINT 5: micGain n'est PAS connecté à la sortie HP → l'hôte ne s'entend jamais (sauf « M'entendre »).
       micGainRef.current = ctx.createGain();
       micGainRef.current.gain.value = state.micVolume;
       micStreamDestRef.current = ctx.createMediaStreamDestination();
       micGainRef.current.connect(micStreamDestRef.current);
+
+      // 🔊 MONITORING « M'entendre » : nœud de gain dédié (0 = silencieux), micSource y sera branché.
+      const monitor = ctx.createGain();
+      monitor.gain.value = 0; // anti-larsen : désactivé par défaut
+      monitor.connect(master);
+      monitorGainRef.current = monitor;
 
       // 👥 Canal C: Volume Tribu (participants entrants) → master → HP de l'hôte
       tribeGainRef.current = ctx.createGain();
@@ -233,6 +260,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     try {
       const source = ctx.createMediaStreamSource(stream);
       source.connect(micGainRef.current); // source → micGain → micStreamDest (déjà câblé à l'init)
+      if (monitorGainRef.current) source.connect(monitorGainRef.current); // 🔊 « M'entendre » (gain 0 par défaut)
       micSourceRef.current = source;
       return micStreamDestRef.current.stream;
     } catch (err) {
@@ -399,6 +427,27 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    */
   const getContext = useCallback(() => audioContextRef.current, []);
 
+  /**
+   * 🔴 Flux audio de la MUSIQUE (son réel, post-gain) destiné à l'enregistrement.
+   * On dérive musicGain → musicTapDest : contrairement à audioElement.captureStream() (muet car
+   * l'élément est déjà routé via createMediaElementSource), ce flux contient bien le son de la musique.
+   */
+  const getMusicStream = useCallback((): MediaStream | null => {
+    return musicTapDestRef.current?.stream ?? null;
+  }, []);
+
+  /**
+   * 🔊 « M'entendre » (#6) : active/désactive le monitoring local de la voix de l'hôte.
+   * micSource → monitorGain → master. Gain 0 = silencieux (anti-larsen). Geste utilisateur requis.
+   */
+  const setSelfMonitor = useCallback((on: boolean) => {
+    const ctx = audioContextRef.current;
+    if (ctx?.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+    if (monitorGainRef.current) {
+      monitorGainRef.current.gain.setValueAtTime(on ? 1 : 0, ctx?.currentTime || 0);
+    }
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -425,6 +474,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     disconnectMusic,
     disconnectMic,
     getContext,
+    getMusicStream,
+    setSelfMonitor,
   };
 }
 

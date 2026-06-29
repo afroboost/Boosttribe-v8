@@ -630,8 +630,15 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
     else:
         try:
             raw = await _openai_transcribe(data, f"{session_id}.{ext}", content_type, key)
-            refined = await _openai_refine(raw, key)
-            patch = {"status": "done", "transcript": refined["transcript"], "summary": refined["summary"]}
+            # 🚫 Audio vide / silencieux : Whisper "hallucine" des phrases sur du silence.
+            #    On NE fabrique PAS de faux résumé → message explicite, le résumé reste dérivé du réel.
+            if not raw or not raw.strip():
+                patch = {"status": "done", "transcript": "",
+                         "summary": "⚠️ Aucun audio capté pendant l'enregistrement (silence). "
+                                    "Vérifiez que le micro est activé et que la musique joue, puis réessayez."}
+            else:
+                refined = await _openai_refine(raw, key)
+                patch = {"status": "done", "transcript": refined["transcript"], "summary": refined["summary"]}
         except Exception as exc:  # noqa: BLE001
             logger.error("transcription échec (rec=%s): %s", rec_id, exc)
             patch = {"status": "error", "error": str(exc)[:500]}

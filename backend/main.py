@@ -1008,6 +1008,9 @@ async def credits_spend(body: SpendBody, authorization: Optional[str] = Header(d
     sid = (body.session_id or "").strip()
     if not sid or not SESSION_ID_RE.match(sid):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    # 💎 Coach abonné « Illimité » → aucun débit de crédits (héberge/rejoint sans limite).
+    if await is_coach_unlimited(uid):
+        return {"ok": True, "balance": await get_balance(uid), "spent": 0, "unlimited": True}
     settings = await get_pricing_settings()
     if body.action == "join":
         cost, reason = int(settings.get("cost_join", 1)), "spend_join"
@@ -1187,12 +1190,14 @@ class CommissionSettingsBody(BaseModel):
     launch_offer: Optional[Dict[str, Any]] = None
     price_min_chf: Optional[float] = None
     price_max_chf: Optional[float] = None
+    coach_sub_price_chf: Optional[float] = None   # prix de l'abo « Coach Illimité » (CHF/mois)
 
 
 _COMMISSION_DEFAULTS = {
     "commission_percent": 15, "fees_included": True,
     "launch_offer": {"active": True, "percent": 0, "scope": "first_month", "days": 30},
     "price_min_chf": 5, "price_max_chf": 500, "currency": "CHF",
+    "coach_sub_price_chf": 99.99,
 }
 
 async def get_commission_settings() -> Dict[str, Any]:
@@ -1200,8 +1205,77 @@ async def get_commission_settings() -> Dict[str, Any]:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/commission_settings",
                                 headers=_service_headers(), params={"id": "eq.default", "select": "*"})
     if resp.status_code == 200 and resp.json():
-        return resp.json()[0]
+        row = resp.json()[0]
+        if row.get("coach_sub_price_chf") is None:
+            row["coach_sub_price_chf"] = _COMMISSION_DEFAULTS["coach_sub_price_chf"]
+        return row
     return dict(_COMMISSION_DEFAULTS)
+
+async def get_coach_payment_type(uid: str) -> str:
+    """Type de paiement du coach (admin) : 'subscription' (défaut) | 'commission'."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
+                                params={"id": f"eq.{uid}", "select": "coach_payment_type"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0].get("coach_payment_type") or "subscription"
+    return "subscription"
+
+async def get_coach_subscription(uid: str) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/coach_subscriptions", headers=_service_headers(),
+                                params={"user_id": f"eq.{uid}", "select": "*"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+def _subscription_active(sub: Optional[Dict[str, Any]]) -> bool:
+    if not sub:
+        return False
+    if sub.get("status") not in ("active", "trialing"):
+        return False
+    end = sub.get("current_period_end")
+    if not end:
+        return True
+    try:
+        return datetime.fromisoformat(str(end).replace("Z", "+00:00")) > datetime.now(timezone.utc)
+    except Exception:  # noqa: BLE001
+        return True
+
+async def is_coach_unlimited(uid: str) -> bool:
+    """Crédits illimités : coach au type 'subscription' avec un abonnement actif."""
+    if await get_coach_payment_type(uid) != "subscription":
+        return False
+    return _subscription_active(await get_coach_subscription(uid))
+
+async def upsert_coach_subscription(uid: str, patch: Dict[str, Any]) -> None:
+    patch = {"user_id": uid, "updated_at": datetime.now(timezone.utc).isoformat(), **patch}
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(f"{SUPABASE_URL}/rest/v1/coach_subscriptions",
+                          headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+                          params={"on_conflict": "user_id"}, json=patch)
+
+async def find_coach_sub_by_stripe_id(sub_id: str) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/coach_subscriptions", headers=_service_headers(),
+                                params={"stripe_subscription_id": f"eq.{sub_id}", "select": "*"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+async def _sync_coach_subscription(uid: str, sub_id: Optional[str]) -> None:
+    """Récupère l'abo Stripe et enregistre statut + fin de période (idempotent)."""
+    status, period_end = "active", None
+    if sub_id:
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            status = sub.get("status") or "active"
+            cpe = sub.get("current_period_end")
+            if cpe:
+                period_end = datetime.fromtimestamp(cpe, tz=timezone.utc).isoformat()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("retrieve abo coach %s échec: %s", sub_id, exc)
+    await upsert_coach_subscription(uid, {"stripe_subscription_id": sub_id,
+                                          "status": status, "current_period_end": period_end})
 
 async def get_coach_wallet(uid: str) -> Dict[str, Any]:
     async with httpx.AsyncClient(timeout=10) as client:
@@ -1279,6 +1353,10 @@ def _launch_active(settings: Dict[str, Any], wallet: Dict[str, Any]) -> bool:
 
 async def compute_commission(price_chf: float, coach_uid: str) -> Dict[str, Any]:
     settings = await get_commission_settings()
+    # 💎 Coach abonné « Illimité » → 0% de commission (il garde 100% de ses ventes).
+    if await is_coach_unlimited(coach_uid):
+        return {"percent": 0.0, "commission_chf": 0.0, "net_chf": round(price_chf, 2),
+                "fees_included": bool(settings.get("fees_included", True))}
     wallet = await get_coach_wallet(coach_uid)
     pct = float(settings.get("commission_percent") or 0)
     if _launch_active(settings, wallet):
@@ -1343,6 +1421,51 @@ async def session_info(session_id: str):
     sold_out = bool(capacity) and mode == "paid" and sold >= int(capacity)
     return {"mode": mode, "price_chf": price, "capacity": capacity,
             "sold": sold, "sold_out": sold_out, "currency": "CHF"}
+
+# ---- Coach : PLAN (type de paiement + abonnement « Coach Illimité ») ----------
+@app.get("/coach/plan")
+async def coach_plan(authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    settings = await get_commission_settings()
+    ptype = await get_coach_payment_type(uid)
+    sub = await get_coach_subscription(uid)
+    active = _subscription_active(sub)
+    return {
+        "payment_type": ptype,
+        "unlimited": ptype == "subscription" and active,
+        "subscription_active": active,
+        "subscription_status": (sub or {}).get("status"),
+        "current_period_end": (sub or {}).get("current_period_end"),
+        "sub_price_chf": float(settings.get("coach_sub_price_chf") or 99.99),
+        "commission_percent": float(settings.get("commission_percent") or 0),
+        "currency": "CHF",
+    }
+
+@app.post("/coach/subscribe")
+async def coach_subscribe(authorization: Optional[str] = Header(default=None)):
+    """Checkout Stripe RÉCURRENT (mode subscription) pour l'abo « Coach Illimité » 99.99 CHF/mois.
+    Réservé à ce plan coach — le grand public reste en ACHAT UNIQUE de crédits."""
+    if not await apply_stripe_key():
+        raise HTTPException(status_code=500, detail="Stripe non configuré")
+    user = await get_user_from_token(authorization)
+    uid, email = user.get("id"), user.get("email")
+    settings = await get_commission_settings()
+    price = float(settings.get("coach_sub_price_chf") or 99.99)
+    session = stripe.checkout.Session.create(
+        mode="subscription",
+        line_items=[{"price_data": {"currency": "chf", "unit_amount": round(price * 100),
+                                    "recurring": {"interval": "month"},
+                                    "product_data": {"name": "Coach Illimité — BoostTribe"}},
+                     "quantity": 1}],
+        success_url=f"{FRONTEND_URL}/wallet?coach_sub=success",
+        cancel_url=f"{FRONTEND_URL}/wallet?coach_sub=canceled",
+        client_reference_id=uid,
+        customer_email=email,
+        metadata={"kind": "coach_sub", "user_id": uid},
+        subscription_data={"metadata": {"kind": "coach_sub", "user_id": uid}},
+    )
+    return {"url": session.url}
 
 # ---- Coach : PORTEFEUILLE (solde / revenus / IBAN / demandes de virement) ----
 @app.get("/coach/wallet")
@@ -1447,6 +1570,9 @@ async def session_configure(body: SessionConfigBody, authorization: Optional[str
     patch: Dict[str, Any] = {"mode": body.mode}
     if body.mode == "paid":
         s = await get_commission_settings()
+        # 💎 Coach au type « abonnement » : l'hébergement payant nécessite un abo actif.
+        if await get_coach_payment_type(uid) == "subscription" and not _subscription_active(await get_coach_subscription(uid)):
+            raise HTTPException(status_code=402, detail="Abonnez-vous à « Coach Illimité » pour créer des sessions payantes")
         if body.price_chf is None:
             raise HTTPException(status_code=400, detail="Prix requis")
         pmin, pmax = float(s.get("price_min_chf") or 0), float(s.get("price_max_chf") or 1e9)
@@ -1526,7 +1652,7 @@ async def admin_commission_config(authorization: Optional[str] = Header(default=
 async def admin_save_commission(body: CommissionSettingsBody, authorization: Optional[str] = Header(default=None)):
     await require_admin(authorization)
     patch: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    for k in ("commission_percent", "fees_included", "launch_offer", "price_min_chf", "price_max_chf"):
+    for k in ("commission_percent", "fees_included", "launch_offer", "price_min_chf", "price_max_chf", "coach_sub_price_chf"):
         v = getattr(body, k)
         if v is not None:
             patch[k] = v
@@ -1537,6 +1663,46 @@ async def admin_save_commission(body: CommissionSettingsBody, authorization: Opt
     if resp.status_code not in (200, 204):
         raise HTTPException(status_code=500, detail="Échec d'enregistrement")
     return {"ok": True, "settings": await get_commission_settings()}
+
+class CoachPaymentTypeBody(BaseModel):
+    user_id: str
+    payment_type: str    # subscription | commission
+
+@app.post("/admin/coach-payment-type")
+async def admin_set_coach_payment_type(body: CoachPaymentTypeBody, authorization: Optional[str] = Header(default=None)):
+    """L'admin choisit le type de paiement d'un coach (défaut 'subscription')."""
+    await require_admin(authorization)
+    if body.payment_type not in ("subscription", "commission"):
+        raise HTTPException(status_code=400, detail="Type invalide")
+    await update_profile(body.user_id, {"coach_payment_type": body.payment_type})
+    return {"ok": True, "user_id": body.user_id, "payment_type": body.payment_type}
+
+@app.get("/admin/coaches")
+async def admin_coaches(authorization: Optional[str] = Header(default=None)):
+    """Liste des comptes avec type de paiement + statut d'abonnement (gestion coach)."""
+    await require_admin(authorization)
+    auth_users = await list_auth_users()
+    profiles = await fetch_profiles_map()
+    async with httpx.AsyncClient(timeout=10) as client:
+        sresp = await client.get(f"{SUPABASE_URL}/rest/v1/coach_subscriptions",
+                                 headers=_service_headers(), params={"select": "*"})
+    subs = {s.get("user_id"): s for s in (sresp.json() if sresp.status_code == 200 else [])}
+    rows: List[Dict[str, Any]] = []
+    for u in auth_users:
+        uid = u.get("id")
+        prof = profiles.get(uid, {})
+        sub = subs.get(uid)
+        rows.append({
+            "id": uid,
+            "email": u.get("email") or prof.get("email"),
+            "full_name": prof.get("full_name"),
+            "coach_payment_type": prof.get("coach_payment_type") or "subscription",
+            "subscription_status": (sub or {}).get("status"),
+            "subscription_active": _subscription_active(sub),
+            "current_period_end": (sub or {}).get("current_period_end"),
+        })
+    rows.sort(key=lambda r: r.get("email") or "")
+    return {"coaches": rows}
 
 @app.get("/admin/billetterie/sales")
 async def admin_billetterie_sales(authorization: Optional[str] = Header(default=None)):
@@ -1816,7 +1982,13 @@ async def stripe_webhook(request: Request):
                     await _create_ticket_from_session(obj, meta, event.get("id"))
                 except Exception as exc:  # noqa: BLE001
                     logger.error("billet création échouée (session=%s): %s", meta.get("session_id"), exc)
-            # (Ancien modèle abonnement — conservé pour compat, plus utilisé par le front)
+            # 💎 ABONNEMENT COACH « Illimité » (mode subscription) → enregistre l'abo actif.
+            if meta.get("kind") == "coach_sub" and user_id:
+                try:
+                    await _sync_coach_subscription(user_id, obj.get("subscription"))
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("abo coach échoué (user=%s): %s", user_id, exc)
+            # (Ancien modèle abonnement public — conservé pour compat, plus utilisé par le front)
             plan = meta.get("plan")
             if user_id and plan in PLANS and not credits:
                 await update_profile(
@@ -1829,13 +2001,25 @@ async def stripe_webhook(request: Request):
                 )
 
         elif etype in ("customer.subscription.created", "customer.subscription.updated"):
-            settings = await get_site_settings()
             sub_id = obj.get("id")
             status = obj.get("status")
+            sub_meta = obj.get("metadata") or {}
+            # 💎 Abonnement COACH : maj statut + fin de période (par metadata ou par id connu).
+            coach_existing = await find_coach_sub_by_stripe_id(sub_id)
+            if sub_meta.get("kind") == "coach_sub" or coach_existing:
+                cuid = sub_meta.get("user_id") or (coach_existing or {}).get("user_id")
+                if cuid:
+                    cpe = obj.get("current_period_end")
+                    period_end = datetime.fromtimestamp(cpe, tz=timezone.utc).isoformat() if cpe else None
+                    await upsert_coach_subscription(cuid, {"stripe_subscription_id": sub_id,
+                                                           "status": status, "current_period_end": period_end})
+                return {"received": True}
+            # (Ancien modèle abonnement public — conservé pour compat)
+            settings = await get_site_settings()
             items = (obj.get("items") or {}).get("data") or []
             price_id = items[0]["price"]["id"] if items else None
-            plan = (obj.get("metadata") or {}).get("plan") or _plan_from_price_id(price_id, settings)
-            user_id = (obj.get("metadata") or {}).get("user_id")
+            plan = sub_meta.get("plan") or _plan_from_price_id(price_id, settings)
+            user_id = sub_meta.get("user_id")
 
             if not user_id:
                 prof = await find_profile_by_subscription(sub_id)
@@ -1856,12 +2040,24 @@ async def stripe_webhook(request: Request):
 
         elif etype == "customer.subscription.deleted":
             sub_id = obj.get("id")
+            # 💎 Abonnement COACH supprimé → statut canceled (crédits illimités désactivés).
+            coach_existing = await find_coach_sub_by_stripe_id(sub_id)
+            if coach_existing:
+                await upsert_coach_subscription(coach_existing["user_id"], {"status": "canceled"})
+                return {"received": True}
             user_id = (obj.get("metadata") or {}).get("user_id")
             if not user_id:
                 prof = await find_profile_by_subscription(sub_id)
                 user_id = prof.get("id") if prof else None
             if user_id:
                 await update_profile(user_id, {"subscription_status": "none"})
+
+        elif etype == "invoice.paid":
+            # 💎 Renouvellement d'abo coach payé → prolonge la période + statut actif.
+            sub_id = obj.get("subscription")
+            if sub_id and await find_coach_sub_by_stripe_id(sub_id):
+                coach = await find_coach_sub_by_stripe_id(sub_id)
+                await _sync_coach_subscription(coach["user_id"], sub_id)
 
         elif etype == "charge.refunded":
             # 🎟️ Remboursement → billet invalidé + ajustement du solde coach (net retiré).

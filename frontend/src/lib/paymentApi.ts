@@ -354,6 +354,28 @@ export interface CommissionSettings {
   price_min_chf: number;
   price_max_chf: number;
   currency: string;
+  coach_sub_price_chf: number;
+}
+
+export interface CoachPlan {
+  payment_type: 'subscription' | 'commission';
+  unlimited: boolean;
+  subscription_active: boolean;
+  subscription_status: string | null;
+  current_period_end: string | null;
+  sub_price_chf: number;
+  commission_percent: number;
+  currency: string;
+}
+
+export interface AdminCoach {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  coach_payment_type: 'subscription' | 'commission';
+  subscription_status: string | null;
+  subscription_active: boolean;
+  current_period_end: string | null;
 }
 
 /** Réglages publics (devise + garde-fous de prix) pour l'UI coach. */
@@ -431,6 +453,39 @@ export async function requestPayout(): Promise<{ ok: boolean; amount_chf?: numbe
     return { ok: !!data?.ok, amount_chf: data?.amount_chf };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Coach : plan (type de paiement + état de l'abonnement « Illimité »). */
+export async function getCoachPlan(): Promise<{ data?: CoachPlan; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/coach/plan`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as CoachPlan };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Coach : s'abonner à « Coach Illimité » → URL Stripe Checkout (abonnement récurrent CHF). */
+export async function subscribeCoach(): Promise<{ url?: string; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/coach/subscribe`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { url: data.url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
 }
 
@@ -551,6 +606,22 @@ export async function markPayoutPaid(payoutId: number): Promise<{ ok: boolean; e
 
 export async function rejectPayout(payoutId: number): Promise<{ ok: boolean; error?: string }> {
   const { data, error } = await adminFetch(`/admin/payouts/${payoutId}/reject`, { method: 'POST' });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
+}
+
+// ---- Admin : gestion des coachs (type de paiement + statut abo) -------------
+export async function getAdminCoaches(): Promise<{ coaches: AdminCoach[]; error?: string }> {
+  const { data, error } = await adminFetch('/admin/coaches', { method: 'GET' });
+  if (error) return { coaches: [], error };
+  return { coaches: (data?.coaches || []) as AdminCoach[] };
+}
+
+export async function setCoachPaymentType(userId: string, paymentType: 'subscription' | 'commission'): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch('/admin/coach-payment-type', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, payment_type: paymentType }),
+  });
   if (error) return { ok: false, error };
   return { ok: !!data?.ok };
 }

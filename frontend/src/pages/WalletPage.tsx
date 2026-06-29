@@ -5,7 +5,8 @@ import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getCoachWallet, saveCoachBank, requestPayout, type CoachWallet,
+  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, subscribeCoach,
+  type CoachWallet, type CoachPlan,
 } from '@/lib/paymentApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,7 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import {
-  ArrowLeft, Wallet, TrendingUp, Send, CheckCircle2, Landmark, Loader2,
+  ArrowLeft, Wallet, TrendingUp, Send, CheckCircle2, Landmark, Loader2, Crown, Infinity as InfinityIcon,
 } from 'lucide-react';
 
 // 🎨 Couleurs Afroboost
@@ -34,24 +35,54 @@ const WalletPage: React.FC = () => {
   const { isAuthenticated } = useAuth();
   const { showToast } = useToast();
   const [wallet, setWallet] = useState<CoachWallet | null>(null);
+  const [plan, setPlan] = useState<CoachPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [iban, setIban] = useState('');
   const [holder, setHolder] = useState('');
   const [savingBank, setSavingBank] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
 
   const refresh = useCallback(async () => {
-    const { data, error } = await getCoachWallet();
-    if (error) { showToast(error, 'error'); setLoading(false); return; }
-    if (data) {
-      setWallet(data);
-      setIban(data.iban || '');
-      setHolder(data.holder || '');
+    const [w, p] = await Promise.all([getCoachWallet(), getCoachPlan()]);
+    if (w.error) { showToast(w.error, 'error'); }
+    if (w.data) {
+      setWallet(w.data);
+      setIban(w.data.iban || '');
+      setHolder(w.data.holder || '');
     }
+    if (p.data) setPlan(p.data);
     setLoading(false);
   }, [showToast]);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // 💎 Retour de Stripe après abonnement → re-vérifier (le webhook peut avoir un léger délai).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('coach_sub') !== 'success') return;
+    showToast('Abonnement reçu — activation en cours…', 'success');
+    let tries = 0;
+    const tick = async () => {
+      tries += 1;
+      const { data } = await getCoachPlan();
+      if (data) { setPlan(data); if (data.subscription_active) return; }
+      if (tries < 6) setTimeout(tick, 1500);
+    };
+    tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleSubscribe = useCallback(async () => {
+    setSubscribing(true);
+    try {
+      const { url, error } = await subscribeCoach();
+      if (url) { window.location.href = url; return; }
+      showToast(error || 'Abonnement impossible', 'error');
+    } finally {
+      setSubscribing(false);
+    }
+  }, [showToast]);
 
   const handleSaveBank = useCallback(async () => {
     if (!iban.trim() || !holder.trim()) { showToast('IBAN et titulaire requis', 'warning'); return; }
@@ -135,6 +166,51 @@ const WalletPage: React.FC = () => {
                 </CardContent>
               </Card>
             </div>
+
+            {/* 💎 Abonnement « Coach Illimité » / modèle commission */}
+            {plan && (
+              <Card className="border-white/10 mb-6" style={{ background: plan.unlimited ? 'linear-gradient(135deg, rgba(217,28,210,0.18), rgba(255,45,170,0.12))' : 'rgba(255,255,255,0.05)' }}>
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Crown size={20} style={{ color: '#FF2DAA' }} />
+                    {plan.payment_type === 'subscription' ? 'Abonnement Coach Illimité' : 'Modèle commission'}
+                    {plan.unlimited && (
+                      <span className="ml-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
+                        <InfinityIcon size={12} /> Illimité actif
+                      </span>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {plan.payment_type === 'subscription' ? (
+                    plan.subscription_active ? (
+                      <div className="text-white/70 text-sm space-y-1">
+                        <p className="flex items-center gap-2 text-green-400"><CheckCircle2 size={16} /> Crédits illimités + 0% de commission sur tes ventes.</p>
+                        {plan.current_period_end && (
+                          <p className="text-white/50 text-xs">Renouvellement le {new Date(plan.current_period_end).toLocaleDateString('fr-CH')}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                          <p className="text-white/70 text-sm">Crédits illimités + 0% de commission.</p>
+                          <p className="text-2xl font-bold text-white">{plan.sub_price_chf.toFixed(2)} <span className="text-base text-white/60">CHF / mois</span></p>
+                        </div>
+                        <PrimaryButton onClick={handleSubscribe} disabled={subscribing}>
+                          {subscribing ? <Loader2 size={16} className="animate-spin mr-2" /> : <Crown size={16} className="mr-2" />}
+                          S'abonner
+                        </PrimaryButton>
+                      </div>
+                    )
+                  ) : (
+                    <p className="text-white/70 text-sm">
+                      Tu es en <strong>modèle commission</strong> : commission de {plan.commission_percent}% sur tes ventes,
+                      versée sur ton solde, virements via IBAN ci-dessous.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Coordonnées bancaires */}
             <Card className="bg-white/5 border-white/10 mb-6">

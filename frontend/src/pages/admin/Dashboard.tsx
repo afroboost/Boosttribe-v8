@@ -13,7 +13,8 @@ import {
 import {
   getCommissionConfig, saveCommissionSettings, getBilletterieSales,
   getAdminPayouts, markPayoutPaid, rejectPayout,
-  type CommissionSettings, type TicketRow, type PayoutRow,
+  getAdminCoaches, setCoachPaymentType,
+  type CommissionSettings, type TicketRow, type PayoutRow, type AdminCoach,
 } from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -299,20 +300,29 @@ const Dashboard: React.FC = () => {
   const [salesTotals, setSalesTotals] = useState<{ count_paid: number; gross_chf: number; commission_chf: number }>({ count_paid: 0, gross_chf: 0, commission_chf: 0 });
   const [payouts, setPayouts] = useState<PayoutRow[]>([]);
   const [payoutsPending, setPayoutsPending] = useState(0);
+  const [coaches, setCoaches] = useState<AdminCoach[]>([]);
+  const [coachQuery, setCoachQuery] = useState('');
 
   const refreshBilletterie = useCallback(async () => {
     setBillLoading(true);
     try {
-      const [cfg, sale, pay] = await Promise.all([getCommissionConfig(), getBilletterieSales(), getAdminPayouts()]);
+      const [cfg, sale, pay, co] = await Promise.all([getCommissionConfig(), getBilletterieSales(), getAdminPayouts(), getAdminCoaches()]);
       if (cfg.settings) setCommission(cfg.settings);
       if (cfg.error) showToast(`Commission : ${cfg.error}`, 'error');
       setSales(sale.sales || []);
       setSalesTotals({ count_paid: sale.count_paid, gross_chf: sale.gross_chf, commission_chf: sale.commission_chf });
       setPayouts(pay.payouts || []);
       setPayoutsPending(pay.pending_total_chf || 0);
+      setCoaches(co.coaches || []);
     } finally {
       setBillLoading(false);
     }
+  }, [showToast]);
+
+  const handleSetCoachType = useCallback(async (c: AdminCoach, type: 'subscription' | 'commission') => {
+    const { ok, error } = await setCoachPaymentType(c.id, type);
+    if (ok) { showToast('Type de paiement mis à jour', 'success'); setCoaches((prev) => prev.map((x) => x.id === c.id ? { ...x, coach_payment_type: type } : x)); }
+    else showToast(error || 'Échec', 'error');
   }, [showToast]);
 
   const handleSaveCommission = useCallback(async () => {
@@ -1668,6 +1678,14 @@ const Dashboard: React.FC = () => {
                           onChange={(e) => setCommission({ ...commission, price_max_chf: Number(e.target.value) })}
                           className="bg-black/30 border-white/15 text-white" />
                       </div>
+                      <div className="sm:col-span-2">
+                        <Label className="text-white/80">Abonnement « Coach Illimité » (CHF / mois)</Label>
+                        <Input type="number" min={0} step={0.01}
+                          value={commission.coach_sub_price_chf ?? 99.99}
+                          onChange={(e) => setCommission({ ...commission, coach_sub_price_chf: Number(e.target.value) })}
+                          className="bg-black/30 border-white/15 text-white" />
+                        <p className="text-white/40 text-xs mt-1">Crédits illimités + 0% de commission pour les coachs abonnés.</p>
+                      </div>
                     </div>
 
                     <label className="flex items-center gap-3 cursor-pointer">
@@ -1713,6 +1731,55 @@ const Dashboard: React.FC = () => {
                 ) : (
                   <p className="text-white/50 text-sm">Réglages indisponibles.</p>
                 )}
+              </CardContent>
+            </Card>
+
+            {/* Coachs — type de paiement (par coach) */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Crown size={20} style={{ color: '#FF2DAA' }} /> Coachs — type de paiement
+                </CardTitle>
+                <CardDescription className="text-white/60">
+                  Défaut : Abonnement (crédits illimités + 0% commission). « Commission » = billetterie IBAN avec commission.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="mb-3">
+                  <Input
+                    value={coachQuery}
+                    onChange={(e) => setCoachQuery(e.target.value)}
+                    placeholder="Rechercher un coach (email)…"
+                    className="bg-black/30 border-white/15 text-white"
+                  />
+                </div>
+                <div className="max-h-96 overflow-y-auto space-y-2">
+                  {coaches
+                    .filter((c) => !coachQuery || (c.email || '').toLowerCase().includes(coachQuery.toLowerCase()))
+                    .slice(0, 100)
+                    .map((c) => (
+                      <div key={c.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                        <div className="min-w-0">
+                          <p className="text-white text-sm font-medium truncate">{c.email || c.id}</p>
+                          <p className="text-white/50 text-xs">
+                            {c.coach_payment_type === 'subscription'
+                              ? (c.subscription_active ? '💎 Abo actif (illimité)' : 'Abo — non actif')
+                              : 'Commission'}
+                            {c.current_period_end && c.subscription_active ? ` · jusqu'au ${new Date(c.current_period_end).toLocaleDateString('fr-CH')}` : ''}
+                          </p>
+                        </div>
+                        <select
+                          value={c.coach_payment_type}
+                          onChange={(e) => handleSetCoachType(c, e.target.value as 'subscription' | 'commission')}
+                          className="bg-black/40 border border-white/15 text-white text-sm rounded-lg px-2 py-1.5"
+                        >
+                          <option value="subscription">Abonnement (illimité)</option>
+                          <option value="commission">Commission (IBAN)</option>
+                        </select>
+                      </div>
+                    ))}
+                  {coaches.length === 0 && <p className="text-white/50 text-sm">Aucun compte.</p>}
+                </div>
               </CardContent>
             </Card>
 

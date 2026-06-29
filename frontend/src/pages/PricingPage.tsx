@@ -1,114 +1,73 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { Footer } from '@/components/layout/Footer';
-import { useSiteSettings } from '@/hooks/useSiteSettings';
 import { useToast } from '@/components/ui/Toast';
-import { createCheckout } from '@/lib/paymentApi';
+import { getCreditsConfig, buyCredits, type CreditsConfig, type CreditPack } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Check, Crown, Zap, Building2, ArrowLeft, ExternalLink, Sparkles } from 'lucide-react';
+import {
+  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2,
+} from 'lucide-react';
 
-// Plan data
-interface Plan {
-  id: string;
-  name: string;
-  monthlyPrice: number;
-  yearlyPrice: number;
-  currency: string;
-  features: string[];
-  trackLimit: number;
-  stripeMonthlyLink?: string;
-  stripeYearlyLink?: string;
-  isPopular?: boolean;
-}
+// 🎨 Couleurs Afroboost
+const AFRO = {
+  magenta: '#D91CD2',
+  pink: '#FF2DAA',
+  dark: '#0A0A0F',
+  white: '#FFFFFF',
+  gradient: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)',
+};
 
-// Base plans (Stripe links will be injected from settings)
-const BASE_PLANS: Plan[] = [
-  {
-    id: 'trial',
-    name: 'Essai Gratuit',
-    monthlyPrice: 0,
-    yearlyPrice: 0,
-    currency: 'EUR',
-    features: [
-      '1 session active',
-      'Audio & vidéo synchronisés',
-      'Partage vidéo : 30s max',
-      'Sans Live Visio',
-      'Participants illimités',
-    ],
-    trackLimit: 1,
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    monthlyPrice: 9.99,
-    yearlyPrice: 99.99,
-    currency: 'EUR',
-    features: [
-      'Live Visio (caméras façon Zoom)',
-      'Vidéo complète (jusqu\'à 90 min)',
-      'Sessions illimitées',
-      'Micro + voix privée',
-      'Enregistrement de session',
-      'Participants illimités',
-      'Support prioritaire',
-    ],
-    trackLimit: 50,
-    isPopular: true,
-  },
-  {
-    id: 'enterprise',
-    name: 'Enterprise',
-    monthlyPrice: 29.99,
-    yearlyPrice: 299.99,
-    currency: 'EUR',
-    features: [
-      'Tout le plan Pro',
-      'Sessions illimitées',
-      'Branding personnalisé',
-      'Analytics avancées',
-      'API dédiée',
-      'Support 24/7',
-    ],
-    trackLimit: -1,
-  },
-];
+// Libellés des services configurables (pricing_settings.services_shown)
+const SERVICE_LABELS: Record<string, string> = {
+  live: 'Lives audio synchronisés',
+  visio: 'Live Visio (caméras façon Zoom)',
+  stage: 'Scène / co-animation',
+  chat: 'Chat en direct',
+};
 
 const PricingPage: React.FC = () => {
   const { theme } = useTheme();
   const navigate = useNavigate();
-  const { settings, isLoaded } = useSiteSettings();
   const {
     isAuthenticated,
-    profile,
+    credits,
     isAdmin,
-    isSubscribed,
-    effectivePlan,
-    compActive,
     hasAcceptedTerms,
     acceptTerms,
-    refreshProfile,
+    refreshCredits,
   } = useAuth();
   const { showToast } = useToast();
 
-  const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
+  const [config, setConfig] = useState<CreditsConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [buyingPackId, setBuyingPackId] = useState<number | null>(null);
+
   const [termsChecked, setTermsChecked] = useState(hasAcceptedTerms);
   const [isAccepting, setIsAccepting] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
-  const [checkoutLoadingPlan, setCheckoutLoadingPlan] = useState<string | null>(null);
+  const [pendingPack, setPendingPack] = useState<CreditPack | null>(null);
+
+  // Charge la config publique (packs + offres + réglages) — tout est éditable en admin.
+  const loadConfig = useCallback(async () => {
+    setLoading(true);
+    const { data } = await getCreditsConfig();
+    if (data) setConfig(data);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadConfig(); }, [loadConfig]);
 
   // Retour de paiement Stripe (?success=1 / ?canceled=1)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('success') === '1') {
-      showToast('Abonnement activé ! Bienvenue 🎉', 'success');
-      // Rafraîchir le profil pour refléter subscription_status (peut prendre quelques secondes via le webhook)
-      refreshProfile();
-      setTimeout(() => refreshProfile(), 3000);
+      showToast('Paiement validé ! Tes crédits arrivent 🎉', 'success');
+      refreshCredits();
+      setTimeout(() => refreshCredits(), 3000);
       window.history.replaceState({}, '', '/pricing');
     } else if (params.get('canceled') === '1') {
       showToast('Paiement annulé', 'default');
@@ -117,36 +76,6 @@ const PricingPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Inject Stripe links AND dynamic prices from settings into plans
-  // Also filter by visibility settings
-  const PLANS: Plan[] = BASE_PLANS.map(plan => {
-    if (plan.id === 'pro') {
-      return {
-        ...plan,
-        monthlyPrice: parseFloat(settings.plan_pro_price_monthly || '9.99'),
-        yearlyPrice: parseFloat(settings.plan_pro_price_yearly || '99.99'),
-        stripeMonthlyLink: settings.stripe_pro_monthly || undefined,
-        stripeYearlyLink: settings.stripe_pro_yearly || undefined,
-      };
-    }
-    if (plan.id === 'enterprise') {
-      return {
-        ...plan,
-        monthlyPrice: parseFloat(settings.plan_enterprise_price_monthly || '29.99'),
-        yearlyPrice: parseFloat(settings.plan_enterprise_price_yearly || '299.99'),
-        stripeMonthlyLink: settings.stripe_enterprise_monthly || undefined,
-        stripeYearlyLink: settings.stripe_enterprise_yearly || undefined,
-      };
-    }
-    return plan;
-  }).filter(plan => {
-    // Filter out hidden plans based on visibility settings
-    if (plan.id === 'pro' && settings.plan_pro_visible === false) return false;
-    if (plan.id === 'enterprise' && settings.plan_enterprise_visible === false) return false;
-    return true;
-  });
-
-  // Handle terms acceptance
   const handleAcceptTerms = async () => {
     if (termsChecked && !hasAcceptedTerms) {
       setIsAccepting(true);
@@ -155,298 +84,232 @@ const PricingPage: React.FC = () => {
     }
   };
 
-  // Handle plan selection
-  const handleSelectPlan = async (plan: Plan) => {
-    // If not authenticated, redirect to login
-    if (!isAuthenticated && plan.id !== 'trial') {
+  const startCheckout = useCallback(async (pack: CreditPack) => {
+    setBuyingPackId(pack.id);
+    try {
+      const { url, error } = await buyCredits(pack.id);
+      if (url) window.location.href = url;
+      else showToast(error || 'Impossible de démarrer le paiement', 'error');
+    } finally {
+      setBuyingPackId(null);
+    }
+  }, [showToast]);
+
+  const handleBuy = async (pack: CreditPack) => {
+    if (!isAuthenticated) {
       navigate('/login', { state: { from: '/pricing' } });
       return;
     }
-
-    // If terms not accepted, require acceptance first
-    if (!hasAcceptedTerms && !termsChecked && plan.id !== 'trial') {
+    if (!hasAcceptedTerms && !termsChecked) {
+      setPendingPack(pack);
       setShowTermsModal(true);
       return;
     }
+    if (termsChecked && !hasAcceptedTerms) await handleAcceptTerms();
+    await startCheckout(pack);
+  };
 
-    // Accept terms if checked but not yet saved
-    if (termsChecked && !hasAcceptedTerms) {
-      await handleAcceptTerms();
-    }
+  const packs = config?.packs || [];
+  const participantPacks = packs.filter((p) => p.audience === 'participant');
+  const creatorPacks = packs.filter((p) => p.audience === 'creator');
+  const offers = config?.offers || {};
+  const validityMonths = config?.credit_validity_months ?? 12;
+  const services = config?.services_shown || [];
 
-    // If free trial, go to session (or login if not authenticated)
-    if (plan.id === 'trial') {
-      if (isAuthenticated) {
-        navigate('/session');
-      } else {
-        navigate('/login', { state: { from: '/session' } });
-      }
-      return;
-    }
+  // Offres actives à mettre en avant (toggle admin via pricing_settings.offers[key].enabled)
+  const activeOffers = Object.entries(offers)
+    .filter(([, o]: [string, any]) => o && o.enabled)
+    .map(([key, o]: [string, any]) => ({ key, ...o }));
 
-    // Abonnements payants (pro/enterprise) → Stripe Checkout via le backend
-    if (plan.id !== 'pro' && plan.id !== 'enterprise') {
-      navigate('/contact');
-      return;
-    }
-
-    const interval: 'month' | 'year' = billingPeriod === 'monthly' ? 'month' : 'year';
-    setCheckoutLoadingPlan(plan.id);
-    try {
-      const { url, error } = await createCheckout(plan.id as 'pro' | 'enterprise', interval);
-      if (url) {
-        window.location.href = url;
-      } else {
-        showToast(error || 'Impossible de démarrer le paiement', 'error');
-      }
-    } finally {
-      setCheckoutLoadingPlan(null);
+  const offerIcon = (key: string) => {
+    switch (key) {
+      case 'first_free': return <Gift className="w-5 h-5" />;
+      case 'discovery': return <Sparkles className="w-5 h-5" />;
+      case 'validity': return <Clock className="w-5 h-5" />;
+      case 'referral': return <Users className="w-5 h-5" />;
+      case 'gift': return <Gift className="w-5 h-5" />;
+      case 'launch': return <Star className="w-5 h-5" />;
+      default: return <Sparkles className="w-5 h-5" />;
     }
   };
 
-  // Get icon for plan
-  const getPlanIcon = (planId: string) => {
-    switch (planId) {
-      case 'trial': return <Zap className="w-6 h-6" />;
-      case 'pro': return <Crown className="w-6 h-6" />;
-      case 'enterprise': return <Building2 className="w-6 h-6" />;
-      default: return <Sparkles className="w-6 h-6" />;
-    }
-  };
+  const renderPack = (pack: CreditPack) => {
+    const busy = buyingPackId === pack.id;
+    const perCredit = pack.credits > 0 ? (pack.price_chf / pack.credits) : pack.price_chf;
+    return (
+      <Card
+        key={pack.id}
+        className={`relative border-white/10 bg-white/5 backdrop-blur-sm transition-all hover:border-white/20 ${
+          pack.is_highlighted ? 'ring-2 scale-105' : ''
+        }`}
+        style={pack.is_highlighted ? { borderColor: AFRO.magenta } : {}}
+      >
+        {pack.is_highlighted && (
+          <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+            <Badge className="px-3 py-1 text-white border-0" style={{ background: AFRO.gradient }}>
+              Plus populaire
+            </Badge>
+          </div>
+        )}
 
-  // Get price to display
-  const getDisplayPrice = (plan: Plan) => {
-    if (plan.monthlyPrice === 0) return 'Gratuit';
-    const price = billingPeriod === 'monthly' ? plan.monthlyPrice : plan.yearlyPrice;
-    return `${price}€`;
-  };
+        <CardHeader className="text-center pb-2">
+          <div
+            className="w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center"
+            style={{ background: pack.is_highlighted ? AFRO.gradient : 'rgba(255,255,255,0.1)' }}
+          >
+            <Coins className="w-6 h-6 text-white" />
+          </div>
+          <CardTitle className="text-white">{pack.name}</CardTitle>
+          <CardDescription className="text-white/50">
+            {pack.credits} crédit{pack.credits > 1 ? 's' : ''}
+          </CardDescription>
+        </CardHeader>
 
-  // Get savings for yearly
-  const getYearlySavings = (plan: Plan) => {
-    if (plan.monthlyPrice === 0) return null;
-    const monthlyCost = plan.monthlyPrice * 12;
-    const yearlyCost = plan.yearlyPrice;
-    const savings = Math.round(((monthlyCost - yearlyCost) / monthlyCost) * 100);
-    return savings > 0 ? savings : null;
+        <CardContent className="text-center">
+          <div className="mb-2">
+            <span className="text-4xl font-bold text-white">{pack.price_chf.toFixed(2)}</span>
+            <span className="text-white/50 text-sm ml-1">CHF</span>
+          </div>
+          <p className="text-white/40 text-xs mb-6">
+            {perCredit.toFixed(2)} CHF / crédit · valable {validityMonths} mois
+          </p>
+
+          <ul className="space-y-3 mb-6 text-left">
+            <li className="flex items-center gap-2 text-white/70 text-sm">
+              <Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />
+              {pack.credits} accès à un live ({pack.audience === 'creator' ? 'animer' : 'rejoindre'})
+            </li>
+            <li className="flex items-center gap-2 text-white/70 text-sm">
+              <Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />
+              Crédits valables {validityMonths} mois
+            </li>
+            <li className="flex items-center gap-2 text-white/70 text-sm">
+              <Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />
+              Sans abonnement, sans engagement
+            </li>
+          </ul>
+
+          <Button
+            onClick={() => handleBuy(pack)}
+            disabled={busy}
+            className="w-full text-white border-0"
+            style={pack.is_highlighted ? { background: AFRO.gradient } : { background: 'rgba(255,255,255,0.12)' }}
+          >
+            {busy ? (
+              <><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>
+            ) : (
+              <>Acheter des crédits</>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+    );
   };
 
   return (
-    <div 
-      className="min-h-screen py-12 px-4"
-      style={{ background: theme.colors.background }}
-    >
-      {/* Header */}
-      <div className="max-w-6xl mx-auto mb-12">
-        <Link 
-          to="/"
-          className="inline-flex items-center gap-2 text-white/60 hover:text-white mb-8 transition-colors"
-        >
+    <div className="min-h-screen py-12 px-4" style={{ background: AFRO.dark }}>
+      <div className="max-w-6xl mx-auto mb-10">
+        <Link to="/" className="inline-flex items-center gap-2 text-white/60 hover:text-white mb-8 transition-colors">
           <ArrowLeft size={20} />
           Retour à l'accueil
         </Link>
 
         <div className="text-center">
-          <h1 
-            className="text-4xl md:text-5xl font-bold text-white mb-4"
-            style={{ fontFamily: theme.fonts.heading }}
-          >
-            Choisissez votre plan
+          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4" style={{ fontFamily: theme.fonts.heading }}>
+            Achète des crédits
           </h1>
-          <p className="text-white/60 text-lg max-w-2xl mx-auto mb-8">
-            Commencez gratuitement avec l'essai, puis passez à un abonnement pour débloquer toutes les fonctionnalités.
+          <p className="text-white/60 text-lg max-w-2xl mx-auto mb-6">
+            <span className="font-semibold text-white">1 crédit = 1 accès à un live.</span>{' '}
+            Pas d'abonnement : tu paies uniquement ce que tu utilises, et tes crédits restent valables {validityMonths} mois.
           </p>
 
-          {/* Billing Toggle */}
-          <div className="inline-flex items-center gap-3 p-1 rounded-full bg-white/5 border border-white/10">
-            <button
-              onClick={() => setBillingPeriod('monthly')}
-              className={`px-6 py-2 rounded-full text-sm font-medium transition-all ${
-                billingPeriod === 'monthly'
-                  ? 'bg-white text-black'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              Mensuel
-            </button>
-            <button
-              onClick={() => setBillingPeriod('yearly')}
-              className={`px-6 py-2 rounded-full text-sm font-medium transition-all flex items-center gap-2 ${
-                billingPeriod === 'yearly'
-                  ? 'bg-white text-black'
-                  : 'text-white/60 hover:text-white'
-              }`}
-            >
-              Annuel
-              <span className="px-2 py-0.5 text-xs bg-green-500 text-white rounded-full">
-                -17%
-              </span>
-            </button>
-          </div>
-
-          {/* POINT 5 : badge "Mode Admin – Accès illimité gratuit" retiré de l'UI */}
-
-          {/* Current subscription */}
-          {profile && !isAdmin && (
-            <Badge 
-              className={`mt-6 px-4 py-2 ${
-                isSubscribed 
-                  ? 'bg-green-500/20 text-green-400 border-green-500/30' 
-                  : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-              }`}
-            >
-              {isSubscribed
-                ? `✓ ${compActive ? 'Accès offert' : 'Abonné'} ${effectivePlan}`
-                : '🎵 Version d\'essai'
-              }
+          {/* Solde courant */}
+          {isAuthenticated && !isAdmin && (
+            <Badge className="px-4 py-2 text-white border-0" style={{ background: AFRO.gradient }}>
+              <Coins size={16} className="mr-2" />
+              {credits} crédit{credits > 1 ? 's' : ''} disponible{credits > 1 ? 's' : ''}
+            </Badge>
+          )}
+          {isAdmin && (
+            <Badge className="px-4 py-2 bg-white/10 text-white border-white/20">
+              Mode admin — accès illimité
             </Badge>
           )}
         </div>
       </div>
 
-      {/* CGU Checkbox (if not accepted) */}
-      {isAuthenticated && !hasAcceptedTerms && (
-        <div className="max-w-xl mx-auto mb-8">
-          <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={termsChecked}
-                onChange={(e) => setTermsChecked(e.target.checked)}
-                className="mt-1 w-5 h-5 rounded border-white/30 bg-transparent text-purple-500 focus:ring-purple-500 focus:ring-offset-0"
-              />
-              <span className="text-white/80 text-sm">
-                J'accepte les{' '}
-                <button 
-                  onClick={() => setShowTermsModal(true)}
-                  className="text-purple-400 hover:text-purple-300 underline"
-                >
-                  Conditions Générales d'Utilisation
-                </button>
-                {' '}et la{' '}
-                <button 
-                  onClick={() => setShowTermsModal(true)}
-                  className="text-purple-400 hover:text-purple-300 underline"
-                >
-                  Politique de Confidentialité
-                </button>
-                .
+      {/* Offres mises en avant (configurables en admin) */}
+      {activeOffers.length > 0 && (
+        <div className="max-w-5xl mx-auto mb-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {activeOffers.map((o) => (
+            <div key={o.key} className="flex items-start gap-3 p-4 rounded-xl bg-white/5 border border-white/10">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
+                   style={{ background: AFRO.gradient }}>
+                {offerIcon(o.key)}
+              </div>
+              <div>
+                <div className="text-white font-semibold text-sm">
+                  {o.title}{o.key === 'launch' && o.percent ? ` (+${o.percent}%)` : ''}
+                </div>
+                <div className="text-white/50 text-xs">{o.text}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="w-8 h-8 animate-spin text-white/50" />
+        </div>
+      ) : (
+        <>
+          {/* Packs pour participer */}
+          {participantPacks.length > 0 && (
+            <div className="max-w-5xl mx-auto mb-12">
+              <h2 className="text-2xl font-bold text-white mb-1 text-center">Pour participer</h2>
+              <p className="text-white/50 text-center mb-6 text-sm">Rejoins les lives qui t'intéressent.</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {participantPacks.map(renderPack)}
+              </div>
+            </div>
+          )}
+
+          {/* Packs pour animer */}
+          {creatorPacks.length > 0 && (
+            <div className="max-w-5xl mx-auto mb-12">
+              <h2 className="text-2xl font-bold text-white mb-1 text-center flex items-center justify-center gap-2">
+                <Mic2 size={22} style={{ color: AFRO.pink }} /> Pour animer
+              </h2>
+              <p className="text-white/50 text-center mb-6 text-sm">Crée et héberge tes propres lives.</p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {creatorPacks.map(renderPack)}
+              </div>
+            </div>
+          )}
+
+          {packs.length === 0 && (
+            <p className="text-center text-white/50 py-12">Aucun pack disponible pour le moment.</p>
+          )}
+        </>
+      )}
+
+      {/* Services inclus (configurables en admin) */}
+      {services.length > 0 && (
+        <div className="max-w-3xl mx-auto mt-4 mb-8">
+          <h3 className="text-white/80 text-center font-semibold mb-4">Ce que tu débloques avec tes crédits</h3>
+          <div className="flex flex-wrap justify-center gap-3">
+            {services.map((s) => (
+              <span key={s} className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-white/70 text-sm">
+                <Check size={14} style={{ color: AFRO.pink }} />
+                {SERVICE_LABELS[s] || s}
               </span>
-            </label>
+            ))}
           </div>
         </div>
       )}
 
-      {/* Plans Grid */}
-      <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-        {PLANS.map((plan) => {
-          const savings = getYearlySavings(plan);
-          
-          return (
-            <Card 
-              key={plan.id}
-              className={`relative border-white/10 bg-white/5 backdrop-blur-sm transition-all hover:border-white/20 ${
-                plan.isPopular ? 'ring-2 ring-purple-500/50 scale-105' : ''
-              }`}
-            >
-              {/* Popular badge */}
-              {plan.isPopular && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <Badge 
-                    className="px-3 py-1"
-                    style={{ background: theme.colors.gradient.primary }}
-                  >
-                    Plus populaire
-                  </Badge>
-                </div>
-              )}
-
-              {/* Savings badge for yearly */}
-              {billingPeriod === 'yearly' && savings && (
-                <div className="absolute -top-3 right-4">
-                  <Badge className="px-2 py-1 bg-green-500/20 text-green-400 border-green-500/30">
-                    -{savings}%
-                  </Badge>
-                </div>
-              )}
-
-              <CardHeader className="text-center pb-2">
-                <div 
-                  className="w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center"
-                  style={{ 
-                    background: plan.isPopular 
-                      ? theme.colors.gradient.primary 
-                      : 'rgba(255,255,255,0.1)' 
-                  }}
-                >
-                  {getPlanIcon(plan.id)}
-                </div>
-                <CardTitle className="text-white">{plan.name}</CardTitle>
-                <CardDescription className="text-white/50">
-                  {plan.id === 'pro' ? 'Pour les créateurs' : plan.id === 'enterprise' ? 'Sans limite' : 'Pour découvrir'}
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent className="text-center">
-                {/* Price */}
-                <div className="mb-6">
-                  <span className="text-4xl font-bold text-white">
-                    {getDisplayPrice(plan)}
-                  </span>
-                  {plan.monthlyPrice > 0 && (
-                    <span className="text-white/50 text-sm">
-                      /{billingPeriod === 'monthly' ? 'mois' : 'an'}
-                    </span>
-                  )}
-                </div>
-
-                {/* Features */}
-                <ul className="space-y-3 mb-6 text-left">
-                  {plan.features.map((feature: string, idx: number) => (
-                    <li key={idx} className="flex items-center gap-2 text-white/70 text-sm">
-                      <Check size={16} className="text-green-400 flex-shrink-0" />
-                      {feature}
-                    </li>
-                  ))}
-                </ul>
-
-                {/* CTA Button */}
-                <Button
-                  onClick={() => handleSelectPlan(plan)}
-                  disabled={
-                    (!termsChecked && !hasAcceptedTerms && plan.id !== 'trial' && isAuthenticated) ||
-                    checkoutLoadingPlan === plan.id
-                  }
-                  className={`w-full ${
-                    plan.isPopular
-                      ? 'text-white'
-                      : 'bg-white/10 hover:bg-white/20 text-white'
-                  }`}
-                  style={plan.isPopular ? { background: theme.colors.gradient.primary } : {}}
-                >
-                  {plan.id === 'trial' ? (
-                    isAuthenticated ? 'Commencer gratuitement' : 'Créer un compte'
-                  ) : checkoutLoadingPlan === plan.id ? (
-                    'Redirection…'
-                  ) : (
-                    <>
-                      Souscrire <ExternalLink size={14} className="ml-1" />
-                    </>
-                  )}
-                </Button>
-
-                {/* Terms reminder */}
-                {isAuthenticated && !termsChecked && !hasAcceptedTerms && plan.id !== 'trial' && (
-                  <p className="text-xs text-yellow-400/70 mt-2">
-                    Acceptez les CGU pour souscrire
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
-
-      {/* Terms Modal */}
+      {/* CGU Modal */}
       {showTermsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-[#1a1a1f] border border-white/10 rounded-xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
@@ -455,40 +318,15 @@ const PricingPage: React.FC = () => {
             </div>
             <div className="p-6 overflow-y-auto max-h-[50vh] text-white/70 text-sm space-y-4">
               <h3 className="text-white font-semibold">1. Acceptation des conditions</h3>
-              <p>
-                En utilisant Boosttribe, vous acceptez les présentes conditions générales d'utilisation. 
-                Si vous n'acceptez pas ces conditions, veuillez ne pas utiliser le service.
-              </p>
-
-              <h3 className="text-white font-semibold">2. Description du service</h3>
-              <p>
-                Boosttribe est une plateforme d'écoute musicale synchronisée permettant à un hôte 
-                de partager de la musique en temps réel avec des participants.
-              </p>
-
-              <h3 className="text-white font-semibold">3. Propriété intellectuelle</h3>
-              <p>
-                Les utilisateurs sont responsables des contenus musicaux qu'ils uploadent. 
-                Assurez-vous d'avoir les droits nécessaires pour partager les fichiers audio.
-              </p>
-
-              <h3 className="text-white font-semibold">4. Abonnements et paiements</h3>
-              <p>
-                Les abonnements sont facturés selon la période choisie (mensuelle ou annuelle). 
-                Les paiements sont traités de manière sécurisée via Stripe.
-              </p>
-
+              <p>En utilisant BoostTribe, vous acceptez les présentes conditions générales d'utilisation.</p>
+              <h3 className="text-white font-semibold">2. Crédits</h3>
+              <p>BoostTribe fonctionne avec des crédits : 1 crédit donne accès à un live (rejoindre ou animer). Les crédits achetés sont valables {validityMonths} mois.</p>
+              <h3 className="text-white font-semibold">3. Paiements</h3>
+              <p>Les achats de crédits sont des paiements uniques traités de manière sécurisée via Stripe, en CHF.</p>
+              <h3 className="text-white font-semibold">4. Propriété intellectuelle</h3>
+              <p>Les utilisateurs sont responsables des contenus qu'ils partagent et doivent disposer des droits nécessaires.</p>
               <h3 className="text-white font-semibold">5. Protection des données</h3>
-              <p>
-                Nous collectons uniquement les données nécessaires au fonctionnement du service. 
-                Vos informations ne sont pas partagées avec des tiers sans votre consentement.
-              </p>
-
-              <h3 className="text-white font-semibold">6. Résiliation</h3>
-              <p>
-                Vous pouvez résilier votre abonnement à tout moment. L'accès aux fonctionnalités 
-                premium sera maintenu jusqu'à la fin de la période payée.
-              </p>
+              <p>Nous collectons uniquement les données nécessaires au fonctionnement du service.</p>
             </div>
             <div className="p-6 border-t border-white/10 flex items-center justify-between">
               <label className="flex items-center gap-2 cursor-pointer">
@@ -496,30 +334,26 @@ const PricingPage: React.FC = () => {
                   type="checkbox"
                   checked={termsChecked}
                   onChange={(e) => setTermsChecked(e.target.checked)}
-                  className="w-4 h-4 rounded border-white/30 bg-transparent text-purple-500"
+                  className="w-4 h-4 rounded border-white/30 bg-transparent"
                 />
                 <span className="text-white/80 text-sm">J'ai lu et j'accepte les CGU</span>
               </label>
               <div className="flex gap-3">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setShowTermsModal(false)}
-                  className="border-white/20 text-white/70"
-                >
+                <Button variant="outline" onClick={() => setShowTermsModal(false)} className="border-white/20 text-white/70">
                   Fermer
                 </Button>
                 <Button
                   onClick={async () => {
-                    if (termsChecked) {
-                      await handleAcceptTerms();
-                      setShowTermsModal(false);
-                    }
+                    if (!termsChecked) return;
+                    await handleAcceptTerms();
+                    setShowTermsModal(false);
+                    if (pendingPack) { const p = pendingPack; setPendingPack(null); await startCheckout(p); }
                   }}
                   disabled={!termsChecked || isAccepting}
-                  className="text-white"
-                  style={{ background: theme.colors.gradient.primary }}
+                  className="text-white border-0"
+                  style={{ background: AFRO.gradient }}
                 >
-                  {isAccepting ? 'Enregistrement...' : 'Accepter et continuer'}
+                  {isAccepting ? 'Enregistrement…' : 'Accepter et continuer'}
                 </Button>
               </div>
             </div>

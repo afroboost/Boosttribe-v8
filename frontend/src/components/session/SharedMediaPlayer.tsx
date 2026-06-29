@@ -652,9 +652,9 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         {limitReached && (
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-black/75 backdrop-blur-sm text-center p-4">
             <p className="text-white font-semibold text-sm">Aperçu limité à 30 s</p>
-            <p className="text-white/60 text-xs">Passez à Pro pour la vidéo complète</p>
-            <a href="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
-              Passer à Pro
+            <p className="text-white/60 text-xs">Utilisez des crédits pour la vidéo complète</p>
+            <a href="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+              Acheter des crédits
             </a>
           </div>
         )}

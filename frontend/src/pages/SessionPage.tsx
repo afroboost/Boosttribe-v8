@@ -45,7 +45,7 @@ import { useLiveKitStage } from '@/hooks/useLiveKitStage';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
-import { claimHost, setCohosts } from '@/lib/paymentApi';
+import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
 import { Pencil } from 'lucide-react';
 
 // LocalStorage key for nickname
@@ -470,7 +470,7 @@ export const SessionPage: React.FC = () => {
   const { showToast } = useToast();
   const { t } = useI18n();
   const socket = useSocket();
-  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, isFree, sessionLimit } = useAuth();
+  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, isFree, sessionLimit, refreshCredits } = useAuth();
   
   // ADMIN BYPASS: Check email directly for instant host access
   const userEmail = user?.email?.toLowerCase() || '';
@@ -1001,7 +1001,7 @@ export const SessionPage: React.FC = () => {
     if (sessionId && socket.userId && nickname) {
       socket.joinSession(sessionId, socket.userId, isHost, nickname, myAvatar || undefined);
     }
-    
+
     return () => {
       if (socket.isConnected) {
         socket.leaveSession();
@@ -1009,6 +1009,27 @@ export const SessionPage: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, socket.userId, nickname, isHost]);
+
+  // 💳 Débit du crédit pour REJOINDRE (participant CONNECTÉ non admin), idempotent par session.
+  //    Les participants anonymes (lien/QR, sans compte) rejoignent librement — pas de régression.
+  //    L'hôte est débité séparément (cost_host) lors de la revendication de session.
+  const joinDebitedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (isHost || isAdminUser) return;
+    if (!sessionId || !user?.id || !nickname) return;
+    if (joinDebitedRef.current === sessionId) return;
+    joinDebitedRef.current = sessionId;
+    (async () => {
+      const res = await spendCredit('join', sessionId);
+      if (res.insufficient) {
+        showToast('Crédits insuffisants pour rejoindre ce live', 'warning');
+        navigate('/pricing');
+      } else if (res.ok) {
+        refreshCredits();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, user?.id, nickname, isHost, isAdminUser]);
 
   // Listen for remote mute commands (for participants)
   useEffect(() => {
@@ -2175,13 +2196,25 @@ export const SessionPage: React.FC = () => {
   }, [isHost, sessionId, user?.id]);
 
   // F : l'hôte revendique sa session côté serveur (host_id) → autorité pour le partage/co-animateurs
+  // 💳 + débit du crédit d'animation (cost_host), atomique et idempotent par session côté backend.
   const claimedSessionRef = useRef<string | null>(null);
   useEffect(() => {
     if (!isHost || !sessionId || !user?.id) return;
     if (claimedSessionRef.current === sessionId) return;
     claimedSessionRef.current = sessionId;
-    claimHost(sessionId);
-  }, [isHost, sessionId, user?.id]);
+    (async () => {
+      await claimHost(sessionId);
+      if (isAdminUser) return;  // admin : accès illimité, jamais débité
+      const res = await spendCredit('host', sessionId);
+      if (res.insufficient) {
+        showToast('Crédits insuffisants pour animer ce live', 'warning');
+        navigate('/pricing');
+      } else if (res.ok) {
+        refreshCredits();
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, sessionId, user?.id, isAdminUser]);
 
   // Get shareable session URL
   const sessionUrl = useMemo(() => {
@@ -2693,7 +2726,7 @@ export const SessionPage: React.FC = () => {
                 <button
                   onClick={() => {
                     if (isFree) {
-                      showToast('Live Visio réservé aux membres Pro', 'warning');
+                      showToast('Live Visio : procurez-vous des crédits', 'warning');
                       navigate('/pricing');
                       return;
                     }
@@ -2703,7 +2736,7 @@ export const SessionPage: React.FC = () => {
                     isFree ? 'text-white/40 cursor-not-allowed' : liveMode ? 'text-white' : 'text-white/60 hover:text-white'
                   }`}
                   style={liveMode && !isFree ? { background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' } : undefined}
-                  title={isFree ? 'Live Visio réservé aux membres Pro' : undefined}
+                  title={isFree ? 'Live Visio : procurez-vous des crédits' : undefined}
                   data-testid="mode-live"
                 >
                   {isFree ? <Lock className="w-4 h-4" /> : <Video className="w-4 h-4" />} {t('session.mode.live')}
@@ -2714,9 +2747,9 @@ export const SessionPage: React.FC = () => {
             {/* 🔒 Plan gratuit : Live Visio verrouillé → invite Pro */}
             {isFree && sessionId && (
               <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
-                <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio réservé aux membres Pro</span>
-                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
-                  Passer à Pro
+                <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio : nécessite des crédits</span>
+                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+                  Acheter des crédits
                 </button>
               </div>
             )}
@@ -3039,11 +3072,11 @@ export const SessionPage: React.FC = () => {
                           {Math.floor((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / 60)}:{String((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) % 60).padStart(2, '0')} restant
                         </span>
                       </div>
-                      <Link 
-                        to="/pricing" 
+                      <Link
+                        to="/pricing"
                         className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded-full transition-colors"
                       >
-                        Passer à Pro
+                        Acheter des crédits
                       </Link>
                     </div>
                     <div className="mt-2 bg-white/10 rounded-full h-1.5 overflow-hidden">
@@ -3075,7 +3108,7 @@ export const SessionPage: React.FC = () => {
                       {/* Description */}
                       <p className="text-white/70 text-center mb-6">
                         Votre essai gratuit de <strong className="text-red-400">5 minutes</strong> est terminé.<br />
-                        Passez à Pro pour une écoute <strong className="text-purple-400">illimitée</strong> !
+                        Utilisez un crédit pour une écoute <strong className="text-purple-400">illimitée</strong> !
                       </p>
                       
                       {/* Features */}
@@ -3099,7 +3132,7 @@ export const SessionPage: React.FC = () => {
                         data-testid="trial-limit-upgrade-btn"
                       >
                         <Rocket className="w-5 h-5" />
-                        Passer à Pro
+                        Acheter des crédits
                       </Link>
                       
                       {/* Secondary link */}

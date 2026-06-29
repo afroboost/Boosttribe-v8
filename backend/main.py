@@ -724,7 +724,10 @@ async def sync_plan(body: SyncPlanBody, authorization: Optional[str] = Header(de
 
 @app.post("/stripe/create-checkout")
 async def create_checkout(body: CheckoutBody, authorization: Optional[str] = Header(default=None)):
-    if not await apply_stripe_key():
+    # ❌ Abonnements désactivés : BoostTribe fonctionne désormais 100% en CRÉDITS.
+    #    Utiliser POST /stripe/buy-credits (paiement unique CHF) pour acheter un pack.
+    raise HTTPException(status_code=410, detail="Les abonnements ne sont plus proposés. Achetez des crédits.")
+    if not await apply_stripe_key():  # noqa: B018  (code conservé pour rollback éventuel)
         raise HTTPException(status_code=500, detail="Stripe non configuré")
     if body.plan not in PLANS:
         raise HTTPException(status_code=400, detail="Plan inconnu")
@@ -844,6 +847,318 @@ async def list_users(authorization: Optional[str] = Header(default=None)):
     # Tri par date de création décroissante (comptes récents en premier)
     rows.sort(key=lambda r: r.get("created_at") or "", reverse=True)
     return {"users": rows}
+
+
+# =========================================================================== #
+# 💳 SYSTÈME DE CRÉDITS (remplace les abonnements)
+#   1 crédit = 1 accès à un live (rejoindre OU héberger). Tout est éditable admin.
+#   Écritures du ledger via RPC service-role (add_credits / spend_credits, atomiques).
+# =========================================================================== #
+class SpendBody(BaseModel):
+    action: str          # "join" | "host"
+    session_id: str
+
+class OfferCreditsBody(BaseModel):
+    email: Optional[str] = None
+    user_id: Optional[str] = None
+    credits: int
+    note: Optional[str] = None
+
+class BuyCreditsBody(BaseModel):
+    pack_id: int
+
+class PackBody(BaseModel):
+    id: Optional[int] = None
+    name: str
+    credits: int
+    price_chf: float
+    is_highlighted: bool = False
+    audience: str = "participant"     # participant | creator
+    sort: int = 0
+    active: bool = True
+
+class PricingSettingsBody(BaseModel):
+    services_shown: Optional[List[str]] = None
+    offers: Optional[Dict[str, Any]] = None
+    cost_join: Optional[int] = None
+    cost_host: Optional[int] = None
+    credit_validity_months: Optional[int] = None
+    signup_free_credits: Optional[int] = None
+
+
+async def get_pricing_settings() -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/pricing_settings",
+            headers=_service_headers(), params={"id": "eq.default", "select": "*"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    # repli défauts si la table n'est pas encore initialisée
+    return {"services_shown": ["live", "visio", "stage", "chat"], "offers": {},
+            "cost_join": 1, "cost_host": 1, "credit_validity_months": 12, "signup_free_credits": 1}
+
+async def _credit_validity_months() -> int:
+    try:
+        return int((await get_pricing_settings()).get("credit_validity_months") or 12)
+    except Exception:  # noqa: BLE001
+        return 12
+
+async def get_credit_packs(active_only: bool = True) -> List[Dict[str, Any]]:
+    params = {"select": "*", "order": "audience.asc,sort.asc"}
+    if active_only:
+        params["active"] = "eq.true"
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/credit_packs", headers=_service_headers(), params=params)
+    return resp.json() if resp.status_code == 200 else []
+
+async def get_balance(user_id: str) -> int:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/profiles",
+            headers=_service_headers(), params={"id": f"eq.{user_id}", "select": "credits"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return int(resp.json()[0].get("credits") or 0)
+    return 0
+
+async def _rpc(fn: str, args: Dict[str, Any]) -> httpx.Response:
+    async with httpx.AsyncClient(timeout=10) as client:
+        return await client.post(f"{SUPABASE_URL}/rest/v1/rpc/{fn}", headers=_service_headers(), json=args)
+
+async def _add_credits(user_id: str, amount: int, reason: str, ref: Optional[str] = None,
+                       note: Optional[str] = None, expires_months: Optional[int] = None) -> int:
+    expires = None
+    if expires_months:
+        expires = (datetime.now(timezone.utc) + timedelta(days=30 * expires_months)).isoformat()
+    resp = await _rpc("add_credits", {"p_user": user_id, "p_amount": amount, "p_reason": reason,
+                                      "p_ref": ref, "p_note": note, "p_expires": expires})
+    if resp.status_code not in (200, 204):
+        logger.error("add_credits RPC échec: HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+        raise HTTPException(status_code=500, detail="Échec du crédit")
+    try:
+        return int(resp.json())
+    except Exception:  # noqa: BLE001
+        return await get_balance(user_id)
+
+async def _spend_credits(user_id: str, amount: int, reason: str, ref: str, note: Optional[str] = None) -> int:
+    if amount <= 0:
+        return await get_balance(user_id)
+    resp = await _rpc("spend_credits", {"p_user": user_id, "p_amount": amount, "p_reason": reason,
+                                        "p_ref": ref, "p_note": note})
+    if resp.status_code in (200, 204):
+        try:
+            return int(resp.json())
+        except Exception:  # noqa: BLE001
+            return await get_balance(user_id)
+    # P0001 'insufficient_credits' → 402
+    if "insufficient_credits" in (resp.text or ""):
+        raise HTTPException(status_code=402, detail="Crédits insuffisants")
+    logger.error("spend_credits RPC échec: HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+    raise HTTPException(status_code=500, detail="Échec du débit de crédits")
+
+
+@app.get("/credits/config")
+async def credits_config():
+    """Config publique pour la page tarifaire + l'assistant : packs actifs + réglages/offres."""
+    settings = await get_pricing_settings()
+    packs = await get_credit_packs(active_only=True)
+    return {
+        "packs": packs,
+        "services_shown": settings.get("services_shown") or [],
+        "offers": settings.get("offers") or {},
+        "cost_join": settings.get("cost_join", 1),
+        "cost_host": settings.get("cost_host", 1),
+        "credit_validity_months": settings.get("credit_validity_months", 12),
+        "signup_free_credits": settings.get("signup_free_credits", 1),
+        "currency": "CHF",
+    }
+
+@app.get("/credits/me")
+async def credits_me(authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/credit_ledger",
+            headers=_service_headers(),
+            params={"user_id": f"eq.{uid}", "select": "delta,reason,note,created_at,expires_at",
+                    "order": "created_at.desc", "limit": "50"},
+        )
+    ledger = resp.json() if resp.status_code == 200 else []
+    return {"balance": await get_balance(uid), "ledger": ledger}
+
+@app.post("/credits/signup-bonus")
+async def credits_signup_bonus(authorization: Optional[str] = Header(default=None)):
+    """1er cours offert : crédite signup_free_credits une seule fois (idempotent par user)."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    n = int((await get_pricing_settings()).get("signup_free_credits") or 0)
+    if n <= 0:
+        return {"balance": await get_balance(uid), "granted": 0}
+    bal = await _add_credits(uid, n, "signup_bonus", ref=f"signup:{uid}",
+                             note="1er cours offert", expires_months=await _credit_validity_months())
+    return {"balance": bal, "granted": n}
+
+@app.post("/credits/spend")
+async def credits_spend(body: SpendBody, authorization: Optional[str] = Header(default=None)):
+    """Débite cost_join / cost_host (atomique + idempotent par session)."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    sid = (body.session_id or "").strip()
+    if not sid or not SESSION_ID_RE.match(sid):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    settings = await get_pricing_settings()
+    if body.action == "join":
+        cost, reason = int(settings.get("cost_join", 1)), "spend_join"
+    elif body.action == "host":
+        cost, reason = int(settings.get("cost_host", 1)), "spend_host"
+    else:
+        raise HTTPException(status_code=400, detail="Action invalide")
+    bal = await _spend_credits(uid, cost, reason, ref=f"{sid}:{uid}", note=f"{body.action} {sid}")
+    return {"ok": True, "balance": bal, "spent": cost}
+
+@app.post("/stripe/buy-credits")
+async def buy_credits(body: BuyCreditsBody, authorization: Optional[str] = Header(default=None)):
+    """Checkout Stripe ONE-TIME (mode payment, CHF) pour acheter un pack de crédits."""
+    if not await apply_stripe_key():
+        raise HTTPException(status_code=500, detail="Stripe non configuré")
+    user = await get_user_from_token(authorization)
+    uid, email = user.get("id"), user.get("email")
+    packs = await get_credit_packs(active_only=True)
+    pack = next((p for p in packs if int(p["id"]) == int(body.pack_id)), None)
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack introuvable")
+    amount = round(float(pack["price_chf"]) * 100)
+    # Offre de lancement : bonus % de crédits (réglage admin)
+    settings = await get_pricing_settings()
+    launch = (settings.get("offers") or {}).get("launch") or {}
+    bonus_credits = 0
+    if launch.get("enabled") and launch.get("percent"):
+        ends = launch.get("ends_at")
+        active = True
+        if ends:
+            try:
+                active = datetime.fromisoformat(str(ends).replace("Z", "+00:00")) > datetime.now(timezone.utc)
+            except Exception:  # noqa: BLE001
+                active = True
+        if active:
+            bonus_credits = int(round(int(pack["credits"]) * float(launch["percent"]) / 100.0))
+    total_credits = int(pack["credits"]) + bonus_credits
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{
+            "price_data": {
+                "currency": "chf",
+                "unit_amount": amount,
+                "product_data": {"name": f"{pack['name']} — {total_credits} crédits BoostTribe"},
+            },
+            "quantity": 1,
+        }],
+        success_url=f"{FRONTEND_URL}/pricing?success=1",
+        cancel_url=f"{FRONTEND_URL}/pricing?canceled=1",
+        client_reference_id=uid,
+        customer_email=email,
+        metadata={"user_id": uid, "pack_id": str(pack["id"]), "credits": str(total_credits)},
+    )
+    return {"url": session.url}
+
+
+# --------------------------------------------------------------------------- #
+# 💳 ADMIN crédits : offrir des crédits + config (packs / réglages)
+# --------------------------------------------------------------------------- #
+@app.post("/admin/offer-credits")
+async def offer_credits(body: OfferCreditsBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    if not body.credits or body.credits <= 0:
+        raise HTTPException(status_code=400, detail="Nombre de crédits invalide")
+    user_id = body.user_id
+    if not user_id:
+        target = (body.email or "").strip().lower()
+        if not target:
+            raise HTTPException(status_code=400, detail="email ou user_id requis")
+        prof = await get_profile_by_email(target)
+        if prof:
+            user_id = prof["id"]
+        else:
+            au = next((u for u in await list_auth_users() if (u.get("email") or "").lower() == target), None)
+            if not au:
+                raise HTTPException(status_code=404, detail="Compte introuvable pour cet email")
+            user_id = au["id"]
+            await upsert_profile({"id": user_id, "email": target})
+    # ref unique → évite un double crédit en cas de double-clic immédiat
+    ref = f"offered:{user_id}:{int(datetime.now(timezone.utc).timestamp())}"
+    bal = await _add_credits(user_id, int(body.credits), "offered", ref=ref,
+                             note=body.note or "Crédits offerts (admin)",
+                             expires_months=await _credit_validity_months())
+    return {"ok": True, "user_id": user_id, "credits": body.credits, "balance": bal}
+
+@app.get("/admin/credit-offers")
+async def admin_credit_offers(authorization: Optional[str] = Header(default=None)):
+    """Historique des crédits offerts (qui, combien, quand, note) — enrichi de l'email."""
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/credit_ledger",
+            headers=_service_headers(),
+            params={"reason": "eq.offered", "select": "id,user_id,delta,note,created_at,expires_at",
+                    "order": "created_at.desc", "limit": "200"},
+        )
+    rows = resp.json() if resp.status_code == 200 else []
+    profiles = await fetch_profiles_map()
+    for r in rows:
+        r["email"] = (profiles.get(r.get("user_id")) or {}).get("email")
+    return {"offers": rows}
+
+@app.get("/admin/credit-config")
+async def admin_credit_config(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    return {"packs": await get_credit_packs(active_only=False), "settings": await get_pricing_settings()}
+
+@app.post("/admin/credit-packs")
+async def admin_save_pack(body: PackBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    if body.audience not in ("participant", "creator"):
+        raise HTTPException(status_code=400, detail="Audience invalide")
+    row = {"name": body.name, "credits": body.credits, "price_chf": body.price_chf,
+           "is_highlighted": body.is_highlighted, "audience": body.audience,
+           "sort": body.sort, "active": body.active, "updated_at": datetime.now(timezone.utc).isoformat()}
+    async with httpx.AsyncClient(timeout=10) as client:
+        if body.id:
+            resp = await client.patch(f"{SUPABASE_URL}/rest/v1/credit_packs",
+                                      headers=_service_headers({"Prefer": "return=representation"}),
+                                      params={"id": f"eq.{body.id}"}, json=row)
+        else:
+            resp = await client.post(f"{SUPABASE_URL}/rest/v1/credit_packs",
+                                     headers=_service_headers({"Prefer": "return=representation"}), json=row)
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Échec d'enregistrement du pack")
+    data = resp.json()
+    return {"ok": True, "pack": data[0] if isinstance(data, list) and data else data}
+
+@app.delete("/admin/credit-packs/{pack_id}")
+async def admin_delete_pack(pack_id: int, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.delete(f"{SUPABASE_URL}/rest/v1/credit_packs",
+                                   headers=_service_headers(), params={"id": f"eq.{pack_id}"})
+    return {"ok": resp.status_code in (200, 204)}
+
+@app.post("/admin/pricing-settings")
+async def admin_save_pricing_settings(body: PricingSettingsBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    patch: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    for k in ("services_shown", "offers", "cost_join", "cost_host", "credit_validity_months", "signup_free_credits"):
+        v = getattr(body, k)
+        if v is not None:
+            patch[k] = v
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.patch(f"{SUPABASE_URL}/rest/v1/pricing_settings",
+                                  headers=_service_headers({"Prefer": "return=representation"}),
+                                  params={"id": "eq.default"}, json=patch)
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Échec d'enregistrement des réglages")
+    return {"ok": True, "settings": await get_pricing_settings()}
 
 
 # --------------------------------------------------------------------------- #
@@ -1034,9 +1349,24 @@ async def stripe_webhook(request: Request):
 
     try:
         if etype == "checkout.session.completed":
-            user_id = obj.get("client_reference_id") or (obj.get("metadata") or {}).get("user_id")
-            plan = (obj.get("metadata") or {}).get("plan")
-            if user_id and plan in PLANS:
+            meta = obj.get("metadata") or {}
+            user_id = obj.get("client_reference_id") or meta.get("user_id")
+            # 💳 NOUVEAU MODÈLE : achat de PACK de CRÉDITS (mode payment). Idempotent sur l'event id.
+            credits = meta.get("credits")
+            if user_id and credits:
+                try:
+                    months = await _credit_validity_months()
+                    await _add_credits(
+                        user_id, int(credits), "purchase",
+                        ref=f"stripe:{event.get('id')}",
+                        note=f"Achat pack {meta.get('pack_id')}",
+                        expires_months=months,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("crédit achat échoué (user=%s): %s", user_id, exc)
+            # (Ancien modèle abonnement — conservé pour compat, plus utilisé par le front)
+            plan = meta.get("plan")
+            if user_id and plan in PLANS and not credits:
                 await update_profile(
                     user_id,
                     {

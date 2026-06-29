@@ -5,7 +5,11 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
-import { syncPlan, grantAccess, revokeAccess, listGranted, listUsers, GrantedRow, AdminUser, getStripeKeys, saveStripeKeys } from "@/lib/paymentApi";
+import { syncPlan, listUsers, AdminUser, getStripeKeys, saveStripeKeys } from "@/lib/paymentApi";
+import {
+  offerCredits, listCreditOffers, getCreditAdminConfig, saveCreditPack, deleteCreditPack, savePricingSettings,
+  type CreditOfferRow, type CreditPack, type PricingSettings,
+} from "@/lib/paymentApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -39,7 +43,9 @@ import {
   Crown,
   Users,
   Search,
-  Download
+  Download,
+  Coins,
+  Plus
 } from "lucide-react";
 
 // Site settings interface - matches Supabase table
@@ -179,7 +185,7 @@ const Dashboard: React.FC = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
-  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'access' | 'users'>('identity');
+  const [activeTab, setActiveTab] = useState<'identity' | 'colors' | 'buttons' | 'stripe' | 'plans' | 'credits' | 'access' | 'users'>('identity');
 
   // D : liste de tous les utilisateurs
   const [usersList, setUsersList] = useState<AdminUser[]>([]);
@@ -233,66 +239,126 @@ const Dashboard: React.FC = () => {
     else showToast(error || 'Clé secrète non configurée', 'warning');
   }, [revealedSecret, showToast]);
 
-  // POINT 6 : état de la section "Accès offerts"
-  const [grantEmail, setGrantEmail] = useState('');
-  const [grantPlan, setGrantPlan] = useState<'pro' | 'enterprise'>('pro');
-  const [grantDuration, setGrantDuration] = useState<'1m' | '3m' | '6m' | '1y' | 'custom'>('1m');
-  const [grantCustomDate, setGrantCustomDate] = useState('');
-  const [granting, setGranting] = useState(false);
-  const [grantedList, setGrantedList] = useState<GrantedRow[]>([]);
+  // ===========================================================================
+  // 💳 CRÉDITS OFFERTS (admin) — remplace "Accès offerts"
+  // ===========================================================================
+  const [offerEmail, setOfferEmail] = useState('');
+  const [offerAmount, setOfferAmount] = useState(1);
+  const [offerNote, setOfferNote] = useState('');
+  const [offering, setOffering] = useState(false);
+  const [creditOffers, setCreditOffers] = useState<CreditOfferRow[]>([]);
 
-  const computeUntil = useCallback((): string | null => {
-    if (grantDuration === 'custom') {
-      if (!grantCustomDate) return null;
-      const d = new Date(grantCustomDate);
-      return isNaN(d.getTime()) ? null : d.toISOString();
-    }
-    const now = new Date();
-    const monthsMap: Record<string, number> = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 };
-    now.setMonth(now.getMonth() + (monthsMap[grantDuration] || 1));
-    return now.toISOString();
-  }, [grantDuration, grantCustomDate]);
-
-  const refreshGranted = useCallback(async () => {
-    const { granted, error } = await listGranted();
-    if (error) {
-      showToast(`Liste des accès : ${error}`, 'error');
-      return;
-    }
-    setGrantedList(granted);
+  const refreshCreditOffers = useCallback(async () => {
+    const { offers, error } = await listCreditOffers();
+    if (error) { showToast(`Historique crédits : ${error}`, 'error'); return; }
+    setCreditOffers(offers);
   }, [showToast]);
 
-  const handleGrantAccess = useCallback(async () => {
-    const email = grantEmail.trim().toLowerCase();
+  const handleOfferCredits = useCallback(async () => {
+    const email = offerEmail.trim().toLowerCase();
     if (!email) { showToast('Renseignez un email', 'warning'); return; }
-    const until = computeUntil();
-    if (!until) { showToast('Date de validité invalide', 'warning'); return; }
-
-    setGranting(true);
+    if (!offerAmount || offerAmount <= 0) { showToast('Nombre de crédits invalide', 'warning'); return; }
+    setOffering(true);
     try {
-      const { ok, error } = await grantAccess({ email, plan: grantPlan, until });
+      const { ok, error } = await offerCredits({ email, credits: offerAmount, note: offerNote.trim() || undefined });
       if (ok) {
-        showToast(`Accès ${grantPlan} accordé à ${email}`, 'success');
-        setGrantEmail('');
-        await refreshGranted();
+        showToast(`${offerAmount} crédit(s) offert(s) à ${email}`, 'success');
+        setOfferEmail(''); setOfferNote(''); setOfferAmount(1);
+        await refreshCreditOffers();
       } else {
-        showToast(error || 'Échec de l\'attribution', 'error');
+        showToast(error || "Échec de l'attribution", 'error');
       }
     } finally {
-      setGranting(false);
+      setOffering(false);
     }
-  }, [grantEmail, grantPlan, computeUntil, refreshGranted, showToast]);
+  }, [offerEmail, offerAmount, offerNote, refreshCreditOffers, showToast]);
 
-  const handleRevokeAccess = useCallback(async (userId: string, email: string) => {
-    if (!window.confirm(`Révoquer l'accès offert de ${email} ?`)) return;
-    const { ok, error } = await revokeAccess(userId);
-    if (ok) {
-      showToast(`Accès révoqué pour ${email}`, 'success');
-      await refreshGranted();
-    } else {
-      showToast(error || 'Échec de la révocation', 'error');
+  // ===========================================================================
+  // 💳 CRÉDITS & TARIFS (admin) — packs + réglages (coûts, validité, offres, services)
+  // ===========================================================================
+  const [creditPacks, setCreditPacks] = useState<CreditPack[]>([]);
+  const [pricingSettings, setPricingSettings] = useState<PricingSettings | null>(null);
+  const [creditCfgLoading, setCreditCfgLoading] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const blankPack: Partial<CreditPack> = { name: '', credits: 1, price_chf: 9, is_highlighted: false, audience: 'participant', sort: 0, active: true };
+  const [packDraft, setPackDraft] = useState<Partial<CreditPack>>(blankPack);
+
+  const refreshCreditConfig = useCallback(async () => {
+    setCreditCfgLoading(true);
+    try {
+      const { packs, settings, error } = await getCreditAdminConfig();
+      if (error) { showToast(`Config crédits : ${error}`, 'error'); return; }
+      setCreditPacks(packs);
+      setPricingSettings(settings);
+    } finally {
+      setCreditCfgLoading(false);
     }
-  }, [refreshGranted, showToast]);
+  }, [showToast]);
+
+  const handleSavePack = useCallback(async () => {
+    const d = packDraft;
+    if (!d.name || !d.name.trim()) { showToast('Nom du pack requis', 'warning'); return; }
+    if (!d.credits || d.credits <= 0) { showToast('Crédits invalides', 'warning'); return; }
+    const { ok, error } = await saveCreditPack({
+      id: d.id, name: d.name.trim(), credits: Number(d.credits), price_chf: Number(d.price_chf),
+      is_highlighted: !!d.is_highlighted, audience: (d.audience as any) || 'participant',
+      sort: Number(d.sort) || 0, active: d.active !== false,
+    });
+    if (ok) {
+      showToast(d.id ? 'Pack mis à jour' : 'Pack créé', 'success');
+      setPackDraft(blankPack);
+      await refreshCreditConfig();
+    } else {
+      showToast(error || 'Échec', 'error');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [packDraft, refreshCreditConfig, showToast]);
+
+  const handleDeletePack = useCallback(async (pack: CreditPack) => {
+    if (!window.confirm(`Supprimer le pack « ${pack.name} » ?`)) return;
+    const { ok, error } = await deleteCreditPack(pack.id);
+    if (ok) { showToast('Pack supprimé', 'success'); await refreshCreditConfig(); }
+    else showToast(error || 'Échec', 'error');
+  }, [refreshCreditConfig, showToast]);
+
+  const handleSavePricingSettings = useCallback(async () => {
+    if (!pricingSettings) return;
+    setSavingSettings(true);
+    try {
+      const { ok, error, settings } = await savePricingSettings({
+        cost_join: pricingSettings.cost_join,
+        cost_host: pricingSettings.cost_host,
+        credit_validity_months: pricingSettings.credit_validity_months,
+        signup_free_credits: pricingSettings.signup_free_credits,
+        services_shown: pricingSettings.services_shown,
+        offers: pricingSettings.offers,
+      });
+      if (ok) { showToast('Réglages enregistrés', 'success'); if (settings) setPricingSettings(settings); }
+      else showToast(error || 'Échec', 'error');
+    } finally {
+      setSavingSettings(false);
+    }
+  }, [pricingSettings, showToast]);
+
+  const ALL_SERVICES: { key: string; label: string }[] = [
+    { key: 'live', label: 'Lives audio' },
+    { key: 'visio', label: 'Live Visio' },
+    { key: 'stage', label: 'Scène / co-animation' },
+    { key: 'chat', label: 'Chat en direct' },
+  ];
+  const toggleService = (key: string) => {
+    if (!pricingSettings) return;
+    const cur = pricingSettings.services_shown || [];
+    const next = cur.includes(key) ? cur.filter((s) => s !== key) : [...cur, key];
+    setPricingSettings({ ...pricingSettings, services_shown: next });
+  };
+  const toggleOffer = (key: string) => {
+    if (!pricingSettings) return;
+    const offers = { ...(pricingSettings.offers || {}) };
+    const cur = offers[key] || {};
+    offers[key] = { ...cur, enabled: !cur.enabled };
+    setPricingSettings({ ...pricingSettings, offers });
+  };
 
   // D : charger tous les utilisateurs
   const refreshUsers = useCallback(async () => {
@@ -335,10 +401,11 @@ const Dashboard: React.FC = () => {
 
   // Charger la liste quand on ouvre les onglets concernés
   useEffect(() => {
-    if (activeTab === 'access') { refreshGranted(); refreshUsers(); }
+    if (activeTab === 'access') { refreshCreditOffers(); refreshUsers(); }
+    if (activeTab === 'credits') refreshCreditConfig();
     if (activeTab === 'users') refreshUsers();
     if (activeTab === 'stripe') loadStripeKeys();
-  }, [activeTab, refreshGranted, refreshUsers, loadStripeKeys]);
+  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshUsers, loadStripeKeys]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -775,9 +842,9 @@ const Dashboard: React.FC = () => {
             { id: 'identity', label: 'Identité', icon: <Type size={16} /> },
             { id: 'colors', label: 'Couleurs', icon: <Palette size={16} /> },
             { id: 'buttons', label: 'Boutons & Stats', icon: <Settings size={16} /> },
-            { id: 'stripe', label: 'Liens Stripe', icon: <CreditCard size={16} /> },
-            { id: 'plans', label: 'Plans & Prix', icon: <DollarSign size={16} /> },
-            { id: 'access', label: 'Accès offerts', icon: <Gift size={16} /> },
+            { id: 'stripe', label: 'Clés Stripe', icon: <CreditCard size={16} /> },
+            { id: 'credits', label: 'Crédits & Tarifs', icon: <Coins size={16} /> },
+            { id: 'access', label: 'Crédits offerts', icon: <Gift size={16} /> },
             { id: 'users', label: 'Utilisateurs', icon: <Users size={16} /> },
           ].map(tab => (
             <Button
@@ -1284,128 +1351,291 @@ const Dashboard: React.FC = () => {
         )}
 
         {/* POINT 6 : Accès offerts Tab */}
+        {/* 💳 Crédits & Tarifs : packs + réglages (tout éditable) */}
+        {activeTab === 'credits' && (
+          <div className="space-y-6">
+            {/* Réglages globaux */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Settings size={20} style={{ color: '#FF2DAA' }} />
+                  Réglages des crédits
+                </CardTitle>
+                <CardDescription className="text-white/50">
+                  Coût d'un accès, validité, 1er cours offert, offres et services affichés. 1 crédit = 1 accès à un live.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {creditCfgLoading || !pricingSettings ? (
+                  <p className="text-white/40 text-sm py-4 text-center">Chargement…</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                      <div>
+                        <Label className="text-white/70">Coût rejoindre</Label>
+                        <Input type="number" min={0} value={pricingSettings.cost_join}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, cost_join: parseInt(e.target.value) || 0 })}
+                          className="bg-white/5 border-white/10 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/70">Coût animer</Label>
+                        <Input type="number" min={0} value={pricingSettings.cost_host}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, cost_host: parseInt(e.target.value) || 0 })}
+                          className="bg-white/5 border-white/10 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/70">Validité (mois)</Label>
+                        <Input type="number" min={1} value={pricingSettings.credit_validity_months}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, credit_validity_months: parseInt(e.target.value) || 1 })}
+                          className="bg-white/5 border-white/10 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/70">1er cours offert</Label>
+                        <Input type="number" min={0} value={pricingSettings.signup_free_credits}
+                          onChange={(e) => setPricingSettings({ ...pricingSettings, signup_free_credits: parseInt(e.target.value) || 0 })}
+                          className="bg-white/5 border-white/10 text-white" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label className="text-white/70">Services affichés sur la page tarifaire</Label>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {ALL_SERVICES.map((s) => {
+                          const on = (pricingSettings.services_shown || []).includes(s.key);
+                          return (
+                            <Button key={s.key} size="sm" variant={on ? 'default' : 'outline'}
+                              onClick={() => toggleService(s.key)}
+                              className={on ? 'text-white border-0' : 'border-white/20 text-white/70'}
+                              style={on ? { background: 'linear-gradient(135deg,#D91CD2,#FF2DAA)' } : {}}>
+                              {on ? <Check size={14} className="mr-1" /> : null}{s.label}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <Label className="text-white/70">Offres affichées</Label>
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {Object.entries(pricingSettings.offers || {}).map(([key, o]: [string, any]) => (
+                          <Button key={key} size="sm" variant={o?.enabled ? 'default' : 'outline'}
+                            onClick={() => toggleOffer(key)}
+                            className={o?.enabled ? 'text-white border-0' : 'border-white/20 text-white/70'}
+                            style={o?.enabled ? { background: 'linear-gradient(135deg,#D91CD2,#FF2DAA)' } : {}}>
+                            {o?.enabled ? <Check size={14} className="mr-1" /> : null}{o?.title || key}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <Button onClick={handleSavePricingSettings} disabled={savingSettings}
+                      className="text-white border-0" style={{ background: 'linear-gradient(135deg,#D91CD2,#FF2DAA)' }}>
+                      <Save size={16} className="mr-2" />{savingSettings ? 'Enregistrement…' : 'Enregistrer les réglages'}
+                    </Button>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Packs */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Coins size={20} style={{ color: '#FF2DAA' }} />
+                  Packs de crédits
+                </CardTitle>
+                <CardDescription className="text-white/50">
+                  Crée, modifie, supprime et ordonne les packs proposés sur la page tarifaire (en CHF).
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Éditeur de pack */}
+                <div className="p-4 rounded-lg bg-white/5 border border-white/10 space-y-4">
+                  <h3 className="text-white font-medium">{packDraft.id ? 'Modifier le pack' : 'Nouveau pack'}</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-white/70">Nom</Label>
+                      <Input value={packDraft.name || ''} onChange={(e) => setPackDraft({ ...packDraft, name: e.target.value })}
+                        placeholder="Découverte" className="bg-white/5 border-white/10 text-white" />
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Audience</Label>
+                      <div className="flex gap-2 mt-1">
+                        {(['participant', 'creator'] as const).map((a) => (
+                          <Button key={a} size="sm" variant={packDraft.audience === a ? 'default' : 'outline'}
+                            onClick={() => setPackDraft({ ...packDraft, audience: a })}
+                            className={packDraft.audience === a ? 'bg-purple-500 text-white' : 'border-white/20 text-white/70'}>
+                            {a === 'participant' ? 'Participer' : 'Animer'}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Crédits</Label>
+                      <Input type="number" min={1} value={packDraft.credits ?? 1}
+                        onChange={(e) => setPackDraft({ ...packDraft, credits: parseInt(e.target.value) || 1 })}
+                        className="bg-white/5 border-white/10 text-white" />
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Prix (CHF)</Label>
+                      <Input type="number" min={0} step="0.5" value={packDraft.price_chf ?? 0}
+                        onChange={(e) => setPackDraft({ ...packDraft, price_chf: parseFloat(e.target.value) || 0 })}
+                        className="bg-white/5 border-white/10 text-white" />
+                    </div>
+                    <div>
+                      <Label className="text-white/70">Ordre</Label>
+                      <Input type="number" value={packDraft.sort ?? 0}
+                        onChange={(e) => setPackDraft({ ...packDraft, sort: parseInt(e.target.value) || 0 })}
+                        className="bg-white/5 border-white/10 text-white" />
+                    </div>
+                    <div className="flex items-end gap-4">
+                      <label className="flex items-center gap-2 text-white/70 text-sm cursor-pointer">
+                        <input type="checkbox" checked={!!packDraft.is_highlighted}
+                          onChange={(e) => setPackDraft({ ...packDraft, is_highlighted: e.target.checked })} />
+                        Populaire
+                      </label>
+                      <label className="flex items-center gap-2 text-white/70 text-sm cursor-pointer">
+                        <input type="checkbox" checked={packDraft.active !== false}
+                          onChange={(e) => setPackDraft({ ...packDraft, active: e.target.checked })} />
+                        Actif
+                      </label>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={handleSavePack} className="text-white border-0"
+                      style={{ background: 'linear-gradient(135deg,#D91CD2,#FF2DAA)' }}>
+                      <Plus size={16} className="mr-2" />{packDraft.id ? 'Mettre à jour' : 'Créer le pack'}
+                    </Button>
+                    {packDraft.id && (
+                      <Button variant="outline" onClick={() => setPackDraft(blankPack)} className="border-white/20 text-white/70">
+                        Annuler
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Liste des packs */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-white font-medium">Packs ({creditPacks.length})</h3>
+                    <Button size="sm" variant="outline" onClick={refreshCreditConfig} className="border-white/20 text-white/70">
+                      <RefreshCw size={14} className="mr-1" /> Actualiser
+                    </Button>
+                  </div>
+                  {creditPacks.length === 0 ? (
+                    <p className="text-white/40 text-sm py-4 text-center">Aucun pack. Créez-en un ci-dessus.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+                      {creditPacks.map((p) => (
+                        <div key={p.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
+                          <div className="min-w-0">
+                            <p className="text-white text-sm truncate">
+                              {p.name} {p.is_highlighted && <span className="text-xs" style={{ color: '#FF2DAA' }}>★</span>}
+                              {!p.active && <span className="text-white/30 text-xs ml-1">(inactif)</span>}
+                            </p>
+                            <p className="text-white/50 text-xs">
+                              {p.credits} crédit(s) · {Number(p.price_chf).toFixed(2)} CHF · {p.audience === 'creator' ? 'Animer' : 'Participer'} · ordre {p.sort}
+                            </p>
+                          </div>
+                          <div className="flex gap-2 flex-shrink-0">
+                            <Button size="sm" variant="outline" onClick={() => setPackDraft(p)} className="border-white/20 text-white/70">
+                              Modifier
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => handleDeletePack(p)}
+                              className="border-red-500/30 text-red-400 hover:bg-red-500/10">
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* 💳 Crédits offerts (admin) */}
         {activeTab === 'access' && (
           <Card className="bg-white/5 border-white/10">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <Gift size={20} className="text-purple-400" />
-                Accès offerts
+                Crédits offerts
               </CardTitle>
               <CardDescription className="text-white/50">
-                Offrez un accès Pro ou Enterprise à un compte, pour une durée définie.
+                Créditez gratuitement le compte d'un utilisateur (email + nombre de crédits + note).
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              {/* Formulaire d'attribution */}
+              {/* Formulaire */}
               <div className="p-4 rounded-lg bg-white/5 border border-white/10 space-y-4">
                 <div>
                   <Label className="text-white/70">Compte (recherche par nom ou email)</Label>
                   <Input
-                    value={grantEmail}
-                    onChange={(e) => setGrantEmail(e.target.value)}
+                    value={offerEmail}
+                    onChange={(e) => setOfferEmail(e.target.value)}
                     placeholder="utilisateur@email.com"
                     type="text"
-                    list="grant-users-datalist"
+                    list="offer-users-datalist"
                     className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
                   />
-                  {/* D : suggestions basées sur la liste de tous les utilisateurs */}
-                  <datalist id="grant-users-datalist">
+                  <datalist id="offer-users-datalist">
                     {usersList.map((u) => (
                       <option key={u.id} value={u.email}>{u.full_name ? `${u.full_name} — ${u.email}` : u.email}</option>
                     ))}
                   </datalist>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
-                    <Label className="text-white/70">Plan</Label>
-                    <div className="flex gap-2 mt-1">
-                      {(['pro', 'enterprise'] as const).map((p) => (
-                        <Button
-                          key={p}
-                          variant={grantPlan === p ? 'default' : 'outline'}
-                          onClick={() => setGrantPlan(p)}
-                          className={grantPlan === p ? 'bg-purple-500 text-white' : 'border-white/20 text-white/70'}
-                        >
-                          {p === 'pro' ? <Crown size={14} className="mr-1" /> : <Building2 size={14} className="mr-1" />}
-                          {p === 'pro' ? 'Pro' : 'Enterprise'}
-                        </Button>
-                      ))}
-                    </div>
+                    <Label className="text-white/70">Nombre de crédits</Label>
+                    <Input type="number" min={1} value={offerAmount}
+                      onChange={(e) => setOfferAmount(parseInt(e.target.value) || 1)}
+                      className="bg-white/5 border-white/10 text-white" />
                   </div>
-
-                  <div>
-                    <Label className="text-white/70">Durée de validité</Label>
-                    <div className="flex flex-wrap gap-2 mt-1">
-                      {([
-                        { id: '1m', label: '1 mois' },
-                        { id: '3m', label: '3 mois' },
-                        { id: '6m', label: '6 mois' },
-                        { id: '1y', label: '1 an' },
-                        { id: 'custom', label: 'Date…' },
-                      ] as const).map((d) => (
-                        <Button
-                          key={d.id}
-                          size="sm"
-                          variant={grantDuration === d.id ? 'default' : 'outline'}
-                          onClick={() => setGrantDuration(d.id)}
-                          className={grantDuration === d.id ? 'bg-purple-500 text-white' : 'border-white/20 text-white/70'}
-                        >
-                          {d.label}
-                        </Button>
-                      ))}
-                    </div>
-                    {grantDuration === 'custom' && (
-                      <Input
-                        value={grantCustomDate}
-                        onChange={(e) => setGrantCustomDate(e.target.value)}
-                        type="date"
-                        className="mt-2 bg-white/5 border-white/10 text-white"
-                      />
-                    )}
+                  <div className="sm:col-span-2">
+                    <Label className="text-white/70">Note (optionnel)</Label>
+                    <Input value={offerNote} onChange={(e) => setOfferNote(e.target.value)}
+                      placeholder="Cadeau de bienvenue…"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30" />
                   </div>
                 </div>
 
                 <Button
-                  onClick={handleGrantAccess}
-                  disabled={granting}
+                  onClick={handleOfferCredits}
+                  disabled={offering}
                   className="w-full text-white border-none"
-                  style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
                 >
-                  <Gift size={16} className="mr-2" />
-                  {granting ? 'Attribution…' : 'Accorder l\'accès'}
+                  <Coins size={16} className="mr-2" />
+                  {offering ? 'Attribution…' : 'Offrir les crédits'}
                 </Button>
               </div>
 
-              {/* Liste des accès offerts actifs */}
+              {/* Historique des crédits offerts */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-white font-medium">Accès actifs ({grantedList.length})</h3>
-                  <Button size="sm" variant="outline" onClick={refreshGranted} className="border-white/20 text-white/70">
+                  <h3 className="text-white font-medium">Historique ({creditOffers.length})</h3>
+                  <Button size="sm" variant="outline" onClick={refreshCreditOffers} className="border-white/20 text-white/70">
                     <RefreshCw size={14} className="mr-1" /> Actualiser
                   </Button>
                 </div>
-                {grantedList.length === 0 ? (
-                  <p className="text-white/40 text-sm py-4 text-center">Aucun accès offert actif.</p>
+                {creditOffers.length === 0 ? (
+                  <p className="text-white/40 text-sm py-4 text-center">Aucun crédit offert pour le moment.</p>
                 ) : (
                   <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
-                    {grantedList.map((g) => (
-                      <div key={g.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
+                    {creditOffers.map((o) => (
+                      <div key={o.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
                         <div className="min-w-0">
-                          <p className="text-white text-sm truncate">{g.email}</p>
+                          <p className="text-white text-sm truncate">{o.email || o.user_id}</p>
                           <p className="text-white/50 text-xs">
-                            {g.comp_access_plan === 'enterprise' ? 'Enterprise' : 'Pro'}
-                            {g.comp_access_until ? ` · expire le ${new Date(g.comp_access_until).toLocaleDateString()}` : ''}
+                            +{o.delta} crédit(s) · {new Date(o.created_at).toLocaleDateString()}
+                            {o.note ? ` · ${o.note}` : ''}
                           </p>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleRevokeAccess(g.id, g.email)}
-                          className="border-red-500/30 text-red-400 hover:bg-red-500/10 flex-shrink-0"
-                        >
-                          <Trash2 size={14} className="mr-1" /> Révoquer
-                        </Button>
+                        <Badge className="bg-white/10 text-white border-white/20 flex-shrink-0">+{o.delta}</Badge>
                       </div>
                     ))}
                   </div>

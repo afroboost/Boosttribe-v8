@@ -78,8 +78,200 @@ export async function createCheckout(
   }
 }
 
+// ===========================================================================
+// 💳 CRÉDITS (nouveau modèle — remplace les abonnements)
+// ===========================================================================
+export interface CreditPack {
+  id: number;
+  name: string;
+  credits: number;
+  price_chf: number;
+  currency: string;
+  is_highlighted: boolean;
+  audience: 'participant' | 'creator';
+  sort: number;
+  active: boolean;
+}
+
+export interface CreditsConfig {
+  packs: CreditPack[];
+  services_shown: string[];
+  offers: Record<string, any>;
+  cost_join: number;
+  cost_host: number;
+  credit_validity_months: number;
+  signup_free_credits: number;
+  currency: string;
+}
+
+/** Config publique (page tarifaire + assistant) : packs actifs + offres + réglages. */
+export async function getCreditsConfig(): Promise<{ data?: CreditsConfig; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée (REACT_APP_API_URL)' };
+  try {
+    const res = await fetch(`${API_URL}/credits/config`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as CreditsConfig };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+export interface LedgerRow {
+  delta: number;
+  reason: string;
+  note: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+/** Solde + historique récent de l'utilisateur connecté. */
+export async function getMyCredits(): Promise<{ balance: number; ledger: LedgerRow[]; error?: string }> {
+  if (!API_URL) return { balance: 0, ledger: [], error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { balance: 0, ledger: [] };
+  try {
+    const res = await fetch(`${API_URL}/credits/me`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { balance: 0, ledger: [], error: data?.detail || `Erreur ${res.status}` };
+    return { balance: data.balance || 0, ledger: data.ledger || [] };
+  } catch (e) {
+    return { balance: 0, ledger: [], error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Réclame le 1er cours offert (idempotent côté backend). */
+export async function claimSignupBonus(): Promise<{ balance?: number; granted?: number; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/credits/signup-bonus`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { balance: data.balance, granted: data.granted };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Débite un crédit pour rejoindre (join) ou animer (host) un live. 402 si solde insuffisant. */
+export async function spendCredit(
+  action: 'join' | 'host',
+  sessionId: string,
+): Promise<{ ok: boolean; balance?: number; spent?: number; insufficient?: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Connectez-vous' };
+  try {
+    const res = await fetch(`${API_URL}/credits/spend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, session_id: sessionId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 402) return { ok: false, insufficient: true, error: data?.detail || 'Crédits insuffisants' };
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: true, balance: data.balance, spent: data.spent };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Achat d'un pack de crédits → URL Stripe Checkout (paiement unique CHF). */
+export async function buyCredits(packId: number): Promise<{ url?: string; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Connectez-vous pour acheter des crédits' };
+  try {
+    const res = await fetch(`${API_URL}/stripe/buy-credits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ pack_id: packId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { url: data.url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+// ---- Admin crédits : offrir des crédits + config (packs / réglages) --------
+export interface CreditOfferRow {
+  id: number;
+  user_id: string;
+  email: string | null;
+  delta: number;
+  note: string | null;
+  created_at: string;
+  expires_at: string | null;
+}
+
+export async function offerCredits(payload: {
+  email?: string;
+  user_id?: string;
+  credits: number;
+  note?: string;
+}): Promise<{ ok: boolean; balance?: number; error?: string }> {
+  const { data, error } = await adminFetch('/admin/offer-credits', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok, balance: data?.balance };
+}
+
+export async function listCreditOffers(): Promise<{ offers: CreditOfferRow[]; error?: string }> {
+  const { data, error } = await adminFetch('/admin/credit-offers', { method: 'GET' });
+  if (error) return { offers: [], error };
+  return { offers: (data?.offers || []) as CreditOfferRow[] };
+}
+
+export interface PricingSettings {
+  services_shown: string[];
+  offers: Record<string, any>;
+  cost_join: number;
+  cost_host: number;
+  credit_validity_months: number;
+  signup_free_credits: number;
+}
+
+export async function getCreditAdminConfig(): Promise<{ packs: CreditPack[]; settings: PricingSettings | null; error?: string }> {
+  const { data, error } = await adminFetch('/admin/credit-config', { method: 'GET' });
+  if (error) return { packs: [], settings: null, error };
+  return { packs: (data?.packs || []) as CreditPack[], settings: (data?.settings || null) as PricingSettings | null };
+}
+
+export async function saveCreditPack(pack: Partial<CreditPack> & { name: string; credits: number; price_chf: number }): Promise<{ ok: boolean; pack?: CreditPack; error?: string }> {
+  const { data, error } = await adminFetch('/admin/credit-packs', {
+    method: 'POST',
+    body: JSON.stringify(pack),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok, pack: data?.pack };
+}
+
+export async function deleteCreditPack(packId: number): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch(`/admin/credit-packs/${packId}`, { method: 'DELETE' });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
+}
+
+export async function savePricingSettings(settings: Partial<PricingSettings>): Promise<{ ok: boolean; settings?: PricingSettings; error?: string }> {
+  const { data, error } = await adminFetch('/admin/pricing-settings', {
+    method: 'POST',
+    body: JSON.stringify(settings),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok, settings: data?.settings };
+}
+
 // ---------------------------------------------------------------------------
-// POINT 6 : accès offerts (admin)
+// POINT 6 : accès offerts (admin) — DÉPRÉCIÉ (conservé pour compat)
 // ---------------------------------------------------------------------------
 export interface GrantedRow {
   id: string;

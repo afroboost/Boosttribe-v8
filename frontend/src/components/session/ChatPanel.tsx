@@ -134,14 +134,14 @@ const ProLock: React.FC<{ gradient: string }> = ({ gradient }) => (
     <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-4">
       <Lock className="w-8 h-8 text-white/50" />
     </div>
-    <h3 className="text-white font-semibold mb-2">Le chat (groupé et privé) est réservé aux membres Pro</h3>
-    <p className="text-white/60 text-sm mb-4">Passez à Pro ou Enterprise pour discuter avec le groupe et en privé.</p>
+    <h3 className="text-white font-semibold mb-2">Le chat (groupé et privé) nécessite des crédits</h3>
+    <p className="text-white/60 text-sm mb-4">Procurez-vous des crédits pour discuter avec le groupe et en privé.</p>
     <a
       href="/pricing"
       className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
       style={{ background: gradient }}
     >
-      Passer à Pro
+      Acheter des crédits
     </a>
   </div>
 );

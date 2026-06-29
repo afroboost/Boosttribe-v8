@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
+import { claimSignupBonus, getMyCredits } from '@/lib/paymentApi';
 
 // Types
 export type UserRole = 'user' | 'admin';
@@ -14,7 +15,9 @@ export interface UserProfile {
   role: UserRole;
   subscription_status: SubscriptionStatus;
   has_accepted_terms: boolean;
-  // POINT 6 : accès offert par l'admin (colonnes déjà créées côté serveur)
+  // 💳 Solde de crédits (colonne maintenue par trigger côté Supabase). 1 crédit = 1 accès à un live.
+  credits?: number;
+  // POINT 6 : accès offert par l'admin (DÉPRÉCIÉ — conservé pour compat migration)
   comp_access_until?: string | null;
   comp_access_plan?: SubscriptionStatus | string | null;
   created_at: string;
@@ -34,6 +37,10 @@ export interface AuthContextValue {
   isSubscribed: boolean;
   isFree: boolean; // utilisateur gratuit : ni Pro/Enterprise, ni accès offert, ni admin
   hasAcceptedTerms: boolean;
+  // 💳 Crédits : solde courant + raccourci hasCredits (solde > 0)
+  credits: number;
+  hasCredits: boolean;
+  refreshCredits: () => Promise<void>;
   // POINT 6 : plan EFFECTIF (abonnement payant OU accès offert actif) + accès offert actif
   effectivePlan: SubscriptionStatus;
   compActive: boolean;
@@ -113,10 +120,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : profile?.subscription_status || 'none'
   ) as SubscriptionStatus;
 
-  // 🔒 FIX: Un utilisateur non connecté ou sans profil n'est PAS abonné.
-  // Abonné si : admin, OU accès offert actif, OU plan effectif payant (≠ none/trial).
-  const isSubscribed = isAdmin || compActive || (profile !== null && effectivePlan !== 'none' && effectivePlan !== 'trial');
-  // Gratuit = pas d'abonnement payant ni admin ni accès offert (les anonymes comptent comme gratuits)
+  // 💳 Solde de crédits courant (0 si anonyme/sans profil). 1 crédit = 1 accès à un live.
+  const credits = Math.max(0, Number(profile?.credits ?? 0));
+  const hasCredits = isAdmin || credits > 0;
+
+  // 🔒 Accès aux fonctionnalités « premium » : admin, OU possède des crédits,
+  // OU (legacy) accès offert/abonnement encore actif — pour ne casser aucun gate existant.
+  const isSubscribed =
+    isAdmin ||
+    hasCredits ||
+    compActive ||
+    (profile !== null && effectivePlan !== 'none' && effectivePlan !== 'trial');
+  // Gratuit = aucun crédit, ni admin, ni accès legacy actif (les anonymes comptent comme gratuits)
   const isFree = !isSubscribed;
   const hasAcceptedTerms = isAdmin || (profile?.has_accepted_terms ?? false);
   const trackLimit = isAdmin ? -1 : (TRACK_LIMITS[effectivePlan] ?? TRACK_LIMITS.none);
@@ -233,6 +248,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setProfile(updatedProfile);
     }
   }, [user, fetchProfile]);
+
+  // 💳 Rafraîchit uniquement le solde de crédits (après achat/dépense) sans recharger tout le profil.
+  const refreshCredits = useCallback(async (): Promise<void> => {
+    if (!user) return;
+    const { balance } = await getMyCredits();
+    setProfile((prev) => (prev ? { ...prev, credits: balance } : prev));
+  }, [user]);
 
   // Sign in with email - using Supabase SDK only
   const signInWithEmail = useCallback(async (email: string, password: string) => {
@@ -619,6 +641,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, [fetchProfile, isAdminEmail, createInstantAdminProfile, createLocalProfile]);
 
+  // 💳 1er cours offert : réclame le bonus d'inscription une fois (idempotent côté backend).
+  // Le backend ne crédite qu'une seule fois par utilisateur (ref=signup:<uid>).
+  useEffect(() => {
+    if (!user || isAdmin) return;
+    const key = `bt_signup_bonus_${user.id}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
+    (async () => {
+      try {
+        const res = await claimSignupBonus();
+        if (res.granted && res.granted > 0) {
+          setProfile((prev) => (prev ? { ...prev, credits: res.balance ?? prev.credits } : prev));
+        }
+      } catch {
+        /* silencieux : ne bloque jamais l'auth */
+      }
+    })();
+  }, [user, isAdmin]);
+
   const value: AuthContextValue = {
     user,
     profile,
@@ -629,6 +670,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isSubscribed,
     isFree,
     hasAcceptedTerms,
+    credits,
+    hasCredits,
+    refreshCredits,
     effectivePlan,
     compActive,
     trackLimit,

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Lock } from 'lucide-react';
+import { getCreditsConfig, type CreditsConfig } from '@/lib/paymentApi';
 
 interface Message {
   id: string;
@@ -8,11 +9,12 @@ interface Message {
   timestamp: number;
 }
 
-// 🧠 Connaissances de l'assistant Boosttribe — à jour (réponses pré-écrites, 100% front).
+// 🧠 Connaissances de l'assistant BoostTribe — système de CRÉDITS (1 crédit = 1 accès à un live).
+// Les textes "crédits/tarifs" sont enrichis dynamiquement depuis la config admin (getCreditsConfig).
 const BOT_RESPONSES: Record<string, string[]> = {
   default: [
-    "Bonjour ! Je suis l'assistant Boosttribe 👋 Je peux vous parler des sessions audio/vidéo synchronisées, du Live Visio, du micro, de l'enregistrement, des sessions privées ou des abonnements.",
-    "BoostTribe permet d'animer des sessions où tout le monde écoute/regarde la même chose, parfaitement synchronisé. Posez-moi votre question !",
+    "Bonjour ! Je suis l'assistant BoostTribe 👋 Je peux vous parler des sessions audio/vidéo synchronisées, du Live Visio, du micro, de l'enregistrement, des sessions privées ou des crédits.",
+    "BoostTribe permet d'animer des lives où tout le monde écoute/regarde la même chose, parfaitement synchronisé. Posez-moi votre question !",
   ],
   session: [
     "Pour créer une session : cliquez sur « Créer ma session ». Vous partagez ensuite un lien ou un QR code, et vos participants rejoignent en un clic — audio ET vidéo restent synchronisés pour tout le monde.",
@@ -20,10 +22,9 @@ const BOT_RESPONSES: Record<string, string[]> = {
   ],
   video: [
     "BoostTribe synchronise aussi la VIDÉO : partagez une vidéo uploadée ou un lien YouTube/Vimeo, et tous les participants la voient au même instant (l'hôte pilote play/pause/seek).",
-    "En plan gratuit, la vidéo partagée est limitée à 30 secondes. Les membres Pro profitent de la vidéo complète (jusqu'à 90 min).",
   ],
   visio: [
-    "Le Live Visio, c'est la visio façon Zoom DANS la session : activez votre caméra et voyez les autres en direct (jusqu'à 6 caméras), tout en gardant la vidéo partagée. Le lecteur est même déplaçable sur l'écran. 🎥 Réservé aux membres Pro.",
+    "Le Live Visio, c'est la visio façon Zoom DANS la session : activez votre caméra et voyez les autres en direct (jusqu'à 6 caméras), tout en gardant la vidéo partagée. Le lecteur est même déplaçable sur l'écran. 🎥",
   ],
   voice: [
     "Côté voix : prenez le micro pour guider votre audience, parlez à tout le groupe ou en privé à un ou plusieurs participants choisis. Chaque participant peut aussi régler le volume des autres.",
@@ -35,14 +36,7 @@ const BOT_RESPONSES: Record<string, string[]> = {
     "Pendant une session : likes et commentaires en direct, photos de profil, et partage de vidéo, image ou lien. Une vraie expérience de groupe. 💬",
   ],
   private: [
-    "Les sessions privées ont une SALLE D'ATTENTE : même si le lien fuite, l'hôte admet (ou refuse) chaque participant manuellement. Parfait pour vendre vos sessions et ne laisser entrer que ceux qui ont payé.",
-  ],
-  pricing: [
-    "Les plans : Essai Gratuit (1 session active, audio & vidéo synchronisés, partage vidéo 30s max, sans Live Visio), Pro à 9,99€/mois (Live Visio, vidéo complète jusqu'à 90 min, micro + voix privée, enregistrement) et Enterprise à 29,99€/mois (branding, analytics, API, support 24/7).",
-    "Le plan Pro (9,99€/mois) débloque le Live Visio, la vidéo complète, le micro/voix privée et l'enregistrement de session.",
-  ],
-  free: [
-    "En gratuit : 1 session active, audio & vidéo synchronisés, participants illimités, MAIS partage vidéo limité à 30s et pas de Live Visio. Passez à Pro (9,99€/mois) pour tout débloquer.",
+    "Les sessions privées ont une SALLE D'ATTENTE : même si le lien fuite, l'hôte admet (ou refuse) chaque participant manuellement. Parfait pour vendre vos lives et ne laisser entrer que ceux qui ont payé.",
   ],
   lang: [
     "L'application est multilingue : Français, Anglais et Allemand (bouton globe 🌐). Le français est la langue par défaut.",
@@ -51,23 +45,50 @@ const BOT_RESPONSES: Record<string, string[]> = {
     "Rejoindre une session est ultra simple : un lien ou un QR code, aucune application à installer, compatible tous appareils (et installable en PWA).",
   ],
   help: [
-    "Je peux vous expliquer : sessions synchronisées, Live Visio, micro & voix privée, enregistrement, sessions privées (salle d'attente), partage vidéo/image/lien, langues et abonnements. Que voulez-vous savoir ?",
+    "Je peux vous expliquer : les crédits, les sessions synchronisées, le Live Visio, le micro & la voix privée, l'enregistrement, les sessions privées (salle d'attente), le partage vidéo/image/lien et les langues. Que voulez-vous savoir ?",
   ],
 };
 
+// Texte « crédits » par défaut (si la config admin n'est pas encore chargée).
+const CREDITS_FALLBACK =
+  "BoostTribe fonctionne avec des CRÉDITS (en CHF), sans abonnement : 1 crédit = 1 accès à un live. " +
+  "Vous dépensez 1 crédit pour rejoindre un live, et l'animateur dépense 1 crédit pour l'héberger. " +
+  "Votre 1er cours est offert à l'inscription, et les crédits achetés sont valables 12 mois. " +
+  "Achetez des packs depuis la page Tarifs.";
+
+// Construit la réponse « crédits » à partir de la config admin (dynamique).
+function buildCreditsText(cfg: CreditsConfig | null): string {
+  if (!cfg) return CREDITS_FALLBACK;
+  const parts: string[] = [];
+  parts.push("BoostTribe fonctionne avec des CRÉDITS, sans abonnement : 1 crédit = 1 accès à un live.");
+  parts.push(`Rejoindre un live coûte ${cfg.cost_join} crédit(s) ; l'animer coûte ${cfg.cost_host} crédit(s).`);
+  if (cfg.signup_free_credits > 0) parts.push(`Votre 1er cours est offert (${cfg.signup_free_credits} crédit(s) à l'inscription).`);
+  parts.push(`Les crédits achetés sont valables ${cfg.credit_validity_months} mois.`);
+  if (cfg.packs && cfg.packs.length) {
+    const list = cfg.packs.slice(0, 4).map((p) => `${p.name} (${p.credits} cr. — ${Number(p.price_chf).toFixed(0)} CHF)`).join(', ');
+    parts.push(`Packs disponibles : ${list}.`);
+  }
+  const activeOffers = Object.values(cfg.offers || {}).filter((o: any) => o && o.enabled).map((o: any) => o.title);
+  if (activeOffers.length) parts.push(`Offres en cours : ${activeOffers.join(', ')}.`);
+  return parts.join(' ');
+}
+
 // Détection par mots-clés (français)
-function getBotResponse(userMessage: string): string {
+function getBotResponse(userMessage: string, cfg: CreditsConfig | null): string {
   const msg = userMessage.toLowerCase();
   const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
 
+  if (msg.includes('crédit') || msg.includes('credit') || msg.includes('prix') || msg.includes('tarif') ||
+      msg.includes('coût') || msg.includes('cout') || msg.includes('payer') || msg.includes('acheter') ||
+      msg.includes('pack') || msg.includes('abonnement') || msg.includes('gratuit') || msg.includes('free') ||
+      msg.includes('plan') || msg.includes('chf'))
+    return buildCreditsText(cfg);
   if (msg.includes('visio') || msg.includes('caméra') || msg.includes('camera') || msg.includes('zoom') || msg.includes('webcam')) return pick(BOT_RESPONSES.visio);
-  if (msg.includes('privé') || msg.includes('prive') || msg.includes('salle') || msg.includes('attente') || msg.includes('admet') || msg.includes('vendre') || msg.includes('payer mes') || msg.includes('payant')) return pick(BOT_RESPONSES.private);
+  if (msg.includes('privé') || msg.includes('prive') || msg.includes('salle') || msg.includes('attente') || msg.includes('admet') || msg.includes('vendre') || msg.includes('payant')) return pick(BOT_RESPONSES.private);
   if (msg.includes('enregistr') || msg.includes('record') || msg.includes('télécharg')) return pick(BOT_RESPONSES.record);
   if (msg.includes('micro') || msg.includes('voix') || msg.includes('parler')) return pick(BOT_RESPONSES.voice);
   if (msg.includes('commentaire') || msg.includes('like') || msg.includes('aime') || msg.includes('photo')) return pick(BOT_RESPONSES.social);
-  if (msg.includes('vidéo') || msg.includes('video') || msg.includes('youtube') || msg.includes('vimeo') || msg.includes('30s') || msg.includes('30 sec')) return pick(BOT_RESPONSES.video);
-  if (msg.includes('gratuit') || msg.includes('free') || msg.includes('limite')) return pick(BOT_RESPONSES.free);
-  if (msg.includes('prix') || msg.includes('tarif') || msg.includes('abonnement') || msg.includes('pro') || msg.includes('enterprise') || msg.includes('plan')) return pick(BOT_RESPONSES.pricing);
+  if (msg.includes('vidéo') || msg.includes('video') || msg.includes('youtube') || msg.includes('vimeo')) return pick(BOT_RESPONSES.video);
   if (msg.includes('langue') || msg.includes('anglais') || msg.includes('english') || msg.includes('allemand') || msg.includes('traduc')) return pick(BOT_RESPONSES.lang);
   if (msg.includes('rejoindre') || msg.includes('lien') || msg.includes('qr') || msg.includes('installer') || msg.includes('mobile')) return pick(BOT_RESPONSES.access);
   if (msg.includes('session') || msg.includes('créer') || msg.includes('hôte') || msg.includes('synchron')) return pick(BOT_RESPONSES.session);
@@ -88,7 +109,15 @@ export const AssistantChat: React.FC<AssistantChatProps> = ({ hasAccess, gradien
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [creditsCfg, setCreditsCfg] = useState<CreditsConfig | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Charge la config crédits (dynamique, éditable en admin) pour des réponses tarifaires à jour.
+  useEffect(() => {
+    let alive = true;
+    getCreditsConfig().then(({ data }) => { if (alive && data) setCreditsCfg(data); });
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -116,7 +145,7 @@ export const AssistantChat: React.FC<AssistantChatProps> = ({ hasAccess, gradien
     setIsTyping(true);
     setTimeout(() => {
       const botResponse: Message = {
-        id: `${Date.now()}-a`, role: 'assistant', content: getBotResponse(userMessage.content), timestamp: Date.now(),
+        id: `${Date.now()}-a`, role: 'assistant', content: getBotResponse(userMessage.content, creditsCfg), timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, botResponse]);
       setIsTyping(false);
@@ -129,14 +158,14 @@ export const AssistantChat: React.FC<AssistantChatProps> = ({ hasAccess, gradien
         <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-4">
           <Lock className="w-8 h-8 text-white/50" />
         </div>
-        <h3 className="text-white font-semibold mb-2">Assistant Boosttribe réservé aux membres PRO.</h3>
-        <p className="text-white/60 text-sm mb-4">Passez à Pro ou Enterprise pour accéder à l'assistant.</p>
+        <h3 className="text-white font-semibold mb-2">Assistant BoostTribe</h3>
+        <p className="text-white/60 text-sm mb-4">Procurez-vous des crédits pour accéder à l'assistant et aux lives.</p>
         <a
           href="/pricing"
           className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
           style={{ background: gradient }}
         >
-          Passer à Pro
+          Acheter des crédits
         </a>
       </div>
     );

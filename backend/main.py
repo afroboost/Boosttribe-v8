@@ -24,6 +24,15 @@ from fastapi import FastAPI, Request, HTTPException, Header, File, UploadFile, F
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# LiveKit (SFU) — import GARDÉ : si le SDK n'est pas installé, l'app démarre quand même
+# et seul l'endpoint /livekit/token renverra une erreur 500 claire.
+try:
+    from livekit import api as livekit_api  # SDK serveur officiel (génération de tokens)
+    _LIVEKIT_IMPORT_ERROR: Optional[str] = None
+except Exception as _lk_exc:  # pragma: no cover
+    livekit_api = None  # type: ignore[assignment]
+    _LIVEKIT_IMPORT_ERROR = str(_lk_exc)
+
 # Bucket de stockage des médias de session (vidéos partagées par l'hôte)
 SESSION_MEDIA_BUCKET = "session-media"
 MEDIA_TTL_HOURS = 24
@@ -39,6 +48,11 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://api.boosttribe.pro").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://boosttribe.pro").rstrip("/")
+# LiveKit (SFU) — lues depuis l'environnement (déjà définies dans Coolify), jamais en dur.
+LIVEKIT_URL = os.environ.get("LIVEKIT_URL", "").strip()
+LIVEKIT_API_KEY = os.environ.get("LIVEKIT_API_KEY", "").strip()
+LIVEKIT_API_SECRET = os.environ.get("LIVEKIT_API_SECRET", "").strip()
+MAX_LIVEKIT_STAGE = 10  # nombre max de participants pouvant publier (caméra/micro/écran) par room
 ADMIN_EMAILS = [
     e.strip().lower()
     for e in os.environ.get("ADMIN_EMAILS", "contact.artboost@gmail.com").split(",")
@@ -429,6 +443,86 @@ class CohostsBody(BaseModel):
 @app.get("/health")
 async def health():
     return {"ok": True}
+
+
+# --------------------------------------------------------------------------- #
+# LiveKit (SFU) — génération de tokens d'accès (room = session BoostTribe)
+#   rôle "stage"  : publie caméra/micro/écran (max 10 publishers / room)
+#   rôle "viewer" : regarde seulement (illimité)
+# --------------------------------------------------------------------------- #
+class LiveKitTokenBody(BaseModel):
+    session_id: str
+    identity: str
+    name: Optional[str] = None
+    role: str = "viewer"  # "stage" | "viewer"
+
+
+async def _count_livekit_publishers(session_id: str) -> int:
+    """Compte les participants pouvant PUBLIER déjà présents dans la room.
+    Si la room n'existe pas encore (ou service injoignable) → 0 (best-effort)."""
+    lkapi = livekit_api.LiveKitAPI(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+    try:
+        resp = await lkapi.room.list_participants(
+            livekit_api.ListParticipantsRequest(room=session_id)
+        )
+        count = 0
+        for p in resp.participants:
+            perm = getattr(p, "permission", None)
+            if perm is not None and getattr(perm, "can_publish", False):
+                count += 1
+        return count
+    except Exception as exc:  # room inexistante (404) ou erreur réseau → on considère 0
+        logger.info("LiveKit list_participants(%s) → 0 publishers (%s)", session_id, exc)
+        return 0
+    finally:
+        try:
+            await lkapi.aclose()
+        except Exception:  # pragma: no cover
+            pass
+
+
+@app.post("/livekit/token")
+async def livekit_token(body: LiveKitTokenBody):
+    # SDK indisponible (dépendance non installée) → erreur claire, app intacte
+    if livekit_api is None:
+        logger.error("livekit-api non importable: %s", _LIVEKIT_IMPORT_ERROR)
+        raise HTTPException(status_code=500, detail="SDK LiveKit indisponible côté serveur")
+    if not LIVEKIT_URL or not LIVEKIT_API_KEY or not LIVEKIT_API_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="LiveKit non configuré (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET)",
+        )
+
+    session_id = (body.session_id or "").strip()
+    identity = (body.identity or "").strip()
+    if not session_id or not identity:
+        raise HTTPException(status_code=400, detail="session_id et identity requis")
+
+    role = body.role if body.role in ("stage", "viewer") else "viewer"
+    can_publish = role == "stage"
+
+    # Limite scène : refuser un nouveau publisher si la room est déjà pleine (10 max).
+    if can_publish:
+        publishers = await _count_livekit_publishers(session_id)
+        if publishers >= MAX_LIVEKIT_STAGE:
+            raise HTTPException(status_code=409, detail="stage_full")
+
+    grants = livekit_api.VideoGrants(
+        room_join=True,
+        room=session_id,
+        can_subscribe=True,
+        can_publish=can_publish,
+        can_publish_data=True,
+    )
+    token = (
+        livekit_api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        .with_identity(identity)
+        .with_name(body.name or identity)
+        .with_grants(grants)
+        .with_ttl(timedelta(hours=6))
+        .to_jwt()
+    )
+    return {"token": token, "url": LIVEKIT_URL}
 
 
 @app.post("/stripe/sync-plan")

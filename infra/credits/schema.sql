@@ -162,7 +162,8 @@ select p.id, 5, 'launch_bonus', 'migration_'||p.id::text,
 from public.profiles p
 where (p.comp_access_until is not null and p.comp_access_until > now())
    or (p.subscription_status in ('pro','enterprise','monthly','yearly'))
-on conflict (reason, ref) do nothing;
+-- l'index d'idempotence est PARTIEL (where ref is not null) → on répète le prédicat
+on conflict (reason, ref) where ref is not null do nothing;
 
 -- ---------------------------------------------------------------------------
 -- 7) (optionnel) Trigger : créditer signup_free_credits à la création du profil.

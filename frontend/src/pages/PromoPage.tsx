@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, Ticket, ArrowRight, Play } from 'lucide-react';
-import { getPromo, getVideoThumbnail, type PromoConfig } from '@/lib/paymentApi';
-import { isHttpUrl } from '@/lib/videoEmbed';
+import { Loader2, Ticket, ArrowRight, Play, X } from 'lucide-react';
+import { getPromo, getVideoThumbnail, requestSessionAccess, type PromoConfig } from '@/lib/paymentApi';
+import { isHttpUrl, videoEmbedUrl } from '@/lib/videoEmbed';
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
@@ -25,6 +25,12 @@ const PromoPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [ctaError, setCtaError] = useState<string | null>(null);
   const [videoThumb, setVideoThumb] = useState<string | null>(null);
+  const [videoOpen, setVideoOpen] = useState(false); // 🎬 lecteur intégré (modale), AUCUNE redirection
+  // B) Demander l'accès (session payante, abonné)
+  const [reqName, setReqName] = useState('');
+  const [reqAsking, setReqAsking] = useState(false);  // formulaire nom ouvert
+  const [reqSent, setReqSent] = useState(false);
+  const [reqBusy, setReqBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,7 +69,20 @@ const PromoPage: React.FC = () => {
     navigate(`/session/${encodeURIComponent(sessionId)}`); // gratuite → rejoindre la session
   };
   const isPaid = paidIntent;
-  const openVideo = () => { if (promo?.media_url && isHttpUrl(promo.media_url)) window.open(promo.media_url, '_blank', 'noopener,noreferrer'); };
+  // 🎬 Clic miniature → LECTEUR INTÉGRÉ en modale (aucune redirection externe).
+  const embedSrc = promo?.media_url ? videoEmbedUrl(promo.media_url) : null;
+  const openVideo = () => setVideoOpen(true);
+
+  // B) Demander l'accès gratuit (au lieu de payer) — envoie une demande à l'hôte (temps réel).
+  const submitAccessRequest = async () => {
+    const name = reqName.trim();
+    if (!name) return;
+    setReqBusy(true);
+    const { ok, error } = await requestSessionAccess(sessionId, name);
+    setReqBusy(false);
+    if (ok) { setReqSent(true); setReqAsking(false); }
+    else setCtaError(error || "Échec de l'envoi de la demande");
+  };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8" style={{ background: '#0A0A0F', fontFamily: "'Inter', sans-serif" }}>
@@ -111,21 +130,66 @@ const PromoPage: React.FC = () => {
             <p className="text-white/85 text-center text-sm sm:text-base whitespace-pre-wrap leading-relaxed">{promo.description}</p>
           )}
 
-          {/* CTA */}
-          <button
-            onClick={handleCta}
-            className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl text-white font-bold text-base shadow-lg transition-transform hover:scale-[1.02] active:scale-95"
-            style={{ background: AFRO.gradient }}
-            data-testid="promo-cta"
-          >
-            {isPaid
-              ? <>{promo.cta_text || 'Payer'}{promo.price ? ` ${promo.price}` : ''}</>
-              : <>{promo.cta_text || 'Rejoindre gratuitement'}</>}
-            <ArrowRight className="w-5 h-5" />
-          </button>
-          {ctaError && <p className="text-red-300 text-xs text-center -mt-2">{ctaError}</p>}
+          {/* CTA : Payer + (option) Demander l'accès */}
+          <div className="w-full flex flex-col gap-2">
+            <button
+              onClick={handleCta}
+              className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl text-white font-bold text-base shadow-lg transition-transform hover:scale-[1.02] active:scale-95"
+              style={{ background: AFRO.gradient }}
+              data-testid="promo-cta"
+            >
+              {isPaid
+                ? <>{promo.cta_text || 'Payer'}{promo.price ? ` ${promo.price}` : ''}</>
+                : <>{promo.cta_text || 'Rejoindre gratuitement'}</>}
+              <ArrowRight className="w-5 h-5" />
+            </button>
+
+            {/* 🙋 Demander l'accès (session payante + option activée par le coach) */}
+            {isPaid && promo.allow_access_requests && (
+              reqSent ? (
+                <p className="text-center text-sm text-white/80 bg-white/5 border border-white/10 rounded-xl py-2.5 px-3">
+                  Demande envoyée — en attente de validation de l'hôte.
+                </p>
+              ) : reqAsking ? (
+                <div className="flex items-center gap-2">
+                  <input value={reqName} onChange={(e) => setReqName(e.target.value)} placeholder="Votre nom"
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" autoFocus />
+                  <button onClick={submitAccessRequest} disabled={reqBusy || !reqName.trim()}
+                    className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold border border-[#8A2EFF]/50 bg-[#8A2EFF]/20 hover:bg-[#8A2EFF]/30 disabled:opacity-50">
+                    {reqBusy ? '…' : 'Envoyer'}
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setReqAsking(true)}
+                  className="w-full py-2.5 rounded-2xl text-white/85 text-sm font-medium border border-white/20 hover:bg-white/10"
+                  data-testid="promo-request-access">
+                  Demander l'accès (sans payer)
+                </button>
+              )
+            )}
+          </div>
+          {ctaError && <p className="text-red-300 text-xs text-center -mt-1">{ctaError}</p>}
 
           <p className="text-white/30 text-xs text-center">Propulsé par Boosttribe</p>
+        </div>
+      )}
+
+      {/* 🎬 LECTEUR INTÉGRÉ (modale) — lit la vidéo SUR PLACE, aucune redirection externe. */}
+      {videoOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-sm p-3" onClick={() => setVideoOpen(false)}>
+          <button onClick={() => setVideoOpen(false)} className="absolute top-3 right-3 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white" aria-label="Fermer">
+            <X className="w-5 h-5" />
+          </button>
+          <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: promo.format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
+            {embedSrc ? (
+              <iframe src={embedSrc} title="Vidéo de la session" className="w-full h-full"
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-center text-white/70 text-sm p-4">
+                Lecture intégrée indisponible pour ce lien.
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

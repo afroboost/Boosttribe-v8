@@ -711,6 +711,7 @@ class PromoBody(BaseModel):
     payment_link: Optional[str] = None     # vide/None = session GRATUITE
     price: Optional[str] = None
     format: Optional[str] = None           # '9:16' | '16:9' (cadrage de l'affiche/vidéo)
+    allow_access_requests: Optional[bool] = None  # autoriser « Demander l'accès » (sans payer)
 
 async def _promo_authz(session_id: str, user: Dict[str, Any]) -> None:
     if not SESSION_ID_RE.match(session_id):
@@ -744,7 +745,7 @@ async def save_promo(body: PromoBody, authorization: Optional[str] = Header(defa
     mapping = [("enabled", "promo_enabled"), ("media_url", "promo_media_url"),
                ("media_type", "promo_media_type"), ("description", "promo_description"),
                ("cta_text", "promo_cta"), ("payment_link", "promo_payment_link"), ("price", "promo_price"),
-               ("format", "promo_format")]
+               ("format", "promo_format"), ("allow_access_requests", "promo_allow_access_requests")]
     patch: Dict[str, Any] = {}
     for attr, col in mapping:
         v = getattr(body, attr)
@@ -894,7 +895,7 @@ async def get_promo(session_id: str):
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}",
-                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format",
+                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format,promo_allow_access_requests",
                                         "limit": "1"})
     rows = resp.json() if resp.status_code == 200 else []
     if not rows:
@@ -910,7 +911,77 @@ async def get_promo(session_id: str):
         "payment_link": r.get("promo_payment_link"),
         "price": r.get("promo_price"),
         "format": r.get("promo_format") or "9:16",
+        "allow_access_requests": bool(r.get("promo_allow_access_requests")),
     }
+
+
+# ── Demandes d'accès gratuit à une session payante (« Demander l'accès ») ──────
+class AccessRequestBody(BaseModel):
+    session_id: str
+    requester_name: str
+
+class AccessDecisionBody(BaseModel):
+    approve: bool
+
+async def _has_approved_access_request(session_id: str, uid: Optional[str]) -> bool:
+    if not uid:
+        return False
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
+                                params={"session_id": f"eq.{session_id}", "requester_user_id": f"eq.{uid}",
+                                        "status": "eq.approved", "select": "id", "limit": "1"})
+    return resp.status_code == 200 and bool(resp.json())
+
+@app.post("/session/access-request")
+async def create_access_request(body: AccessRequestBody, authorization: Optional[str] = Header(default=None)):
+    """Participant : demande l'accès gratuit (l'hôte approuvera). requester_user_id si authentifié."""
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    name = (body.requester_name or "").strip()[:60]
+    if not name:
+        raise HTTPException(status_code=400, detail="Nom requis")
+    uid = None
+    try:
+        user = await get_user_from_token(authorization)
+        uid = user.get("id")
+    except Exception:  # noqa: BLE001 — demande possible même sans compte
+        uid = None
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(f"{SUPABASE_URL}/rest/v1/access_requests",
+                                 headers=_service_headers({"Prefer": "return=representation"}),
+                                 json={"session_id": body.session_id, "requester_user_id": uid,
+                                       "requester_name": name, "status": "pending"})
+    row = resp.json()[0] if resp.status_code in (200, 201) and resp.json() else {}
+    return {"ok": bool(row), "id": row.get("id")}
+
+@app.get("/session/access-requests/{session_id}")
+async def list_access_requests(session_id: str, authorization: Optional[str] = Header(default=None)):
+    """Hôte : demandes d'accès en attente pour SA session."""
+    user = await get_user_from_token(authorization)
+    await _promo_authz(session_id, user)  # hôte / co-hôte / admin uniquement
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
+                                params={"session_id": f"eq.{session_id}", "status": "eq.pending",
+                                        "select": "id,requester_user_id,requester_name,status,created_at",
+                                        "order": "created_at.asc"})
+    return {"requests": resp.json() if resp.status_code == 200 else []}
+
+@app.post("/session/access-request/{request_id}/decision")
+async def decide_access_request(request_id: int, body: AccessDecisionBody, authorization: Optional[str] = Header(default=None)):
+    """Hôte : approuve (accès SANS payer) ou refuse une demande."""
+    user = await get_user_from_token(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        cur = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
+                               params={"id": f"eq.{request_id}", "select": "session_id", "limit": "1"})
+        rows = cur.json() if cur.status_code == 200 else []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Demande introuvable")
+        await _promo_authz(rows[0]["session_id"], user)  # seul l'hôte décide
+        await client.patch(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers({"Prefer": "return=minimal"}),
+                           params={"id": f"eq.{request_id}"},
+                           json={"status": "approved" if body.approve else "refused",
+                                 "decided_at": datetime.now(timezone.utc).isoformat()})
+    return {"ok": True}
 
 
 class GrantAccessBody(BaseModel):
@@ -2251,7 +2322,10 @@ async def ticket_check(session_id: str, authorization: Optional[str] = Header(de
     user = await get_user_from_token(authorization)
     if not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    return {"has_ticket": await has_valid_ticket(session_id, user.get("id"))}
+    uid = user.get("id")
+    # ✅ Accès valide si billet payé OU demande d'accès APPROUVÉE par l'hôte (accès sans payer).
+    ok = await has_valid_ticket(session_id, uid) or await _has_approved_access_request(session_id, uid)
+    return {"has_ticket": ok}
 
 @app.get("/tickets/me")
 async def tickets_me(authorization: Optional[str] = Header(default=None)):

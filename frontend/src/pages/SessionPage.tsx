@@ -46,7 +46,7 @@ import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
-import { claimHost, setCohosts, spendCredit } from '@/lib/paymentApi';
+import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest } from '@/lib/paymentApi';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
@@ -929,6 +929,24 @@ export const SessionPage: React.FC = () => {
   const isGuestRestricted = accessMode === 'guest' && !isHost;
   // 🚪 Sécurité : un invité ne doit jamais être en Live Visio (coupe la visio si le mode passe en 'guest').
   useEffect(() => { if (isGuestRestricted) setLiveMode(false); }, [isGuestRestricted]);
+
+  // 🙋 Demandes d'accès gratuit (session payante) — l'HÔTE est notifié en TEMPS RÉEL (Supabase realtime).
+  const [promoAccessReqs, setPromoAccessReqs] = useState<Array<{ id: number; requester_name: string }>>([]);
+  useEffect(() => {
+    if (!isHost || !sessionId || !supabase || !isSupabaseConfigured) return;
+    const refresh = () => listAccessRequests(sessionId).then(({ requests }) =>
+      setPromoAccessReqs(requests.filter((r) => r.status === 'pending').map((r) => ({ id: r.id, requester_name: r.requester_name }))));
+    refresh();
+    const ch = supabase.channel(`access-req:${sessionId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'access_requests', filter: `session_id=eq.${sessionId}` }, refresh)
+      .subscribe();
+    return () => { try { supabase!.removeChannel(ch); } catch { /* ignore */ } };
+  }, [isHost, sessionId]);
+  const handleAccessDecision = useCallback(async (id: number, approve: boolean) => {
+    setPromoAccessReqs((prev) => prev.filter((r) => r.id !== id));
+    await decideAccessRequest(id, approve);
+    showToast(approve ? 'Accès accordé (sans paiement)' : 'Demande refusée', approve ? 'success' : 'default');
+  }, [showToast]);
   // Type de paiement du coach hôte ('subscription' par défaut → mode Payante masqué).
   const [coachPaymentType, setCoachPaymentType] = useState<'subscription' | 'commission'>('subscription');
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
@@ -4207,6 +4225,21 @@ export const SessionPage: React.FC = () => {
           className="hidden"
           data-testid="remote-audio"
         />
+      )}
+
+      {/* 🙋 HÔTE — demandes d'accès gratuit (temps réel) : Approuver / Refuser */}
+      {isHost && promoAccessReqs.length > 0 && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[145] w-[min(92vw,420px)] space-y-2" data-testid="access-requests">
+          {promoAccessReqs.map((r) => (
+            <div key={r.id} className="flex items-center gap-2 rounded-2xl border border-[#8A2EFF]/40 bg-[#15151b] shadow-2xl px-3 py-2.5">
+              <span className="flex-1 min-w-0 text-sm text-white truncate">
+                <span className="text-white/50">Demande d'accès : </span><span className="font-medium">{r.requester_name}</span>
+              </span>
+              <button onClick={() => handleAccessDecision(r.id, true)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ background: 'linear-gradient(135deg,#16a34a,#22c55e)' }}>Approuver</button>
+              <button onClick={() => handleAccessDecision(r.id, false)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white/70 border border-white/15 hover:bg-white/10">Refuser</button>
+            </div>
+          ))}
+        </div>
       )}
 
       {/* 💬 Lanceur + panneau de CHAT — au niveau page SAUF quand la vidéo est agrandie (alors il est

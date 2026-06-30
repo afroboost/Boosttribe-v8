@@ -708,6 +708,58 @@ export interface PromoConfig {
   payment_link?: string | null;  // vide = gratuit
   price?: string | null;
   format?: '9:16' | '16:9' | null;  // cadrage de l'affiche/vidéo
+  allow_access_requests?: boolean;  // autoriser « Demander l'accès » (sans payer)
+}
+
+/** Participant : demande l'accès gratuit à une session payante (l'hôte approuve/refuse). */
+export async function requestSessionAccess(sessionId: string, requesterName: string): Promise<{ ok: boolean; id?: number; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  try {
+    const res = await fetch(`${API_URL}/session/access-request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ session_id: sessionId, requester_name: requesterName }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: true, id: data.id };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Hôte : liste des demandes d'accès en attente pour sa session. */
+export async function listAccessRequests(sessionId: string): Promise<{ requests: Array<{ id: number; requester_name: string; requester_user_id: string | null; status: string; created_at: string }>; error?: string }> {
+  if (!API_URL) return { requests: [], error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { requests: [] };
+  try {
+    const res = await fetch(`${API_URL}/session/access-requests/${encodeURIComponent(sessionId)}`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { requests: [], error: data?.detail || `Erreur ${res.status}` };
+    return { requests: data.requests || [] };
+  } catch (e) {
+    return { requests: [], error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Hôte : approuve/refuse une demande d'accès. */
+export async function decideAccessRequest(requestId: number, approve: boolean): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Non authentifié' };
+  try {
+    const res = await fetch(`${API_URL}/session/access-request/${requestId}/decision`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ approve }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
 }
 
 /** Lecture PUBLIQUE de la page promo (lien partageable, pas d'auth requise). */

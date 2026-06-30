@@ -53,6 +53,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
   const [isPaid, setIsPaid] = useState(false);
   const [paymentLink, setPaymentLink] = useState('');
   const [price, setPrice] = useState('');
+  const [allowAccessRequests, setAllowAccessRequests] = useState(false);
 
   // Crop modal
   const [cropSrc, setCropSrc] = useState<string | null>(null);
@@ -77,6 +78,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
       setPaymentLink(promo.payment_link || '');
       setIsPaid(!!(promo.payment_link && promo.payment_link.trim()));
       setPrice(promo.price || '');
+      setAllowAccessRequests(!!promo.allow_access_requests);
       setLoading(false);
     })();
     return () => { cancelled = true; };
@@ -153,6 +155,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
       session_id: sessionId, enabled, media_url: mediaUrl, media_type: mediaType, format,
       description, cta_text: ctaText,
       payment_link: isPaid ? paymentLink.trim() : '', price: isPaid ? price.trim() : '',
+      allow_access_requests: isPaid ? allowAccessRequests : false,
     });
     setSaving(false);
     if (ok) showToast('Page promo enregistrée ✅', 'success');
@@ -231,6 +234,10 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                     <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="20 CHF"
                       className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" />
                   </div>
+                  <label className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
+                    <input type="checkbox" checked={allowAccessRequests} onChange={(e) => setAllowAccessRequests(e.target.checked)} className="accent-[#D91CD2]" />
+                    Autoriser les demandes d'accès gratuit (« Demander l'accès »)
+                  </label>
                 </div>
               )}
               <div>

@@ -51,9 +51,11 @@ const PromoPage: React.FC = () => {
 
   const handleCta = () => {
     if (isPaid) {
-      // Lien de paiement du coach (Stripe Payment Link / Twint / etc.) — il encaisse lui-même.
-      window.location.href = safePaymentLink!;
+      // 💳 Lien de paiement EXTERNE du coach (Twint/Stripe/etc.) → NOUVEL ONGLET, directement.
+      //    AUCUNE validation du code de session ici (le lien de paiement ≠ le code de session).
+      window.open(safePaymentLink!, '_blank', 'noopener,noreferrer');
     } else {
+      // Gratuite → on rejoint la session.
       navigate(`/session/${encodeURIComponent(sessionId)}`);
     }
   };
@@ -81,8 +83,8 @@ const PromoPage: React.FC = () => {
                   allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
               ) : (
                 <a href={isHttpUrl(promo.media_url) ? promo.media_url : undefined} target="_blank" rel="noopener noreferrer"
-                   className="w-full h-full flex flex-col items-center justify-center gap-2 text-white" style={{ background: AFRO.gradient }}>
-                  <PlayCircle className="w-16 h-16" /><span className="text-sm font-semibold">Voir la vidéo</span>
+                   className="w-full h-full flex flex-col items-center justify-center gap-3 text-white bg-[#15151b] hover:bg-[#1c1c24] transition-colors">
+                  <PlayCircle className="w-20 h-20" style={{ color: AFRO.pink }} /><span className="text-sm font-semibold">Voir la vidéo</span>
                 </a>
               )
             ) : promo.media_url && promo.media_type === 'image' ? (

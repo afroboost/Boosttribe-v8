@@ -3,7 +3,8 @@ import {
   DndContext,
   closestCenter,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
   DragEndEvent,
@@ -102,13 +103,15 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         </button>
       )}
 
-      {/* 🔒 Drag Handle - HOST ONLY. Masqué sur MOBILE (drag tactile peu fiable + gain de place pour les
-          flèches/corbeille) → réorganisation via les flèches ↑/↓. Visible dès sm (desktop/tablette). */}
+      {/* 🔒 Poignée de glisser-déposer — HOST ONLY, VISIBLE mobile ET desktop (drag tactile + souris).
+          touch-none = le drag tactile fonctionne sans déclencher le scroll. Les flèches ↑/↓ et la
+          corbeille coexistent (deux méthodes de réorganisation). */}
       {isHost && !isEditMode && (
         <button
           {...attributes}
           {...listeners}
-          className="hidden sm:flex p-1 text-white/30 hover:text-white/60 cursor-grab active:cursor-grabbing touch-none flex-shrink-0"
+          className="flex items-center p-0.5 sm:p-1 -ml-0.5 text-white/40 hover:text-white/70 cursor-grab active:cursor-grabbing touch-none flex-shrink-0"
+          aria-label={`Déplacer ${track.title}`}
           data-testid={`drag-handle-${track.id}`}
         >
           <GripVertical size={16} strokeWidth={1.5} />
@@ -215,15 +218,14 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   const [isEditMode, setIsEditMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
 
+  // 🖱️📱 Capteurs explicites cross-device (recommandé dnd-kit) :
+  //  - Souris (desktop) : drag dès 8px de déplacement.
+  //  - Tactile (mobile) : appui long 180ms puis glissement (tolérance 8px) → le scroll reste possible,
+  //    un simple tap = sélection. Restaure le glisser-déposer au doigt ET à la souris.
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
   const handleDragEnd = (event: DragEndEvent) => {

@@ -20,7 +20,17 @@ export function videoEmbedUrl(raw?: string | null): string | null {
   // Vimeo
   const vm = href.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   if (vm) return `https://player.vimeo.com/video/${vm[1]}`;
-  return null; // IG / FB / TikTok / autres : pas d'embed iframe fiable
+  // Instagram (post / reel / tv) — embed officiel
+  const ig = href.match(/instagram\.com\/(p|reel|reels|tv)\/([\w-]+)/);
+  if (ig) { const t = ig[1] === 'reels' ? 'reel' : ig[1]; return `https://www.instagram.com/${t}/${ig[2]}/embed`; }
+  // TikTok (URL complète avec /video/{id}) — embed officiel v2
+  const tk = href.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/);
+  if (tk) return `https://www.tiktok.com/embed/v2/${tk[1]}`;
+  // Facebook (watch / videos / fb.watch) — plugin vidéo officiel
+  if (/facebook\.com\/(?:watch\/?\?v=|[^/]+\/videos\/|reel\/)|fb\.watch\//.test(href)) {
+    return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(href)}&show_text=false`;
+  }
+  return null; // autres / liens raccourcis non résolus : fallback « Voir la vidéo »
 }
 
 /** true si l'URL est http(s) valide (pour autoriser un lien « Voir la vidéo »). */

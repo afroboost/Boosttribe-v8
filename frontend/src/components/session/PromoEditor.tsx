@@ -251,8 +251,8 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                     videoEmbedUrl(mediaUrl)
                       ? <iframe src={videoEmbedUrl(mediaUrl)!} title="Aperçu vidéo" className="w-full h-full" allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
                       : <a href={isHttpUrl(mediaUrl) ? mediaUrl : undefined} target="_blank" rel="noopener noreferrer"
-                           className="w-full h-full flex flex-col items-center justify-center gap-2 text-white" style={{ background: AFRO.gradient }}>
-                          <Video className="w-10 h-10" /><span className="text-xs font-semibold">Voir la vidéo</span>
+                           className="w-full h-full flex flex-col items-center justify-center gap-2 text-white bg-[#0d0d12]">
+                          <Video className="w-10 h-10" style={{ color: AFRO.pink }} /><span className="text-xs font-semibold">Voir la vidéo</span>
                         </a>
                   ) : mediaUrl && mediaType === 'image' ? (
                     <img src={mediaUrl} alt="" className="w-full h-full object-cover" />

@@ -35,12 +35,21 @@ const PromoPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [sessionId]);
 
-  const isPaid = !!(promo?.payment_link && promo.payment_link.trim());
+  // 🔒 Sécurité : on n'accepte QUE des liens http(s) (bloque javascript:/data: → XSS au clic).
+  const safePaymentLink = (() => {
+    const raw = promo?.payment_link?.trim();
+    if (!raw) return null;
+    try {
+      const u = new URL(raw);
+      return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : null;
+    } catch { return null; }
+  })();
+  const isPaid = !!safePaymentLink;
 
   const handleCta = () => {
     if (isPaid) {
       // Lien de paiement du coach (Stripe Payment Link / Twint / etc.) — il encaisse lui-même.
-      window.location.href = promo!.payment_link!.trim();
+      window.location.href = safePaymentLink!;
     } else {
       navigate(`/session/${encodeURIComponent(sessionId)}`);
     }

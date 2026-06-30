@@ -727,6 +727,14 @@ async def save_promo(body: PromoBody, authorization: Optional[str] = Header(defa
     """Enregistre/met à jour la page promo de la session (coach/hôte)."""
     user = await get_user_from_token(authorization)
     await _promo_authz(body.session_id, user)
+    # 🔒 N'accepter que des URL http(s) pour le lien de paiement et le média (bloque javascript:/data: → XSS).
+    def _check_url(val: Optional[str], label: str) -> None:
+        if val and val.strip() and not val.strip().lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail=f"{label} invalide (doit commencer par http(s)://)")
+    _check_url(body.payment_link, "Lien de paiement")
+    _check_url(body.media_url, "URL du média")
+    if body.media_type is not None and body.media_type not in ("image", "video", ""):
+        raise HTTPException(status_code=400, detail="Type de média invalide")
     mapping = [("enabled", "promo_enabled"), ("media_url", "promo_media_url"),
                ("media_type", "promo_media_type"), ("description", "promo_description"),
                ("cta_text", "promo_cta"), ("payment_link", "promo_payment_link"), ("price", "promo_price")]
@@ -745,27 +753,29 @@ async def upload_promo_media(file: UploadFile = File(...), session_id: str = For
     """Upload de l'affiche (image) OU de la vidéo 9:16 de la page promo → bucket public session-media."""
     user = await get_user_from_token(authorization)
     await _promo_authz(session_id, user)
-    ct = (file.content_type or "").lower()
-    if ct.startswith("image/"):
-        media_type = "image"
-    elif ct.startswith("video/"):
-        media_type = "video"
-    else:
-        raise HTTPException(status_code=400, detail="Affiche (image) ou vidéo requise")
+    # 🔒 On ne fait PAS confiance au Content-Type client : on n'autorise QUE des formats RASTER/vidéo
+    #    canoniques (SVG/HTML rejetés → pas de XSS stocké servi depuis l'origine du bucket public).
+    raw_ct = (file.content_type or "").split(";")[0].strip().lower()
+    IMAGE_TYPES = {"image/jpeg": ("image", "jpg", "image/jpeg"), "image/png": ("image", "png", "image/png"),
+                   "image/webp": ("image", "webp", "image/webp"), "image/gif": ("image", "gif", "image/gif")}
+    VIDEO_TYPES = {"video/mp4": ("video", "mp4", "video/mp4"), "video/webm": ("video", "webm", "video/webm"),
+                   "video/quicktime": ("video", "mov", "video/quicktime")}
+    spec = IMAGE_TYPES.get(raw_ct) or VIDEO_TYPES.get(raw_ct)
+    if not spec:
+        raise HTTPException(status_code=400, detail="Format non supporté (JPEG, PNG, WebP, GIF, MP4, WebM, MOV)")
+    media_type, ext, safe_ct = spec
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Fichier vide")
     if len(data) > 200 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 200 Mo)")
-    raw_name = (file.filename or "promo").replace("\\", "/").split("/")[-1]
-    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name).replace("..", "_").lstrip(".")[:80] or "promo"
     ts = int(datetime.now(timezone.utc).timestamp())
-    storage_path = f"promo/{session_id}/{ts}_{safe_name}"
+    storage_path = f"promo/{session_id}/{ts}.{ext}"  # extension canonique (pas de nom client)
     async with httpx.AsyncClient(timeout=180) as client:
         up = await client.post(
             f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{storage_path}",
             headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                     "Content-Type": ct, "x-upsert": "true"},
+                     "Content-Type": safe_ct, "x-upsert": "true"},  # type CANONIQUE forcé (jamais le client)
             content=data)
     if up.status_code not in (200, 201):
         logger.error("promo media upload échec: %s %s", up.status_code, (up.text or "")[:200])

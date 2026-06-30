@@ -17,7 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown } from 'lucide-react';
+import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 export interface Track {
@@ -41,6 +41,7 @@ interface SortableTrackItemProps {
   isFirst: boolean;
   isLast: boolean;
   onMove: (trackId: number, dir: -1 | 1) => void;
+  onRename: (trackId: number, title: string) => void; // ✏️ renommer un titre
 }
 
 const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
@@ -55,7 +56,18 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   isFirst,
   isLast,
   onMove,
+  onRename,
 }) => {
+  // ✏️ Édition inline du nom (local à la ligne).
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(track.title);
+  const startRename = () => { setDraft(track.title); setEditing(true); };
+  const saveRename = () => {
+    const t = draft.trim();
+    if (t && t !== track.title) onRename(track.id, t);
+    setEditing(false);
+  };
+
   // 🔒 PARTICIPANT: Désactive complètement le drag-and-drop
   const {
     attributes,
@@ -64,7 +76,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: track.id, disabled: !isHost || isEditMode });
+  } = useSortable({ id: track.id, disabled: !isHost || isEditMode || editing });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -118,10 +130,10 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         </button>
       )}
 
-      {/* Track Info - Cliquable pour l'hôte seulement */}
+      {/* Track Info - Cliquable pour l'hôte seulement. min-w-0 → le nom se tronque, jamais les boutons. */}
       <div
-        onClick={() => isHost && !isEditMode && onSelect(track)}
-        className={`flex-1 min-w-0 flex items-center gap-2 sm:gap-3 text-left ${isHost && !isEditMode ? 'cursor-pointer' : 'cursor-default'}`}
+        onClick={() => { if (!editing && isHost && !isEditMode) onSelect(track); }}
+        className={`flex-1 min-w-0 flex items-center gap-2 sm:gap-3 text-left ${isHost && !isEditMode && !editing ? 'cursor-pointer' : 'cursor-default'}`}
       >
         {/* Cover Art */}
         <div
@@ -135,62 +147,84 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
           )}
         </div>
 
-        {/* Title & Artist */}
+        {/* Title & Artist (édition inline du nom) */}
         <div className="flex-1 min-w-0">
-          <p className="text-white font-medium truncate text-sm leading-tight">{track.title}</p>
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value.slice(0, 120))}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); else if (e.key === 'Escape') setEditing(false); }}
+              onBlur={saveRename}
+              className="w-full bg-black/40 border border-[#8A2EFF]/60 rounded px-2 py-1 text-white text-sm focus:outline-none"
+              data-testid={`rename-input-${track.id}`}
+            />
+          ) : (
+            <p
+              className="text-white font-medium truncate text-sm leading-tight"
+              onDoubleClick={(e) => { if (isHost && !isEditMode) { e.stopPropagation(); startRename(); } }}
+              title={track.title}
+            >
+              {track.title}
+            </p>
+          )}
           <p className="text-white/50 text-xs truncate">{track.artist}</p>
         </div>
       </div>
 
-      {/* ↕️ Boutons POSITION (hôte) — alternative fiable au drag sur MOBILE. flex-shrink-0 → pas de débordement. */}
+      {/* 🎛️ ACTIONS HÔTE — groupe unique aligné à DROITE, flex-shrink-0 → toujours visibles/cliquables
+          même avec un nom long (le nom se tronque dans le conteneur min-w-0 ci-dessus). */}
       {isHost && !isEditMode && (
-        <div className="flex flex-col flex-shrink-0">
-          <button
-            onClick={(e) => { e.stopPropagation(); onMove(track.id, -1); }}
-            disabled={isFirst}
-            className="p-0.5 sm:p-1 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
-            title="Monter"
-            data-testid={`move-up-${track.id}`}
-            aria-label={`Monter ${track.title}`}
-          >
-            <ChevronUp size={16} strokeWidth={2} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onMove(track.id, 1); }}
-            disabled={isLast}
-            className="p-0.5 sm:p-1 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
-            title="Descendre"
-            data-testid={`move-down-${track.id}`}
-            aria-label={`Descendre ${track.title}`}
-          >
-            <ChevronDown size={16} strokeWidth={2} />
-          </button>
-        </div>
+        editing ? (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {/* onMouseDown preventDefault → garde le focus sur l'input (évite que onBlur déclenche avant le clic). */}
+            <button onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); saveRename(); }}
+              className="p-1.5 rounded-lg text-green-400 bg-green-500/20 hover:bg-green-500/30 transition-colors"
+              title="Valider" data-testid={`rename-save-${track.id}`}>
+              <Check size={16} strokeWidth={2.5} />
+            </button>
+            <button onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); setEditing(false); }}
+              className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+              title="Annuler">
+              <XIcon size={16} strokeWidth={2.5} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0">
+            {/* ↕️ Position (alternative au drag) */}
+            <div className="flex flex-col">
+              <button onClick={(e) => { e.stopPropagation(); onMove(track.id, -1); }} disabled={isFirst}
+                className="p-0.5 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+                title="Monter" data-testid={`move-up-${track.id}`} aria-label={`Monter ${track.title}`}>
+                <ChevronUp size={15} strokeWidth={2} />
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); onMove(track.id, 1); }} disabled={isLast}
+                className="p-0.5 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+                title="Descendre" data-testid={`move-down-${track.id}`} aria-label={`Descendre ${track.title}`}>
+                <ChevronDown size={15} strokeWidth={2} />
+              </button>
+            </div>
+            {/* ✏️ Renommer */}
+            <button onClick={(e) => { e.stopPropagation(); startRename(); }}
+              className="p-1.5 rounded-lg text-white/55 hover:text-white hover:bg-white/10 transition-colors"
+              title="Renommer" data-testid={`rename-track-${track.id}`} aria-label={`Renommer ${track.title}`}>
+              <Pencil size={15} strokeWidth={2} />
+            </button>
+            {/* 🗑️ Supprimer */}
+            <button onClick={(e) => { e.stopPropagation(); onDeleteSingle(track); }}
+              className="p-1.5 rounded-lg transition-colors flex-shrink-0"
+              style={{ color: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.18)' }}
+              title="Supprimer cette piste" data-testid={`delete-track-${track.id}`} aria-label={`Supprimer ${track.title}`}>
+              <Trash2 size={15} strokeWidth={2} />
+            </button>
+          </div>
+        )
       )}
 
-      {/* 🔒 Delete Button - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
-      {isHost && !isEditMode && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteSingle(track);
-          }}
-          className="text-red-500 hover:bg-red-500 hover:text-white p-1.5 sm:p-2 rounded-lg transition-all flex-shrink-0"
-          style={{ color: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.2)' }}
-          title="Supprimer cette piste"
-          data-testid={`delete-track-${track.id}`}
-          aria-label={`Supprimer ${track.title}`}
-        >
-          <Trash2 size={16} strokeWidth={2} className="sm:w-[18px] sm:h-[18px]" />
-        </button>
-      )}
-
-      {/* Selected Indicator - hidden in edit mode */}
-      {isSelected && !isEditMode && (
-        <div 
-          className="w-2 h-2 rounded-full flex-shrink-0"
-          style={{ background: '#8A2EFF' }}
-        />
+      {/* Indicateur de sélection (desktop seulement, ne prend pas de place sur mobile) */}
+      {isSelected && !isEditMode && !editing && (
+        <div className="hidden sm:block w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#8A2EFF' }} />
       )}
     </div>
   );
@@ -202,6 +236,7 @@ interface PlaylistDnDProps {
   onTrackSelect: (track: Track) => void;
   onReorder: (tracks: Track[]) => void;
   onDeleteTracks: (tracks: Track[]) => void;
+  onRenameTrack?: (trackId: number, title: string) => void; // ✏️ renommer un titre (persisté par le parent)
   isHost: boolean;
   maxTracks?: number;
 }
@@ -212,6 +247,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   onTrackSelect,
   onReorder,
   onDeleteTracks,
+  onRenameTrack,
   isHost,
   maxTracks = 10,
 }) => {
@@ -365,6 +401,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                   isFirst={idx === 0}
                   isLast={idx === displayTracks.length - 1}
                   onMove={handleMove}
+                  onRename={(id, title) => onRenameTrack?.(id, title)}
                 />
               ))}
             </div>

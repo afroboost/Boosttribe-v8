@@ -2192,6 +2192,21 @@ export const SessionPage: React.FC = () => {
     }
   }, [showToast, isHost, socket, selectedTrack, persistOwnerPlaylist]);
 
+  // ✏️ Renommer un titre : met à jour le nom + PERSISTE (ligne de session DB + playlist du compte) + sync.
+  const handleRenameTrack = useCallback((trackId: number, title: string) => {
+    if (!isHost) return;
+    const clean = title.trim().slice(0, 120);
+    if (!clean) return;
+    const updated = tracks.map((t) => (t.id === trackId ? { ...t, title: clean } : t));
+    setTracks(updated);
+    if (selectedTrack?.id === trackId) setSelectedTrack({ ...selectedTrack, title: clean });
+    const selId = selectedTrack?.id ?? updated[0]?.id ?? 0;
+    socket.syncPlaylist(updated, selId);          // diffusion aux participants
+    socket.savePlaylistToDb(updated, selId, user?.id); // ligne de session (DB)
+    persistOwnerPlaylist(updated, selId);         // playlist du compte coach
+    showToast('Titre renommé', 'success');
+  }, [isHost, tracks, selectedTrack, socket, persistOwnerPlaylist, showToast, user?.id]);
+
   // Track selection handler (syncs via socket)
   const handleTrackSelectWithSync = useCallback((track: Track) => {
     if (!isHost) return;
@@ -3890,6 +3905,7 @@ export const SessionPage: React.FC = () => {
                     onTrackSelect={handleTrackSelectWithSync}
                     onReorder={handlePlaylistReorder}
                     onDeleteTracks={handleDeleteTracks}
+                    onRenameTrack={handleRenameTrack}
                     isHost={isHost}
                     maxTracks={10}
                   />

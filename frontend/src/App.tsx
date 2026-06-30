@@ -18,6 +18,7 @@ import WalletPage from "@/pages/WalletPage";
 import PricingPage from "@/pages/PricingPage";
 import FeaturesPage from "@/pages/FeaturesPage";
 import LoginPage from "@/pages/LoginPage";
+import PromoPage from "@/pages/PromoPage";
 import ChatBot from "@/components/ChatBot";
 
 // Global settings loader component
@@ -122,6 +123,8 @@ const App: React.FC = () => {
                       <Route path="/login" element={<LoginPage />} />
                       <Route path="/pricing" element={<PricingPage />} />
                       <Route path="/features" element={<FeaturesPage />} />
+                      {/* 📣 Page promo PUBLIQUE (lien partageable, pas d'auth) */}
+                      <Route path="/promo/:sessionId" element={<PromoPage />} />
                       <Route 
                         path="/session" 
                         element={

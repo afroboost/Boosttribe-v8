@@ -664,6 +664,141 @@ async def session_recordings(authorization: Optional[str] = Header(default=None)
     return {"recordings": rows}
 
 
+@app.delete("/session/recordings/{rec_id}")
+async def delete_recording(rec_id: int, authorization: Optional[str] = Header(default=None)):
+    """Supprime un enregistrement : FICHIER du bucket privé + ligne en base.
+    Le coach ne supprime QUE ses propres enregistrements (admin = tous)."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    is_admin = _is_admin_email(user)
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/session_recordings", headers=_service_headers(),
+                                params={"id": f"eq.{rec_id}", "select": "id,host_id,audio_path", "limit": "1"})
+        rows = resp.json() if resp.status_code == 200 else []
+        if not rows:
+            raise HTTPException(status_code=404, detail="Enregistrement introuvable")
+        rec = rows[0]
+        if not is_admin and rec.get("host_id") != uid:
+            raise HTTPException(status_code=403, detail="Vous ne pouvez supprimer que vos propres enregistrements")
+        # 1) Retirer le FICHIER du stockage (bucket privé) — pas juste masquer.
+        path = rec.get("audio_path")
+        if path:
+            try:
+                await client.delete(
+                    f"{SUPABASE_URL}/storage/v1/object/{RECORDINGS_BUCKET}/{path}",
+                    headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"})
+            except Exception as exc:  # noqa: BLE001
+                logger.error("suppression fichier enregistrement échec (%s): %s", path, exc)
+        # 2) Supprimer la ligne en base.
+        await client.delete(f"{SUPABASE_URL}/rest/v1/session_recordings", headers=_service_headers(),
+                            params={"id": f"eq.{rec_id}"})
+    return {"ok": True}
+
+
+# ============================================================================
+#  PAGE PROMO / AFFICHE DE SESSION (configurable par le coach, lien partageable)
+#  Stockée sur la ligne `playlists` (colonnes promo_*). Média (affiche/vidéo 9:16) dans le
+#  bucket public session-media. Lecture PUBLIQUE (via backend service role → pas de blocage RLS).
+# ============================================================================
+class PromoBody(BaseModel):
+    session_id: str
+    enabled: Optional[bool] = None
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None       # 'image' | 'video'
+    description: Optional[str] = None
+    cta_text: Optional[str] = None
+    payment_link: Optional[str] = None     # vide/None = session GRATUITE
+    price: Optional[str] = None
+
+async def _promo_authz(session_id: str, user: Dict[str, Any]) -> None:
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if _is_admin_email(user):
+        return
+    uid = user.get("id")
+    authz = await get_session_authz(session_id)
+    host_id = authz.get("host_id") if authz else None
+    cohosts = (authz.get("cohosts") if authz else None) or []
+    if uid != host_id and uid not in cohosts:
+        raise HTTPException(status_code=403, detail="Réservé à l'hôte de la session")
+
+@app.post("/session/promo")
+async def save_promo(body: PromoBody, authorization: Optional[str] = Header(default=None)):
+    """Enregistre/met à jour la page promo de la session (coach/hôte)."""
+    user = await get_user_from_token(authorization)
+    await _promo_authz(body.session_id, user)
+    mapping = [("enabled", "promo_enabled"), ("media_url", "promo_media_url"),
+               ("media_type", "promo_media_type"), ("description", "promo_description"),
+               ("cta_text", "promo_cta"), ("payment_link", "promo_payment_link"), ("price", "promo_price")]
+    patch: Dict[str, Any] = {}
+    for attr, col in mapping:
+        v = getattr(body, attr)
+        if v is not None:
+            patch[col] = v
+    if patch:
+        await upsert_playlist_fields(body.session_id, patch)
+    return {"ok": True}
+
+@app.post("/session/promo/media")
+async def upload_promo_media(file: UploadFile = File(...), session_id: str = Form(...),
+                             authorization: Optional[str] = Header(default=None)):
+    """Upload de l'affiche (image) OU de la vidéo 9:16 de la page promo → bucket public session-media."""
+    user = await get_user_from_token(authorization)
+    await _promo_authz(session_id, user)
+    ct = (file.content_type or "").lower()
+    if ct.startswith("image/"):
+        media_type = "image"
+    elif ct.startswith("video/"):
+        media_type = "video"
+    else:
+        raise HTTPException(status_code=400, detail="Affiche (image) ou vidéo requise")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Fichier vide")
+    if len(data) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 200 Mo)")
+    raw_name = (file.filename or "promo").replace("\\", "/").split("/")[-1]
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", raw_name).replace("..", "_").lstrip(".")[:80] or "promo"
+    ts = int(datetime.now(timezone.utc).timestamp())
+    storage_path = f"promo/{session_id}/{ts}_{safe_name}"
+    async with httpx.AsyncClient(timeout=180) as client:
+        up = await client.post(
+            f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{storage_path}",
+            headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                     "Content-Type": ct, "x-upsert": "true"},
+            content=data)
+    if up.status_code not in (200, 201):
+        logger.error("promo media upload échec: %s %s", up.status_code, (up.text or "")[:200])
+        raise HTTPException(status_code=500, detail="Upload échoué")
+    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{storage_path}"
+    return {"url": public_url, "media_type": media_type}
+
+@app.get("/session/promo/{session_id}")
+async def get_promo(session_id: str):
+    """Lecture PUBLIQUE de la page promo (lien partageable, visiteur non authentifié)."""
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant invalide")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                                params={"session_id": f"eq.{session_id}",
+                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price",
+                                        "limit": "1"})
+    rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Session introuvable")
+    r = rows[0]
+    return {
+        "session_id": session_id,
+        "enabled": bool(r.get("promo_enabled")),
+        "media_url": r.get("promo_media_url"),
+        "media_type": r.get("promo_media_type"),
+        "description": r.get("promo_description"),
+        "cta_text": r.get("promo_cta"),
+        "payment_link": r.get("promo_payment_link"),
+        "price": r.get("promo_price"),
+    }
+
+
 class GrantAccessBody(BaseModel):
     email: Optional[str] = None
     user_id: Optional[str] = None

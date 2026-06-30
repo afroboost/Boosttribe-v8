@@ -39,6 +39,7 @@ import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { StageRequestsPanel } from '@/components/session/StageRequestsPanel';
 import type { StageRequest } from '@/components/session/StageRequestsPanel';
 import { ChatPanel } from '@/components/session/ChatPanel';
+import { PromoEditor } from '@/components/session/PromoEditor';
 import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
@@ -911,6 +912,7 @@ export const SessionPage: React.FC = () => {
   const [savingMode, setSavingMode] = useState(false);
   const [modeDraft, setModeDraft] = useState<{ mode: 'open' | 'paid' | 'private'; price: string; capacity: string }>({ mode: 'open', price: '', capacity: '' });
   const [showSessionSettings, setShowSessionSettings] = useState(false);
+  const [showPromoEditor, setShowPromoEditor] = useState(false); // 📣 éditeur de la page promo
   // Type de paiement du coach hôte ('subscription' par défaut → mode Payante masqué).
   const [coachPaymentType, setCoachPaymentType] = useState<'subscription' | 'commission'>('subscription');
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
@@ -1313,6 +1315,9 @@ export const SessionPage: React.FC = () => {
   const navigateRef = useRef(navigate);
   useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
+  // 🔍 Vidéo partagée en vue agrandie (plein écran) → le chat est rendu À L'INTÉRIEUR du plein écran
+  //    (sinon invisible en plein écran natif). Piloté par SharedMediaPlayer.onEnlargedChange.
+  const [videoEnlarged, setVideoEnlarged] = useState(false);
   // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
   const [chatOpen, setChatOpen] = useState(false);
   const [chatTab, setChatTab] = useState<'assistant' | 'group' | 'private'>('assistant');
@@ -2746,6 +2751,33 @@ export const SessionPage: React.FC = () => {
     </div>
   );
 
+  // 💬 Panneau de chat — rendu soit au niveau page, soit À L'INTÉRIEUR de la vidéo plein écran (#3).
+  const chatPanelNode = sessionId ? (
+    <ChatPanel
+      open={chatOpen}
+      onToggle={toggleChat}
+      onClose={() => setChatOpen(false)}
+      isPro={isPro}
+      gradient={theme.colors.gradient.primary}
+      unreadTotal={chatUnreadTotal}
+      meUserId={socket.userId}
+      isHost={isHost}
+      participants={participants
+        .filter((p) => !p.isCurrentUser && p.id !== socket.userId)
+        .map((p) => ({ id: p.id, name: p.name, avatarUrl: p.avatarUrl || null }))}
+      tab={chatTab}
+      onTab={setChatTab}
+      partner={chatPartner}
+      onOpenPartner={setChatPartner}
+      groupMessages={groupMessages}
+      privateThreads={privateThreads}
+      unread={chatUnread}
+      onSendGroup={handleSendGroupMessage}
+      onSendPrivate={handleSendPrivateMessage}
+      onDeleteGroup={handleDeleteGroupMessage}
+    />
+  ) : null;
+
   return (
     <div
       // 💬 Quand le chat est ouvert, on libère 372px à droite sur desktop (lg+) → tout le contenu
@@ -2942,6 +2974,14 @@ export const SessionPage: React.FC = () => {
                 </div>
               </div>
             )}
+            {/* 📣 Page promo / affiche partageable */}
+            <button
+              onClick={() => { setShowSessionSettings(false); setShowPromoEditor(true); }}
+              className="w-full mb-3 py-2.5 rounded-xl text-white text-sm font-medium border border-[#D91CD2]/40 bg-[#D91CD2]/10 hover:bg-[#D91CD2]/20 flex items-center justify-center gap-2"
+              data-testid="open-promo-editor"
+            >
+              📣 Configurer la page promo (affiche + lien partageable)
+            </button>
             <div className="flex gap-2">
               <button
                 onClick={handleSaveMode}
@@ -2960,6 +3000,11 @@ export const SessionPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* 📣 Éditeur de la page promo (hôte) */}
+      {showPromoEditor && isHost && sessionId && (
+        <PromoEditor sessionId={sessionId} onClose={() => setShowPromoEditor(false)} />
       )}
 
       {/* 🔊 BUG 1: Overlay d'activation du son (autoplay bloqué côté participant) */}
@@ -3510,7 +3555,8 @@ export const SessionPage: React.FC = () => {
                 onClose={canShare ? handleCloseMedia : undefined}
                 mediaVolume={mixerState.musicVolume}
                 maxSeconds={isFree ? 30 : Infinity}
-                chatOpen={chatOpen}
+                onEnlargedChange={setVideoEnlarged}
+                chatNode={chatPanelNode}
                 liveCamerasNode={liveCamerasNode}
               />
               </div>
@@ -4119,33 +4165,9 @@ export const SessionPage: React.FC = () => {
         />
       )}
 
-      {/* 💬 Lanceur + panneau de CHAT de session (bas à droite) — onglets Assistant / Groupe / Privé.
-          Groupe + Privé sont Pro (realtime éphémère) ; l'Assistant reste Pro comme ailleurs. */}
-      {sessionId && (
-        <ChatPanel
-          open={chatOpen}
-          onToggle={toggleChat}
-          onClose={() => setChatOpen(false)}
-          isPro={isPro}
-          gradient={theme.colors.gradient.primary}
-          unreadTotal={chatUnreadTotal}
-          meUserId={socket.userId}
-          isHost={isHost}
-          participants={participants
-            .filter((p) => !p.isCurrentUser && p.id !== socket.userId)
-            .map((p) => ({ id: p.id, name: p.name, avatarUrl: p.avatarUrl || null }))}
-          tab={chatTab}
-          onTab={setChatTab}
-          partner={chatPartner}
-          onOpenPartner={setChatPartner}
-          groupMessages={groupMessages}
-          privateThreads={privateThreads}
-          unread={chatUnread}
-          onSendGroup={handleSendGroupMessage}
-          onSendPrivate={handleSendPrivateMessage}
-          onDeleteGroup={handleDeleteGroupMessage}
-        />
-      )}
+      {/* 💬 Lanceur + panneau de CHAT — au niveau page SAUF quand la vidéo est agrandie (alors il est
+          rendu À L'INTÉRIEUR du plein écran de la vidéo, cf. SharedMediaPlayer chatNode). */}
+      {!videoEnlarged && chatPanelNode}
     </div>
   );
 };

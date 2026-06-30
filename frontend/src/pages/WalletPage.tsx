@@ -5,7 +5,7 @@ import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, subscribeCoach, getRecordings,
+  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, subscribeCoach, getRecordings, deleteRecording,
   type CoachWallet, type CoachPlan, type RecordingRow,
 } from '@/lib/paymentApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import {
   ArrowLeft, Wallet, TrendingUp, Send, CheckCircle2, Landmark, Loader2, Crown, Infinity as InfinityIcon,
-  Radio, Download, FileText,
+  Radio, Download, FileText, Trash2,
 } from 'lucide-react';
 
 // 🎨 Couleurs Afroboost
@@ -44,6 +44,16 @@ const WalletPage: React.FC = () => {
   const [requesting, setRequesting] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [recordings, setRecordings] = useState<RecordingRow[]>([]);
+  const [deletingRec, setDeletingRec] = useState<number | null>(null);
+
+  const handleDeleteRecording = useCallback(async (id: number) => {
+    if (!window.confirm('Supprimer définitivement cet enregistrement ? Le fichier audio et la transcription seront effacés du serveur.')) return;
+    setDeletingRec(id);
+    const { ok, error } = await deleteRecording(id);
+    setDeletingRec(null);
+    if (ok) { setRecordings((prev) => prev.filter((r) => r.id !== id)); showToast('Enregistrement supprimé', 'success'); }
+    else { showToast(error || 'Suppression impossible', 'error'); }
+  }, [showToast]);
 
   const refresh = useCallback(async () => {
     const [w, p, rec] = await Promise.all([getCoachWallet(), getCoachPlan(), getRecordings()]);
@@ -334,12 +344,23 @@ const WalletPage: React.FC = () => {
                     <details key={r.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
                       <summary className="flex items-center justify-between gap-3 cursor-pointer text-sm">
                         <span className="text-white/80">{new Date(r.created_at).toLocaleString('fr-CH')}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs ${
-                          r.status === 'done' ? 'bg-green-500/20 text-green-400'
-                          : r.status === 'error' ? 'bg-red-500/20 text-red-300'
-                          : 'bg-white/15 text-white/70'
-                        }`}>
-                          {r.status === 'done' ? 'Prêt' : r.status === 'error' ? 'Erreur' : 'En cours…'}
+                        <span className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-xs ${
+                            r.status === 'done' ? 'bg-green-500/20 text-green-400'
+                            : r.status === 'error' ? 'bg-red-500/20 text-red-300'
+                            : 'bg-white/15 text-white/70'
+                          }`}>
+                            {r.status === 'done' ? 'Prêt' : r.status === 'error' ? 'Erreur' : 'En cours…'}
+                          </span>
+                          <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteRecording(r.id); }}
+                            disabled={deletingRec === r.id}
+                            className="p-1.5 rounded-lg text-red-400 hover:text-white hover:bg-red-500/30 border border-red-500/30 transition-colors disabled:opacity-50"
+                            title="Supprimer cet enregistrement (serveur)"
+                            data-testid={`delete-recording-${r.id}`}
+                          >
+                            {deletingRec === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
                         </span>
                       </summary>
                       <div className="mt-3 space-y-3">

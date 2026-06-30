@@ -669,6 +669,87 @@ export async function getRecordings(): Promise<{ recordings: RecordingRow[]; err
   }
 }
 
+// ───────────────────────── PAGE PROMO / AFFICHE DE SESSION ─────────────────────────
+export interface PromoConfig {
+  session_id?: string;
+  enabled?: boolean;
+  media_url?: string | null;
+  media_type?: 'image' | 'video' | null;
+  description?: string | null;
+  cta_text?: string | null;
+  payment_link?: string | null;  // vide = gratuit
+  price?: string | null;
+}
+
+/** Lecture PUBLIQUE de la page promo (lien partageable, pas d'auth requise). */
+export async function getPromo(sessionId: string): Promise<{ promo: PromoConfig | null; error?: string }> {
+  if (!API_URL) return { promo: null, error: 'API non configurée' };
+  try {
+    const res = await fetch(`${API_URL}/session/promo/${encodeURIComponent(sessionId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { promo: null, error: data?.detail || `Erreur ${res.status}` };
+    return { promo: data as PromoConfig };
+  } catch (e) {
+    return { promo: null, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Enregistre la config de la page promo (coach/hôte). */
+export async function savePromo(promo: PromoConfig & { session_id: string }): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Non authentifié' };
+  try {
+    const res = await fetch(`${API_URL}/session/promo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(promo),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Upload de l'affiche/vidéo 9:16 de la page promo. Renvoie l'URL publique + le type. */
+export async function uploadPromoMedia(sessionId: string, file: File): Promise<{ url?: string; media_type?: 'image' | 'video'; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { error: 'Non authentifié' };
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('session_id', sessionId);
+    const res = await fetch(`${API_URL}/session/promo/media`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { url: data.url, media_type: data.media_type };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/** Supprime un enregistrement : fichier serveur (bucket) + ligne en base. Coach = ses propres ; admin = tous. */
+export async function deleteRecording(id: number): Promise<{ ok: boolean; error?: string }> {
+  if (!API_URL) return { ok: false, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, error: 'Non authentifié' };
+  try {
+    const res = await fetch(`${API_URL}/session/recordings/${id}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
 // ---- Admin : clé IA (OpenAI) -----------------------------------------------
 export async function getAiKeys(): Promise<{ configured: boolean; last4: string; source: string; error?: string }> {
   const { data, error } = await adminFetch('/admin/ai-keys', { method: 'GET' });

@@ -18,9 +18,11 @@ interface SharedMediaPlayerProps {
   onClose?: () => void; // hôte : retirer le média partagé
   mediaVolume?: number;  // 0–1 : "Volume Vidéo" du mixeur → pilote le lecteur courant
   maxSeconds?: number;   // plan gratuit : coupe la lecture à 30s (émetteur) ; Pro : Infinity
-  // 💬 Chat ouvert : la vue agrandie laisse la place au chat (panneau latéral desktop / feuille basse mobile)
-  //    et on évite le plein écran NATIF (qui masquerait tout) → overlay CSS qui coexiste avec le chat.
-  chatOpen?: boolean;
+  // 🔔 Notifie le parent quand la vue agrandie (plein écran) s'ouvre/ferme → le parent rend le chat
+  //    À L'INTÉRIEUR de l'élément plein écran (sinon invisible en plein écran natif).
+  onEnlargedChange?: (enlarged: boolean) => void;
+  // 💬 Chat rendu À L'INTÉRIEUR de l'élément plein écran (overlay par-dessus la vidéo paysage).
+  chatNode?: React.ReactNode;
   // 🎥 Vignettes caméra du Live Visio à garder visibles (fenêtre flottante) en vue agrandie.
   liveCamerasNode?: React.ReactNode;
 }
@@ -54,7 +56,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, chatOpen = false, liveCamerasNode }) => {
+export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // 🔍 Racine du lecteur : c'est ELLE qu'on passe en plein écran (contient vidéo + overlay caméras + bouton Retour).
   const rootRef = useRef<HTMLDivElement>(null);
@@ -401,28 +403,23 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   // 🔍 Entrer en plein écran : on demande le plein écran sur le CONTENEUR (root) — pas sur l'iframe —
   // pour que les caméras live (déplaçables) ET le bouton Retour (enfants du conteneur) restent visibles,
   // tout en permettant le verrouillage paysage. Fallback overlay CSS si l'API n'est pas dispo (iOS div).
-  const chatOpenRef = useRef(chatOpen);
-  chatOpenRef.current = chatOpen;
-  const keepEnlargedRef = useRef(false); // sortie de plein écran NATIF voulue (chat) → garder l'overlay CSS
-
   const handleEnlarge = useCallback(() => {
-    // 🔍 Vue agrandie = overlay CSS plein écran (PAS de plein écran NATIF) → le lanceur/panneau de chat
-    //    restent visibles et la vidéo COUVRE tout l'écran dispo (le natif masquerait tout le reste).
-    //    On tente quand même le verrouillage paysage (no-op hors plein écran natif → l'utilisateur tourne).
+    // 🔍 Vue agrandie = PLEIN ÉCRAN NATIF + verrouillage PAYSAGE (mobile) → meilleur visionnage.
+    //    Les caméras live ET le chat sont rendus À L'INTÉRIEUR de cet élément plein écran (rootRef)
+    //    → ils restent visibles/accessibles en overlay PAR-DESSUS la vidéo paysage (cf. liveCamerasNode + chatNode).
     setEnlarged(true);
-    lockLandscape();
+    const el = rootRef.current as (HTMLElement & { webkitRequestFullscreen?: () => void }) | null;
+    try {
+      if (el?.requestFullscreen) {
+        el.requestFullscreen().then(lockLandscape).catch(lockLandscape);
+      } else if (el?.webkitRequestFullscreen) {
+        el.webkitRequestFullscreen();
+        lockLandscape();
+      } else {
+        lockLandscape(); // pas de Fullscreen API (ex. iOS Safari div) → overlay CSS plein écran + rotation manuelle
+      }
+    } catch { /* ignore */ }
   }, [lockLandscape]);
-
-  // 💬 Si le chat s'ouvre PENDANT un plein écran natif → en sortir tout en GARDANT la vue agrandie
-  //    (overlay CSS) pour que vidéo et chat coexistent. keepEnlargedRef empêche onFsChange de fermer.
-  useEffect(() => {
-    if (!chatOpen) return;
-    const d = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void };
-    if (d.fullscreenElement || d.webkitFullscreenElement) {
-      keepEnlargedRef.current = true;
-      try { (d.exitFullscreen?.() || d.webkitExitFullscreen?.()); } catch { /* ignore */ }
-    }
-  }, [chatOpen]);
 
   // 🔍 Sortir : déverrouiller l'orientation + quitter le vrai plein écran s'il est actif
   // (sinon simplement refermer l'overlay CSS). fullscreenchange refermera aussi l'overlay.
@@ -436,6 +433,9 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     }
   }, [unlockOrientation]);
 
+  // 🔔 Informer le parent (SessionPage) de l'état agrandi → il rend le chat À L'INTÉRIEUR du plein écran.
+  useEffect(() => { onEnlargedChange?.(enlarged); }, [enlarged, onEnlargedChange]);
+
   // 🔍 Suivre l'état plein écran : si on en sort (Échap, geste retour, bouton natif) → refermer l'overlay
   const enlargedRef = useRef(enlarged);
   enlargedRef.current = enlarged;
@@ -444,8 +444,6 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       const fsEl = document.fullscreenElement || (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
       if (!fsEl) {
         unlockOrientation();
-        // 💬 Sortie de plein écran VOULUE pour laisser place au chat → garder l'overlay CSS agrandi.
-        if (keepEnlargedRef.current) { keepEnlargedRef.current = false; return; }
         if (enlargedRef.current) setEnlarged(false); // sortie du plein écran natif → fermer la vue agrandie
       }
     };
@@ -587,11 +585,9 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       ref={rootRef}
       className={
         enlarged
-          // 💬 Vue agrandie (overlay CSS) : quand le chat est ouvert, on laisse la place au panneau
-          //    (372px à droite sur desktop, 58vh en bas sur mobile) → vidéo + chat visibles ensemble.
-          ? `fixed z-[100] bg-black flex flex-col ${
-              chatOpen ? 'inset-0 bottom-[58vh] lg:bottom-0 lg:right-[372px]' : 'inset-0'
-            }`
+          // 🔍 Vue agrandie : couvre TOUT l'écran (plein écran natif paysage sur mobile). Caméras + chat
+          //    sont rendus À L'INTÉRIEUR (enfants) → visibles en overlay par-dessus la vidéo paysage.
+          ? 'fixed inset-0 z-[100] bg-black flex flex-col'
           : 'rounded-2xl overflow-hidden border border-white/10 bg-[rgba(20,20,25,0.95)]'
       }
       data-testid="shared-media-root"
@@ -689,6 +685,10 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
           {liveCamerasNode}
         </DraggableWindow>
       )}
+
+      {/* 💬 Chat rendu À L'INTÉRIEUR de l'élément plein écran → reste accessible par-dessus la vidéo
+          paysage (le plein écran natif n'affiche QUE cet élément ; un chat hors de lui serait invisible). */}
+      {enlarged && chatNode}
     </div>
   );
 };

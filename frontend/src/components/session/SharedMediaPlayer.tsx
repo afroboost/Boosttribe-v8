@@ -493,6 +493,13 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const isControllable = media.type === 'video' || media.type === 'youtube' || media.type === 'vimeo';
   const blockParticipant = !isHost && isControllable;
 
+  // 🖼️ Cadrage des iframes (YouTube/Vimeo) : object-fit ne s'applique PAS aux iframes. En vue AGRANDIE,
+  //    on « couvre » le conteneur (technique vh/vw) → plus de bandes noires. En vue intégrée (boîte 16:9),
+  //    l'iframe remplit déjà → comportement inchangé (sûr).
+  const iframeMountClass = enlarged
+    ? "absolute inset-0 overflow-hidden [&>iframe]:absolute [&>iframe]:left-1/2 [&>iframe]:top-1/2 [&>iframe]:-translate-x-1/2 [&>iframe]:-translate-y-1/2 [&>iframe]:w-[177.78vh] [&>iframe]:h-[56.25vw] [&>iframe]:min-w-full [&>iframe]:min-h-full"
+    : "w-full h-full [&>iframe]:w-full [&>iframe]:h-full";
+
   // Construire le contenu intégré (jamais de redirection externe)
   let body: React.ReactNode = null;
   if (media.type === 'video') {
@@ -516,7 +523,8 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         disablePictureInPicture
         onContextMenu={(e) => e.preventDefault()}
         style={{ pointerEvents: isHost ? 'auto' : 'none' }}
-        className="w-full h-full object-contain bg-black"
+        // 🖼️ object-cover → la vidéo REMPLIT tout le conteneur (plus de bandes noires latérales).
+        className="w-full h-full object-cover bg-black"
         // Bug 2 : participant → au chargement, se positionner à l'état hôte et lancer la lecture muette
         // (frame visible, jamais d'écran noir) ; la sync mettra en pause si l'hôte est en pause.
         onLoadedMetadata={() => {
@@ -547,12 +555,12 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     const id = youtubeId(media.url);
     // Item 1/3 : IFrame Player API (window.YT) — pas de simple <iframe> → contrôle + masquage possibles.
     body = id ? (
-      <div ref={ytMountRef} className="w-full h-full" data-testid="shared-youtube" />
+      <div ref={ytMountRef} className={iframeMountClass} data-testid="shared-youtube" />
     ) : <p className="text-white/60 text-sm p-4">Lien YouTube invalide</p>;
   } else if (media.type === 'vimeo') {
     const id = vimeoId(media.url);
     body = id ? (
-      <div ref={vimeoMountRef} className="w-full h-full [&>iframe]:w-full [&>iframe]:h-full" data-testid="shared-vimeo" />
+      <div ref={vimeoMountRef} className={iframeMountClass} data-testid="shared-vimeo" />
     ) : <p className="text-white/60 text-sm p-4">Lien Vimeo invalide</p>;
   } else {
     // Lien générique : on tente l'intégration en iframe (reste DANS la page).
@@ -632,7 +640,7 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
         ref={containerRef}
         className={
           enlarged
-            ? 'relative flex-1 min-h-0 bg-black flex items-center justify-center'
+            ? 'relative flex-1 min-h-0 bg-black flex items-center justify-center overflow-hidden'
             : 'relative w-full aspect-video bg-black [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:aspect-auto [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center'
         }
       >

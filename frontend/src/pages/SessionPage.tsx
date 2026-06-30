@@ -2816,14 +2816,14 @@ export const SessionPage: React.FC = () => {
         onAddPhoto={handleAddPhotoFromModal}
       />
 
-      {/* Photo de profil (upload + recadrage). Hôte : requise. Participant (P2) : optionnelle → annulable. */}
+      {/* Photo de profil (upload + recadrage) — FACULTATIVE pour tout le monde (hôte inclus) : annulable. */}
       {showAvatarCrop && (
         <AvatarUploadCrop
           userId={user?.id || null}
           title="Votre photo de profil"
-          subtitle={isHost ? 'Ajoutez une photo pour créer votre session' : 'Ajoutez votre vraie photo (optionnel, recommandé)'}
+          subtitle={isHost ? 'Ajoutez une photo (facultatif)' : 'Ajoutez votre vraie photo (optionnel, recommandé)'}
           onComplete={handleAvatarComplete}
-          onCancel={isHost ? undefined : () => setShowAvatarCrop(false)}
+          onCancel={() => setShowAvatarCrop(false)}
         />
       )}
 

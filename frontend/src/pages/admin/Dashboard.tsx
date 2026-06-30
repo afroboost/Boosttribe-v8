@@ -16,6 +16,11 @@ import {
   getAdminCoaches, setCoachPaymentType,
   type CommissionSettings, type TicketRow, type PayoutRow, type AdminCoach,
 } from "@/lib/paymentApi";
+import {
+  listCreditGrants, updateCreditGrant, deleteCreditGrant,
+  getTrialConfig, saveTrialConfig,
+  type CreditGrant, type TrialConfig,
+} from "@/lib/adminCreditsApi";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -320,6 +325,98 @@ const Dashboard: React.FC = () => {
   }, [offerEmail, offerAmount, offerNote, refreshCreditOffers, showToast]);
 
   // ===========================================================================
+  // 3a) Historique « Crédits offerts » ÉDITABLE — MODIFIER / SUPPRIMER (grants)
+  // ===========================================================================
+  const [grants, setGrants] = useState<CreditGrant[]>([]);
+  const [grantsLoading, setGrantsLoading] = useState(false);
+  const [editGrantId, setEditGrantId] = useState<number | null>(null);
+  const [editGrantAmount, setEditGrantAmount] = useState(1);
+  const [editGrantNote, setEditGrantNote] = useState('');
+  const [savingGrant, setSavingGrant] = useState(false);
+
+  const refreshGrants = useCallback(async () => {
+    setGrantsLoading(true);
+    try {
+      const { grants: list, error } = await listCreditGrants();
+      if (error) { showToast(`Historique crédits offerts : ${error}`, 'error'); return; }
+      setGrants(list);
+    } finally {
+      setGrantsLoading(false);
+    }
+  }, [showToast]);
+
+  const startEditGrant = useCallback((g: CreditGrant) => {
+    setEditGrantId(g.id);
+    setEditGrantAmount(g.amount);
+    setEditGrantNote(g.note || '');
+  }, []);
+
+  const cancelEditGrant = useCallback(() => {
+    setEditGrantId(null);
+    setEditGrantNote('');
+    setEditGrantAmount(1);
+  }, []);
+
+  const handleUpdateGrant = useCallback(async (id: number) => {
+    if (!editGrantAmount || editGrantAmount <= 0) { showToast('Nombre de crédits invalide', 'warning'); return; }
+    setSavingGrant(true);
+    try {
+      const { ok, error } = await updateCreditGrant(id, { amount: editGrantAmount, note: editGrantNote.trim() });
+      if (ok) {
+        showToast('Crédit offert mis à jour', 'success');
+        cancelEditGrant();
+        await refreshGrants();
+      } else {
+        showToast(error || 'Échec de la mise à jour', 'error');
+      }
+    } finally {
+      setSavingGrant(false);
+    }
+  }, [editGrantAmount, editGrantNote, cancelEditGrant, refreshGrants, showToast]);
+
+  const handleDeleteGrant = useCallback(async (id: number) => {
+    if (!window.confirm('Supprimer définitivement ce crédit offert ?')) return;
+    const { ok, error } = await deleteCreditGrant(id);
+    if (ok) {
+      showToast('Crédit offert supprimé', 'success');
+      if (editGrantId === id) cancelEditGrant();
+      await refreshGrants();
+    } else {
+      showToast(error || 'Échec de la suppression', 'error');
+    }
+  }, [editGrantId, cancelEditGrant, refreshGrants, showToast]);
+
+  // ===========================================================================
+  // 3b) Essai gratuit → paiement automatique (prépare le flux Stripe récurrent)
+  // ===========================================================================
+  const [trialConfig, setTrialConfig] = useState<TrialConfig>({ trial_days: 0, auto_charge_enabled: false });
+  const [trialLoading, setTrialLoading] = useState(false);
+  const [savingTrial, setSavingTrial] = useState(false);
+
+  const refreshTrialConfig = useCallback(async () => {
+    setTrialLoading(true);
+    try {
+      const { data, error } = await getTrialConfig();
+      if (error) { showToast(`Essai gratuit : ${error}`, 'error'); return; }
+      if (data) setTrialConfig(data);
+    } finally {
+      setTrialLoading(false);
+    }
+  }, [showToast]);
+
+  const handleSaveTrialConfig = useCallback(async () => {
+    if (trialConfig.trial_days < 0) { showToast("Durée d'essai invalide", 'warning'); return; }
+    setSavingTrial(true);
+    try {
+      const { ok, error } = await saveTrialConfig(trialConfig);
+      if (ok) showToast('Réglage de l\'essai gratuit enregistré', 'success');
+      else showToast(error || "Échec de l'enregistrement", 'error');
+    } finally {
+      setSavingTrial(false);
+    }
+  }, [trialConfig, showToast]);
+
+  // ===========================================================================
   // 💳 CRÉDITS & TARIFS (admin) — packs + réglages (coûts, validité, offres, services)
   // ===========================================================================
   const [creditPacks, setCreditPacks] = useState<CreditPack[]>([]);
@@ -507,12 +604,13 @@ const Dashboard: React.FC = () => {
 
   // Charger la liste quand on ouvre les onglets concernés
   useEffect(() => {
-    if (activeTab === 'access') { refreshCreditOffers(); refreshUsers(); }
+    if (activeTab === 'access') { refreshCreditOffers(); refreshUsers(); refreshGrants(); }
     if (activeTab === 'credits') refreshCreditConfig();
     if (activeTab === 'billetterie') refreshBilletterie();
     if (activeTab === 'users') refreshUsers();
     if (activeTab === 'stripe') { loadStripeKeys(); loadAiKey(); }
-  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys, loadAiKey]);
+    if (activeTab === 'plans') refreshTrialConfig();
+  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys, loadAiKey, refreshGrants, refreshTrialConfig]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -1591,6 +1689,66 @@ const Dashboard: React.FC = () => {
                   ))}
                 </div>
               </div>
+
+              {/* 3b) Essai gratuit → paiement automatique (Stripe récurrent) */}
+              <div className="p-4 rounded-lg bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <CreditCard size={20} style={{ color: '#D91CD2' }} />
+                  <h3 className="text-white font-semibold">Essai gratuit → paiement automatique</h3>
+                </div>
+                <p className="text-white/50 text-sm mb-4">
+                  Prépare le flux d'abonnement récurrent Stripe : durée de l'essai puis prélèvement
+                  automatique à la fin de la période d'essai.
+                </p>
+                {trialLoading ? (
+                  <p className="text-white/40 text-sm py-2">Chargement…</p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label className="text-white/70">Durée de l'essai (jours)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={trialConfig.trial_days}
+                          onChange={(e) => setTrialConfig((prev) => ({ ...prev, trial_days: parseInt(e.target.value) || 0 }))}
+                          placeholder="14"
+                          className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-white/70">Paiement automatique après l'essai</Label>
+                        <label className="flex items-center gap-3 cursor-pointer h-10">
+                          <button
+                            type="button"
+                            onClick={() => setTrialConfig((prev) => ({ ...prev, auto_charge_enabled: !prev.auto_charge_enabled }))}
+                            className="relative w-12 h-6 rounded-full transition-colors"
+                            style={{ background: trialConfig.auto_charge_enabled ? '#D91CD2' : 'rgba(255,255,255,0.2)' }}
+                          >
+                            <span className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${trialConfig.auto_charge_enabled ? 'translate-x-6' : ''}`} />
+                          </button>
+                          <span className="text-white/70 text-sm">
+                            {trialConfig.auto_charge_enabled ? 'Activé (Stripe)' : 'Désactivé'}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                    <p className="text-white/40 text-xs">
+                      Ce réglage prépare le flux d'abonnement récurrent Stripe : à la fin de l'essai,
+                      le client est prélevé automatiquement si l'option est activée.
+                    </p>
+                    <Button
+                      onClick={handleSaveTrialConfig}
+                      disabled={savingTrial}
+                      className="text-white border-none"
+                      style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                    >
+                      <Save size={16} className="mr-2" />
+                      {savingTrial ? 'Enregistrement…' : "Enregistrer l'essai gratuit"}
+                    </Button>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}
@@ -2062,6 +2220,7 @@ const Dashboard: React.FC = () => {
 
         {/* 💳 Crédits offerts (admin) */}
         {activeTab === 'access' && (
+          <div className="space-y-6">
           <Card className="bg-white/5 border-white/10">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
@@ -2147,6 +2306,89 @@ const Dashboard: React.FC = () => {
               </div>
             </CardContent>
           </Card>
+
+          {/* 3a) Historique « Crédits offerts » — éditable (MODIFIER / SUPPRIMER) */}
+          <Card className="bg-white/5 border-white/10">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Coins size={20} style={{ color: '#FF2DAA' }} />
+                  Historique des crédits offerts ({grants.length})
+                </CardTitle>
+                <Button size="sm" variant="outline" onClick={refreshGrants} className="border-white/20 text-white/70">
+                  <RefreshCw size={14} className="mr-1" /> Actualiser
+                </Button>
+              </div>
+              <CardDescription className="text-white/50">
+                Modifiez le montant / la note d'un crédit offert, ou supprimez-le.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {grantsLoading ? (
+                <p className="text-white/40 text-sm py-4 text-center">Chargement…</p>
+              ) : grants.length === 0 ? (
+                <p className="text-white/40 text-sm py-4 text-center">Aucun crédit offert pour le moment.</p>
+              ) : (
+                <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+                  {grants.map((g) => (
+                    <div key={g.id} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                      {editGrantId === g.id ? (
+                        <div className="space-y-3">
+                          <p className="text-white text-sm font-medium truncate">{g.email}</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                              <Label className="text-white/70 text-xs">Crédits</Label>
+                              <Input type="number" min={1} value={editGrantAmount}
+                                onChange={(e) => setEditGrantAmount(parseInt(e.target.value) || 1)}
+                                className="bg-white/5 border-white/10 text-white" />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <Label className="text-white/70 text-xs">Note</Label>
+                              <Input value={editGrantNote} onChange={(e) => setEditGrantNote(e.target.value)}
+                                placeholder="Note…"
+                                className="bg-white/5 border-white/10 text-white placeholder:text-white/30" />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" disabled={savingGrant} onClick={() => handleUpdateGrant(g.id)}
+                              className="text-white border-none"
+                              style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+                              <Check size={14} className="mr-1" /> {savingGrant ? 'Enregistrement…' : 'Enregistrer'}
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={cancelEditGrant} className="border-white/20 text-white/70">
+                              <X size={14} className="mr-1" /> Annuler
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-white text-sm truncate">{g.email}</p>
+                            <p className="text-white/50 text-xs">
+                              +{g.amount} crédit(s) · {new Date(g.created_at).toLocaleDateString()}
+                              {g.note ? ` · ${g.note}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <Badge className="bg-white/10 text-white border-white/20">+{g.amount}</Badge>
+                            <Button size="sm" variant="outline" onClick={() => startEditGrant(g)}
+                              className="border-white/20" style={{ color: '#FF2DAA' }}>
+                              Modifier
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => handleDeleteGrant(g.id)}
+                              className="border-red-500/30 text-red-400 hover:bg-red-500/10">
+                              <Trash2 size={14} className="mr-1" /> Supprimer
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          </div>
         )}
 
         {/* D : Utilisateurs Tab */}

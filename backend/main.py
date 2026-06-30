@@ -1627,6 +1627,78 @@ async def admin_credit_offers(authorization: Optional[str] = Header(default=None
         r["email"] = (profiles.get(r.get("user_id")) or {}).get("email")
     return {"offers": rows}
 
+# ── Crédits offerts : éditer / supprimer une entrée (admin) ───────────────────
+class CreditGrantPatch(BaseModel):
+    amount: Optional[int] = None
+    note: Optional[str] = None
+
+@app.get("/admin/credit-grants")
+async def admin_credit_grants(authorization: Optional[str] = Header(default=None)):
+    """Liste des crédits offerts (id, email, montant, note, date) — éditable/supprimable."""
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
+                                params={"reason": "eq.offered", "select": "id,user_id,delta,note,created_at",
+                                        "order": "created_at.desc", "limit": "300"})
+    rows = resp.json() if resp.status_code == 200 else []
+    profiles = await fetch_profiles_map()
+    grants = [{"id": r.get("id"), "email": (profiles.get(r.get("user_id")) or {}).get("email"),
+               "amount": r.get("delta"), "note": r.get("note"), "created_at": r.get("created_at")} for r in rows]
+    return {"grants": grants}
+
+@app.patch("/admin/credit-grants/{grant_id}")
+async def admin_update_grant(grant_id: int, body: CreditGrantPatch, authorization: Optional[str] = Header(default=None)):
+    """Modifie le montant (delta) et/ou la note d'un crédit offert."""
+    await require_admin(authorization)
+    patch: Dict[str, Any] = {}
+    if body.amount is not None:
+        patch["delta"] = int(body.amount)
+    if body.note is not None:
+        patch["note"] = body.note
+    if not patch:
+        return {"ok": True}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.patch(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
+                                  params={"id": f"eq.{grant_id}", "reason": "eq.offered"}, json=patch)
+    return {"ok": resp.status_code in (200, 204)}
+
+@app.delete("/admin/credit-grants/{grant_id}")
+async def admin_delete_grant(grant_id: int, authorization: Optional[str] = Header(default=None)):
+    """Supprime une entrée de crédits offerts."""
+    await require_admin(authorization)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.delete(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
+                                   params={"id": f"eq.{grant_id}", "reason": "eq.offered"})
+    return {"ok": resp.status_code in (200, 204)}
+
+# ── Essai gratuit → paiement automatique (réglage admin) ──────────────────────
+class TrialConfigBody(BaseModel):
+    trial_days: int
+    auto_charge_enabled: bool
+
+@app.get("/admin/trial-config")
+async def admin_get_trial_config(authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    s = await get_pricing_settings()
+    return {"trial_days": int(s.get("trial_days") or 3),
+            "auto_charge_enabled": bool(s.get("auto_charge_enabled"))}
+
+@app.post("/admin/trial-config")
+async def admin_save_trial_config(body: TrialConfigBody, authorization: Optional[str] = Header(default=None)):
+    await require_admin(authorization)
+    days = max(0, min(90, int(body.trial_days)))
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.patch(f"{SUPABASE_URL}/rest/v1/pricing_settings",
+                                  headers=_service_headers({"Prefer": "return=minimal"}),
+                                  params={"id": "eq.default"},
+                                  json={"trial_days": days, "auto_charge_enabled": bool(body.auto_charge_enabled),
+                                        "updated_at": datetime.now(timezone.utc).isoformat()})
+    # TODO (flux récurrent Stripe) : à l'expiration de l'essai, créer un abonnement Stripe récurrent
+    #   (mode='subscription') pour les coachs concernés. Base prête ; activation via auto_charge_enabled.
+    if resp.status_code not in (200, 204):
+        raise HTTPException(status_code=500, detail="Échec d'enregistrement de l'essai")
+    return {"ok": True}
+
 @app.get("/admin/credit-config")
 async def admin_credit_config(authorization: Optional[str] = Header(default=None)):
     await require_admin(authorization)

@@ -113,6 +113,8 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
     if (!t) { if (mediaType === 'video') { setMediaUrl(null); setMediaType(null); } return; }
     setMediaUrl(t); setMediaType('video');
   };
+  // 🎬 Aperçu : clic sur la miniature → ouvre le lien vidéo dans un nouvel onglet (jamais d'embed).
+  const openVideo = () => { if (mediaUrl && isHttpUrl(mediaUrl)) window.open(mediaUrl, '_blank', 'noopener,noreferrer'); };
   // Miniature PROPRE de la vidéo (image seule) pour l'aperçu — récupérée via le backend (og:image/oEmbed).
   const [videoThumb, setVideoThumb] = useState<string | null>(null);
   useEffect(() => {
@@ -262,17 +264,17 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                 <div className="w-full max-w-[230px] rounded-2xl overflow-hidden border border-white/10 bg-black"
                      style={{ aspectRatio: format === '9:16' ? '9 / 16' : '16 / 9' }}>
                   {mediaUrl && mediaType === 'video' ? (
-                    // Miniature PROPRE (image seule) + play — pas de carte plateforme.
-                    <div className="relative w-full h-full">
+                    // Miniature PROPRE (image seule) + play — pas de carte plateforme. Clic = ouvre le lien vidéo.
+                    <button type="button" onClick={openVideo} className="group relative w-full h-full block" aria-label="Voir la vidéo">
                       {videoThumb
                         ? <img src={videoThumb} alt="Aperçu vidéo" className="w-full h-full object-cover" />
                         : <div className="w-full h-full" style={{ background: AFRO.gradient }} />}
                       <span className="absolute inset-0 flex items-center justify-center">
-                        <span className="w-12 h-12 rounded-full bg-black/55 flex items-center justify-center backdrop-blur-sm">
+                        <span className="w-12 h-12 rounded-full bg-black/55 group-hover:bg-black/70 flex items-center justify-center backdrop-blur-sm transition-colors">
                           <Play className="w-6 h-6 text-white ml-0.5" fill="currentColor" />
                         </span>
                       </span>
-                    </div>
+                    </button>
                   ) : mediaUrl && mediaType === 'image' ? (
                     <img src={mediaUrl} alt="" className="w-full h-full object-cover" />
                   ) : (

@@ -66,6 +66,12 @@
 /* Base styles */
 html {
   scroll-behavior: smooth;
+  /* MOBILE SCROLL FIX (CHANTIER 4c):
+     Contain horizontal overflow at the <html> level instead of on <body>.
+     When overflow-x:hidden lives on <body> only, iOS Safari / mobile Chrome
+     turn <body> into a scroll container, which fights vertical touch/momentum
+     scrolling and makes the page feel "blocked" when scrolling down. */
+  overflow-x: clip; /* clip = visual clipping WITHOUT creating a scroll container (unlike hidden) */
 }
 
 body {
@@ -75,7 +81,14 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
+  /* MOBILE SCROLL FIX (CHANTIER 4c):
+     Use overflow-x:clip instead of overflow-x:hidden. `clip` prevents horizontal
+     overflow visually but never makes <body> a scroll container, so vertical
+     scrolling stays on the natural document/viewport scroller. Desktop layout
+     is unaffected (horizontal overflow is still hidden). */
+  overflow-x: clip;
+  /* Allow native vertical scrolling + smooth iOS momentum scrolling. */
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Headings use Space Grotesk */

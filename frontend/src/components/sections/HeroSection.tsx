@@ -237,31 +237,8 @@ export const HeroSection: React.FC = () => {
           {t('hero.title')}
         </p>
 
-        {/* Description - Dynamic from translation */}
-        <p 
-          className="text-base sm:text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed opacity-0"
-          style={{
-            fontFamily: fonts.body,
-            color: colors.text.muted,
-            animation: "bt-fade-in 0.8s ease-out 0.8s forwards",
-          }}
-        >
-          {t('hero.subtitle')}
-        </p>
-
-        {/* Ligne de valeur — nouveautés (discrète) */}
-        <p
-          className="text-sm sm:text-base max-w-xl mx-auto mb-10 opacity-0"
-          style={{
-            fontFamily: fonts.body,
-            color: colors.text.muted,
-            animation: "bt-fade-in 0.8s ease-out 0.9s forwards",
-          }}
-        >
-          Lives synchronisés, <span style={{ color: colors.text.secondary }}>Live visio</span>,
-          {" "}<span style={{ color: colors.text.secondary }}>chat en direct</span> et
-          {" "}<span style={{ color: colors.text.secondary }}>transcription IA</span> — tout au même endroit.
-        </p>
+        {/* 🪶 Accueil allégé : on garde le titre fort + le slogan court. Les paragraphes descriptifs
+            ont été retirés (plus aéré, premium) ; les bénéfices restent en badges compacts plus bas. */}
 
         {/* Session Join Form */}
         <div 

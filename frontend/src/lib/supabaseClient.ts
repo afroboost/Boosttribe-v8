@@ -443,6 +443,32 @@ export async function uploadAvatar(file: Blob, userId: string): Promise<{ url?: 
 }
 
 /**
+ * Upload d'une image du CARROUSEL d'accueil (admin) vers le bucket public "session-media".
+ * 🔒 Formats raster uniquement (SVG/HTML rejetés → pas de XSS stocké servi depuis le bucket public).
+ */
+export async function uploadHomeImage(file: File): Promise<{ url?: string; error?: string }> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
+  const ALLOWED: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+  const ct = (file.type || '').toLowerCase();
+  const ext = ALLOWED[ct];
+  if (!ext) return { error: 'Format non supporté (JPEG, PNG, WebP, GIF)' };
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token || supabaseAnonKey;
+    const path = `home/${Date.now()}-${Math.floor(performance.now())}.${ext}`;
+    const res = await fetch(`${supabaseUrl}/storage/v1/object/session-media/${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, apikey: supabaseAnonKey, 'Content-Type': ct, 'x-upsert': 'true' },
+      body: file,
+    });
+    if (!res.ok) return { error: `Upload échoué (${res.status})` };
+    return { url: `${supabaseUrl}/storage/v1/object/public/session-media/${path}` };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Erreur upload image' };
+  }
+}
+
+/**
  * Upload d'une image de session vers le bucket "session-media" (auth utilisateur requise).
  */
 export async function uploadSessionImage(file: File, sessionId: string): Promise<{ url?: string; error?: string }> {

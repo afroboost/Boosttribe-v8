@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { MobileMenu } from "@/components/layout/MobileMenu";
-import supabase, { isSupabaseConfigured } from "@/lib/supabaseClient";
+import supabase, { isSupabaseConfigured, uploadHomeImage } from "@/lib/supabaseClient";
 import {
   KeyRound,
   ShieldCheck,
@@ -54,7 +54,11 @@ import {
   Coins,
   Plus,
   Ticket,
-  Percent
+  Percent,
+  Upload,
+  ChevronUp,
+  ChevronDown,
+  Loader2
 } from "lucide-react";
 
 // Site settings interface - matches Supabase table
@@ -65,6 +69,7 @@ interface SiteSettings {
   site_description: string;
   site_badge: string;
   favicon_url: string;
+  home_carousel: { url: string; alt?: string }[]; // 🖼️ carrousel d'accueil (max 3)
   color_primary: string;
   color_secondary: string;
   color_background: string;
@@ -97,6 +102,7 @@ const DEFAULT_SETTINGS: SiteSettings = {
   site_description: 'Rejoignez la communauté des beatmakers et producteurs.',
   site_badge: 'La communauté des créateurs',
   favicon_url: '',
+  home_carousel: [],
   color_primary: '#8A2EFF',
   color_secondary: '#FF2FB3',
   color_background: '#000000',
@@ -647,6 +653,48 @@ const Dashboard: React.FC = () => {
     setHasChanges(true);
   }, []);
 
+  // 🖼️ Carrousel d'accueil (max 3 images) — upload/remplacement, texte alt, ordre.
+  const [carouselUploading, setCarouselUploading] = useState<number | null>(null);
+  const setCarousel = useCallback((next: { url: string; alt?: string }[]) => {
+    setSettings(prev => ({ ...prev, home_carousel: next }));
+    setHasChanges(true);
+  }, []);
+  const handleCarouselUpload = useCallback(async (slot: number, file: File) => {
+    setCarouselUploading(slot);
+    const { url, error } = await uploadHomeImage(file);
+    setCarouselUploading(null);
+    if (error || !url) { showToast(error || 'Upload échoué', 'error'); return; }
+    setSettings(prev => {
+      const arr = [...(prev.home_carousel || [])];
+      arr[slot] = { url, alt: arr[slot]?.alt || '' };
+      return { ...prev, home_carousel: arr.filter(Boolean) };
+    });
+    setHasChanges(true);
+    showToast('Image téléversée — pensez à Enregistrer', 'success');
+  }, [showToast]);
+  const updateCarouselAlt = useCallback((slot: number, alt: string) => {
+    setSettings(prev => {
+      const arr = [...(prev.home_carousel || [])];
+      if (arr[slot]) arr[slot] = { ...arr[slot], alt };
+      return { ...prev, home_carousel: arr };
+    });
+    setHasChanges(true);
+  }, []);
+  const moveCarousel = useCallback((slot: number, dir: -1 | 1) => {
+    setSettings(prev => {
+      const arr = [...(prev.home_carousel || [])];
+      const t = slot + dir;
+      if (t < 0 || t >= arr.length) return prev;
+      [arr[slot], arr[t]] = [arr[t], arr[slot]];
+      return { ...prev, home_carousel: arr };
+    });
+    setHasChanges(true);
+  }, []);
+  const removeCarousel = useCallback((slot: number) => {
+    setSettings(prev => ({ ...prev, home_carousel: (prev.home_carousel || []).filter((_, i) => i !== slot) }));
+    setHasChanges(true);
+  }, []);
+
   // Save settings - SDK SUPABASE UNIQUEMENT (SANS FETCH)
   const handleSave = useCallback(async () => {
     if (!supabase) { 
@@ -665,6 +713,7 @@ const Dashboard: React.FC = () => {
         site_description: settings.site_description,
         site_badge: settings.site_badge,
         favicon_url: settings.favicon_url || '',
+        home_carousel: settings.home_carousel || [],
         color_primary: settings.color_primary,
         color_secondary: settings.color_secondary,
         color_background: settings.color_background,
@@ -1037,6 +1086,51 @@ const Dashboard: React.FC = () => {
                   <span className="hidden text-red-400 text-xs">Image non chargée</span>
                 </div>
               )}
+
+              <Separator className="my-4 bg-white/10" />
+
+              {/* 🖼️ Images d'accueil (carrousel) — upload / remplacer / ordonner (max 3) */}
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-white/80 flex items-center gap-2"><Image size={14} /> Images d'accueil (carrousel)</Label>
+                  <p className="text-white/30 text-[11px] mt-0.5">Jusqu'à 3 images défilant sur la page d'accueil. JPEG/PNG/WebP/GIF. Sans image → la section est masquée.</p>
+                </div>
+
+                {(settings.home_carousel || []).map((img, i) => (
+                  <div key={i} className="flex items-center gap-3 p-2.5 rounded-lg bg-white/5 border border-white/10">
+                    <div className="w-16 h-10 rounded overflow-hidden bg-black/40 flex-shrink-0">
+                      {img.url ? <img src={img.url} alt="" className="w-full h-full object-cover" /> : null}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <Input
+                        value={img.alt || ''}
+                        onChange={(e) => updateCarouselAlt(i, e.target.value)}
+                        placeholder="Texte alternatif (optionnel)"
+                        className="h-8 text-xs bg-black/30 border-white/15 text-white"
+                      />
+                    </div>
+                    <div className="flex flex-col flex-shrink-0">
+                      <button onClick={() => moveCarousel(i, -1)} disabled={i === 0} className="p-0.5 text-white/50 hover:text-white disabled:opacity-20" title="Monter"><ChevronUp size={15} /></button>
+                      <button onClick={() => moveCarousel(i, 1)} disabled={i === (settings.home_carousel?.length || 0) - 1} className="p-0.5 text-white/50 hover:text-white disabled:opacity-20" title="Descendre"><ChevronDown size={15} /></button>
+                    </div>
+                    <label className="flex-shrink-0 cursor-pointer p-1.5 rounded text-white/60 hover:text-white hover:bg-white/10" title="Remplacer">
+                      {carouselUploading === i ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
+                      <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden"
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCarouselUpload(i, f); e.currentTarget.value = ''; }} />
+                    </label>
+                    <button onClick={() => removeCarousel(i)} className="flex-shrink-0 p-1.5 rounded text-red-400 hover:text-white hover:bg-red-500/30" title="Retirer"><Trash2 size={15} /></button>
+                  </div>
+                ))}
+
+                {(settings.home_carousel?.length || 0) < 3 && (
+                  <label className="flex items-center justify-center gap-2 cursor-pointer p-2.5 rounded-lg border border-dashed border-white/20 text-white/60 hover:text-white hover:border-white/40 text-sm">
+                    {carouselUploading === (settings.home_carousel?.length || 0) ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+                    Ajouter une image
+                    <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" className="hidden"
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCarouselUpload(settings.home_carousel?.length || 0, f); e.currentTarget.value = ''; }} />
+                  </label>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}

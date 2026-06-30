@@ -789,6 +789,61 @@ async def upload_promo_media(file: UploadFile = File(...), session_id: str = For
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{storage_path}"
     return {"url": public_url, "media_type": media_type}
 
+@app.get("/promo/thumbnail")
+async def promo_thumbnail(url: str):
+    """À partir d'un lien vidéo (Instagram, Facebook, YouTube, TikTok, Vimeo…), renvoie UNIQUEMENT la
+    miniature (og:image / oEmbed thumbnail_url) → le frontend affiche l'image seule + un bouton play,
+    SANS le 'chrome' de la plateforme. { thumbnail_url, video_url }. thumbnail_url=null si introuvable."""
+    if not url or not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL invalide (http(s) requis)")
+    low = url.lower()
+    thumb: Optional[str] = None
+
+    # YouTube : miniature déduite de l'id (aucune requête).
+    ytm = re.search(r'(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)([\w-]{6,})', url)
+    if ytm:
+        thumb = f"https://i.ytimg.com/vi/{ytm.group(1)}/hqdefault.jpg"
+
+    # Vimeo / TikTok : oEmbed officiel (public, renvoie thumbnail_url).
+    if not thumb and "vimeo.com" in low:
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
+                r = await c.get("https://vimeo.com/api/oembed.json", params={"url": url})
+            if r.status_code == 200:
+                thumb = r.json().get("thumbnail_url")
+        except Exception:  # noqa: BLE001
+            pass
+    if not thumb and "tiktok.com" in low:
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
+                r = await c.get("https://www.tiktok.com/oembed", params={"url": url})
+            if r.status_code == 200:
+                thumb = r.json().get("thumbnail_url")
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Instagram / Facebook / autres : og:image de la page (UA crawler → meta OpenGraph publiques).
+    if not thumb:
+        try:
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True,
+                                         headers={"User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"}) as c:
+                r = await c.get(url)
+            if r.status_code == 200 and r.text:
+                html = r.text[:200000]
+                m = (re.search(r'<meta[^>]+property=["\']og:image(?::secure_url)?["\'][^>]+content=["\']([^"\']+)', html, re.I)
+                     or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', html, re.I)
+                     or re.search(r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)', html, re.I))
+                if m:
+                    thumb = m.group(1).replace("&amp;", "&").strip()
+        except Exception:  # noqa: BLE001
+            pass
+
+    # On ne renvoie qu'une miniature http(s) (sinon le frontend met une vignette neutre Afroboost).
+    if thumb and not thumb.lower().startswith(("http://", "https://")):
+        thumb = None
+    return {"thumbnail_url": thumb, "video_url": url}
+
+
 @app.get("/session/my-last")
 async def my_last_session(authorization: Optional[str] = Header(default=None)):
     """Renvoie la DERNIÈRE session de l'utilisateur (host_id = uid), pour le bouton « Ma session ».

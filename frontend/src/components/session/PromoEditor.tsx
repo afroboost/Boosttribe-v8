@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import RawCropper from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
-import { X, Upload, Loader2, Copy, Check, Image as ImageIcon, Video, ArrowRight, Ticket } from 'lucide-react';
-import { getPromo, savePromo, uploadPromoMedia, claimHost } from '@/lib/paymentApi';
-import { videoEmbedUrl, isHttpUrl } from '@/lib/videoEmbed';
+import { X, Upload, Loader2, Copy, Check, Image as ImageIcon, Video, ArrowRight, Ticket, Play } from 'lucide-react';
+import { getPromo, savePromo, uploadPromoMedia, claimHost, getVideoThumbnail } from '@/lib/paymentApi';
+import { isHttpUrl } from '@/lib/videoEmbed';
 import { useToast } from '@/components/ui/Toast';
 
 // react-easy-crop v6 : caster pour le typage JSX (l'export par défaut perd le type valeur).
@@ -113,6 +113,20 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
     if (!t) { if (mediaType === 'video') { setMediaUrl(null); setMediaType(null); } return; }
     setMediaUrl(t); setMediaType('video');
   };
+  // Miniature PROPRE de la vidéo (image seule) pour l'aperçu — récupérée via le backend (og:image/oEmbed).
+  const [videoThumb, setVideoThumb] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (mediaType === 'video' && mediaUrl && isHttpUrl(mediaUrl)) {
+      const t = setTimeout(async () => {
+        const { thumbnail_url } = await getVideoThumbnail(mediaUrl);
+        if (!cancelled) setVideoThumb(thumbnail_url);
+      }, 600); // léger délai (l'admin tape l'URL)
+      return () => { cancelled = true; clearTimeout(t); };
+    }
+    setVideoThumb(null);
+    return () => { cancelled = true; };
+  }, [mediaType, mediaUrl]);
 
   const confirmCrop = async () => {
     if (!cropSrc || !cropPixelsRef.current) return;
@@ -187,8 +201,8 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                 <label className="text-white/80 text-xs">Ou lien vidéo (Instagram, Facebook, YouTube, TikTok, Vimeo…)</label>
                 <input value={videoLink} onChange={(e) => setVideoLink(e.target.value)} placeholder="https://…"
                   className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" />
-                {videoLink && !videoEmbedUrl(videoLink) && isHttpUrl(videoLink) && (
-                  <p className="text-white/40 text-[11px] mt-1">Aperçu non intégrable pour ce réseau → un bouton « Voir la vidéo » sera affiché.</p>
+                {videoLink && isHttpUrl(videoLink) && !videoThumb && (
+                  <p className="text-white/40 text-[11px] mt-1">Miniature en cours de récupération… (vignette neutre si introuvable).</p>
                 )}
               </div>
 
@@ -248,12 +262,17 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                 <div className="w-full max-w-[230px] rounded-2xl overflow-hidden border border-white/10 bg-black"
                      style={{ aspectRatio: format === '9:16' ? '9 / 16' : '16 / 9' }}>
                   {mediaUrl && mediaType === 'video' ? (
-                    videoEmbedUrl(mediaUrl)
-                      ? <iframe src={videoEmbedUrl(mediaUrl)!} title="Aperçu vidéo" className="w-full h-full" allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
-                      : <a href={isHttpUrl(mediaUrl) ? mediaUrl : undefined} target="_blank" rel="noopener noreferrer"
-                           className="w-full h-full flex flex-col items-center justify-center gap-2 text-white bg-[#0d0d12]">
-                          <Video className="w-10 h-10" style={{ color: AFRO.pink }} /><span className="text-xs font-semibold">Voir la vidéo</span>
-                        </a>
+                    // Miniature PROPRE (image seule) + play — pas de carte plateforme.
+                    <div className="relative w-full h-full">
+                      {videoThumb
+                        ? <img src={videoThumb} alt="Aperçu vidéo" className="w-full h-full object-cover" />
+                        : <div className="w-full h-full" style={{ background: AFRO.gradient }} />}
+                      <span className="absolute inset-0 flex items-center justify-center">
+                        <span className="w-12 h-12 rounded-full bg-black/55 flex items-center justify-center backdrop-blur-sm">
+                          <Play className="w-6 h-6 text-white ml-0.5" fill="currentColor" />
+                        </span>
+                      </span>
+                    </div>
                   ) : mediaUrl && mediaType === 'image' ? (
                     <img src={mediaUrl} alt="" className="w-full h-full object-cover" />
                   ) : (

@@ -684,6 +684,19 @@ export async function getMyLastSession(): Promise<{ sessionId: string | null; er
   }
 }
 
+/** Miniature PROPRE d'un lien vidéo (og:image/oEmbed) — sans le « chrome » de la plateforme. Public. */
+export async function getVideoThumbnail(url: string): Promise<{ thumbnail_url: string | null; video_url: string }> {
+  if (!API_URL) return { thumbnail_url: null, video_url: url };
+  try {
+    const res = await fetch(`${API_URL}/promo/thumbnail?url=${encodeURIComponent(url)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { thumbnail_url: null, video_url: url };
+    return { thumbnail_url: data.thumbnail_url || null, video_url: data.video_url || url };
+  } catch {
+    return { thumbnail_url: null, video_url: url };
+  }
+}
+
 // ───────────────────────── PAGE PROMO / AFFICHE DE SESSION ─────────────────────────
 export interface PromoConfig {
   session_id?: string;

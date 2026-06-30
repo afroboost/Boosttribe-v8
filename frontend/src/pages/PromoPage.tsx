@@ -28,12 +28,14 @@ const PromoPage: React.FC = () => {
     (async () => {
       const { promo: p, error: e } = await getPromo(sessionId);
       if (cancelled) return;
-      if (e || !p) { setError(e || 'Page introuvable'); setLoading(false); return; }
+      // 🔁 Point d'entrée TRANSPARENT : si aucune page promo n'est publiée pour cette session,
+      //    on entre directement dans la session (le participant ne voit pas de page « indisponible »).
+      if (!p || !p.enabled) { navigate(`/session/${encodeURIComponent(sessionId)}`, { replace: true }); return; }
       setPromo(p);
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [sessionId]);
+  }, [sessionId, navigate]);
 
   // 🔒 Sécurité : on n'accepte QUE des liens http(s) (bloque javascript:/data: → XSS au clic).
   const safePaymentLink = (() => {
@@ -69,9 +71,9 @@ const PromoPage: React.FC = () => {
         </div>
       ) : (
         <div className="w-full max-w-sm flex flex-col items-center gap-5">
-          {/* Affiche / vidéo 9:16 */}
+          {/* Affiche / vidéo au format choisi par le coach (9:16 ou 16:9) */}
           <div className="w-full rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-black"
-               style={{ aspectRatio: '9 / 16', maxHeight: '70vh' }}>
+               style={{ aspectRatio: promo.format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '70vh' }}>
             {promo.media_url ? (
               promo.media_type === 'video' ? (
                 <video src={promo.media_url} className="w-full h-full object-cover" autoPlay muted loop playsInline controls />

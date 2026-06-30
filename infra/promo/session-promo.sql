@@ -11,3 +11,4 @@ alter table public.playlists
   add column if not exists promo_cta          text,    -- texte du bouton (CTA)
   add column if not exists promo_payment_link text,    -- lien de paiement du coach ; NULL/vide = gratuit
   add column if not exists promo_price        text;    -- prix affiché (ex. "20 CHF")
+alter table public.playlists add column if not exists promo_format text;

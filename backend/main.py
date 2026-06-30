@@ -709,6 +709,7 @@ class PromoBody(BaseModel):
     cta_text: Optional[str] = None
     payment_link: Optional[str] = None     # vide/None = session GRATUITE
     price: Optional[str] = None
+    format: Optional[str] = None           # '9:16' | '16:9' (cadrage de l'affiche/vidéo)
 
 async def _promo_authz(session_id: str, user: Dict[str, Any]) -> None:
     if not SESSION_ID_RE.match(session_id):
@@ -719,8 +720,12 @@ async def _promo_authz(session_id: str, user: Dict[str, Any]) -> None:
     authz = await get_session_authz(session_id)
     host_id = authz.get("host_id") if authz else None
     cohosts = (authz.get("cohosts") if authz else None) or []
-    if uid != host_id and uid not in cohosts:
+    if host_id and uid != host_id and uid not in cohosts:
         raise HTTPException(status_code=403, detail="Réservé à l'hôte de la session")
+    # 🔑 host_id absent (session pas encore « réclamée » → c'était la cause de l'échec d'enregistrement) :
+    #    le coach authentifié devient l'hôte de la ligne playlists, ce qui débloque la sauvegarde.
+    if not host_id and uid:
+        await upsert_playlist_fields(session_id, {"host_id": uid})
 
 @app.post("/session/promo")
 async def save_promo(body: PromoBody, authorization: Optional[str] = Header(default=None)):
@@ -735,9 +740,12 @@ async def save_promo(body: PromoBody, authorization: Optional[str] = Header(defa
     _check_url(body.media_url, "URL du média")
     if body.media_type is not None and body.media_type not in ("image", "video", ""):
         raise HTTPException(status_code=400, detail="Type de média invalide")
+    if body.format is not None and body.format not in ("9:16", "16:9", ""):
+        raise HTTPException(status_code=400, detail="Format invalide")
     mapping = [("enabled", "promo_enabled"), ("media_url", "promo_media_url"),
                ("media_type", "promo_media_type"), ("description", "promo_description"),
-               ("cta_text", "promo_cta"), ("payment_link", "promo_payment_link"), ("price", "promo_price")]
+               ("cta_text", "promo_cta"), ("payment_link", "promo_payment_link"), ("price", "promo_price"),
+               ("format", "promo_format")]
     patch: Dict[str, Any] = {}
     for attr, col in mapping:
         v = getattr(body, attr)
@@ -791,7 +799,7 @@ async def get_promo(session_id: str):
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}",
-                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price",
+                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format",
                                         "limit": "1"})
     rows = resp.json() if resp.status_code == 200 else []
     if not rows:
@@ -806,6 +814,7 @@ async def get_promo(session_id: str):
         "cta_text": r.get("promo_cta"),
         "payment_link": r.get("promo_payment_link"),
         "price": r.get("promo_price"),
+        "format": r.get("promo_format") or "9:16",
     }
 
 
@@ -1184,6 +1193,14 @@ async def grant_access(body: GrantAccessBody, authorization: Optional[str] = Hea
     if not await upsert_profile(row):
         # Repli ultime : PATCH si l'upsert a échoué (ex. colonnes requises supplémentaires)
         await update_profile(user_id, {"comp_access_plan": body.plan, "comp_access_until": body.until})
+    # 🏆 Un accès accordé par l'admin = coach ILLIMITÉ : on écrit aussi un abo coach ACTIF + type
+    #    'subscription' → crédits illimités côté backend (is_coach_unlimited) ET RLS (has_open_session_access).
+    try:
+        await update_profile(user_id, {"coach_payment_type": "subscription"})
+        await upsert_coach_subscription(user_id, {"status": "active", "current_period_end": body.until,
+                                                  "stripe_subscription_id": f"admin-grant:{user_id}"})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("grant-access: synchro abo coach échec (%s): %s", user_id, exc)
     return {"ok": True, "user_id": user_id, "plan": body.plan, "until": body.until}
 
 
@@ -1191,6 +1208,13 @@ async def grant_access(body: GrantAccessBody, authorization: Optional[str] = Hea
 async def revoke_access(body: RevokeAccessBody, authorization: Optional[str] = Header(default=None)):
     await require_admin(authorization)
     await update_profile(body.user_id, {"comp_access_plan": None, "comp_access_until": None})
+    # Annule l'abo coach SEULEMENT s'il provient d'un accès admin (jamais un vrai abo Stripe payant).
+    try:
+        sub = await get_coach_subscription(body.user_id)
+        if sub and str(sub.get("stripe_subscription_id") or "").startswith("admin-grant:"):
+            await upsert_coach_subscription(body.user_id, {"status": "canceled", "current_period_end": None})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("revoke-access: annulation abo coach échec (%s): %s", body.user_id, exc)
     return {"ok": True}
 
 
@@ -1636,8 +1660,33 @@ def _subscription_active(sub: Optional[Dict[str, Any]]) -> bool:
     except Exception:  # noqa: BLE001
         return True
 
+async def _get_comp_access(uid: str) -> tuple:
+    """(comp_access_plan, comp_access_until) du profil — accès accordé par l'admin."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
+                                params={"id": f"eq.{uid}", "select": "comp_access_plan,comp_access_until"})
+    if resp.status_code == 200 and resp.json():
+        r = resp.json()[0]
+        return r.get("comp_access_plan"), r.get("comp_access_until")
+    return None, None
+
+def _comp_access_active(plan: Optional[str], until: Optional[str]) -> bool:
+    """Un accès admin (pro/enterprise) non expiré = coach ILLIMITÉ."""
+    if plan not in ("pro", "enterprise"):
+        return False
+    if not until:
+        return True
+    try:
+        return datetime.fromisoformat(str(until).replace("Z", "+00:00")) > datetime.now(timezone.utc)
+    except Exception:  # noqa: BLE001
+        return True
+
 async def is_coach_unlimited(uid: str) -> bool:
-    """Crédits illimités : coach au type 'subscription' avec un abonnement actif."""
+    """Crédits ILLIMITÉS si : accès admin actif (comp_access pro/enterprise), OU coach 'subscription' avec abo actif.
+    ⚠️ Un accès accordé par l'admin (abo illimité 99.99) débloque donc directement les crédits illimités."""
+    plan, until = await _get_comp_access(uid)
+    if _comp_access_active(plan, until):
+        return True
     if await get_coach_payment_type(uid) != "subscription":
         return False
     return _subscription_active(await get_coach_subscription(uid))
@@ -1827,12 +1876,15 @@ async def coach_plan(authorization: Optional[str] = Header(default=None)):
     settings = await get_commission_settings()
     ptype = await get_coach_payment_type(uid)
     sub = await get_coach_subscription(uid)
-    active = _subscription_active(sub)
+    plan, until = await _get_comp_access(uid)
+    comp_active = _comp_access_active(plan, until)
+    active = _subscription_active(sub) or comp_active  # accès admin = abo actif
+    unlimited = await is_coach_unlimited(uid)
     return {
         "payment_type": ptype,
-        "unlimited": ptype == "subscription" and active,
+        "unlimited": unlimited,
         "subscription_active": active,
-        "subscription_status": (sub or {}).get("status"),
+        "subscription_status": (sub or {}).get("status") or ("active" if comp_active else None),
         "current_period_end": (sub or {}).get("current_period_end"),
         "sub_price_chf": float(settings.get("coach_sub_price_chf") or 99.99),
         "commission_percent": float(settings.get("commission_percent") or 0),

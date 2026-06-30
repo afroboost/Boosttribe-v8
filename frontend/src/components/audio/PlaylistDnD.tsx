@@ -102,12 +102,13 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         </button>
       )}
 
-      {/* 🔒 Drag Handle - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
+      {/* 🔒 Drag Handle - HOST ONLY. Masqué sur MOBILE (drag tactile peu fiable + gain de place pour les
+          flèches/corbeille) → réorganisation via les flèches ↑/↓. Visible dès sm (desktop/tablette). */}
       {isHost && !isEditMode && (
         <button
           {...attributes}
           {...listeners}
-          className="p-1 text-white/30 hover:text-white/60 cursor-grab active:cursor-grabbing touch-none"
+          className="hidden sm:flex p-1 text-white/30 hover:text-white/60 cursor-grab active:cursor-grabbing touch-none flex-shrink-0"
           data-testid={`drag-handle-${track.id}`}
         >
           <GripVertical size={16} strokeWidth={1.5} />

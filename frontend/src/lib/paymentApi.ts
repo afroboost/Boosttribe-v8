@@ -679,6 +679,7 @@ export interface PromoConfig {
   cta_text?: string | null;
   payment_link?: string | null;  // vide = gratuit
   price?: string | null;
+  format?: '9:16' | '16:9' | null;  // cadrage de l'affiche/vidéo
 }
 
 /** Lecture PUBLIQUE de la page promo (lien partageable, pas d'auth requise). */

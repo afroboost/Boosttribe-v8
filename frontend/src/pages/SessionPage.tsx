@@ -2442,11 +2442,12 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, sessionId, user?.id, isAdminUser]);
 
-  // Get shareable session URL
+  // Lien partageable (copie + QR) → PAGE PROMO d'abord (affiche + CTA). Si aucune promo publiée,
+  // /promo redirige automatiquement vers la session (parcours transparent).
   const sessionUrl = useMemo(() => {
     if (!sessionId) return '';
     const baseUrl = window.location.origin;
-    return `${baseUrl}/session/${sessionId}`;
+    return `${baseUrl}/promo/${sessionId}`;
   }, [sessionId]);
 
   // Copy session link to clipboard

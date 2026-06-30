@@ -15,8 +15,9 @@ import { Button } from '@/components/ui/button';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
 import {
   ArrowLeft, Wallet, TrendingUp, Send, CheckCircle2, Landmark, Loader2, Crown, Infinity as InfinityIcon,
-  Radio, Download, FileText, Trash2,
+  Radio, Download, FileText, Trash2, Megaphone,
 } from 'lucide-react';
+import { PromoEditor } from '@/components/session/PromoEditor';
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
@@ -45,6 +46,9 @@ const WalletPage: React.FC = () => {
   const [subscribing, setSubscribing] = useState(false);
   const [recordings, setRecordings] = useState<RecordingRow[]>([]);
   const [deletingRec, setDeletingRec] = useState<number | null>(null);
+  // 📣 Page promo éditable depuis l'espace coach (par code de session)
+  const [promoCode, setPromoCode] = useState(() => { try { return localStorage.getItem('bt_last_session_code') || ''; } catch { return ''; } });
+  const [promoEditorSession, setPromoEditorSession] = useState<string | null>(null);
 
   const handleDeleteRecording = useCallback(async (id: number) => {
     if (!window.confirm('Supprimer définitivement cet enregistrement ? Le fichier audio et la transcription seront effacés du serveur.')) return;
@@ -330,6 +334,31 @@ const WalletPage: React.FC = () => {
               </Card>
             )}
 
+            {/* 📣 Page promo de ma session (éditable depuis l'espace coach) */}
+            <Card className="bg-white/5 border-white/10 mt-6">
+              <CardHeader>
+                <CardTitle className="text-white text-lg flex items-center gap-2">
+                  <Megaphone size={20} style={{ color: AFRO.pink }} /> Page promo de ma session
+                </CardTitle>
+                <p className="text-white/50 text-sm">Affiche/vidéo + description + CTA + lien partageable. Saisis le code de ta session.</p>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={promoCode}
+                    onChange={(e) => setPromoCode(e.target.value.toUpperCase().replace(/\s/g, ''))}
+                    placeholder="Code de session (ex: MKTQUYEY-5LFJ94)"
+                    className="flex-1 bg-black/30 border-white/15 text-white font-mono"
+                  />
+                  <PrimaryButton
+                    onClick={() => { if (promoCode.trim()) setPromoEditorSession(promoCode.trim()); else showToast('Entrez un code de session', 'error'); }}
+                  >
+                    Éditer
+                  </PrimaryButton>
+                </div>
+              </CardContent>
+            </Card>
+
             {/* 🔴 Mes enregistrements + transcriptions IA */}
             {recordings.length > 0 && (
               <Card className="bg-white/5 border-white/10 mt-6">
@@ -410,6 +439,9 @@ const WalletPage: React.FC = () => {
           </>
         )}
       </div>
+      {promoEditorSession && (
+        <PromoEditor sessionId={promoEditorSession} onClose={() => setPromoEditorSession(null)} />
+      )}
       <Footer />
     </div>
   );

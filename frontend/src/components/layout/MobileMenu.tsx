@@ -4,6 +4,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
 import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet, Crown } from 'lucide-react';
 import { ProfilePhotoModal } from '@/components/profile/ProfilePhotoEditor';
+import { sessionExists } from '@/lib/supabaseClient';
 
 /**
  * 📱 MobileMenu — LE menu hamburger réutilisable du site (un seul composant, utilisé partout :
@@ -108,7 +109,18 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
               </button>
             )}
             <button
-              onClick={() => go(isAuthenticated ? '/session' : '/login', isAuthenticated ? undefined : { from: '/session' })}
+              onClick={async () => {
+                if (!isAuthenticated) { go('/login', { from: '/session' }); return; }
+                // « Ma session » : reprendre la dernière session (ne pas recréer).
+                let last: string | null = null;
+                try { last = localStorage.getItem('bt_last_session_code'); } catch { /* ignore */ }
+                if (last) {
+                  const exists = await sessionExists(last);
+                  if (exists !== false) { go(`/session/${last}`); return; }
+                  try { localStorage.removeItem('bt_last_session_code'); } catch { /* ignore */ }
+                }
+                go('/session');
+              }}
               className="mt-2 w-full px-4 py-3 rounded-xl text-white font-semibold text-center"
               style={{ background: colors.gradient.primary }}
             >

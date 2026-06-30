@@ -86,9 +86,10 @@ export const HeroSection: React.FC = () => {
       setIsJoining(false);
       return;
     }
-    // exists === true (existe) OU null (inconnu : Supabase non configuré / mode démo) → on entre
+    // exists === true (existe) OU null (inconnu : Supabase non configuré / mode démo) → on passe par la
+    // PAGE PROMO d'abord (affiche + CTA). Si aucune promo n'est publiée, /promo redirige vers /session.
     try { localStorage.setItem("bt_last_session_code", code); } catch { /* ignore */ }
-    navigate(`/session/${code}`);
+    navigate(`/promo/${code}`);
   }, [navigate, showToast]);
 
   // Handle join session

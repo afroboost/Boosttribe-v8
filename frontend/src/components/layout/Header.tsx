@@ -7,6 +7,7 @@ import { LanguageSelector } from "@/context/I18nContext";
 import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { MobileMenu } from "@/components/layout/MobileMenu";
 import { ProfilePhotoEditor } from "@/components/profile/ProfilePhotoEditor";
+import { sessionExists } from "@/lib/supabaseClient";
 import { LogOut, Settings } from "lucide-react";
 
 export const Header: React.FC = () => {
@@ -20,12 +21,18 @@ export const Header: React.FC = () => {
     link => link.label.toLowerCase() !== 'communauté'
   );
 
-  const handleStartClick = () => {
-    if (isAuthenticated) {
-      navigate('/session');
-    } else {
-      navigate('/login', { state: { from: '/session' } });
+  // « Ma session » : REPREND la dernière session de l'utilisateur (ne RECRÉE pas). Crée seulement
+  // s'il n'y a aucune session mémorisée (ou si elle n'existe plus).
+  const handleStartClick = async () => {
+    if (!isAuthenticated) { navigate('/login', { state: { from: '/session' } }); return; }
+    let last: string | null = null;
+    try { last = localStorage.getItem('bt_last_session_code'); } catch { /* ignore */ }
+    if (last) {
+      const exists = await sessionExists(last);
+      if (exists !== false) { navigate(`/session/${last}`); return; } // existe (ou inconnu) → reprendre
+      try { localStorage.removeItem('bt_last_session_code'); } catch { /* ignore */ }
     }
+    navigate('/session'); // aucune session existante → en créer une
   };
 
   const handleLoginClick = () => {

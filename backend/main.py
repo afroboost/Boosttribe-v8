@@ -13,6 +13,7 @@ Endpoints :
 
 import os
 import re
+from urllib.parse import urlparse
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
@@ -789,56 +790,84 @@ async def upload_promo_media(file: UploadFile = File(...), session_id: str = For
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{storage_path}"
     return {"url": public_url, "media_type": media_type}
 
+# 🔒 Anti-SSRF : on ne récupère une miniature QUE depuis ces plateformes vidéo connues (jamais une URL
+#    arbitraire → pas d'accès aux services internes / métadonnées cloud).
+_THUMB_HOSTS = ("instagram.com", "facebook.com", "fb.watch", "tiktok.com", "vimeo.com",
+                "youtube.com", "youtu.be")
+
+def _thumb_host(url: str) -> Optional[str]:
+    """hostname si l'URL est http(s) ET appartient (exactement ou en sous-domaine) à une plateforme connue, sinon None."""
+    try:
+        p = urlparse(url)
+    except Exception:  # noqa: BLE001
+        return None
+    if p.scheme not in ("http", "https") or not p.hostname:
+        return None
+    host = p.hostname.lower().rstrip(".")
+    if any(host == d or host.endswith("." + d) for d in _THUMB_HOSTS):
+        return host
+    return None
+
+async def _fetch_text_capped(client: httpx.AsyncClient, url: str, params: Optional[Dict[str, Any]] = None,
+                             max_bytes: int = 524288) -> Optional[str]:
+    """GET en lisant AU PLUS max_bytes (anti-DoS / amplification)."""
+    try:
+        async with client.stream("GET", url, params=params) as r:
+            if r.status_code != 200:
+                return None
+            buf = bytearray()
+            async for chunk in r.aiter_bytes():
+                buf.extend(chunk)
+                if len(buf) >= max_bytes:
+                    break
+            return bytes(buf[:max_bytes]).decode("utf-8", "ignore")
+    except Exception:  # noqa: BLE001
+        return None
+
 @app.get("/promo/thumbnail")
 async def promo_thumbnail(url: str):
-    """À partir d'un lien vidéo (Instagram, Facebook, YouTube, TikTok, Vimeo…), renvoie UNIQUEMENT la
-    miniature (og:image / oEmbed thumbnail_url) → le frontend affiche l'image seule + un bouton play,
-    SANS le 'chrome' de la plateforme. { thumbnail_url, video_url }. thumbnail_url=null si introuvable."""
-    if not url or not url.lower().startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="URL invalide (http(s) requis)")
-    low = url.lower()
+    """À partir d'un lien vidéo (Instagram, Facebook, YouTube, TikTok, Vimeo), renvoie UNIQUEMENT la
+    miniature (og:image / oEmbed thumbnail_url). { thumbnail_url, video_url }. null si introuvable.
+    🔒 Restreint aux plateformes connues (anti-SSRF), lecture plafonnée (anti-DoS)."""
+    host = _thumb_host(url)
+    if not host:
+        # URL hors plateformes autorisées → pas de fetch (anti-SSRF) : vignette neutre côté frontend.
+        return {"thumbnail_url": None, "video_url": url}
+    import json as _json
     thumb: Optional[str] = None
 
-    # YouTube : miniature déduite de l'id (aucune requête).
+    # YouTube : miniature déduite de l'id (AUCUNE requête sortante).
     ytm = re.search(r'(?:youtube\.com/(?:watch\?v=|shorts/|embed/)|youtu\.be/)([\w-]{6,})', url)
     if ytm:
         thumb = f"https://i.ytimg.com/vi/{ytm.group(1)}/hqdefault.jpg"
 
-    # Vimeo / TikTok : oEmbed officiel (public, renvoie thumbnail_url).
-    if not thumb and "vimeo.com" in low:
-        try:
-            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
-                r = await c.get("https://vimeo.com/api/oembed.json", params={"url": url})
-            if r.status_code == 200:
-                thumb = r.json().get("thumbnail_url")
-        except Exception:  # noqa: BLE001
-            pass
-    if not thumb and "tiktok.com" in low:
-        try:
-            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
-                r = await c.get("https://www.tiktok.com/oembed", params={"url": url})
-            if r.status_code == 200:
-                thumb = r.json().get("thumbnail_url")
-        except Exception:  # noqa: BLE001
-            pass
+    # Vimeo / TikTok : oEmbed officiel (endpoints CONSTANTS de confiance ; l'URL n'est qu'un paramètre).
+    if not thumb and (host == "vimeo.com" or host.endswith(".vimeo.com")):
+        async with httpx.AsyncClient(timeout=8) as c:
+            txt = await _fetch_text_capped(c, "https://vimeo.com/api/oembed.json", params={"url": url}, max_bytes=65536)
+        if txt:
+            try: thumb = _json.loads(txt).get("thumbnail_url")
+            except Exception: pass  # noqa: BLE001
+    if not thumb and (host == "tiktok.com" or host.endswith(".tiktok.com")):
+        async with httpx.AsyncClient(timeout=8) as c:
+            txt = await _fetch_text_capped(c, "https://www.tiktok.com/oembed", params={"url": url}, max_bytes=65536)
+        if txt:
+            try: thumb = _json.loads(txt).get("thumbnail_url")
+            except Exception: pass  # noqa: BLE001
 
-    # Instagram / Facebook / autres : og:image de la page (UA crawler → meta OpenGraph publiques).
+    # Instagram / Facebook : og:image de la page (host déjà validé dans l'allowlist). follow_redirects=False
+    # → pas de rebond vers un hôte interne. Lecture plafonnée à 512 Ko.
     if not thumb:
-        try:
-            async with httpx.AsyncClient(timeout=8, follow_redirects=True,
-                                         headers={"User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"}) as c:
-                r = await c.get(url)
-            if r.status_code == 200 and r.text:
-                html = r.text[:200000]
-                m = (re.search(r'<meta[^>]+property=["\']og:image(?::secure_url)?["\'][^>]+content=["\']([^"\']+)', html, re.I)
-                     or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', html, re.I)
-                     or re.search(r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)', html, re.I))
-                if m:
-                    thumb = m.group(1).replace("&amp;", "&").strip()
-        except Exception:  # noqa: BLE001
-            pass
+        async with httpx.AsyncClient(timeout=8, follow_redirects=False,
+                                     headers={"User-Agent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"}) as c:
+            html = await _fetch_text_capped(c, url)
+        if html:
+            m = (re.search(r'<meta[^>]+property=["\']og:image(?::secure_url)?["\'][^>]+content=["\']([^"\']+)', html, re.I)
+                 or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', html, re.I)
+                 or re.search(r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)', html, re.I))
+            if m:
+                thumb = m.group(1).replace("&amp;", "&").strip()
 
-    # On ne renvoie qu'une miniature http(s) (sinon le frontend met une vignette neutre Afroboost).
     if thumb and not thumb.lower().startswith(("http://", "https://")):
         thumb = None
     return {"thumbnail_url": thumb, "video_url": url}

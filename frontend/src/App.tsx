@@ -12,7 +12,6 @@ import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 import Header from "@/components/layout/Header";
 import HeroSection from "@/components/sections/HeroSection";
-import HomeCarousel from "@/components/sections/HomeCarousel";
 import AdminDashboard from "@/pages/admin/Dashboard";
 import SessionPage from "@/pages/SessionPage";
 import WalletPage from "@/pages/WalletPage";
@@ -101,8 +100,6 @@ const HomePage: React.FC = () => {
       <Header />
       <main>
         <HeroSection />
-        {/* 🖼️ Carrousel d'images d'accueil (géré depuis l'admin « Identité ») */}
-        <HomeCarousel />
       </main>
       <Footer />
     </div>

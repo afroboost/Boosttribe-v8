@@ -720,12 +720,10 @@ async def _promo_authz(session_id: str, user: Dict[str, Any]) -> None:
     authz = await get_session_authz(session_id)
     host_id = authz.get("host_id") if authz else None
     cohosts = (authz.get("cohosts") if authz else None) or []
-    if host_id and uid != host_id and uid not in cohosts:
+    # 🔒 Strict : seul l'hôte (ou co-hôte / admin) édite la promo. On NE « réclame » JAMAIS une session
+    #    sans hôte ici (= prise de contrôle / IDOR). L'hôte est défini à la création/config de la session.
+    if uid != host_id and uid not in cohosts:
         raise HTTPException(status_code=403, detail="Réservé à l'hôte de la session")
-    # 🔑 host_id absent (session pas encore « réclamée » → c'était la cause de l'échec d'enregistrement) :
-    #    le coach authentifié devient l'hôte de la ligne playlists, ce qui débloque la sauvegarde.
-    if not host_id and uid:
-        await upsert_playlist_fields(session_id, {"host_id": uid})
 
 @app.post("/session/promo")
 async def save_promo(body: PromoBody, authorization: Optional[str] = Header(default=None)):

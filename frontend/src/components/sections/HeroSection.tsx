@@ -7,6 +7,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/components/ui/Toast";
 import { sessionExists } from "@/lib/supabaseClient";
+import HomeCarousel from "@/components/sections/HomeCarousel";
 
 // ✅ Bénéfices honnêtes (remplacent des stats peu crédibles).
 const HERO_BENEFITS = [
@@ -238,8 +239,16 @@ export const HeroSection: React.FC = () => {
           {t('hero.title')}
         </p>
 
-        {/* 🪶 Accueil allégé : on garde le titre fort + le slogan court. Les paragraphes descriptifs
-            ont été retirés (plus aéré, premium) ; les bénéfices restent en badges compacts plus bas. */}
+        {/* 🪶 Accueil allégé : titre fort + slogan court (paragraphes descriptifs retirés). */}
+
+        {/* 🖼️ Carrousel d'images — DANS le hero, sous le sous-titre et au-dessus du bloc code session.
+            Géré depuis l'admin « Identité ». Sans cadre/bordure, fond noir homogène. */}
+        <div
+          className="opacity-0"
+          style={{ animation: "bt-fade-in 0.8s ease-out 0.7s forwards" }}
+        >
+          <HomeCarousel />
+        </div>
 
         {/* Session Join Form */}
         <div 

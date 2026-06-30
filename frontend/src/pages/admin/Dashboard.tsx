@@ -61,6 +61,13 @@ import {
   Loader2
 } from "lucide-react";
 
+// Textes ALT par défaut du carrousel d'accueil (appliqués si l'admin laisse vide).
+const HOME_CAROUSEL_DEFAULT_ALTS = [
+  "Deux sportifs en plein effort, chacun avec son propre casque, connectés à la même musique sur BoostTribe.",
+  "Un duo qui s'entraîne en rythme, chacun ses écouteurs, la même playlist partagée en direct.",
+  "Deux danseurs sur le même son, casques différents, expérience musicale synchronisée BoostTribe.",
+];
+
 // Site settings interface - matches Supabase table
 interface SiteSettings {
   id?: string;
@@ -1105,7 +1112,7 @@ const Dashboard: React.FC = () => {
                       <Input
                         value={img.alt || ''}
                         onChange={(e) => updateCarouselAlt(i, e.target.value)}
-                        placeholder="Texte alternatif (optionnel)"
+                        placeholder={HOME_CAROUSEL_DEFAULT_ALTS[i] || 'Texte alternatif (optionnel)'}
                         className="h-8 text-xs bg-black/30 border-white/15 text-white"
                       />
                     </div>

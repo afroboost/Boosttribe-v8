@@ -67,17 +67,29 @@ export const HomeCarousel: React.FC = () => {
       >
         {/* Piste défilante (translateX) — sans cadre ni bordure */}
         <div className="flex h-full transition-transform duration-700 ease-in-out" style={{ transform: `translateX(-${index * 100}%)` }}>
-          {images.map((img, i) => (
-            <div key={i} className="w-full h-full flex-shrink-0">
-              <img
-                src={img.url}
-                alt={img.alt?.trim() || DEFAULT_ALTS[i] || `Image d'accueil ${i + 1}`}
-                className="w-full h-full object-cover"
-                loading={i === 0 ? 'eager' : 'lazy'}
-                draggable={false}
-              />
-            </div>
-          ))}
+          {images.map((img, i) => {
+            // Texte effectif : champ admin, sinon défaut. Sert de LÉGENDE visible ET d'attribut alt.
+            const caption = (img.alt?.trim() || DEFAULT_ALTS[i] || '').trim();
+            return (
+              <div key={i} className="relative w-full h-full flex-shrink-0">
+                <img
+                  src={img.url}
+                  alt={caption || `Image d'accueil ${i + 1}`}
+                  className="w-full h-full object-cover"
+                  loading={i === 0 ? 'eager' : 'lazy'}
+                  draggable={false}
+                />
+                {/* 📝 Légende visible — overlay bas, dégradé sombre pour la lisibilité (rien si vide). */}
+                {caption && (
+                  <div className="absolute inset-x-0 bottom-0 px-4 pt-10 pb-9 sm:pb-10 bg-gradient-to-t from-black/85 via-black/45 to-transparent pointer-events-none">
+                    <p className="text-white text-center text-[13px] leading-snug sm:text-sm md:text-base font-medium max-w-2xl mx-auto drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
+                      {caption}
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Indicateurs (points) */}

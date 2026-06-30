@@ -8,6 +8,7 @@ import { PWAInstallPrompt } from "@/components/PWAInstallPrompt";
 import { MobileMenu } from "@/components/layout/MobileMenu";
 import { ProfilePhotoEditor } from "@/components/profile/ProfilePhotoEditor";
 import { sessionExists } from "@/lib/supabaseClient";
+import { getMyLastSession } from "@/lib/paymentApi";
 import { LogOut, Settings } from "lucide-react";
 
 export const Header: React.FC = () => {
@@ -21,17 +22,23 @@ export const Header: React.FC = () => {
     link => link.label.toLowerCase() !== 'communauté'
   );
 
-  // « Ma session » : REPREND la dernière session de l'utilisateur (ne RECRÉE pas). Crée seulement
-  // s'il n'y a aucune session mémorisée (ou si elle n'existe plus).
+  // « Ma session » : REPREND la dernière session de l'utilisateur (ne RECRÉE pas). On interroge la DB
+  // (host_id = uid) en priorité ; repli sur le code mémorisé localement ; sinon seulement, on crée.
   const handleStartClick = async () => {
     if (!isAuthenticated) { navigate('/login', { state: { from: '/session' } }); return; }
+    // 1) Source fiable : la DB (dernière session dont je suis l'hôte).
+    const { sessionId, error } = await getMyLastSession();
+    if (sessionId) { navigate(`/session/${sessionId}`); return; }
+    console.log('[MA SESSION] aucune session DB pour cet hôte', error ? `(${error})` : '', '→ repli localStorage');
+    // 2) Repli : code mémorisé localement (s'il existe encore).
     let last: string | null = null;
     try { last = localStorage.getItem('bt_last_session_code'); } catch { /* ignore */ }
     if (last) {
       const exists = await sessionExists(last);
-      if (exists !== false) { navigate(`/session/${last}`); return; } // existe (ou inconnu) → reprendre
+      if (exists !== false) { navigate(`/session/${last}`); return; }
       try { localStorage.removeItem('bt_last_session_code'); } catch { /* ignore */ }
     }
+    console.log('[MA SESSION] aucune session existante → création');
     navigate('/session'); // aucune session existante → en créer une
   };
 

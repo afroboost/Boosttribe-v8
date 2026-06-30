@@ -86,6 +86,10 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
 
   // 🎤 POINT 5: destination de flux pour le micro hôte (sortie WebRTC, JAMAIS les HP de l'hôte)
   const micStreamDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  // 🎙️ ANTI-DUCKING : le micro vit dans son PROPRE AudioContext, SÉPARÉ de celui de la musique.
+  //    Chrome « duck » (baisse ~20%) la sortie d'un AudioContext qui contient une source micro live ;
+  //    en isolant le micro, le contexte musique reste à PLEIN volume quand le micro est actif.
+  const micCtxRef = useRef<AudioContext | null>(null);
   // 👥 POINT 5: sources des micros participants entrants (mixés via tribeGain → HP hôte)
   const tribeSourcesRef = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map());
 
@@ -159,18 +163,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       musicGainRef.current.connect(master);
       musicGainRef.current.connect(recTap); // 🔴 capte la musique pour l'enregistrement (son réel, pas muet)
 
-      // 🎤 Canal B: Micro Hôte → destination de flux UNIQUEMENT (anti-larsen).
-      // ⚠️ POINT 5: micGain n'est PAS connecté à la sortie HP → l'hôte ne s'entend jamais (sauf « M'entendre »).
-      micGainRef.current = ctx.createGain();
-      micGainRef.current.gain.value = state.micVolume;
-      micStreamDestRef.current = ctx.createMediaStreamDestination();
-      micGainRef.current.connect(micStreamDestRef.current);
-
-      // 🔊 MONITORING « M'entendre » : nœud de gain dédié (0 = silencieux), micSource y sera branché.
-      const monitor = ctx.createGain();
-      monitor.gain.value = 0; // anti-larsen : désactivé par défaut
-      monitor.connect(master);
-      monitorGainRef.current = monitor;
+      // 🎤 Canal B (micro hôte) : créé dans un AudioContext SÉPARÉ (cf. micCtxRef) à l'activation du micro
+      //    → le contexte musique ne contient AUCUNE source micro → plus de ducking de la musique.
 
       // 👥 Canal C: Volume Tribu (participants entrants) → master → HP de l'hôte
       tribeGainRef.current = ctx.createGain();
@@ -238,37 +232,39 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * par les haut-parleurs de l'hôte (micGain → micStreamDest uniquement) → anti-larsen.
    */
   const connectMicSource = useCallback((stream: MediaStream): MediaStream => {
-    const ctx = audioContextRef.current;
-    if (!ctx || !micGainRef.current || !micStreamDestRef.current) {
-      initialize();
-      return stream; // Fallback: stream original si le mixeur n'est pas prêt
-    }
-
-    // Déconnecter l'ancienne source micro
-    if (micSourceRef.current) {
-      try {
-        micSourceRef.current.disconnect();
-      } catch (e) {
-        // Ignore
-      }
-    }
-
-    // S'assurer que le contexte tourne, sinon le flux diffusé serait muet
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => { /* ignore */ });
-    }
-
     try {
-      const source = ctx.createMediaStreamSource(stream);
-      source.connect(micGainRef.current); // source → micGain → micStreamDest (déjà câblé à l'init)
-      if (monitorGainRef.current) source.connect(monitorGainRef.current); // 🔊 « M'entendre » (gain 0 par défaut)
+      // 🎙️ Le micro est traité dans son PROPRE AudioContext (séparé de la musique) → AUCUN ducking.
+      let micCtx = micCtxRef.current;
+      if (!micCtx) {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        micCtx = new Ctx({ latencyHint: 'interactive' }); // faible latence pour la voix
+        micCtxRef.current = micCtx;
+        // micGain → micStreamDest (diffusion WebRTC). PAS branché aux HP → anti-larsen.
+        const micGain = micCtx.createGain();
+        micGain.gain.value = state.micVolume;
+        const micDest = micCtx.createMediaStreamDestination();
+        micGain.connect(micDest);
+        micGainRef.current = micGain;
+        micStreamDestRef.current = micDest;
+        // « M'entendre » (monitoring local) : micGain → monitorGain(0) → HP du micCtx. Off par défaut.
+        const monitor = micCtx.createGain();
+        monitor.gain.value = 0;
+        monitor.connect(micCtx.destination);
+        micGainRef.current.connect(monitor);
+        monitorGainRef.current = monitor;
+      }
+      if (micCtx.state === 'suspended') micCtx.resume().catch(() => { /* ignore */ });
+
+      // Remplacer l'ancienne source micro
+      if (micSourceRef.current) { try { micSourceRef.current.disconnect(); } catch { /* ignore */ } }
+      const source = micCtx.createMediaStreamSource(stream);
+      source.connect(micGainRef.current!); // source → micGain → micStreamDest (+ monitor)
       micSourceRef.current = source;
-      return micStreamDestRef.current.stream;
-    } catch (err) {
-      // Silencieux - retourner le stream original
-      return stream;
+      return micStreamDestRef.current!.stream;
+    } catch {
+      return stream; // Fallback : flux brut si Web Audio indisponible
     }
-  }, [initialize]);
+  }, [state.micVolume]);
 
   /**
    * 👥 POINT 5: Mixe un flux micro participant entrant via le GainNode "Volume Tribu".
@@ -364,7 +360,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     setState(prev => ({ ...prev, micVolume: clamped }));
 
     if (micGainRef.current) {
-      micGainRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
+      micGainRef.current.gain.setValueAtTime(clamped, micCtxRef.current?.currentTime || 0); // micGain vit dans micCtx
     }
   }, []);
 
@@ -442,10 +438,10 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * micSource → monitorGain → master. Gain 0 = silencieux (anti-larsen). Geste utilisateur requis.
    */
   const setSelfMonitor = useCallback((on: boolean) => {
-    const ctx = audioContextRef.current;
-    if (ctx?.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+    const micCtx = micCtxRef.current;
+    if (micCtx?.state === 'suspended') micCtx.resume().catch(() => { /* ignore */ });
     if (monitorGainRef.current) {
-      monitorGainRef.current.gain.setValueAtTime(on ? 1 : 0, ctx?.currentTime || 0);
+      monitorGainRef.current.gain.setValueAtTime(on ? 1 : 0, micCtx?.currentTime || 0);
     }
   }, []);
 
@@ -456,6 +452,10 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       disconnectMic();
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         audioContextRef.current.close();
+      }
+      // Fermer aussi le contexte micro séparé
+      if (micCtxRef.current && micCtxRef.current.state !== 'closed') {
+        try { micCtxRef.current.close(); } catch { /* ignore */ }
       }
     };
   }, [disconnectMusic, disconnectMic]);

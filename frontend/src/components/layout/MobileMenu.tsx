@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet, Crown } from 'lucide-react';
 import { ProfilePhotoModal } from '@/components/profile/ProfilePhotoEditor';
 import { sessionExists } from '@/lib/supabaseClient';
+import { getMyLastSession } from '@/lib/paymentApi';
 
 /**
  * 📱 MobileMenu — LE menu hamburger réutilisable du site (un seul composant, utilisé partout :
@@ -111,7 +112,9 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
             <button
               onClick={async () => {
                 if (!isAuthenticated) { go('/login', { from: '/session' }); return; }
-                // « Ma session » : reprendre la dernière session (ne pas recréer).
+                // « Ma session » : reprendre la dernière session (DB host_id), repli localStorage, sinon créer.
+                const { sessionId } = await getMyLastSession();
+                if (sessionId) { go(`/session/${sessionId}`); return; }
                 let last: string | null = null;
                 try { last = localStorage.getItem('bt_last_session_code'); } catch { /* ignore */ }
                 if (last) {

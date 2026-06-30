@@ -789,6 +789,19 @@ async def upload_promo_media(file: UploadFile = File(...), session_id: str = For
     public_url = f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{storage_path}"
     return {"url": public_url, "media_type": media_type}
 
+@app.get("/session/my-last")
+async def my_last_session(authorization: Optional[str] = Header(default=None)):
+    """Renvoie la DERNIÈRE session de l'utilisateur (host_id = uid), pour le bouton « Ma session ».
+    Exclut la ligne de playlist personnelle (owner-*). None si l'utilisateur n'a aucune session."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                                params={"host_id": f"eq.{uid}", "session_id": "not.like.owner-*",
+                                        "select": "session_id,updated_at", "order": "updated_at.desc", "limit": "1"})
+    rows = resp.json() if resp.status_code == 200 else []
+    return {"session_id": rows[0]["session_id"] if rows else None}
+
 @app.get("/session/promo/{session_id}")
 async def get_promo(session_id: str):
     """Lecture PUBLIQUE de la page promo (lien partageable, visiteur non authentifié)."""

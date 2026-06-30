@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import RawCropper from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
 import { X, Upload, Loader2, Copy, Check, Image as ImageIcon, Video, ArrowRight, Ticket } from 'lucide-react';
-import { getPromo, savePromo, uploadPromoMedia, type PromoConfig } from '@/lib/paymentApi';
+import { getPromo, savePromo, uploadPromoMedia, claimHost } from '@/lib/paymentApi';
+import { videoEmbedUrl, isHttpUrl } from '@/lib/videoEmbed';
 import { useToast } from '@/components/ui/Toast';
 
 // react-easy-crop v6 : caster pour le typage JSX (l'export par défaut perd le type valeur).
@@ -95,14 +96,22 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
     const file = e.target.files?.[0];
     e.currentTarget.value = '';
     if (!file) return;
-    if (file.type.startsWith('video/')) { doUpload(file); return; }   // vidéo : pas de recadrage
+    // 🖼️ Affiche = IMAGE uniquement (la vidéo se fait désormais par LIEN, pas d'upload serveur).
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = () => { setCropSrc(String(reader.result)); setCrop({ x: 0, y: 0 }); setZoom(1); };
       reader.readAsDataURL(file);
       return;
     }
-    showToast('Image ou vidéo requise', 'error');
+    showToast('Image requise (la vidéo se renseigne par lien)', 'error');
+  };
+
+  // 🔗 Lien vidéo (IG/FB/YouTube/TikTok/Vimeo…) — http(s) uniquement. Stocke media_type='video'.
+  const videoLink = mediaType === 'video' ? (mediaUrl || '') : '';
+  const setVideoLink = (v: string) => {
+    const t = v.trim();
+    if (!t) { if (mediaType === 'video') { setMediaUrl(null); setMediaType(null); } return; }
+    setMediaUrl(t); setMediaType('video');
   };
 
   const confirmCrop = async () => {
@@ -116,7 +125,14 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
   };
 
   const handleSave = async () => {
+    // 🔒 Lien vidéo : http(s) uniquement (bloque javascript:/data:).
+    if (mediaType === 'video' && mediaUrl && !isHttpUrl(mediaUrl)) {
+      showToast('Lien vidéo invalide (http(s) requis)', 'error'); return;
+    }
     setSaving(true);
+    // 🔑 S'assurer que la session est « réclamée » par cet hôte (idempotent, sécurisé : ne vole jamais
+    //    une session déjà détenue par un autre) → débloque l'enregistrement (host_id requis par la RLS).
+    try { await claimHost(sessionId); } catch { /* ignore : savePromo renverra l'erreur d'autorisation */ }
     const { ok, error } = await savePromo({
       session_id: sessionId, enabled, media_url: mediaUrl, media_type: mediaType, format,
       description, cta_text: ctaText,
@@ -162,9 +178,19 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
               <button onClick={() => fileRef.current?.click()} disabled={uploading}
                 className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium text-white border border-white/20 hover:bg-white/10 disabled:opacity-60">
                 {uploading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
-                {uploading ? 'Envoi…' : 'Téléverser une affiche (image) ou vidéo'}
+                {uploading ? 'Envoi…' : 'Téléverser une affiche (image)'}
               </button>
-              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime" onChange={handlePickFile} className="hidden" />
+              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={handlePickFile} className="hidden" />
+
+              {/* 🔗 Vidéo par LIEN (IG, Facebook, YouTube, TikTok, Vimeo…) — pas d'upload serveur */}
+              <div>
+                <label className="text-white/80 text-xs">Ou lien vidéo (Instagram, Facebook, YouTube, TikTok, Vimeo…)</label>
+                <input value={videoLink} onChange={(e) => setVideoLink(e.target.value)} placeholder="https://…"
+                  className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" />
+                {videoLink && !videoEmbedUrl(videoLink) && isHttpUrl(videoLink) && (
+                  <p className="text-white/40 text-[11px] mt-1">Aperçu non intégrable pour ce réseau → un bouton « Voir la vidéo » sera affiché.</p>
+                )}
+              </div>
 
               <div>
                 <label className="text-white/80 text-xs">Description</label>
@@ -221,10 +247,15 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
               <div className="flex flex-col items-center gap-4 rounded-2xl bg-black/40 border border-white/10 p-5">
                 <div className="w-full max-w-[230px] rounded-2xl overflow-hidden border border-white/10 bg-black"
                      style={{ aspectRatio: format === '9:16' ? '9 / 16' : '16 / 9' }}>
-                  {mediaUrl ? (
-                    mediaType === 'video'
-                      ? <video src={mediaUrl} className="w-full h-full object-cover" muted autoPlay loop playsInline />
-                      : <img src={mediaUrl} alt="" className="w-full h-full object-cover" />
+                  {mediaUrl && mediaType === 'video' ? (
+                    videoEmbedUrl(mediaUrl)
+                      ? <iframe src={videoEmbedUrl(mediaUrl)!} title="Aperçu vidéo" className="w-full h-full" allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+                      : <a href={isHttpUrl(mediaUrl) ? mediaUrl : undefined} target="_blank" rel="noopener noreferrer"
+                           className="w-full h-full flex flex-col items-center justify-center gap-2 text-white" style={{ background: AFRO.gradient }}>
+                          <Video className="w-10 h-10" /><span className="text-xs font-semibold">Voir la vidéo</span>
+                        </a>
+                  ) : mediaUrl && mediaType === 'image' ? (
+                    <img src={mediaUrl} alt="" className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center" style={{ background: AFRO.gradient }}><Ticket className="w-12 h-12 text-white/80" /></div>
                   )}

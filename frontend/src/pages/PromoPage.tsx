@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, Ticket, ArrowRight } from 'lucide-react';
+import { Loader2, Ticket, ArrowRight, PlayCircle } from 'lucide-react';
 import { getPromo, type PromoConfig } from '@/lib/paymentApi';
+import { videoEmbedUrl, isHttpUrl } from '@/lib/videoEmbed';
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
@@ -74,12 +75,18 @@ const PromoPage: React.FC = () => {
           {/* Affiche / vidéo au format choisi par le coach (9:16 ou 16:9) */}
           <div className="w-full rounded-3xl overflow-hidden border border-white/10 shadow-2xl bg-black"
                style={{ aspectRatio: promo.format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '70vh' }}>
-            {promo.media_url ? (
-              promo.media_type === 'video' ? (
-                <video src={promo.media_url} className="w-full h-full object-cover" autoPlay muted loop playsInline controls />
+            {promo.media_url && promo.media_type === 'video' ? (
+              videoEmbedUrl(promo.media_url) ? (
+                <iframe src={videoEmbedUrl(promo.media_url)!} title="Vidéo de la session" className="w-full h-full"
+                  allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
               ) : (
-                <img src={promo.media_url} alt="Affiche de la session" className="w-full h-full object-cover" />
+                <a href={isHttpUrl(promo.media_url) ? promo.media_url : undefined} target="_blank" rel="noopener noreferrer"
+                   className="w-full h-full flex flex-col items-center justify-center gap-2 text-white" style={{ background: AFRO.gradient }}>
+                  <PlayCircle className="w-16 h-16" /><span className="text-sm font-semibold">Voir la vidéo</span>
+                </a>
               )
+            ) : promo.media_url && promo.media_type === 'image' ? (
+              <img src={promo.media_url} alt="Affiche de la session" className="w-full h-full object-cover" />
             ) : (
               <div className="w-full h-full flex items-center justify-center" style={{ background: AFRO.gradient }}>
                 <Ticket className="w-16 h-16 text-white/80" />

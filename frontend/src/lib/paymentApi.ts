@@ -669,6 +669,21 @@ export async function getRecordings(): Promise<{ recordings: RecordingRow[]; err
   }
 }
 
+/** « Ma session » : récupère la dernière session de l'utilisateur (host_id = uid) depuis la DB. */
+export async function getMyLastSession(): Promise<{ sessionId: string | null; error?: string }> {
+  if (!API_URL) return { sessionId: null, error: 'API non configurée' };
+  const token = await getAccessToken();
+  if (!token) return { sessionId: null, error: 'Non authentifié' };
+  try {
+    const res = await fetch(`${API_URL}/session/my-last`, { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { sessionId: null, error: data?.detail || `Erreur ${res.status}` };
+    return { sessionId: data.session_id || null };
+  } catch (e) {
+    return { sessionId: null, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
 // ───────────────────────── PAGE PROMO / AFFICHE DE SESSION ─────────────────────────
 export interface PromoConfig {
   session_id?: string;

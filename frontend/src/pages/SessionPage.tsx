@@ -26,7 +26,8 @@ import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
-import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSessionDescription, saveSharedMedia, saveSessionPrivacy } from '@/lib/supabaseClient';
+import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSessionDescription, saveSharedMedia, saveSessionPrivacy, saveAccessMode } from '@/lib/supabaseClient';
+import { AccessModeSelector, type AccessMode } from '@/components/session/AccessModeSelector';
 import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
@@ -913,6 +914,21 @@ export const SessionPage: React.FC = () => {
   const [modeDraft, setModeDraft] = useState<{ mode: 'open' | 'paid' | 'private'; price: string; capacity: string }>({ mode: 'open', price: '', capacity: '' });
   const [showSessionSettings, setShowSessionSettings] = useState(false);
   const [showPromoEditor, setShowPromoEditor] = useState(false); // 📣 éditeur de la page promo
+  // 🚪 Mode d'accès : 'account' (avec nom → chat + visio) ou 'guest' (sans inscription → écoute/lecture seule).
+  const [accessMode, setAccessMode] = useState<AccessMode>('account');
+  const [savingAccessMode, setSavingAccessMode] = useState(false);
+  const handleAccessMode = useCallback(async (mode: AccessMode) => {
+    setAccessMode(mode);
+    if (!sessionId) return;
+    setSavingAccessMode(true);
+    await saveAccessMode(sessionId, mode, user?.id);
+    setSavingAccessMode(false);
+    showToast(mode === 'guest' ? 'Accès sans inscription activé' : 'Accès avec inscription activé', 'success');
+  }, [sessionId, user?.id, showToast]);
+  // Invité = mode guest ET pas l'hôte → pas de chat ni de visio (écoute/lecture seule).
+  const isGuestRestricted = accessMode === 'guest' && !isHost;
+  // 🚪 Sécurité : un invité ne doit jamais être en Live Visio (coupe la visio si le mode passe en 'guest').
+  useEffect(() => { if (isGuestRestricted) setLiveMode(false); }, [isGuestRestricted]);
   // Type de paiement du coach hôte ('subscription' par défaut → mode Payante masqué).
   const [coachPaymentType, setCoachPaymentType] = useState<'subscription' | 'commission'>('subscription');
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
@@ -933,7 +949,7 @@ export const SessionPage: React.FC = () => {
   //    On n'éteint JAMAIS liveMode au changement d'onglet → la connexion LiveKit reste montée.
   useEffect(() => {
     if (isDesktop) return;
-    if (mobileTab === 'live' && sessionId && !isFree && !liveMode) setLiveMode(true);
+    if (mobileTab === 'live' && sessionId && !isFree && !liveMode && !isGuestRestricted) setLiveMode(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mobileTab, isDesktop, sessionId]);
 
@@ -1350,7 +1366,7 @@ export const SessionPage: React.FC = () => {
       try {
         const { data, error } = await supabase
           .from('playlists')
-          .select('tracks, description, shared_media, host_id')
+          .select('tracks, description, shared_media, host_id, access_mode')
           .eq('session_id', sessionId)
           .maybeSingle();
 
@@ -1361,6 +1377,9 @@ export const SessionPage: React.FC = () => {
           if (typeof (data as { host_id?: string }).host_id === 'string') {
             setSessionHostId((data as { host_id?: string }).host_id || null);
           }
+          // 🚪 Mode d'accès (invité vs avec inscription) — défaut 'account'.
+          const am = (data as { access_mode?: string }).access_mode;
+          if (am === 'guest' || am === 'account') setAccessMode(am);
           if (typeof data.description === 'string') setDescription(data.description);
           if (data.shared_media) {
             const sm = data.shared_media as SharedMedia;
@@ -2768,7 +2787,8 @@ export const SessionPage: React.FC = () => {
   );
 
   // 💬 Panneau de chat — rendu soit au niveau page, soit À L'INTÉRIEUR de la vidéo plein écran (#3).
-  const chatPanelNode = sessionId ? (
+  //    🚪 Invité (accès sans inscription) → pas de chat (écoute/lecture seule).
+  const chatPanelNode = (sessionId && !isGuestRestricted) ? (
     <ChatPanel
       open={chatOpen}
       onToggle={toggleChat}
@@ -2990,6 +3010,12 @@ export const SessionPage: React.FC = () => {
                 </div>
               </div>
             )}
+            {/* 🚪 Accès sans inscription (invité) OU avec inscription (chat + visio) */}
+            <div className="mb-3">
+              <p className="text-white/80 text-sm mb-2">Type d'accès des participants</p>
+              <AccessModeSelector value={accessMode} onChange={handleAccessMode} />
+              {savingAccessMode && <p className="text-white/40 text-[11px] mt-1">Enregistrement…</p>}
+            </div>
             {/* 📣 Page promo / affiche partageable */}
             <button
               onClick={() => { setShowSessionSettings(false); setShowPromoEditor(true); }}
@@ -3267,7 +3293,8 @@ export const SessionPage: React.FC = () => {
             { id: 'access', label: 'Accès & Tribu' },
             { id: 'mixer', label: 'Mixeur' },
             { id: 'live', label: 'Live' },
-          ] as const).map((tab) => {
+            // 🚪 Onglet Live masqué pour un invité (accès sans inscription → pas de visio).
+          ] as const).filter((tab) => !(isGuestRestricted && tab.id === 'live')).map((tab) => {
             const isActive = mobileTab === tab.id;
             return (
               <button

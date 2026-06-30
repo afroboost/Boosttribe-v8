@@ -629,6 +629,18 @@ export async function saveSessionPrivacy(sessionId: string, isPrivate: boolean):
 }
 
 /**
+ * Mode d'accès de la session (playlists.access_mode) : 'guest' (sans inscription, écoute/lecture seule —
+ * pas de chat ni visio) ou 'account' (avec nom, accès complet chat + visio). Écriture host/co-hôte (RLS).
+ */
+export async function saveAccessMode(sessionId: string, mode: 'guest' | 'account', hostId?: string): Promise<boolean> {
+  if (!supabase) return false;
+  const row: Record<string, unknown> = { session_id: sessionId, access_mode: mode, updated_at: new Date().toISOString() };
+  if (hostId) row.host_id = hostId; // RLS : permet l'UPDATE si host_id encore NULL
+  const { error } = await supabase.from('playlists').upsert(row, { onConflict: 'session_id' });
+  return !error;
+}
+
+/**
  * Save playlist to database
  */
 export async function savePlaylist(playlist: PlaylistRecord): Promise<boolean> {

@@ -52,9 +52,11 @@ const initialState: MicrophoneState = {
  */
 export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophoneReturn {
   const {
-    autoGainControl = true,
-    echoCancellation = true,
-    noiseSuppression = true,
+    // 🎚️ MIXAGE MANUEL : par défaut AUCUN traitement auto. echoCancellation/AGC/NS « duckent » la
+    //    musique (Chrome bascule la sortie en mode communication) → désactivés pour hôte ET participants.
+    autoGainControl = false,
+    echoCancellation = false,
+    noiseSuppression = false,
     onAudioLevel,
   } = options;
 

@@ -22,6 +22,9 @@ export interface AudioPlayerProps {
   onSyncUpdate?: (syncState: SyncState) => void;
   onTrackEnded?: () => void;
   onRepeatModeChange?: (mode: RepeatMode) => void;
+  // 🔊 Appelé AVANT la lecture (geste utilisateur) → réveille l'AudioContext du mixeur pour que la
+  //    musique démarre dès le 1er clic (l'élément est routé via createMediaElementSource → sinon muet).
+  onBeforePlay?: () => void;
   className?: string;
   disabled?: boolean;
 }
@@ -37,6 +40,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   onSyncUpdate,
   onTrackEnded,
   onRepeatModeChange,
+  onBeforePlay,
   className = '',
   disabled = false,
 }) => {
@@ -127,13 +131,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   // Handle play/pause toggle
   const handlePlayPause = useCallback(async () => {
     if (!isHost || disabled) return;
-    
+
     if (audioState.isPlaying) {
       pause();
     } else {
+      // 🔊 Réveiller l'AudioContext du mixeur DANS le geste utilisateur → musique au 1er clic.
+      try { onBeforePlay?.(); } catch { /* ignore */ }
       await play();
     }
-  }, [isHost, audioState.isPlaying, play, pause, disabled]);
+  }, [isHost, audioState.isPlaying, play, pause, disabled, onBeforePlay]);
 
   // Handle progress bar click/drag
   const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {

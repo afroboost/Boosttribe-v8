@@ -189,7 +189,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       {!open && (
         <button
           onClick={onToggle}
-          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+          // z-[130] : AU-DESSUS de la vidéo agrandie (overlay z-[100]) → le lanceur reste visible/cliquable.
+          className="fixed bottom-6 right-6 z-[130] w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
           style={{ background: gradient }}
           data-testid="session-chat-launcher"
           aria-label="Ouvrir le chat de la session"

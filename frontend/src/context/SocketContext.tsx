@@ -70,7 +70,7 @@ interface SocketContextValue {
   broadcast: (eventType: string, data?: unknown) => void;
   
   // Persistence
-  savePlaylistToDb: (tracks: PlaylistPayload['tracks'], selectedTrackId: number) => Promise<boolean>;
+  savePlaylistToDb: (tracks: PlaylistPayload['tracks'], selectedTrackId: number, hostId?: string) => Promise<boolean>;
   loadPlaylistFromDb: () => Promise<PlaylistRecord | null>;
   
   // Event listeners
@@ -313,12 +313,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [userId, isDev]);
 
   // Database persistence
-  const savePlaylistToDb = useCallback(async (tracks: PlaylistPayload['tracks'], selectedTrackId: number): Promise<boolean> => {
+  const savePlaylistToDb = useCallback(async (tracks: PlaylistPayload['tracks'], selectedTrackId: number, hostId?: string): Promise<boolean> => {
     if (!sessionId) return false;
     return savePlaylist({
       session_id: sessionId,
       tracks,
       selected_track_id: selectedTrackId,
+      host_id: hostId, // 🔒 RLS : host_id = auth.uid() requis pour l'UPDATE de la ligne de session
     });
   }, [sessionId]);
 

@@ -619,6 +619,7 @@ export const SessionPage: React.FC = () => {
     connectMusicSource,
     getMusicStream,
     setSelfMonitor,
+    getContext: getMixerContext,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -794,9 +795,10 @@ export const SessionPage: React.FC = () => {
   // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
   const [isTalking, setIsTalking] = useState(false);
   const participantMic = useMicrophone({
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
+    // 🎚️ AEC/AGC/NS OFF : sinon la musique du participant chute quand il prend la parole (ducking Chrome).
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
   });
 
   // Quand le micro participant est prêt et qu'il a pris la parole → envoyer à l'hôte
@@ -1336,10 +1338,10 @@ export const SessionPage: React.FC = () => {
     
     // ⚡ OPTIMISATION SRE: Exécuter fetch initial ET connexion Realtime EN PARALLÈLE
     
-    // 📡 FETCH INITIAL (non-bloquant)
-    const fetchPromise = (async () => {
+    // 📡 FETCH (initial + re-exécuté à l'abonnement Realtime → playlist/vidéo visibles SANS refresh)
+    const doFetch = async () => {
       if (!supabase) return;
-      
+
       try {
         const { data, error } = await supabase
           .from('playlists')
@@ -1401,8 +1403,9 @@ export const SessionPage: React.FC = () => {
       } catch (err) {
         setIsSyncActive(true);
       }
-    })();
-    
+    };
+    doFetch();
+
     // 📡 REALTIME CHANNEL pour la playlist (connexion en parallèle)
     const channel = supabase
       .channel(`playlist:${sessionId}`)
@@ -1453,6 +1456,9 @@ export const SessionPage: React.FC = () => {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setIsSyncActive(true);
+          // 🔄 Re-fetch à l'abonnement : récupère la playlist + la vidéo partagée enregistrées entre le
+          //    fetch initial et la connexion Realtime → affichage IMMÉDIAT sans refresh manuel (#7).
+          doFetch();
         }
       });
 
@@ -2166,8 +2172,9 @@ export const SessionPage: React.FC = () => {
       session_id: ownerPlaylistKey,
       tracks: newTracks,
       selected_track_id: selectedId,
+      host_id: user?.id, // 🔒 RLS : permet l'UPDATE de la ligne (sinon host_id NULL → UPDATE refusé)
     }).then((ok) => console.log('[PLAYLIST] save owner result:', ok));
-  }, [isHost, ownerPlaylistKey]);
+  }, [isHost, ownerPlaylistKey, user?.id]);
 
   // Playlist reorder handler (syncs via socket for participants)
   const handlePlaylistReorder = useCallback((newTracks: Track[]) => {
@@ -2213,7 +2220,7 @@ export const SessionPage: React.FC = () => {
     const updatedTracks = [...tracks, newTrack];
     const trackIdToSync = selectedTrack?.id || newTrack.id;
     socket.syncPlaylist(updatedTracks, trackIdToSync);
-    socket.savePlaylistToDb(updatedTracks, trackIdToSync);
+    socket.savePlaylistToDb(updatedTracks, trackIdToSync, user?.id);
     persistOwnerPlaylist(updatedTracks, trackIdToSync);
   }, [tracks, selectedTrack, socket, showToast, persistOwnerPlaylist]);
 
@@ -2244,7 +2251,7 @@ export const SessionPage: React.FC = () => {
       ? selectedTrack.id
       : (updatedTracks[0]?.id || 0);
     socket.syncPlaylist(updatedTracks, trackIdToSync);
-    socket.savePlaylistToDb(updatedTracks, trackIdToSync);
+    socket.savePlaylistToDb(updatedTracks, trackIdToSync, user?.id);
     persistOwnerPlaylist(updatedTracks, trackIdToSync);
   }, [isHost, tracks, selectedTrack, socket, showToast, persistOwnerPlaylist]);
 
@@ -2291,7 +2298,7 @@ export const SessionPage: React.FC = () => {
       setSelectedTrack(sel);
       // Pousser vers la session live pour les participants (réutilise la synchro existante)
       socketRef.current.syncPlaylist(restored, sel.id);
-      socketRef.current.savePlaylistToDb(restored, sel.id);
+      socketRef.current.savePlaylistToDb(restored, sel.id, user?.id);
       showToast('Votre playlist a été restaurée', 'success');
       console.log('[PLAYLIST] restore: appliquée ✓', restored.length, 'titres');
     })();
@@ -2480,7 +2487,7 @@ export const SessionPage: React.FC = () => {
     // Reporter la playlist courante sur la nouvelle session (les participants la retrouvent)
     if (tracks.length > 0 && isSupabaseConfigured) {
       const sel = selectedTrack?.id ?? tracks[0].id;
-      savePlaylist({ session_id: newSessionId, tracks, selected_track_id: sel });
+      savePlaylist({ session_id: newSessionId, tracks, selected_track_id: sel, host_id: user?.id });
     }
 
     if (user?.id) markActiveSession(user.id, newSessionId);
@@ -3790,6 +3797,7 @@ export const SessionPage: React.FC = () => {
                   onSyncUpdate={handleSyncStateChange}
                   onTrackEnded={handleTrackEnded}
                   onRepeatModeChange={setRepeatMode}
+                  onBeforePlay={() => { initializeMixer(); try { getMixerContext()?.resume(); } catch { /* ignore */ } }}
                 />
               </>
             ) : (

@@ -402,6 +402,9 @@ export interface PlaylistRecord {
     uploaded?: boolean;
   }>;
   selected_track_id: number;
+  // 🔒 RLS : doit valoir auth.uid() pour que l'UPDATE passe (policy host_id = auth.uid()). Sans lui, la
+  //    ligne est créée avec host_id NULL puis tout UPDATE est REFUSÉ → la playlist ne se sauvegarde plus.
+  host_id?: string | null;
   description?: string | null;
   shared_media?: SharedMedia | null;
   created_at?: string;
@@ -609,16 +612,17 @@ export async function savePlaylist(playlist: PlaylistRecord): Promise<boolean> {
   }
 
   try {
+    // 🔒 host_id inclus quand fourni → INSERT/UPDATE conformes à la RLS (host_id = auth.uid()).
+    const row: Record<string, unknown> = {
+      session_id: playlist.session_id,
+      tracks: playlist.tracks,
+      selected_track_id: playlist.selected_track_id,
+      updated_at: new Date().toISOString(),
+    };
+    if (playlist.host_id) row.host_id = playlist.host_id;
     const { error } = await supabase
       .from('playlists')
-      .upsert({
-        session_id: playlist.session_id,
-        tracks: playlist.tracks,
-        selected_track_id: playlist.selected_track_id,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'session_id',
-      });
+      .upsert(row, { onConflict: 'session_id' });
 
     if (error) {
       console.error('[SUPABASE] Save playlist error:', error);

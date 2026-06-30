@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Music, Play, Trash2, Check } from 'lucide-react';
+import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 export interface Track {
@@ -36,6 +36,10 @@ interface SortableTrackItemProps {
   isChecked: boolean;
   onToggleCheck: (trackId: number) => void;
   onDeleteSingle: (track: Track) => void;
+  // ↕️ Boutons de position (mobile-friendly, alternative au drag) :
+  isFirst: boolean;
+  isLast: boolean;
+  onMove: (trackId: number, dir: -1 | 1) => void;
 }
 
 const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
@@ -47,6 +51,9 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   isChecked,
   onToggleCheck,
   onDeleteSingle,
+  isFirst,
+  isLast,
+  onMove,
 }) => {
   // 🔒 PARTICIPANT: Désactive complètement le drag-and-drop
   const {
@@ -131,6 +138,32 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         </div>
       </div>
 
+      {/* ↕️ Boutons POSITION (hôte) — alternative fiable au drag sur MOBILE. flex-shrink-0 → pas de débordement. */}
+      {isHost && !isEditMode && (
+        <div className="flex flex-col flex-shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); onMove(track.id, -1); }}
+            disabled={isFirst}
+            className="p-0.5 sm:p-1 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+            title="Monter"
+            data-testid={`move-up-${track.id}`}
+            aria-label={`Monter ${track.title}`}
+          >
+            <ChevronUp size={16} strokeWidth={2} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); onMove(track.id, 1); }}
+            disabled={isLast}
+            className="p-0.5 sm:p-1 rounded text-white/50 hover:text-white hover:bg-white/10 disabled:opacity-25 disabled:hover:bg-transparent transition-colors"
+            title="Descendre"
+            data-testid={`move-down-${track.id}`}
+            aria-label={`Descendre ${track.title}`}
+          >
+            <ChevronDown size={16} strokeWidth={2} />
+          </button>
+        </div>
+      )}
+
       {/* 🔒 Delete Button - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
       {isHost && !isEditMode && (
         <button
@@ -202,6 +235,15 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
       onReorder(newTracks);
     }
   };
+
+  // ↕️ Déplacer une piste d'un cran (boutons position, alternative au drag sur mobile).
+  const handleMove = useCallback((trackId: number, dir: -1 | 1) => {
+    const idx = tracks.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+    const target = idx + dir;
+    if (target < 0 || target >= tracks.length) return;
+    onReorder(arrayMove(tracks, idx, target));
+  }, [tracks, onReorder]);
 
   const handleToggleCheck = useCallback((trackId: number) => {
     setCheckedIds(prev => {
@@ -306,7 +348,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
             strategy={verticalListSortingStrategy}
           >
             <div className="space-y-2">
-              {displayTracks.map((track) => (
+              {displayTracks.map((track, idx) => (
                 <SortableTrackItem
                   key={track.id}
                   track={track}
@@ -317,6 +359,9 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                   isChecked={checkedIds.has(track.id)}
                   onToggleCheck={handleToggleCheck}
                   onDeleteSingle={handleDeleteSingle}
+                  isFirst={idx === 0}
+                  isLast={idx === displayTracks.length - 1}
+                  onMove={handleMove}
                 />
               ))}
             </div>

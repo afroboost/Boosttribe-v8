@@ -44,10 +44,10 @@ export interface UseAudioMixerReturn {
   setSelfMonitor: (on: boolean) => void;
 }
 
-// 🔊 Plages : 1.0 = pleine puissance ; au-delà = amplification (headroom). Aucun défaut < 1.0.
-const MUSIC_MAX_GAIN = 2.0; // musique amplifiable jusqu'à 200%
-const MIC_MAX_GAIN = 1.5;   // micro hôte : un peu de marge sans saturer la diffusion
-const MASTER_MAKEUP_GAIN = 1.25; // léger gain de sortie maître (compensé par le compresseur → pas de clipping brutal)
+// 🔊 Plages : 1.0 = pleine puissance RÉELLE (aucune atténuation) ; au-delà = amplification (headroom).
+const MUSIC_MAX_GAIN = 2.5; // musique amplifiable jusqu'à 250%
+const MIC_MAX_GAIN = 2.5;   // micro hôte amplifiable jusqu'à 250% (indépendant de la musique)
+const MASTER_MAKEUP_GAIN = 1.0; // 🔊 sortie maître à l'UNITÉ : 100% = plein volume réel (plus d'atténuation)
 
 const initialState: MixerState = {
   musicVolume: 1.0, // 🔊 plein volume par défaut (avant : 0.8 → atténuation perçue)
@@ -129,17 +129,18 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       document.addEventListener('click', resumeOnGesture);
       document.addEventListener('touchstart', resumeOnGesture, { passive: true });
 
-      // 🔊 SORTIE MAÎTRE : masterGain → compresseur → destination.
-      // Le compresseur (léger) augmente la puissance perçue sans distorsion (limite les crêtes),
-      // et le master applique un petit gain de compensation (makeup) → son plus franc.
+      // 🔊 SORTIE MAÎTRE à l'UNITÉ (1.0) : masterGain → limiteur de crêtes → destination.
+      // ⚠️ L'ancien compresseur (seuil -18 dB, ratio 3) atténuait fortement (~5x ressenti) → SUPPRIMÉ.
+      // Le limiteur ci-dessous est quasi TRANSPARENT à 100% (n'attrape que les toutes dernières crêtes
+      // pour éviter une distorsion brutale quand on pousse à 200-250%). 100% = plein volume réel.
       const master = ctx.createGain();
-      master.gain.value = MASTER_MAKEUP_GAIN;
+      master.gain.value = MASTER_MAKEUP_GAIN; // 1.0
       const compressor = ctx.createDynamicsCompressor();
-      compressor.threshold.value = -18; // dB : ne comprime que les crêtes
-      compressor.knee.value = 20;
-      compressor.ratio.value = 3;       // compression douce
-      compressor.attack.value = 0.003;
-      compressor.release.value = 0.25;
+      compressor.threshold.value = -1.5; // n'agit que sur les crêtes proches de 0 dBFS
+      compressor.knee.value = 0;
+      compressor.ratio.value = 20;       // brickwall limiter (anti-clipping), pas un compresseur de volume
+      compressor.attack.value = 0.002;
+      compressor.release.value = 0.1;
       master.connect(compressor);
       compressor.connect(ctx.destination);
       masterGainRef.current = master;

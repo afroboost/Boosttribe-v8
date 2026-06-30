@@ -406,20 +406,11 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
   const keepEnlargedRef = useRef(false); // sortie de plein écran NATIF voulue (chat) → garder l'overlay CSS
 
   const handleEnlarge = useCallback(() => {
+    // 🔍 Vue agrandie = overlay CSS plein écran (PAS de plein écran NATIF) → le lanceur/panneau de chat
+    //    restent visibles et la vidéo COUVRE tout l'écran dispo (le natif masquerait tout le reste).
+    //    On tente quand même le verrouillage paysage (no-op hors plein écran natif → l'utilisateur tourne).
     setEnlarged(true);
-    // 💬 Chat ouvert → pas de plein écran NATIF (il masquerait le chat). Overlay CSS qui coexiste.
-    if (chatOpenRef.current) { lockLandscape(); return; }
-    const el = rootRef.current as (HTMLElement & { webkitRequestFullscreen?: () => void }) | null;
-    try {
-      if (el?.requestFullscreen) {
-        el.requestFullscreen().then(lockLandscape).catch(lockLandscape);
-      } else if (el?.webkitRequestFullscreen) {
-        el.webkitRequestFullscreen();
-        lockLandscape();
-      } else {
-        lockLandscape(); // pas de Fullscreen API (ex. iOS Safari div) → overlay CSS, l'utilisateur tourne
-      }
-    } catch { /* ignore */ }
+    lockLandscape();
   }, [lockLandscape]);
 
   // 💬 Si le chat s'ouvre PENDANT un plein écran natif → en sortir tout en GARDANT la vue agrandie

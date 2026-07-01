@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   DndContext,
@@ -66,20 +66,36 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false); // ⋮ menu kebab (Renommer / Supprimer)
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const openMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    // 🔎 Diagnostic : confirme que le handler se déclenche (filtre console sur [PLAYLIST]).
-    // eslint-disable-next-line no-console
-    console.log('[PLAYLIST] ⋮ clic — track', track.id, '| ouvert avant =', menuOpen);
     if (menuOpen) { setMenuOpen(false); return; }
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // Menu ~220px : on l'aligne à droite du bouton, ouverture vers le bas ; borné à l'écran.
-    const top = Math.min(r.bottom + 4, window.innerHeight - 200);
+    // Menu ~220px : aligné à droite du bouton, ouverture vers le bas ; borné à l'écran.
+    const top = Math.min(r.bottom + 4, window.innerHeight - 210);
     const left = Math.min(Math.max(8, r.right - 220), window.innerWidth - 228);
     setMenuPos({ top, left });
     setMenuOpen(true);
   };
+  // 🔧 Fermeture au clic EXTÉRIEUR — listener attaché au TICK SUIVANT (setTimeout) pour NE PAS capter
+  //    le clic d'ouverture (sinon le menu se refermait aussitôt → « ouvert avant = false » à chaque clic).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onOutside = (ev: Event) => {
+      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setMenuOpen(false); };
+    const t = window.setTimeout(() => {
+      document.addEventListener('pointerdown', onOutside, true);
+      document.addEventListener('keydown', onKey);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('pointerdown', onOutside, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
   const [draft, setDraft] = useState(track.title);
   const startRename = () => { setDraft(track.title); setEditing(true); };
   const saveRename = () => {
@@ -238,8 +254,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
               </button>
               {menuOpen && menuPos && createPortal(
                 <>
-                  <div className="fixed inset-0 z-[9998]" onPointerDown={(e) => { e.stopPropagation(); setMenuOpen(false); }} onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} />
-                  <div role="menu" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
+                  <div ref={menuRef} role="menu" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
                     className="z-[9999] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
                     onClick={(e) => e.stopPropagation()}>
                     <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); startRename(); }}

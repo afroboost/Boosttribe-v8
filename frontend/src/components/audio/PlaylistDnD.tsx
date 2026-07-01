@@ -68,10 +68,16 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
   const openMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
+    e.preventDefault();
+    // 🔎 Diagnostic : confirme que le handler se déclenche (filtre console sur [PLAYLIST]).
+    // eslint-disable-next-line no-console
+    console.log('[PLAYLIST] ⋮ clic — track', track.id, '| ouvert avant =', menuOpen);
     if (menuOpen) { setMenuOpen(false); return; }
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // Aligne le bord droit du menu (~160px) sous le bouton ; ouvre vers le bas.
-    setMenuPos({ top: r.bottom + 4, left: Math.max(8, r.right - 160) });
+    // Menu ~220px : on l'aligne à droite du bouton, ouverture vers le bas ; borné à l'écran.
+    const top = Math.min(r.bottom + 4, window.innerHeight - 200);
+    const left = Math.min(Math.max(8, r.right - 220), window.innerWidth - 228);
+    setMenuPos({ top, left });
     setMenuOpen(true);
   };
   const [draft, setDraft] = useState(track.title);

@@ -1,5 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import Peer, { MediaConnection, DataConnection } from 'peerjs';
+// 🔎 DÉCOUVERTE DE PAIRS via PRÉSENCE Supabase (éphémère, en mémoire, auto-nettoyée). Remplace
+//   l'ancien ID hôte CALCULÉ (déterministe → « ID is taken » au reload). L'hôte publie son id UNIQUE
+//   dans la présence ; les participants le lisent au lieu de le deviner.
+import supabase from '@/lib/supabaseClient';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 // Types
 export interface PeerState {
@@ -315,8 +320,20 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const connectRef = useRef<((stream?: MediaStream | null) => Promise<boolean>) | null>(null);
   const idRetryRef = useRef(0);
   const hostDataRetryRef = useRef(0);
-  const MAX_ID_RETRIES = 5;
+  // 🆕 ID UNIQUE : borne STRICTE de reprise sur « unavailable-id ». L'id étant désormais aléatoire à
+  //   chaque connexion, une collision est quasi impossible ; on régénère un NOUVEL id et on retente
+  //   1-2 fois MAX (plus JAMAIS de boucle de reconnexion sur un id fixe « pris »).
+  const MAX_ID_RETRIES = 2;
   const MAX_HOST_DATA_RETRIES = 15;
+  // 🆕 Identité RÉELLE du peer courant (id UNIQUE aléatoire, plus jamais déterministe).
+  const myPeerIdRef = useRef<string | null>(null);
+  // 🆕 Rôle avec lequel le peer courant a été CRÉÉ (l'id n'encode plus le rôle → on le mémorise ici pour
+  //   la garde d'identité « coach dont isHost passe false→true en asynchrone »).
+  const peerRoleRef = useRef<boolean>(isHost);
+  // 🆕 Id du peer HÔTE : pour l'hôte = son propre id ; pour un participant = id DÉCOUVERT via présence.
+  const hostPeerIdRef = useRef<string | null>(null);
+  // 🆕 Canal de présence Supabase (découverte de pairs). Un canal par peer (clé = id unique du peer).
+  const presenceChannelRef = useRef<RealtimeChannel | null>(null);
   const activeCallRef = useRef<MediaConnection | null>(null);
   // 🎤 POINT 5: appel montant du participant vers l'hôte ("Prendre la parole")
   const upstreamCallRef = useRef<MediaConnection | null>(null);
@@ -420,20 +437,31 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     }
   }, []);
 
-  // Generate peer ID based on session and role
+  // 🆕 Génère un id de peer TOUJOURS UNIQUE (hôte ET participant). Plus JAMAIS d'id déterministe :
+  //   c'était la cause racine des erreurs « ID "beattribe-host-<code>" is taken » / « PeerJS Aborting »
+  //   / « Connection timeout » quand un peer précédent (reload / renouvellement) n'était pas encore
+  //   libéré côté serveur de signalisation. Le rôle n'est plus encodé de façon devinable dans l'id →
+  //   la découverte passe par la présence Supabase (voir getHostPeerId).
   const generatePeerId = useCallback((forHost: boolean) => {
     const cleanSessionId = sessionId.replace(/[^a-zA-Z0-9]/g, '');
-    if (forHost) {
-      return `beattribe-host-${cleanSessionId}`;
-    }
-    return `beattribe-${cleanSessionId}-${Date.now().toString(36)}`;
+    const rand = Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+    return `beattribe-${forHost ? 'host-' : ''}${cleanSessionId}-${rand}`;
   }, [sessionId]);
 
-  // Get host peer ID
-  const getHostPeerId = useCallback(() => {
-    const cleanSessionId = sessionId.replace(/[^a-zA-Z0-9]/g, '');
-    return `beattribe-host-${cleanSessionId}`;
-  }, [sessionId]);
+  // 🆕 Id du peer HÔTE : DÉCOUVERT (participant) via la présence Supabase, ou PROPRE id (hôte).
+  //   Plus JAMAIS un id calculé. `null` tant que l'hôte n'a pas encore été découvert.
+  const getHostPeerId = useCallback((): string | null => hostPeerIdRef.current, []);
+
+  // 🆕 Nettoyage de la présence : arrête de publier ma présence et retire le canal (auto-nettoyé aussi
+  //   côté serveur à la déconnexion socket). Appelé au leave/unmount ET avant de recréer un peer.
+  const teardownPresence = useCallback(() => {
+    const ch = presenceChannelRef.current;
+    if (ch) {
+      try { ch.untrack(); } catch { /* ignore */ }
+      try { supabase?.removeChannel(ch); } catch { /* ignore */ }
+      presenceChannelRef.current = null;
+    }
+  }, []);
 
   /**
    * Force play the remote audio element
@@ -528,13 +556,14 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     //   est vrai dès le départ → peer créé directement en hôte → ça marche. On détecte le décalage
     //   d'identité et on RECRÉE le peer avec la bonne identité.
     if (peerRef.current?.open) {
-      const isHostPeer = peerRef.current.id === getHostPeerId();
-      if (isHost === isHostPeer) {
+      // 🆕 L'id n'encode plus le rôle → on compare au rôle avec lequel le peer a été CRÉÉ (peerRoleRef).
+      if (isHost === peerRoleRef.current) {
         return true; // identité cohérente avec le rôle → rien à faire
       }
       // Rôle changé après ouverture → détruire et recréer avec la bonne identité (hôte/participant)
       try { peerRef.current.destroy(); } catch { /* ignore */ }
       peerRef.current = null;
+      teardownPresence(); // l'ancienne présence portait l'ancien id/rôle → on la retire
     }
 
     // Destroy existing peer if not open
@@ -547,12 +576,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     return new Promise((resolve) => {
       try {
         const peerId = generatePeerId(isHost);
-        const hostPeerId = getHostPeerId();
-
-        // Production: log removed
-        // Production: log removed
-        // Production: log removed
-        // Production: log removed
+        // 🆕 Mémorise IMMÉDIATEMENT l'identité/rôle du peer qu'on crée (avant même l'ouverture).
+        myPeerIdRef.current = peerId;
+        peerRoleRef.current = isHost;
+        if (isHost) hostPeerIdRef.current = peerId; // l'hôte EST sa propre référence d'hôte
 
         // Create peer : signalisation auto-hébergée (repli cloud) + ICE STUN/TURN
         const srv = peerServerOptions();
@@ -572,31 +599,75 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         //    alors la dataConn et rappelle le participant avec sa voix (fin des « participants inaudibles »).
         const connectToHost = () => {
           if (isHost || !peerRef.current || peerRef.current.destroyed) return;
-          if (dataConnectionsRef.current.has(hostPeerId)) return; // déjà connecté
+          // 🆕 Id hôte DÉCOUVERT via présence (plus calculé). Tant qu'il est inconnu, on ne fait rien :
+          //   la sync de présence rappellera connectToHost() dès que l'hôte se sera annoncé.
+          const hostId = hostPeerIdRef.current;
+          if (!hostId) return;
+          if (dataConnectionsRef.current.has(hostId)) return; // déjà connecté
           try {
             // POINT 3 : on transmet l'userId à l'hôte (metadata) → ciblage "parler en privé"
-            const dataConn = peerRef.current.connect(hostPeerId, { metadata: { userId: userIdRef.current } });
+            const dataConn = peerRef.current.connect(hostId, { metadata: { userId: userIdRef.current } });
             dataConn.on('open', () => {
               hostDataRetryRef.current = 0;
-              dataConnectionsRef.current.set(hostPeerId, dataConn);
-              VLOG('participant → dataConn OUVERTE vers hôte', hostPeerId, '(l\'hôte devrait me rappeler avec sa voix)');
+              dataConnectionsRef.current.set(hostId, dataConn);
+              VLOG('participant → dataConn OUVERTE vers hôte', hostId, '(l\'hôte devrait me rappeler avec sa voix)');
             });
             dataConn.on('error', (err) => {
               VLOG('participant → dataConn ERREUR', err);
             });
-          } catch { /* réessayé via le handler d'erreur peer-unavailable */ }
+          } catch { /* réessayé via la présence ou le handler d'erreur peer-unavailable */ }
+        };
+
+        // 🆕 PRÉSENCE Supabase : l'hôte s'y annonce (isHost:true) ; les participants la lisent pour
+        //   découvrir l'id UNIQUE de l'hôte, puis ouvrent la dataConn vers CET id (réutilise connectToHost).
+        const setupPresence = (openedId: string) => {
+          if (!supabase) {
+            VLOG('⚠️ Supabase non configuré — découverte de présence indisponible (voix participant impossible)');
+            return;
+          }
+          teardownPresence(); // retire un éventuel canal précédent (recréation de peer)
+          const channel = supabase.channel('voice-peers:' + sessionId, {
+            config: { presence: { key: openedId } },
+          });
+          presenceChannelRef.current = channel;
+          channel.on('presence', { event: 'sync' }, () => {
+            // Seul un PARTICIPANT a besoin de découvrir l'hôte. L'hôte, lui, est rappelé par les
+            //   participants via dataConn (flux inchangé) : rien à faire ici côté hôte.
+            if (peerRoleRef.current) return;
+            const st = channel.presenceState<{ peerId: string; isHost: boolean; userId?: string }>();
+            let foundHostId: string | null = null;
+            Object.values(st).forEach((arr) => {
+              arr.forEach((m) => { if (m.isHost === true && m.peerId) foundHostId = m.peerId; });
+            });
+            if (foundHostId && foundHostId !== hostPeerIdRef.current) {
+              hostPeerIdRef.current = foundHostId;
+              updateState({ hostPeerId: foundHostId });
+              VLOG('participant → hôte DÉCOUVERT via présence:', foundHostId);
+            }
+            if (foundHostId) connectToHost();
+          });
+          channel.subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+              channel.track({ peerId: openedId, isHost, userId: userIdRef.current });
+              VLOG('présence: track', openedId, isHost ? '(HÔTE)' : '(participant)');
+            }
+          });
         };
 
         // Handle peer open
         peer.on('open', (id) => {
-          VLOG('peer OUVERT — id=', id, 'rôle=', isHost ? 'HÔTE' : 'participant', '| id hôte attendu=', hostPeerId);
+          // 🆕 Confirme l'identité réelle attribuée par le serveur (== peerId unique demandé).
+          myPeerIdRef.current = id;
+          peerRoleRef.current = isHost;
+          if (isHost) hostPeerIdRef.current = id;
+          VLOG('peer OUVERT — id=', id, 'rôle=', isHost ? 'HÔTE' : 'participant');
           reconnectAttempts.current = 0;
-          idRetryRef.current = 0; // 🔁 P5 : l'ID hôte a été obtenu → on remet le compteur à zéro
+          idRetryRef.current = 0; // l'id a été obtenu → on remet le compteur de reprise à zéro
 
           updateState({
             isConnected: true,
             peerId: id,
-            hostPeerId,
+            hostPeerId: hostPeerIdRef.current,
             error: null,
             isReady: true,
           });
@@ -609,7 +680,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             onReady?.();
           }
 
-          // Participant: Connect to host for data channel (retentable)
+          // 🆕 Annonce/écoute la présence (l'hôte publie son id ; le participant découvre l'hôte).
+          setupPresence(id);
+
+          // Participant: Connect to host for data channel (retentable). Si l'hôte n'est pas encore
+          //   découvert, connectToHost() ne fait rien ; la sync de présence le rappellera.
           if (!isHost) {
             hostDataRetryRef.current = 0;
             connectToHost();
@@ -838,19 +913,19 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             }
           } else if (err.type === 'network') {
             errorMessage = 'Erreur réseau. Vérifiez votre connexion.';
-          } else if (err.type === 'unavailable-id') {
+          } else if (err.type === 'unavailable-id' || /is taken/i.test(err.message || '')) {
             errorMessage = 'Reconnexion en cours…';
-            // 🔁 P5 (hôte) : l'ID hôte est FIXE (beattribe-host-<session>). Après un reload / renouvellement
-            //    de code / coupure, l'ancien peer reste brièvement enregistré côté serveur → cette erreur.
-            //    On détruit et on RETENTE après un court délai (l'ID se libère) au lieu d'exiger un refresh
-            //    manuel → c'est LA cause du micro hôte « parfois oui, parfois non ».
-            if (isHost && idRetryRef.current < MAX_ID_RETRIES) {
+            // 🆕 L'id est UNIQUE (aléatoire) → une collision est quasi impossible. Si elle survient malgré
+            //    tout, on RÉGÉNÈRE un NOUVEL id (connect() rappelle generatePeerId) et on retente 1-2 fois
+            //    MAX, hôte OU participant. Plus JAMAIS de boucle de reconnexion sur un id fixe « pris ».
+            if (idRetryRef.current < MAX_ID_RETRIES) {
               idRetryRef.current++;
               try { peerRef.current?.destroy(); } catch { /* ignore */ }
               peerRef.current = null;
-              setTimeout(() => { connectRef.current?.(currentStreamRef.current); }, 1200 * idRetryRef.current);
-            } else if (isHost) {
-              errorMessage = 'ID déjà utilisé. Rafraîchissez la page.';
+              teardownPresence();
+              setTimeout(() => { connectRef.current?.(currentStreamRef.current); }, 300);
+            } else {
+              errorMessage = 'Connexion impossible. Rafraîchissez la page.';
             }
           }
 
@@ -903,7 +978,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // onVoiceStart est consommé via forcePlayRemoteAudio ; sessionId via generatePeerId/getHostPeerId.
     // applyPrivacyToCall (stable) est déclaré plus bas et userId est lu via userIdRef → hors deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, generatePeerId, getHostPeerId, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceEnd, onReceiveTribeAudio, onTribeAudioEnd, onError, onReady, forcePlayRemoteAudio]);
+  }, [isHost, sessionId, generatePeerId, teardownPresence, updateState, onPeerConnected, onPeerDisconnected, onReceiveAudio, onVoiceEnd, onReceiveTribeAudio, onTribeAudioEnd, onError, onReady, forcePlayRemoteAudio]);
 
   /**
    * HOST: Broadcast audio to all connected peers
@@ -1101,6 +1176,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     }
 
     const hostPeerId = getHostPeerId();
+    if (!hostPeerId) {
+      VLOG('participant → PRENDRE LA PAROLE impossible : hôte pas encore découvert (présence)');
+      return;
+    }
     VLOG('participant → PREND LA PAROLE : appelle l\'hôte', hostPeerId, 'avec', stream.getAudioTracks().length, 'piste(s)');
     const call = peerRef.current.call(hostPeerId, stream);
     if (call) {
@@ -1196,6 +1275,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     dataConnectionsRef.current.forEach((conn) => conn.close());
     dataConnectionsRef.current.clear();
 
+    // 🆕 Cesser d'annoncer ma présence (canal Supabase) — auto-nettoyé côté serveur à la déconnexion.
+    teardownPresence();
+    // 🆕 Oublier l'hôte découvert (un participant devra le re-découvrir à la prochaine connexion).
+    if (!isHost) hostPeerIdRef.current = null;
+    myPeerIdRef.current = null;
+
     if (peerRef.current) {
       peerRef.current.destroy();
       peerRef.current = null;
@@ -1221,7 +1306,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     });
 
     // Production: log removed
-  }, [stopBroadcast, updateState, cleanupTribeNode]);
+  }, [isHost, stopBroadcast, updateState, cleanupTribeNode, teardownPresence]);
 
   // Manual reconnect
   const reconnect = useCallback(async (): Promise<boolean> => {
@@ -1242,11 +1327,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   useEffect(() => {
     const peer = peerRef.current;
     if (!peer || !peer.open) return;
-    const isHostPeer = peer.id === getHostPeerId();
-    if (isHost !== isHostPeer) {
+    // 🆕 On compare au rôle de CRÉATION du peer (l'id n'encode plus le rôle).
+    if (isHost !== peerRoleRef.current) {
       connectRef.current?.(currentStreamRef.current);
     }
-  }, [isHost, getHostPeerId]);
+  }, [isHost]);
 
   // Cleanup on unmount
   useEffect(() => {

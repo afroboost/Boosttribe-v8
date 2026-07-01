@@ -511,7 +511,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // Force play
     try {
       await audioEl.play();
-      // Production: log removed
+      VLOG('participant ← remote audio ATTACHÉ + play() OK —', stream.getAudioTracks().length, 'piste(s), routage', routed ? 'Web Audio' : 'élément direct');
       updateState({ isReceivingVoice: true });
       onVoiceStart?.();
       return true;
@@ -703,6 +703,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             if (stream) {
               currentStreamRef.current = stream;
             }
+            VLOG('HÔTE peer ouvert — diffusion en cours ?', !!currentStreamRef.current, '| les participants qui se connectent seront rappelés avec le micStream');
             onReady?.();
           }
 
@@ -888,7 +889,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
             // If broadcasting, call the new peer immediately
             if (currentStreamRef.current && isHost) {
-              VLOG('HÔTE → appelle le nouveau participant', dataConn.peer, 'avec ma voix');
+              VLOG('HÔTE → call émis vers', dataConn.peer, 'avec micStream —', currentStreamRef.current.getAudioTracks().length, 'piste(s) | diffusion en cours ? true');
               const call = peerRef.current?.call(dataConn.peer, currentStreamRef.current);
               if (call) {
                 traceIce('HÔTE→participant ' + dataConn.peer, call);
@@ -1132,9 +1133,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // seront appelés via peer.on('connection') avec currentStreamRef.
     currentStreamRef.current = stream;
     updateState({ isBroadcasting: true });
+    VLOG('broadcastAudio — diffusion en cours ? true —', stream.getAudioTracks().length, 'piste(s) micro prête(s)');
 
     if (!peerRef.current?.open) {
-      // Peer pas encore ouvert : la diffusion se fera à la connexion des participants
+      // Peer pas encore ouvert : la diffusion se fera à la connexion des participants (via peer.on('connection'))
+      VLOG('broadcastAudio — peer pas encore ouvert : micStream mémorisé, diffusion différée à la connexion des participants');
       return;
     }
 
@@ -1142,7 +1145,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     VLOG('broadcastAudio — hôte diffuse à', dataConnectionsRef.current.size, 'participant(s) connecté(s)');
     dataConnectionsRef.current.forEach((_, peerId) => {
       if (!connectionsRef.current.has(peerId)) {
-        VLOG('HÔTE → appelle participant', peerId, 'avec ma voix (broadcast)');
+        VLOG('HÔTE → call émis vers', peerId, 'avec micStream —', stream.getAudioTracks().length, 'piste(s) (broadcast)');
         const call = peerRef.current!.call(peerId, stream);
         traceIce('HÔTE→participant ' + peerId, call);
 

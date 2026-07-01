@@ -487,19 +487,11 @@ export async function requestPayout(): Promise<{ ok: boolean; amount_chf?: numbe
   }
 }
 
-/** Coach : plan (type de paiement + état de l'abonnement « Illimité »). */
+/** Coach : plan (type de paiement + état de l'abonnement « Illimité »). Retry 401 (token frais). */
 export async function getCoachPlan(): Promise<{ data?: CoachPlan; error?: string }> {
-  if (!API_URL) return { error: 'API non configurée' };
-  const token = await getAccessToken();
-  if (!token) return { error: 'Connectez-vous' };
-  try {
-    const res = await fetch(`${API_URL}/coach/plan`, { headers: { Authorization: `Bearer ${token}` } });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
-    return { data: data as CoachPlan };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
-  }
+  const { data, error } = await adminFetch('/coach/plan', { method: 'GET' });
+  if (error) return { error };
+  return { data: data as CoachPlan };
 }
 
 /** Coach : s'abonner à « Coach Illimité » → URL Stripe Checkout (abonnement récurrent CHF). */
@@ -1039,20 +1031,13 @@ export async function saveStripeKeys(payload: { public_key?: string; secret_key?
 
 // F : autorité hôte / co-animateurs (source de vérité serveur)
 export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_id?: string }> {
-  if (!API_URL) return { ok: false };
-  const token = await getAccessToken();
-  if (!token) return { ok: false };
-  try {
-    const res = await fetch(`${API_URL}/session/claim-host`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-    const data = await res.json().catch(() => ({}));
-    return { ok: !!data?.ok, host_id: data?.host_id };
-  } catch {
-    return { ok: false };
-  }
+  // 🔐 Passe par le helper à RETRY sur 401 (force un token frais et réessaie une fois) → l'hôte revendique
+  //    fiablement son rôle même si le token a expiré (sinon 401 → host_id non posé → voix/synchro cassées).
+  const { data } = await adminFetch('/session/claim-host', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  return { ok: !!data?.ok, host_id: data?.host_id };
 }
 
 export async function setCohosts(sessionId: string, cohosts: string[]): Promise<{ ok: boolean; error?: string }> {

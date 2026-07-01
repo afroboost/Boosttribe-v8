@@ -332,8 +332,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const peerRoleRef = useRef<boolean>(isHost);
   // 🆕 Id du peer HÔTE : pour l'hôte = son propre id ; pour un participant = id DÉCOUVERT via présence.
   const hostPeerIdRef = useRef<string | null>(null);
-  // 🆕 Canal de présence Supabase (découverte de pairs). Un canal par peer (clé = id unique du peer).
+  // 🆕 Canal de découverte Supabase (présence + broadcast). Un canal par peer (clé = id unique du peer).
   const presenceChannelRef = useRef<RealtimeChannel | null>(null);
+  const announceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null); // ré-annonce du peer id
   const activeCallRef = useRef<MediaConnection | null>(null);
   // 🎤 POINT 5: appel montant du participant vers l'hôte ("Prendre la parole")
   const upstreamCallRef = useRef<MediaConnection | null>(null);
@@ -455,6 +456,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   // 🆕 Nettoyage de la présence : arrête de publier ma présence et retire le canal (auto-nettoyé aussi
   //   côté serveur à la déconnexion socket). Appelé au leave/unmount ET avant de recréer un peer.
   const teardownPresence = useCallback(() => {
+    if (announceIntervalRef.current) { clearInterval(announceIntervalRef.current); announceIntervalRef.current = null; }
     const ch = presenceChannelRef.current;
     if (ch) {
       try { ch.untrack(); } catch { /* ignore */ }
@@ -618,38 +620,62 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           } catch { /* réessayé via la présence ou le handler d'erreur peer-unavailable */ }
         };
 
-        // 🆕 PRÉSENCE Supabase : l'hôte s'y annonce (isHost:true) ; les participants la lisent pour
-        //   découvrir l'id UNIQUE de l'hôte, puis ouvrent la dataConn vers CET id (réutilise connectToHost).
+        // 🆕 DÉCOUVERTE Supabase — présence ET broadcast RÉ-ANNONCÉ (robuste au timing : chacun ré-émet
+        //   son id toutes les 3 s + à chaque annonce reçue, donc un pair qui arrive après reçoit quand
+        //   même l'id de l'autre → fini le « 0 participant connecté »). Canal fiable (même infra que la
+        //   synchro musique qui marche). Le PARTICIPANT découvre l'id UNIQUE de l'hôte puis ouvre la dataConn.
         const setupPresence = (openedId: string) => {
           if (!supabase) {
-            VLOG('⚠️ Supabase non configuré — découverte de présence indisponible (voix participant impossible)');
+            VLOG('⚠️ Supabase non configuré — découverte indisponible (voix participant impossible)');
             return;
           }
           teardownPresence(); // retire un éventuel canal précédent (recréation de peer)
           const channel = supabase.channel('voice-peers:' + sessionId, {
-            config: { presence: { key: openedId } },
+            config: { presence: { key: openedId }, broadcast: { self: false } },
           });
           presenceChannelRef.current = channel;
-          channel.on('presence', { event: 'sync' }, () => {
-            // Seul un PARTICIPANT a besoin de découvrir l'hôte. L'hôte, lui, est rappelé par les
-            //   participants via dataConn (flux inchangé) : rien à faire ici côté hôte.
-            if (peerRoleRef.current) return;
-            const st = channel.presenceState<{ peerId: string; isHost: boolean; userId?: string }>();
-            let foundHostId: string | null = null;
-            Object.values(st).forEach((arr) => {
-              arr.forEach((m) => { if (m.isHost === true && m.peerId) foundHostId = m.peerId; });
-            });
-            if (foundHostId && foundHostId !== hostPeerIdRef.current) {
-              hostPeerIdRef.current = foundHostId;
-              updateState({ hostPeerId: foundHostId });
-              VLOG('participant → hôte DÉCOUVERT via présence:', foundHostId);
+
+          // Applique un id hôte découvert (participant) et déclenche la connexion.
+          const applyHostId = (hostId: string, via: string) => {
+            if (peerRoleRef.current) return; // l'hôte n'a pas à « découvrir » un hôte
+            if (!hostId) return;
+            if (hostPeerIdRef.current !== hostId) {
+              hostPeerIdRef.current = hostId;
+              updateState({ hostPeerId: hostId });
+              VLOG('participant → hôte DÉCOUVERT via', via, ':', hostId);
             }
-            if (foundHostId) connectToHost();
+            connectToHost();
+          };
+          const announce = () => {
+            try { channel.send({ type: 'broadcast', event: 'peer-announce', payload: { peerId: openedId, isHost, userId: userIdRef.current } }); } catch { /* ignore */ }
+          };
+
+          // 1) Broadcast : chacun annonce son id ; on répond aux annonces.
+          channel.on('broadcast', { event: 'peer-announce' }, ({ payload }) => {
+            const p = payload as { peerId?: string; isHost?: boolean } | undefined;
+            if (!p?.peerId) return;
+            if (!peerRoleRef.current && p.isHost === true) applyHostId(p.peerId, 'broadcast');
+            // L'HÔTE : un participant vient de s'annoncer → je ré-annonce mon id pour qu'il me trouve
+            //   (les participants m'ouvrent ensuite une dataConn ; broadcastAudio les atteint).
+            if (peerRoleRef.current && p.isHost === false) announce();
           });
+          // 2) Présence : filet supplémentaire (état complet, découverte à l'arrivée).
+          channel.on('presence', { event: 'sync' }, () => {
+            if (peerRoleRef.current) return;
+            const st = channel.presenceState<{ peerId: string; isHost: boolean }>();
+            let foundHostId: string | null = null;
+            Object.values(st).forEach((arr) => arr.forEach((m) => { if (m.isHost === true && m.peerId) foundHostId = m.peerId; }));
+            if (foundHostId) applyHostId(foundHostId, 'présence');
+          });
+
           channel.subscribe((status) => {
             if (status === 'SUBSCRIBED') {
               channel.track({ peerId: openedId, isHost, userId: userIdRef.current });
-              VLOG('présence: track', openedId, isHost ? '(HÔTE)' : '(participant)');
+              announce();
+              VLOG('découverte: annonce', openedId, isHost ? '(HÔTE)' : '(participant)');
+              // Ré-annonce périodique tant que le canal vit (couvre toutes les courses de timing).
+              if (announceIntervalRef.current) clearInterval(announceIntervalRef.current);
+              announceIntervalRef.current = setInterval(announce, 3000);
             }
           });
         };

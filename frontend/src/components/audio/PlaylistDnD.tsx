@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon, MoreVertical } from 'lucide-react';
+import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon, MoreVertical, EyeOff, Eye, Share2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 export interface Track {
@@ -27,6 +27,7 @@ export interface Track {
   artist: string;
   src: string;
   coverArt?: string;
+  hidden?: boolean; // 🙈 masqué : invisible pour les participants, récupérable côté hôte (stocké dans le JSON)
 }
 
 interface SortableTrackItemProps {
@@ -43,6 +44,7 @@ interface SortableTrackItemProps {
   isLast: boolean;
   onMove: (trackId: number, dir: -1 | 1) => void;
   onRename: (trackId: number, title: string) => void; // ✏️ renommer un titre
+  onToggleHidden: (trackId: number) => void;          // 🙈 masquer / ré-afficher
 }
 
 const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
@@ -58,6 +60,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   isLast,
   onMove,
   onRename,
+  onToggleHidden,
 }) => {
   // ✏️ Édition inline du nom (local à la ligne).
   const [editing, setEditing] = useState(false);
@@ -106,6 +109,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
           : 'bg-[var(--bt-surface-alpha)] border border-white/10 hover:bg-white/5'
         }
         ${isDragging ? 'shadow-lg shadow-[#8A2EFF]/20 z-50' : ''}
+        ${track.hidden && isHost ? 'opacity-50' : ''}
       `}
       data-testid={`track-item-${track.id}`}
     >
@@ -173,11 +177,13 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
             />
           ) : (
             <p
-              className="text-white font-medium truncate text-sm leading-tight"
+              className="text-white font-medium truncate text-sm leading-tight flex items-center gap-1.5"
               onDoubleClick={(e) => { if (isHost && !isEditMode) { e.stopPropagation(); startRename(); } }}
               title={track.title}
             >
-              {track.title}
+              {track.hidden && isHost && <EyeOff size={13} strokeWidth={2} className="text-white/40 flex-shrink-0" />}
+              <span className="truncate">{track.title}</span>
+              {track.hidden && isHost && <span className="text-[10px] uppercase tracking-wide text-white/40 flex-shrink-0">masqué</span>}
             </p>
           )}
           <p className="text-white/50 text-xs truncate">{track.artist}</p>
@@ -228,17 +234,28 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
                 <>
                   <div className="fixed inset-0 z-[190]" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} />
                   <div role="menu" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
-                    className="z-[200] min-w-[160px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
+                    className="z-[200] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
                     onClick={(e) => e.stopPropagation()}>
                     <button role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); startRename(); }}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
                       data-testid={`rename-track-${track.id}`}>
-                      <Pencil size={15} strokeWidth={2} /> Renommer
+                      <Pencil size={15} strokeWidth={2} /> Renommer / Modifier l'étiquette
                     </button>
+                    <button role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSelect(track); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                      data-testid={`share-track-${track.id}`}>
+                      <Share2 size={15} strokeWidth={2} /> Partager la chanson
+                    </button>
+                    <button role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onToggleHidden(track.id); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                      data-testid={`hide-track-${track.id}`}>
+                      {track.hidden ? <><Eye size={15} strokeWidth={2} /> Afficher la chanson</> : <><EyeOff size={15} strokeWidth={2} /> Masquer la chanson</>}
+                    </button>
+                    <div className="my-1 h-px bg-white/10" />
                     <button role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDeleteSingle(track); }}
                       className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors"
                       data-testid={`delete-track-${track.id}`}>
-                      <Trash2 size={15} strokeWidth={2} /> Supprimer
+                      <Trash2 size={15} strokeWidth={2} /> Supprimer la chanson
                     </button>
                   </div>
                 </>,
@@ -264,6 +281,7 @@ interface PlaylistDnDProps {
   onReorder: (tracks: Track[]) => void;
   onDeleteTracks: (tracks: Track[]) => void;
   onRenameTrack?: (trackId: number, title: string) => void; // ✏️ renommer un titre (persisté par le parent)
+  onToggleHidden?: (trackId: number) => void;               // 🙈 masquer / ré-afficher (persisté par le parent)
   isHost: boolean;
   maxTracks?: number;
 }
@@ -275,6 +293,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   onReorder,
   onDeleteTracks,
   onRenameTrack,
+  onToggleHidden,
   isHost,
   maxTracks = 20,
 }) => {
@@ -349,8 +368,9 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
     setCheckedIds(new Set());
   }, []);
 
-  // Limit tracks display
-  const displayTracks = tracks.slice(0, maxTracks);
+  // Limit tracks display. 🙈 Les titres MASQUÉS sont retirés pour les PARTICIPANTS (l'hôte les voit
+  //   toujours, grisés, pour pouvoir les ré-afficher).
+  const displayTracks = (isHost ? tracks : tracks.filter((t) => !t.hidden)).slice(0, maxTracks);
   const hasChecked = checkedIds.size > 0;
 
   return (
@@ -379,41 +399,8 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
           )}
         </p>
         
-        {/* 🔒 Edit Mode Controls - HOST ONLY, SUPPRIMÉ DU DOM pour participants */}
-        {isHost && displayTracks.length > 0 && (
-          <div className="flex items-center gap-2">
-            {isEditMode ? (
-              <>
-                {/* Delete Selected Button - Only when items checked */}
-                {hasChecked && (
-                  <button
-                    onClick={handleDeleteSelected}
-                    className="text-xs px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded-md transition-colors"
-                    data-testid="delete-selected-btn"
-                  >
-                    Supprimer ({checkedIds.size})
-                  </button>
-                )}
-                <button
-                  onClick={handleExitEditMode}
-                  className="text-xs px-3 py-1.5 text-white/50 hover:text-white/70 hover:bg-white/10 rounded-md transition-colors"
-                  data-testid="cancel-edit-btn"
-                >
-                  Annuler
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => setIsEditMode(true)}
-                className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg text-xs transition-all"
-                style={{ backgroundColor: '#8A2EFF', color: 'white', fontWeight: 'bold' }}
-                data-testid="edit-mode-btn"
-              >
-                Modifier
-              </button>
-            )}
-          </div>
-        )}
+        {/* ⋮ Le bouton « Modifier » a été retiré : toutes les actions (renommer/étiquette, masquer,
+            partager, supprimer) sont désormais dans le menu 3 points de chaque ligne. */}
       </div>
 
       {/* Scrollable Playlist */}
@@ -443,6 +430,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                   isLast={idx === displayTracks.length - 1}
                   onMove={handleMove}
                   onRename={(id, title) => onRenameTrack?.(id, title)}
+                  onToggleHidden={(id) => onToggleHidden?.(id)}
                 />
               ))}
             </div>

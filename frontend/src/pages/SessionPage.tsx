@@ -2309,6 +2309,20 @@ export const SessionPage: React.FC = () => {
     showToast('Titre renommé', 'success');
   }, [isHost, tracks, selectedTrack, socket, persistOwnerPlaylist, showToast, user?.id]);
 
+  // 🙈 Masquer / ré-afficher un titre (booléen `hidden` dans le JSON tracks — AUCUN changement de schéma).
+  //    Même persistance/diffusion que le renommage. Un titre masqué disparaît de la playlist des
+  //    participants (filtré à l'affichage) mais reste visible/récupérable côté hôte.
+  const handleToggleHidden = useCallback((trackId: number) => {
+    if (!isHost) return;
+    const updated = tracks.map((t) => (t.id === trackId ? { ...t, hidden: !t.hidden } : t));
+    setTracks(updated);
+    const selId = selectedTrack?.id ?? updated[0]?.id ?? 0;
+    socket.syncPlaylist(updated, selId);
+    socket.savePlaylistToDb(updated, selId, user?.id);
+    persistOwnerPlaylist(updated, selId);
+    showToast(updated.find((t) => t.id === trackId)?.hidden ? 'Titre masqué (invisible pour les participants)' : 'Titre ré-affiché', 'default');
+  }, [isHost, tracks, selectedTrack, socket, persistOwnerPlaylist, showToast, user?.id]);
+
   // Track selection handler (syncs via socket)
   const handleTrackSelectWithSync = useCallback((track: Track) => {
     if (!isHost) return;
@@ -3996,6 +4010,7 @@ export const SessionPage: React.FC = () => {
                     onReorder={handlePlaylistReorder}
                     onDeleteTracks={handleDeleteTracks}
                     onRenameTrack={handleRenameTrack}
+                    onToggleHidden={handleToggleHidden}
                     isHost={isHost}
                     maxTracks={20}
                   />

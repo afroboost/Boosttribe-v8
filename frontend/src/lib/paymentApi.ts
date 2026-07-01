@@ -578,14 +578,20 @@ export async function buyTicket(sessionId: string): Promise<{ url?: string; alre
   }
 }
 
-/** Participant : a-t-il un billet valide pour cette session ? */
-export async function checkTicket(sessionId: string): Promise<{ has_ticket: boolean; error?: string }> {
+/**
+ * Participant : a-t-il un billet valide pour cette session ?
+ * `requestId` (optionnel) = id d'une demande d'accès APPROUVÉE → permet à un participant ANONYME
+ *  (sans compte) d'être reconnu comme ayant accès (chemin public par id, vérifié côté backend).
+ */
+export async function checkTicket(sessionId: string, requestId?: number | null): Promise<{ has_ticket: boolean; error?: string }> {
   if (!API_URL) return { has_ticket: false, error: 'API non configurée' };
   const token = await getAccessToken();
-  if (!token) return { has_ticket: false };
+  // ⚠️ Sans token MAIS avec une demande approuvée (requestId) → on interroge quand même (accès anonyme).
+  if (!token && !requestId) return { has_ticket: false };
   try {
-    const res = await fetch(`${API_URL}/tickets/check/${encodeURIComponent(sessionId)}`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const qs = requestId ? `?request_id=${encodeURIComponent(String(requestId))}` : '';
+    const res = await fetch(`${API_URL}/tickets/check/${encodeURIComponent(sessionId)}${qs}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { has_ticket: false, error: data?.detail || `Erreur ${res.status}` };
@@ -709,6 +715,7 @@ export interface PromoConfig {
   price?: string | null;
   format?: '9:16' | '16:9' | null;  // cadrage de l'affiche/vidéo
   allow_access_requests?: boolean;  // autoriser « Demander l'accès » (sans payer)
+  access_mode?: 'guest' | 'account' | null;  // 'guest' = entrée directe sans inscription
 }
 
 /** Participant : demande l'accès gratuit à une session payante (l'hôte approuve/refuse). */
@@ -726,6 +733,22 @@ export async function requestSessionAccess(sessionId: string, requesterName: str
     return { ok: true, id: data.id };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+/**
+ * Suivi PUBLIC (sans auth) du statut d'une demande d'accès par son id.
+ * Permet à un demandeur ANONYME de savoir si l'hôte a approuvé (la RLS ne le laisserait pas lire sa ligne).
+ */
+export async function getAccessRequestStatus(requestId: number): Promise<{ status?: 'pending' | 'approved' | 'refused'; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  try {
+    const res = await fetch(`${API_URL}/session/access-request/${encodeURIComponent(String(requestId))}/status`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { status: data.status };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
 }
 

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, Ticket, ArrowRight, Play, X } from 'lucide-react';
-import { getPromo, getVideoThumbnail, requestSessionAccess, type PromoConfig } from '@/lib/paymentApi';
+import { getPromo, getVideoThumbnail, requestSessionAccess, getAccessRequestStatus, type PromoConfig } from '@/lib/paymentApi';
 import { isHttpUrl, videoEmbedUrl } from '@/lib/videoEmbed';
 
 // 🎨 Couleurs Afroboost
@@ -31,6 +31,8 @@ const PromoPage: React.FC = () => {
   const [reqAsking, setReqAsking] = useState(false);  // formulaire nom ouvert
   const [reqSent, setReqSent] = useState(false);
   const [reqBusy, setReqBusy] = useState(false);
+  const [reqId, setReqId] = useState<number | null>(null);   // id de la demande → suivi du statut (poll)
+  const [reqRefused, setReqRefused] = useState(false);        // l'hôte a refusé
 
   useEffect(() => {
     let cancelled = false;
@@ -51,6 +53,28 @@ const PromoPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [sessionId, navigate]);
 
+  // 🔁 SUIVI DE LA DEMANDE D'ACCÈS (demandeur ANONYME inclus) : dès qu'une demande est envoyée,
+  //    on interroge son statut toutes les ~3 s via l'endpoint PUBLIC (par id). À l'approbation de l'hôte,
+  //    on ADMET AUTOMATIQUEMENT le participant → entrée en session avec ?ar=<id> (+ localStorage) qui
+  //    prouve l'accès approuvé même sans compte. Nettoyage complet au démontage.
+  useEffect(() => {
+    if (!reqId) return;
+    let cancelled = false;
+    const poll = async () => {
+      const { status } = await getAccessRequestStatus(reqId);
+      if (cancelled) return;
+      if (status === 'approved') {
+        try { localStorage.setItem(`bt_ar_${sessionId}`, String(reqId)); } catch { /* ignore */ }
+        navigate(`/session/${encodeURIComponent(sessionId)}?ar=${reqId}`);
+      } else if (status === 'refused') {
+        setReqRefused(true);
+      }
+    };
+    poll();
+    const t = window.setInterval(poll, 3000);
+    return () => { cancelled = true; window.clearInterval(t); };
+  }, [reqId, sessionId, navigate]);
+
   // 💳 Flux PAIEMENT totalement SÉPARÉ du code de session : si le coach a configuré un lien de paiement,
   //    le bouton OUVRE CE LIEN (nouvel onglet) — jamais la validation de session (= « code inconnu »).
   const rawPaymentLink = (promo?.payment_link || '').trim();
@@ -69,6 +93,10 @@ const PromoPage: React.FC = () => {
     navigate(`/session/${encodeURIComponent(sessionId)}`); // gratuite → rejoindre la session
   };
   const isPaid = paidIntent;
+  // 🚪 PARTIE 4 — Mode « sans inscription » (guest) : le participant ENTRE directement (pseudo, sans
+  //    compte ni demande d'accès). Le mode guest prime sur le paiement/la demande d'accès.
+  const isGuest = promo?.access_mode === 'guest';
+  const enterSession = () => navigate(`/session/${encodeURIComponent(sessionId)}`);
   // 🎬 Clic miniature → LECTEUR INTÉGRÉ en modale (aucune redirection externe).
   const embedSrc = promo?.media_url ? videoEmbedUrl(promo.media_url) : null;
   const openVideo = () => setVideoOpen(true);
@@ -78,9 +106,9 @@ const PromoPage: React.FC = () => {
     const name = reqName.trim();
     if (!name) return;
     setReqBusy(true);
-    const { ok, error } = await requestSessionAccess(sessionId, name);
+    const { ok, id, error } = await requestSessionAccess(sessionId, name);
     setReqBusy(false);
-    if (ok) { setReqSent(true); setReqAsking(false); }
+    if (ok) { setReqSent(true); setReqAsking(false); setReqRefused(false); if (id) setReqId(id); }
     else setCtaError(error || "Échec de l'envoi de la demande");
   };
 
@@ -130,8 +158,20 @@ const PromoPage: React.FC = () => {
             <p className="text-white/85 text-center text-sm sm:text-base whitespace-pre-wrap leading-relaxed">{promo.description}</p>
           )}
 
-          {/* CTA : Payer + (option) Demander l'accès */}
+          {/* CTA : (guest) Entrer · sinon Payer + (option) Demander l'accès */}
           <div className="w-full flex flex-col gap-2">
+            {isGuest ? (
+              // 🚪 Sans inscription : entrée DIRECTE par pseudo (aucun paiement, aucune demande).
+              <button
+                onClick={enterSession}
+                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl text-white font-bold text-base shadow-lg transition-transform hover:scale-[1.02] active:scale-95"
+                style={{ background: AFRO.gradient }}
+                data-testid="promo-enter"
+              >
+                {promo.cta_text || 'Entrer'}
+                <ArrowRight className="w-5 h-5" />
+              </button>
+            ) : (
             <button
               onClick={handleCta}
               className="w-full flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl text-white font-bold text-base shadow-lg transition-transform hover:scale-[1.02] active:scale-95"
@@ -143,12 +183,15 @@ const PromoPage: React.FC = () => {
                 : <>{promo.cta_text || 'Rejoindre gratuitement'}</>}
               <ArrowRight className="w-5 h-5" />
             </button>
+            )}
 
-            {/* 🙋 Demander l'accès (session payante + option activée par le coach) */}
-            {isPaid && promo.allow_access_requests && (
+            {/* 🙋 Demander l'accès (session payante + option activée par le coach ; jamais en mode guest) */}
+            {!isGuest && isPaid && promo.allow_access_requests && (
               reqSent ? (
-                <p className="text-center text-sm text-white/80 bg-white/5 border border-white/10 rounded-xl py-2.5 px-3">
-                  Demande envoyée — en attente de validation de l'hôte.
+                <p className="text-center text-sm text-white/80 bg-white/5 border border-white/10 rounded-xl py-2.5 px-3" data-testid="promo-request-status">
+                  {reqRefused
+                    ? "Demande refusée par l'hôte."
+                    : 'Demande envoyée, en attente de validation…'}
                 </p>
               ) : reqAsking ? (
                 <div className="flex items-center gap-2">

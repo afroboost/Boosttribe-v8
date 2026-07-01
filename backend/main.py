@@ -895,7 +895,7 @@ async def get_promo(session_id: str):
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}",
-                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format,promo_allow_access_requests",
+                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format,promo_allow_access_requests,access_mode",
                                         "limit": "1"})
     rows = resp.json() if resp.status_code == 200 else []
     if not rows:
@@ -912,6 +912,8 @@ async def get_promo(session_id: str):
         "price": r.get("promo_price"),
         "format": r.get("promo_format") or "9:16",
         "allow_access_requests": bool(r.get("promo_allow_access_requests")),
+        # 🚪 Mode d'accès de la session : 'guest' (sans inscription → entrée directe) ou 'account' (défaut).
+        "access_mode": r.get("access_mode") or "account",
     }
 
 
@@ -929,6 +931,17 @@ async def _has_approved_access_request(session_id: str, uid: Optional[str]) -> b
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}", "requester_user_id": f"eq.{uid}",
+                                        "status": "eq.approved", "select": "id", "limit": "1"})
+    return resp.status_code == 200 and bool(resp.json())
+
+async def _access_request_approved_by_id(session_id: str, request_id: Optional[int]) -> bool:
+    """Vrai si la demande d'accès `request_id` est APPROUVÉE ET concerne bien `session_id`.
+    Chemin par id (sans uid) → permet à un demandeur ANONYME approuvé d'entrer en session payante."""
+    if not request_id:
+        return False
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
+                                params={"id": f"eq.{request_id}", "session_id": f"eq.{session_id}",
                                         "status": "eq.approved", "select": "id", "limit": "1"})
     return resp.status_code == 200 and bool(resp.json())
 
@@ -982,6 +995,19 @@ async def decide_access_request(request_id: int, body: AccessDecisionBody, autho
                            json={"status": "approved" if body.approve else "refused",
                                  "decided_at": datetime.now(timezone.utc).isoformat()})
     return {"ok": True}
+
+@app.get("/session/access-request/{request_id}/status")
+async def access_request_status(request_id: int):
+    """PUBLIC (sans auth) : suivi du statut d'une demande d'accès par son id.
+    Indispensable pour un demandeur ANONYME (requester_user_id NULL) que la RLS ne laisse pas lire sa ligne.
+    Ne renvoie QUE le statut (pending|approved|refused) — aucune donnée sensible."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
+                                params={"id": f"eq.{request_id}", "select": "status", "limit": "1"})
+    rows = resp.json() if resp.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Demande introuvable")
+    return {"status": rows[0].get("status")}
 
 
 class GrantAccessBody(BaseModel):
@@ -2003,7 +2029,9 @@ async def count_paid_tickets(session_id: str) -> int:
             pass
     return len(resp.json()) if resp.status_code == 200 else 0
 
-async def has_valid_ticket(session_id: str, uid: str) -> bool:
+async def has_valid_ticket(session_id: str, uid: Optional[str]) -> bool:
+    if not uid:
+        return False
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}", "buyer_user_id": f"eq.{uid}",
@@ -2318,13 +2346,25 @@ async def buy_ticket(body: BuyTicketBody, authorization: Optional[str] = Header(
     return {"url": session.url}
 
 @app.get("/tickets/check/{session_id}")
-async def ticket_check(session_id: str, authorization: Optional[str] = Header(default=None)):
-    user = await get_user_from_token(authorization)
+async def ticket_check(session_id: str, request_id: Optional[int] = None, authorization: Optional[str] = Header(default=None)):
     if not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    uid = user.get("id")
-    # ✅ Accès valide si billet payé OU demande d'accès APPROUVÉE par l'hôte (accès sans payer).
-    ok = await has_valid_ticket(session_id, uid) or await _has_approved_access_request(session_id, uid)
+    # 🔓 Auth OPTIONNELLE : un demandeur ANONYME approuvé (via request_id) doit pouvoir vérifier son accès.
+    uid = None
+    try:
+        user = await get_user_from_token(authorization)
+        uid = user.get("id")
+    except HTTPException:
+        uid = None
+    # ✅ Accès valide si :
+    #   - billet payé (uid), OU
+    #   - demande d'accès APPROUVÉE par l'hôte pour cet uid (chemin authentifié), OU
+    #   - demande d'accès APPROUVÉE identifiée par son id ET rattachée à CETTE session (chemin anonyme).
+    ok = (
+        await has_valid_ticket(session_id, uid)
+        or await _has_approved_access_request(session_id, uid)
+        or await _access_request_approved_by_id(session_id, request_id)
+    )
     return {"has_ticket": ok}
 
 @app.get("/tickets/me")

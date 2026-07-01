@@ -159,6 +159,21 @@ function setStoredLocalAvatar(dataUrl: string): void {
   }
 }
 
+// 🎫 Demande d'accès APPROUVÉE : id lu depuis l'URL (?ar=<id>) puis PERSISTÉ par session.
+// Permet à un participant ANONYME approuvé par l'hôte d'entrer en session PAYANTE sans compte :
+// le backend vérifie que cette demande est bien approuvée ET rattachée à cette session.
+function getApprovedRequestId(sessionId: string): number | null {
+  try {
+    const key = `bt_ar_${sessionId}`;
+    const fromUrl = new URLSearchParams(window.location.search).get('ar');
+    if (fromUrl && /^\d+$/.test(fromUrl)) { localStorage.setItem(key, fromUrl); return Number(fromUrl); }
+    const saved = localStorage.getItem(key);
+    return saved && /^\d+$/.test(saved) ? Number(saved) : null;
+  } catch {
+    return null;
+  }
+}
+
 // POINT 2 : marqueur de "session active" par utilisateur (heartbeat localStorage).
 // Une session est considérée active si son heartbeat date de moins de 90 s.
 const ACTIVE_SESSION_TTL_MS = 90 * 1000;
@@ -1200,6 +1215,9 @@ export const SessionPage: React.FC = () => {
     if (!sessionId) return;
     if (!accessInfo) return;                          // attendre le mode d'accès (open/paid/private)
     if (accessInfo.mode !== 'open') return;           // seul « open » est gaté ici (privée/payante ailleurs)
+    // 🚪 PARTIE 4 — Mode « sans inscription » (guest) = accès LIBRE : l'hôte a choisi l'entrée directe
+    //    par pseudo → aucun crédit requis, même pour un participant anonyme (pas de paywall).
+    if (accessMode === 'guest') { setCreditsBlocked(null); return; }
     // Mode « Ouverte (crédits) » : 1 crédit requis pour accéder au contenu.
     if (!user?.id) {                                  // anonyme → doit se connecter + se procurer un crédit
       setCreditsBlocked('join');                      // paywall À LA PLACE du contenu
@@ -1220,7 +1238,7 @@ export const SessionPage: React.FC = () => {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, user?.id, nickname, isHost, isAdminUser, accessInfo]);
+  }, [sessionId, user?.id, nickname, isHost, isAdminUser, accessInfo, accessMode]);
 
   // 🎟️ Infos d'accès de la session (mode/prix/capacité) — publiques, pour tous.
   const refreshAccess = useCallback(async () => {
@@ -1235,9 +1253,12 @@ export const SessionPage: React.FC = () => {
     if (isHost || isAdminUser) { setHasTicket(true); return; }
     if (!accessInfo) return;
     if (accessInfo.mode !== 'paid') { setHasTicket(true); return; }
-    if (!sessionId || !user?.id) { setHasTicket(false); return; }   // anonyme → doit se connecter + acheter
+    if (!sessionId) { setHasTicket(false); return; }
+    // 🎫 Demande d'accès approuvée (?ar=) → un participant ANONYME approuvé entre sans compte.
+    const arId = getApprovedRequestId(sessionId);
+    if (!user?.id && !arId) { setHasTicket(false); return; }   // anonyme sans approbation → se connecter + acheter
     (async () => {
-      const { has_ticket } = await checkTicket(sessionId);
+      const { has_ticket } = await checkTicket(sessionId, arId);
       setHasTicket(has_ticket);
     })();
   }, [accessInfo, isHost, isAdminUser, user?.id, sessionId]);

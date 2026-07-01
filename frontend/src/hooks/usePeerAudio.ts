@@ -106,6 +106,18 @@ function buildIceServers(): RTCIceServer[] {
   return iceServers;
 }
 
+// 🛰️ Serveur de SIGNALISATION PeerJS. Par défaut : PeerServer AUTO-HÉBERGÉ (élimine le cloud public
+//   0.peerjs.com, instable → cause n°1 de « la voix ne passe pas / parfois oui parfois non »).
+//   Surcharge possible par env (VITE_/REACT_APP_PEER_*). Le host n'est pas un secret (endpoint public).
+function peerServerOptions(): { host?: string; port?: number; path?: string; secure?: boolean } {
+  const env = import.meta.env as Record<string, string | undefined>;
+  const host = env.VITE_PEER_HOST || env.REACT_APP_PEER_HOST || 'peerjs.178.105.201.62.sslip.io';
+  if (!host) return {}; // aucun host → cloud PeerJS par défaut (repli)
+  const portStr = env.VITE_PEER_PORT || env.REACT_APP_PEER_PORT || '443';
+  const secure = (env.VITE_PEER_SECURE || env.REACT_APP_PEER_SECURE || 'true') !== 'false';
+  return { host, port: Number(portStr) || 443, path: env.VITE_PEER_PATH || env.REACT_APP_PEER_PATH || '/', secure };
+}
+
 // 🔎 Diagnostic voix : log filtrable [VOICE]. Filtre la console sur "[VOICE]" pour tout voir.
 // eslint-disable-next-line no-console
 const VLOG = (...a: unknown[]) => console.log('[VOICE]', ...a);
@@ -389,8 +401,13 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // 🍏 3d : sur iOS, NE PAS router via Web Audio (contexte suspendu écran verrouillé = muet).
     //   L'élément <audio playsinline> joue en direct → voix/musique partagée continuent en arrière-plan.
     const ctx = IS_IOS ? null : ensureVoiceCtx();
+    // 🔊 On tente de RÉVEILLER le contexte (politique autoplay). On ne route via Web Audio (élément muté,
+    //   son émis par le ctx) QUE si le contexte tourne VRAIMENT. Sinon : lecture DIRECTE non-mutée de
+    //   l'élément → garantit le son même si le ctx est suspendu (sinon : muted + ctx suspendu = SILENCE
+    //   malgré ICE connecté = le bug « le son ne sort pas »).
+    if (ctx && ctx.state === 'suspended') { try { await ctx.resume(); } catch { /* geste requis */ } }
     let routed = false;
-    if (ctx) {
+    if (ctx && ctx.state === 'running') {
       try {
         if (hostVoiceNodeRef.current) {
           try { hostVoiceNodeRef.current.source.disconnect(); } catch { /* ignore */ }
@@ -408,8 +425,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       } catch { routed = false; }
     }
     if (!routed) {
+      // Sortie directe garantie (pas d'amplification >100%, mais AUDIBLE).
       audioEl.muted = false;
       audioEl.volume = Math.min(1, hostVoiceVolumeRef.current);
+      VLOG('participant ← voix hôte en lecture DIRECTE (élément, ctx', ctx ? ctx.state : 'absent', ')');
     }
 
     // Force play
@@ -488,9 +507,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         // Production: log removed
         // Production: log removed
 
-        // Create peer with robust STUN servers (+ TURN optionnel via variables d'env)
+        // Create peer : signalisation auto-hébergée (repli cloud) + ICE STUN/TURN
+        const srv = peerServerOptions();
+        VLOG('création peer', peerId, '| serveur signalisation=', srv.host || 'cloud PeerJS', srv.host ? `:${srv.port}${srv.path}` : '');
         const peer = new Peer(peerId, {
           debug: 2,
+          ...srv,
           config: {
             iceServers: buildIceServers(),
           },

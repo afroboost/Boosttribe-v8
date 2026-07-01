@@ -26,7 +26,7 @@ import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
-import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSessionDescription, saveSharedMedia, saveSessionPrivacy, saveAccessMode } from '@/lib/supabaseClient';
+import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSharedMedia, saveSessionPrivacy, saveAccessMode } from '@/lib/supabaseClient';
 import { AccessModeSelector, type AccessMode } from '@/components/session/AccessModeSelector';
 import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
@@ -52,7 +52,7 @@ import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   type SessionAccessInfo,
 } from '@/lib/paymentApi';
-import { Pencil, Maximize2, Minimize2, Coins, Ticket } from 'lucide-react';
+import { Maximize2, Minimize2, Coins, Ticket } from 'lucide-react';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -181,6 +181,22 @@ function clearActiveSession(userId: string, sessionId: string): void {
       if (parsed?.sessionId === sessionId) localStorage.removeItem(activeSessionKey(userId));
     }
   } catch { /* ignore */ }
+}
+
+// 🔒 Le marqueur local prouve que CET utilisateur est le CRÉATEUR de CETTE session
+// (posé par createSessionNow via markActiveSession). Sert à réparer, SANS risque de « vol » de
+// session, le cas où host_id n'a jamais été écrit en DB : seul le créateur (marqueur présent)
+// peut revendiquer une session non revendiquée — jamais un simple participant. Ignore le TTL :
+// on veut savoir « ai-je créé cette session ? », pas « est-elle encore fraîche ? ».
+function hasActiveSessionMarker(userId: string, sessionId: string): boolean {
+  try {
+    const raw = localStorage.getItem(activeSessionKey(userId));
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return parsed?.sessionId === sessionId;
+  } catch {
+    return false;
+  }
 }
 
 // Renvoie le nombre de sessions actives appartenant à l'utilisateur (0 ou 1 via le heartbeat),
@@ -495,6 +511,9 @@ export const SessionPage: React.FC = () => {
   // est un simple participant (aucun contrôle de partage). Le droit de CRÉER une session
   // (plan Pro/etc.) est géré ailleurs et n'a rien à voir avec être hôte d'une session donnée.
   const [sessionHostId, setSessionHostId] = useState<string | null>(null);
+  // 🔒 true dès que le fetch initial a DÉTERMINÉ host_id (présent ou absent). Permet de distinguer
+  // « host_id pas encore chargé » de « session réellement non revendiquée (host_id NULL) ».
+  const [hostResolved, setHostResolved] = useState<boolean>(false);
   const [isHost, setIsHost] = useState<boolean>(() => {
     // Création de session (pas d'URL ID) = créateur = hôte
     if (!urlSessionId) return true;
@@ -572,9 +591,7 @@ export const SessionPage: React.FC = () => {
   const pendingAfterAvatarRef = useRef<(() => void) | null>(null);
 
   // C : description de session
-  const [description, setDescription] = useState('');
-  const [editingDesc, setEditingDesc] = useState(false);
-  const [descDraft, setDescDraft] = useState('');
+  const [description, setDescription] = useState(''); // reçue via realtime/DB (plus d'édition — P8)
 
   // E : média partagé (vidéo/image/youtube/vimeo/lien) + état distant pour les participants
   const [sharedMedia, setSharedMedia] = useState<SharedMedia | null>(null);
@@ -1390,11 +1407,17 @@ export const SessionPage: React.FC = () => {
 
         if (error) return;
 
+        // 🔒 host_id est désormais DÉTERMINÉ (présent OU absent → session non revendiquée).
+        // On mémorise sa valeur (null si absent) et on marque la résolution : le créateur légitime
+        // pourra alors revendiquer une session dont host_id serait resté NULL (répare le blocage coach).
+        {
+          const fetchedHostId = (data as { host_id?: string } | null)?.host_id;
+          setSessionHostId(typeof fetchedHostId === 'string' && fetchedHostId ? fetchedHostId : null);
+          setHostResolved(true);
+        }
+
         // C : charger la description ; E : média partagé courant ; 🔒 host_id (propriétaire)
         if (data) {
-          if (typeof (data as { host_id?: string }).host_id === 'string') {
-            setSessionHostId((data as { host_id?: string }).host_id || null);
-          }
           // 🚪 Mode d'accès (invité vs avec inscription) — défaut 'account'.
           const am = (data as { access_mode?: string }).access_mode;
           if (am === 'guest' || am === 'account') setAccessMode(am);
@@ -1830,8 +1853,24 @@ export const SessionPage: React.FC = () => {
   // On exclut soi-même (ajouté séparément dans le useMemo ci-dessous) et on applique
   // les overlays locaux (mute décidé par l'hôte, volume par participant).
   useEffect(() => {
+    // 🧹 P6 : dédoublonnage. La presence peut contenir des entrées fantômes (reconnexion, double
+    // souscription) → l'hôte apparaissait 2×  (« Coach (Vous) » + « Coach Hôte »). On :
+    //  1) exclut soi-même (ajouté séparément) ;
+    //  2) dédoublonne par userId ;
+    //  3) si JE suis l'hôte, aucune AUTRE entrée ne peut être hôte → on retire les faux hôtes ;
+    //     sinon (participant), on ne garde qu'UN seul hôte (le premier), pour ne jamais en afficher 2.
+    const seenIds = new Set<string>();
+    let hostKept = false;
     const others: Participant[] = socket.presentUsers
-      .filter(u => u.userId !== socket.userId)
+      .filter(u => u.userId && u.userId !== socket.userId)
+      .filter(u => { if (seenIds.has(u.userId)) return false; seenIds.add(u.userId); return true; })
+      .filter(u => {
+        if (!u.isHost) return true;
+        if (isHost) return false;      // je suis l'hôte → tout autre « hôte » est un doublon fantôme
+        if (hostKept) return false;    // un seul hôte affiché côté participant
+        hostKept = true;
+        return true;
+      })
       .map(u => ({
         id: u.userId,
         name: u.nickname || 'Invité',
@@ -1845,7 +1884,7 @@ export const SessionPage: React.FC = () => {
         isMuted: mutedUserIds.has(u.userId),
       }));
     setParticipantsState(others);
-  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes, coHostIds, profileAvatars]);
+  }, [socket.presentUsers, socket.userId, mutedUserIds, userVolumes, coHostIds, profileAvatars, isHost]);
 
   // Build participants list with current user
   const participants = useMemo<Participant[]>(() => {
@@ -2139,19 +2178,8 @@ export const SessionPage: React.FC = () => {
     sendPlaybackEvent('MEDIA_COMMAND', { media: null });
   }, [sessionId, sendPlaybackEvent]);
 
-  // C : édition de la description de session (hôte)
-  const handleStartEditDesc = useCallback(() => {
-    setDescDraft(description);
-    setEditingDesc(true);
-  }, [description]);
-
-  const handleSaveDescription = useCallback(() => {
-    const text = descDraft.trim().slice(0, 140);
-    setDescription(text);
-    setEditingDesc(false);
-    if (sessionId) saveSessionDescription(sessionId, text);
-    sendPlaybackEvent('DESC_UPDATE', { description: text });
-  }, [descDraft, sessionId, sendPlaybackEvent]);
+  // C : le champ « description courte » a été retiré de l'onglet Diffusion (P8). La description
+  // reçue en temps réel (DESC_UPDATE / DB) reste stockée pour compatibilité, mais n'est plus éditable.
 
   // F : autoriser/retirer un co-animateur — autorité SERVEUR (backend host-only).
   // La liste est persistée dans playlists.cohosts ; tous les clients la dérivent via postgres_changes.
@@ -2476,11 +2504,32 @@ export const SessionPage: React.FC = () => {
   // 💳 + débit du crédit d'animation (cost_host), atomique et idempotent par session côté backend.
   const claimedSessionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isHost || !sessionId || !user?.id) return;
+    if (!sessionId || !user?.id) return;
+
+    // 🔑 CAUSE RACINE (admin vs coach) : l'admin devient TOUJOURS hôte (bypass), donc claimHost part
+    // et host_id est écrit. Un coach non-admin ne devenait hôte QUE si host_id était déjà en DB — or
+    // si host_id restait NULL (claim initial raté), il n'était JAMAIS reconnu hôte → claimHost jamais
+    // appelé → deadlock → aucune diffusion (playlist/vidéo/commandes) vers les participants.
+    // Correctif : on revendique aussi quand la session est NON revendiquée (host_id NULL, résolu) et
+    // qu'on en est le CRÉATEUR (marqueur local) — le backend arbitre « 1er arrivé = hôte » et empêche
+    // tout vol d'une session déjà revendiquée (retour host_id ≠ moi → je redeviens participant).
+    const unclaimed = hostResolved && !sessionHostId;
+    const iCreatedIt = hasActiveSessionMarker(user.id, sessionId);
+    const shouldClaim = isHost || (unclaimed && iCreatedIt);
+    if (!shouldClaim) return;
     if (claimedSessionRef.current === sessionId) return;
     claimedSessionRef.current = sessionId;
     (async () => {
-      await claimHost(sessionId);
+      const r = await claimHost(sessionId);
+      // 🔒 Auto-correction : la session appartient déjà à un AUTRE compte → je reste participant.
+      if (r.host_id && r.host_id !== user.id) {
+        setSessionHostId(r.host_id);
+        setIsHost(false);
+        return;
+      }
+      // ✅ Revendiquée par MOI → je suis bien l'hôte (rend le coach non-admin identique à l'admin).
+      setSessionHostId(user.id);
+      setIsHost(true);
       if (isAdminUser) return;  // admin : accès illimité, jamais débité
       const res = await spendCredit('host', sessionId);
       if (res.insufficient) {
@@ -2492,7 +2541,7 @@ export const SessionPage: React.FC = () => {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHost, sessionId, user?.id, isAdminUser]);
+  }, [isHost, sessionId, user?.id, isAdminUser, hostResolved, sessionHostId]);
 
   // Lien partageable (copie + QR) → PAGE PROMO d'abord (affiche + CTA). Si aucune promo publiée,
   // /promo redirige automatiquement vers la session (parcours transparent).
@@ -3550,47 +3599,6 @@ export const SessionPage: React.FC = () => {
                   </div>
                 )}
               </div>
-            )}
-
-            {/* C : Description de session (modifiable par l'hôte) */}
-            {(isHost || description) && (
-              <Card className="bt-tab-diffusion border-white/10 bg-white/5">
-                <CardContent className="p-4">
-                  {editingDesc ? (
-                    <div className="space-y-2">
-                      <textarea
-                        value={descDraft}
-                        onChange={(e) => setDescDraft(e.target.value.slice(0, 140))}
-                        maxLength={140}
-                        rows={2}
-                        placeholder="Description courte de la session (140 caractères max)"
-                        className="w-full rounded-lg bg-white/5 border border-white/10 text-white text-sm p-2 placeholder:text-white/30 focus:outline-none focus:border-[#8A2EFF]"
-                        autoFocus
-                      />
-                      <div className="flex items-center justify-between">
-                        <span className="text-white/30 text-xs">{descDraft.length}/140</span>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => setEditingDesc(false)} className="border-white/20 text-white/70">Annuler</Button>
-                          <Button size="sm" onClick={handleSaveDescription} className="text-white border-none" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
-                            <Check className="w-4 h-4 mr-1" /> Enregistrer
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-white/70 text-sm min-w-0 break-words">
-                        {description || (isHost ? <span className="text-white/30 italic">Ajoutez une description courte…</span> : null)}
-                      </p>
-                      {isHost && (
-                        <button onClick={handleStartEditDesc} className="p-1.5 rounded text-white/50 hover:text-white hover:bg-white/10 flex-shrink-0" title="Modifier la description" data-testid="edit-desc-btn">
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
             )}
 
             {/* 🖥️ Partage d'écran en direct (au-dessus du média partagé) */}

@@ -89,7 +89,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
       ref={setNodeRef}
       style={style}
       className={`
-        flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg transition-all group
+        flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg transition-all group min-w-0 w-full overflow-hidden
         ${isSelected
           ? 'bg-white/10 border border-[#8A2EFF]/50'
           : 'bg-[var(--bt-surface-alpha)] border border-white/10 hover:bg-white/5'
@@ -328,6 +328,20 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
 
   return (
     <div className="space-y-3">
+      {/* 🩹 FIX MOBILE — Radix ScrollArea enveloppe ses enfants dans un <div style="display:table">
+          qui se dimensionne sur le contenu le plus large (le titre non tronqué). Résultat : la ligne
+          devient plus large que la zone visible et les boutons d'action (poignée/flèches/renommer/
+          corbeille) sont poussés hors écran puis rognés par l'overflow-hidden de la ScrollArea, et le
+          `truncate` du titre ne se déclenche jamais. On force ce wrapper en `display:block` (largeur =
+          viewport) : le titre se tronque enfin et les actions restent visibles. Portée limitée à cette
+          playlist via la classe `.playlist-scroll`. N'affecte PAS le drag & drop (dnd-kit). */}
+      <style>{`
+        .playlist-scroll [data-radix-scroll-area-viewport] > div {
+          display: block !important;
+          min-width: 100% !important;
+        }
+      `}</style>
+
       {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap px-1">
         <p className="text-white/50 text-xs">

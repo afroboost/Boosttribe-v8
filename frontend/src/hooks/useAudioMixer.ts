@@ -106,6 +106,19 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const connectedMusicElement = useRef<HTMLAudioElement | null>(null);
   const connectedHostVoiceElement = useRef<HTMLAudioElement | null>(null);
 
+  // 🍏 iOS (#7 — son écran verrouillé) : Safari iOS SUSPEND l'AudioContext dès l'écran verrouillé /
+  //    onglet en arrière-plan. Une <audio> routée via createMediaElementSource devient alors MUETTE
+  //    (sa sortie ne passe plus que par le graphe suspendu). En NE routant PAS la musique dans Web
+  //    Audio sur iOS, l'élément <audio playsinline> joue DIRECTEMENT sur le matériel → la lecture
+  //    continue écran verrouillé (avec MediaSession pour les contrôles). Le volume reste piloté par
+  //    element.volume (0..1). Compromis assumé : pas de boost > 100% ni de captation musique pour
+  //    l'enregistrement sur iPhone (rare), au profit de la lecture en arrière-plan qui est prioritaire.
+  const isIOS = typeof navigator !== 'undefined' && (
+    /iP(hone|ad|od)/.test(navigator.userAgent) ||
+    // iPadOS 13+ se présente comme « MacIntel » mais avec un écran tactile
+    (navigator.platform === 'MacIntel' && (navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints ? ((navigator as unknown as { maxTouchPoints: number }).maxTouchPoints > 1) : false)
+  );
+
   /**
    * Initialise l'AudioContext et les GainNodes
    */
@@ -132,6 +145,11 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       const resumeOnGesture = () => { audioContextRef.current?.resume().catch(() => { /* ignore */ }); };
       document.addEventListener('click', resumeOnGesture);
       document.addEventListener('touchstart', resumeOnGesture, { passive: true });
+      // #7 : au retour d'arrière-plan (onglet redevient visible), on relance le contexte s'il a été
+      //     suspendu par l'OS → la musique routée via Web Audio ne reste jamais muette au réveil.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') resumeOnGesture();
+      });
 
       // 🔊 SORTIE MAÎTRE à l'UNITÉ (1.0) : masterGain → limiteur de crêtes → destination.
       // ⚠️ L'ancien compresseur (seuil -18 dB, ratio 3) atténuait fortement (~5x ressenti) → SUPPRIMÉ.
@@ -193,13 +211,25 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * Connecte un élément audio HTML5 au canal musique
    */
   const connectMusicSource = useCallback((audioElement: HTMLAudioElement) => {
+    // 🍏 iOS : NE PAS router la musique via Web Audio (sinon muet écran verrouillé). L'élément
+    //    <audio playsinline> joue directement → lecture continue en arrière-plan. On s'assure juste
+    //    qu'il n'est pas coupé et que son volume suit l'état du mixeur.
+    if (isIOS) {
+      try {
+        audioElement.muted = false;
+        audioElement.volume = Math.max(0, Math.min(1, state.musicVolume > 1 ? 1 : state.musicVolume));
+      } catch { /* ignore */ }
+      connectedMusicElement.current = audioElement;
+      return;
+    }
+
     const ctx = audioContextRef.current;
     if (!ctx || !musicGainRef.current) {
       initialize();
       setTimeout(() => connectMusicSource(audioElement), 100);
       return;
     }
-    
+
     // Éviter de reconnecter le même élément
     if (connectedMusicElement.current === audioElement && musicSourceRef.current) {
       return;
@@ -224,7 +254,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     } catch (err) {
       // L'élément est peut-être déjà connecté - silencieux
     }
-  }, [initialize]);
+  }, [initialize, isIOS, state.musicVolume]);
 
   /**
    * 🎤 POINT 5: Connecte le micro hôte au GainNode "Mon Micro" et retourne le flux

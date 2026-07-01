@@ -180,7 +180,7 @@ const PromoPage: React.FC = () => {
           <button onClick={() => setVideoOpen(false)} className="absolute top-3 right-3 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white" aria-label="Fermer">
             <X className="w-5 h-5" />
           </button>
-          <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: promo.format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: promo?.format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
             {embedSrc ? (
               <iframe src={embedSrc} title="Vidéo de la session" className="w-full h-full"
                 allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />

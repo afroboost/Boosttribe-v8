@@ -218,6 +218,14 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   const dataConnectionsRef = useRef<Map<string, DataConnection>>(new Map());
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 3;
+  // 🔁 P5 : fiabilisation du micro. Ref vers la dernière `connect` (appelée depuis les handlers d'erreur),
+  //    compteur de reprise de l'ID hôte fixe (unavailable-id : l'ancien peer met un instant à se libérer),
+  //    et compteur de (re)connexion du canal data vers l'hôte (peer-unavailable : hôte pas encore prêt).
+  const connectRef = useRef<((stream?: MediaStream | null) => Promise<boolean>) | null>(null);
+  const idRetryRef = useRef(0);
+  const hostDataRetryRef = useRef(0);
+  const MAX_ID_RETRIES = 5;
+  const MAX_HOST_DATA_RETRIES = 15;
   const activeCallRef = useRef<MediaConnection | null>(null);
   // 🎤 POINT 5: appel montant du participant vers l'hôte ("Prendre la parole")
   const upstreamCallRef = useRef<MediaConnection | null>(null);
@@ -436,10 +444,30 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
         peerRef.current = peer;
 
+        // 🔁 P5 (participant) : (re)connexion du canal data vers l'hôte, RETENTABLE. Si l'hôte n'est pas
+        //    encore en ligne (peer-unavailable), on relance jusqu'à ce qu'il réponde → l'hôte reçoit
+        //    alors la dataConn et rappelle le participant avec sa voix (fin des « participants inaudibles »).
+        const connectToHost = () => {
+          if (isHost || !peerRef.current || peerRef.current.destroyed) return;
+          if (dataConnectionsRef.current.has(hostPeerId)) return; // déjà connecté
+          try {
+            // POINT 3 : on transmet l'userId à l'hôte (metadata) → ciblage "parler en privé"
+            const dataConn = peerRef.current.connect(hostPeerId, { metadata: { userId: userIdRef.current } });
+            dataConn.on('open', () => {
+              hostDataRetryRef.current = 0;
+              dataConnectionsRef.current.set(hostPeerId, dataConn);
+            });
+            dataConn.on('error', (err) => {
+              console.warn('[PEER] ⚠️ Data connection error:', err);
+            });
+          } catch { /* réessayé via le handler d'erreur peer-unavailable */ }
+        };
+
         // Handle peer open
         peer.on('open', (id) => {
           // Production: log removed
           reconnectAttempts.current = 0;
+          idRetryRef.current = 0; // 🔁 P5 : l'ID hôte a été obtenu → on remet le compteur à zéro
 
           updateState({
             isConnected: true,
@@ -457,19 +485,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             onReady?.();
           }
 
-          // Participant: Connect to host for data channel
+          // Participant: Connect to host for data channel (retentable)
           if (!isHost) {
-            // POINT 3 : on transmet l'userId à l'hôte (metadata) → ciblage "parler en privé"
-            const dataConn = peer.connect(hostPeerId, { metadata: { userId: userIdRef.current } });
-
-            dataConn.on('open', () => {
-              // Production: log removed
-              dataConnectionsRef.current.set(hostPeerId, dataConn);
-            });
-
-            dataConn.on('error', (err) => {
-              console.warn('[PEER] ⚠️ Data connection error:', err);
-            });
+            hostDataRetryRef.current = 0;
+            connectToHost();
           }
 
           resolve(true);
@@ -673,21 +692,42 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           console.error('[PEER] ❌ Error:', err.type, '-', err.message);
           
           let errorMessage = 'Erreur de connexion WebRTC';
-          
+
           if (err.type === 'peer-unavailable') {
-            errorMessage = isHost 
-              ? 'Impossible de créer la session' 
+            errorMessage = isHost
+              ? 'Impossible de créer la session'
               : 'L\'hôte n\'est pas encore connecté';
+            // 🔁 P5 (participant) : l'hôte n'a pas (encore) de peer joignable → on retente la dataConn
+            //    jusqu'à ce qu'il soit en ligne. Sans ça, l'hôte ne « voit » jamais le participant et ne
+            //    lui envoie pas sa voix (participant inaudible). Backoff borné.
+            if (!isHost && peerRef.current?.open && hostDataRetryRef.current < MAX_HOST_DATA_RETRIES) {
+              hostDataRetryRef.current++;
+              setTimeout(() => { connectToHost(); }, Math.min(5000, 1000 * hostDataRetryRef.current));
+            }
           } else if (err.type === 'network') {
             errorMessage = 'Erreur réseau. Vérifiez votre connexion.';
           } else if (err.type === 'unavailable-id') {
-            errorMessage = 'ID déjà utilisé. Rafraîchissez la page.';
+            errorMessage = 'Reconnexion en cours…';
+            // 🔁 P5 (hôte) : l'ID hôte est FIXE (beattribe-host-<session>). Après un reload / renouvellement
+            //    de code / coupure, l'ancien peer reste brièvement enregistré côté serveur → cette erreur.
+            //    On détruit et on RETENTE après un court délai (l'ID se libère) au lieu d'exiger un refresh
+            //    manuel → c'est LA cause du micro hôte « parfois oui, parfois non ».
+            if (isHost && idRetryRef.current < MAX_ID_RETRIES) {
+              idRetryRef.current++;
+              try { peerRef.current?.destroy(); } catch { /* ignore */ }
+              peerRef.current = null;
+              setTimeout(() => { connectRef.current?.(currentStreamRef.current); }, 1200 * idRetryRef.current);
+            } else if (isHost) {
+              errorMessage = 'ID déjà utilisé. Rafraîchissez la page.';
+            }
           }
 
           updateState({ error: errorMessage });
           onError?.(errorMessage);
-          
-          if (err.type !== 'peer-unavailable') {
+
+          // peer-unavailable (participant) et unavailable-id (hôte, en cours de reprise) : on ne
+          // résout PAS l'échec → la reprise automatique ci-dessus prend le relais.
+          if (err.type !== 'peer-unavailable' && err.type !== 'unavailable-id') {
             resolve(false);
           }
         });
@@ -1054,6 +1094,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     await new Promise(r => setTimeout(r, 500));
     return connect(currentStreamRef.current);
   }, [disconnect, connect]);
+
+  // 🔁 P5 : garde une ref à jour de `connect` pour la reprise automatique de l'ID hôte
+  //    (unavailable-id) déclenchée depuis le handler d'erreur du peer.
+  useEffect(() => { connectRef.current = connect; }, [connect]);
 
   // Cleanup on unmount
   useEffect(() => {

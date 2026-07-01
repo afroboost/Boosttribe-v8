@@ -3,7 +3,7 @@ import RawCropper from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
 import { X, Upload, Loader2, Copy, Check, Image as ImageIcon, Video, ArrowRight, Ticket, Play } from 'lucide-react';
 import { getPromo, savePromo, uploadPromoMedia, claimHost, getVideoThumbnail } from '@/lib/paymentApi';
-import { isHttpUrl } from '@/lib/videoEmbed';
+import { isHttpUrl, videoEmbedUrl } from '@/lib/videoEmbed';
 import { useToast } from '@/components/ui/Toast';
 
 // react-easy-crop v6 : caster pour le typage JSX (l'export par défaut perd le type valeur).
@@ -43,6 +43,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(false); // 🎬 aperçu vidéo INTÉGRÉ (modale) — aucune redirection
 
   const [enabled, setEnabled] = useState(true);
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
@@ -115,8 +116,9 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
     if (!t) { if (mediaType === 'video') { setMediaUrl(null); setMediaType(null); } return; }
     setMediaUrl(t); setMediaType('video');
   };
-  // 🎬 Aperçu : clic sur la miniature → ouvre le lien vidéo dans un nouvel onglet (jamais d'embed).
-  const openVideo = () => { if (mediaUrl && isHttpUrl(mediaUrl)) window.open(mediaUrl, '_blank', 'noopener,noreferrer'); };
+  // 🎬 Aperçu : clic sur la miniature → LECTEUR INTÉGRÉ (modale), aucune redirection ni nouvel onglet.
+  const openVideo = () => setVideoOpen(true);
+  const embedSrc = mediaUrl ? videoEmbedUrl(mediaUrl) : null;
   // Miniature PROPRE de la vidéo (image seule) pour l'aperçu — récupérée via le backend (og:image/oEmbed).
   const [videoThumb, setVideoThumb] = useState<string | null>(null);
   useEffect(() => {
@@ -312,6 +314,29 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
             <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="w-40 accent-[#D91CD2]" />
             <button onClick={() => setCropSrc(null)} className="px-4 py-2 rounded-xl text-white/70 border border-white/20 text-sm">Annuler</button>
             <button onClick={confirmCrop} className="px-5 py-2 rounded-xl text-white font-semibold text-sm" style={{ background: AFRO.gradient }}>Valider le cadrage</button>
+          </div>
+        </div>
+      )}
+
+      {/* 🎬 LECTEUR INTÉGRÉ (aperçu coach) — lit la vidéo SUR PLACE, jamais de redirection/nouvel onglet. */}
+      {videoOpen && (
+        <div className="fixed inset-0 z-[170] flex items-center justify-center bg-black/90 backdrop-blur-sm p-3"
+             onClick={(e) => { e.stopPropagation(); setVideoOpen(false); }}>
+          <button onClick={(e) => { e.stopPropagation(); setVideoOpen(false); }}
+            className="absolute top-3 right-3 p-2 rounded-full bg-white/10 hover:bg-white/20 text-white" aria-label="Fermer">
+            <X className="w-5 h-5" />
+          </button>
+          <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-black"
+               style={{ aspectRatio: format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '85vh' }}
+               onClick={(e) => e.stopPropagation()}>
+            {embedSrc ? (
+              <iframe src={embedSrc} title="Aperçu de la vidéo" className="w-full h-full"
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-center text-white/70 text-sm p-4">
+                Lecture intégrée indisponible pour ce lien.
+              </div>
+            )}
           </div>
         </div>
       )}

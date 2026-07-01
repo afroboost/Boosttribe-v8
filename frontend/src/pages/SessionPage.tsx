@@ -2340,25 +2340,28 @@ export const SessionPage: React.FC = () => {
 
   // Handle track upload
   const handleTrackUploaded = useCallback((newTrack: Track) => {
-    if (tracks.length >= 10) {
-      showToast('Limite de 10 titres atteinte', 'warning');
+    // 🎵 Limite alignée sur l'affichage (20). Un NOUVEAU titre est VISIBLE par défaut (hidden non défini).
+    if (tracks.length >= 20) {
+      showToast('Limite de 20 titres atteinte', 'warning');
       return;
     }
-    
-    setTracks(prev => [...prev, newTrack]);
-    
-    if (!selectedTrack) {
-      setSelectedTrack(newTrack);
+    const added: Track = { ...newTrack, hidden: false }; // explicitement visible
+
+    const updatedTracks = [...tracks, added];
+    setTracks(updatedTracks);
+
+    if (!selectedTrack) setSelectedTrack(added);
+
+    const trackIdToSync = selectedTrack?.id || added.id;
+    try {
+      socket.syncPlaylist(updatedTracks, trackIdToSync);
+      socket.savePlaylistToDb(updatedTracks, trackIdToSync, user?.id);
+      persistOwnerPlaylist(updatedTracks, trackIdToSync);
+      showToast(`"${added.title}" ajouté à la playlist`, 'success');
+    } catch (e) {
+      showToast("Échec de l'ajout du titre — réessayez", 'error');
     }
-    
-    showToast(`"${newTrack.title}" ajouté à la playlist`, 'success');
-    
-    const updatedTracks = [...tracks, newTrack];
-    const trackIdToSync = selectedTrack?.id || newTrack.id;
-    socket.syncPlaylist(updatedTracks, trackIdToSync);
-    socket.savePlaylistToDb(updatedTracks, trackIdToSync, user?.id);
-    persistOwnerPlaylist(updatedTracks, trackIdToSync);
-  }, [tracks, selectedTrack, socket, showToast, persistOwnerPlaylist]);
+  }, [tracks, selectedTrack, socket, showToast, persistOwnerPlaylist, user?.id]);
 
   // Handle track deletion
   const handleDeleteTracks = useCallback(async (tracksToDelete: Track[]) => {
@@ -3997,7 +4000,7 @@ export const SessionPage: React.FC = () => {
                     Playlist
                   </CardTitle>
                   <CardDescription className="text-white/50">
-                    Glissez pour réorganiser • {tracks.length}/10 titres
+                    Glissez pour réorganiser • {tracks.length}/20 titres
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-4">

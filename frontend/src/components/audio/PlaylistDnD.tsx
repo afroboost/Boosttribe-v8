@@ -1,4 +1,5 @@
 import React, { useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DndContext,
   closestCenter,
@@ -17,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon } from 'lucide-react';
+import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon, MoreVertical } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 export interface Track {
@@ -60,6 +61,16 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
 }) => {
   // ✏️ Édition inline du nom (local à la ligne).
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false); // ⋮ menu kebab (Renommer / Supprimer)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const openMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (menuOpen) { setMenuOpen(false); return; }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    // Aligne le bord droit du menu (~160px) sous le bouton ; ouvre vers le bas.
+    setMenuPos({ top: r.bottom + 4, left: Math.max(8, r.right - 160) });
+    setMenuOpen(true);
+  };
   const [draft, setDraft] = useState(track.title);
   const startRename = () => { setDraft(track.title); setEditing(true); };
   const saveRename = () => {
@@ -205,19 +216,35 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
                 <ChevronDown size={15} strokeWidth={2} />
               </button>
             </div>
-            {/* ✏️ Renommer */}
-            <button onClick={(e) => { e.stopPropagation(); startRename(); }}
-              className="p-1.5 rounded-lg text-white/55 hover:text-white hover:bg-white/10 transition-colors"
-              title="Renommer" data-testid={`rename-track-${track.id}`} aria-label={`Renommer ${track.title}`}>
-              <Pencil size={15} strokeWidth={2} />
-            </button>
-            {/* 🗑️ Supprimer */}
-            <button onClick={(e) => { e.stopPropagation(); onDeleteSingle(track); }}
-              className="p-1.5 rounded-lg transition-colors flex-shrink-0"
-              style={{ color: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.18)' }}
-              title="Supprimer cette piste" data-testid={`delete-track-${track.id}`} aria-label={`Supprimer ${track.title}`}>
-              <Trash2 size={15} strokeWidth={2} />
-            </button>
+            {/* ⋮ MENU (Renommer / Supprimer) — remplace les boutons directs crayon + corbeille.
+                Ouvert en PORTAL position:fixed → jamais rogné par l'overflow de la ligne ni du ScrollArea. */}
+            <div className="flex-shrink-0">
+              <button onClick={openMenu}
+                className="p-1.5 rounded-lg text-white/55 hover:text-white hover:bg-white/10 transition-colors"
+                title="Options" data-testid={`track-menu-${track.id}`} aria-label={`Options ${track.title}`} aria-haspopup="menu" aria-expanded={menuOpen}>
+                <MoreVertical size={16} strokeWidth={2} />
+              </button>
+              {menuOpen && menuPos && createPortal(
+                <>
+                  <div className="fixed inset-0 z-[190]" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} />
+                  <div role="menu" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
+                    className="z-[200] min-w-[160px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}>
+                    <button role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); startRename(); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                      data-testid={`rename-track-${track.id}`}>
+                      <Pencil size={15} strokeWidth={2} /> Renommer
+                    </button>
+                    <button role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDeleteSingle(track); }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors"
+                      data-testid={`delete-track-${track.id}`}>
+                      <Trash2 size={15} strokeWidth={2} /> Supprimer
+                    </button>
+                  </div>
+                </>,
+                document.body
+              )}
+            </div>
           </div>
         )
       )}
@@ -249,7 +276,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   onDeleteTracks,
   onRenameTrack,
   isHost,
-  maxTracks = 10,
+  maxTracks = 20,
 }) => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());

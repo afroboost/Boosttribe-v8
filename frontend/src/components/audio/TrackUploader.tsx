@@ -30,7 +30,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   sessionId,
   onTrackUploaded,
   currentTrackCount,
-  maxTracks = 10,
+  maxTracks = 20,
   disabled = false,
   isSessionHost = false,
   forceUnlimited = false,

@@ -3685,7 +3685,7 @@ export const SessionPage: React.FC = () => {
                     sessionId={sessionId}
                     onTrackUploaded={handleTrackUploaded}
                     currentTrackCount={tracks.length}
-                    maxTracks={10}
+                    maxTracks={20}
                     disabled={!canShare}
                     isSessionHost={isHost}
                     forceUnlimited={isUnlimitedHost}
@@ -3949,7 +3949,7 @@ export const SessionPage: React.FC = () => {
                   onSyncUpdate={handleSyncStateChange}
                   onTrackEnded={handleTrackEnded}
                   onRepeatModeChange={setRepeatMode}
-                  onBeforePlay={() => { initializeMixer(); try { getMixerContext()?.resume(); } catch { /* ignore */ } }}
+                  onBeforePlay={async () => { initializeMixer(); try { await getMixerContext()?.resume(); } catch { /* ignore */ } }}
                 />
               </>
             ) : (
@@ -3997,7 +3997,7 @@ export const SessionPage: React.FC = () => {
                     onDeleteTracks={handleDeleteTracks}
                     onRenameTrack={handleRenameTrack}
                     isHost={isHost}
-                    maxTracks={10}
+                    maxTracks={20}
                   />
                   
                   {/* Supabase status */}
@@ -4043,7 +4043,7 @@ export const SessionPage: React.FC = () => {
                     onReorder={() => {}} // Disabled for participants
                     onDeleteTracks={() => {}} // Disabled for participants
                     isHost={false}
-                    maxTracks={10}
+                    maxTracks={20}
                   />
                 </CardContent>
               </Card>

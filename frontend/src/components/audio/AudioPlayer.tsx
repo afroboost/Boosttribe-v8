@@ -24,7 +24,7 @@ export interface AudioPlayerProps {
   onRepeatModeChange?: (mode: RepeatMode) => void;
   // 🔊 Appelé AVANT la lecture (geste utilisateur) → réveille l'AudioContext du mixeur pour que la
   //    musique démarre dès le 1er clic (l'élément est routé via createMediaElementSource → sinon muet).
-  onBeforePlay?: () => void;
+  onBeforePlay?: () => void | Promise<void>;
   className?: string;
   disabled?: boolean;
 }
@@ -135,8 +135,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     if (audioState.isPlaying) {
       pause();
     } else {
-      // 🔊 Réveiller l'AudioContext du mixeur DANS le geste utilisateur → musique au 1er clic.
-      try { onBeforePlay?.(); } catch { /* ignore */ }
+      // 🔊 Réveiller l'AudioContext du mixeur DANS le geste utilisateur, ET ATTENDRE le resume() AVANT
+      //    play() → 1 SEUL clic lance la lecture (avant : resume() async non attendu → 1er clic sans effet).
+      try { await onBeforePlay?.(); } catch { /* ignore */ }
       await play();
     }
   }, [isHost, audioState.isPlaying, play, pause, disabled, onBeforePlay]);

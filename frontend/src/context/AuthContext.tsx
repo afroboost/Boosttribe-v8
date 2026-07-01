@@ -44,6 +44,9 @@ export interface AuthContextValue {
   // POINT 6 : plan EFFECTIF (abonnement payant OU accès offert actif) + accès offert actif
   effectivePlan: SubscriptionStatus;
   compActive: boolean;
+  // ♾️ Coach ILLIMITÉ (aligné backend is_coach_unlimited) : accès offert pro/enterprise actif,
+  // abonnement enterprise, ou admin. Aucune limite d'upload ni de durée d'essai.
+  isUnlimited: boolean;
 
   // Limits
   trackLimit: number;
@@ -120,6 +123,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : profile?.subscription_status || 'none'
   ) as SubscriptionStatus;
 
+  // ♾️ ILLIMITÉ — miroir FRONT du backend `is_coach_unlimited` :
+  //   • accès offert admin ACTIF avec plan pro/enterprise (l'offre « Abonnement illimité »), OU
+  //   • abonnement enterprise, OU
+  //   • admin.
+  // Un coach illimité est traité comme l'admin : trackLimit = -1, aucune limite d'essai (5 min / 30 s).
+  // ⚠️ On NE promeut PAS le plan public Stripe 'pro' (= 50 titres) ni 'monthly'/'yearly' :
+  //    seul le comp-access admin pro/enterprise (ou enterprise) rend illimité, comme côté backend.
+  const isCompUnlimited = compActive && (profile?.comp_access_plan === 'pro' || profile?.comp_access_plan === 'enterprise');
+  const isUnlimited = isAdmin || isCompUnlimited || profile?.subscription_status === 'enterprise';
+
   // 💳 Solde de crédits courant (0 si anonyme/sans profil). 1 crédit = 1 accès à un live.
   const credits = Math.max(0, Number(profile?.credits ?? 0));
   const hasCredits = isAdmin || credits > 0;
@@ -128,13 +141,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // OU (legacy) accès offert/abonnement encore actif — pour ne casser aucun gate existant.
   const isSubscribed =
     isAdmin ||
+    isUnlimited ||
     hasCredits ||
     compActive ||
     (profile !== null && effectivePlan !== 'none' && effectivePlan !== 'trial');
   // Gratuit = aucun crédit, ni admin, ni accès legacy actif (les anonymes comptent comme gratuits)
   const isFree = !isSubscribed;
   const hasAcceptedTerms = isAdmin || (profile?.has_accepted_terms ?? false);
-  const trackLimit = isAdmin ? -1 : (TRACK_LIMITS[effectivePlan] ?? TRACK_LIMITS.none);
+  // ♾️ Illimité (admin OU coach comp pro/enterprise / enterprise) → aucune limite d'upload.
+  const trackLimit = (isAdmin || isUnlimited) ? -1 : (TRACK_LIMITS[effectivePlan] ?? TRACK_LIMITS.none);
   const sessionLimit = isAdmin ? Infinity : (SESSION_LIMITS[effectivePlan] ?? SESSION_LIMITS.none);
 
   // Check upload limit
@@ -675,6 +690,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshCredits,
     effectivePlan,
     compActive,
+    isUnlimited,
     trackLimit,
     sessionLimit,
     canUploadTrack,

@@ -48,6 +48,7 @@ export interface UseAudioMixerReturn {
 const MUSIC_MAX_GAIN = 2.5; // musique amplifiable jusqu'à 250%
 const MIC_MAX_GAIN = 2.5;   // micro hôte amplifiable jusqu'à 250% (indépendant de la musique)
 const MASTER_MAKEUP_GAIN = 1.0; // 🔊 sortie maître à l'UNITÉ : 100% = plein volume réel (plus d'atténuation)
+const SELF_MONITOR_GAIN = 0.6;  // 🔊 3b : niveau d'auto-écoute (« M'entendre ») modéré → anti-saturation/larsen
 
 const initialState: MixerState = {
   musicVolume: 1.0, // 🔊 plein volume par défaut (avant : 0.8 → atténuation perçue)
@@ -276,11 +277,22 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
         micGain.connect(micDest);
         micGainRef.current = micGain;
         micStreamDestRef.current = micDest;
-        // « M'entendre » (monitoring local) : micGain → monitorGain(0) → HP du micCtx. Off par défaut.
+        // « M'entendre » (monitoring local, #6 / 3b) : SÉPARÉ du chemin diffusé et NON saturant.
+        //   - On tape la SOURCE micro AVANT micGain (le boost de diffusion peut monter à 250% et
+        //     saturerait l'auto-écoute) → le raccord source→monitor est fait plus bas, après la source.
+        //   - Gain d'auto-écoute MODÉRÉ (SELF_MONITOR_GAIN) → limite le larsen (l'auto-écoute qui
+        //     revient dans le micro, AEC volontairement OFF sur le flux diffusé).
+        //   - Limiteur brickwall avant les HP → plus de grésillement/clipping.
         const monitor = micCtx.createGain();
-        monitor.gain.value = 0;
-        monitor.connect(micCtx.destination);
-        micGainRef.current.connect(monitor);
+        monitor.gain.value = 0; // off par défaut (silencieux tant que non demandé → anti-larsen)
+        const monLimiter = micCtx.createDynamicsCompressor();
+        monLimiter.threshold.value = -3;
+        monLimiter.knee.value = 0;
+        monLimiter.ratio.value = 20;   // brickwall (anti-saturation), pas un compresseur de volume
+        monLimiter.attack.value = 0.002;
+        monLimiter.release.value = 0.1;
+        monitor.connect(monLimiter);
+        monLimiter.connect(micCtx.destination);
         monitorGainRef.current = monitor;
       }
       if (micCtx.state === 'suspended') micCtx.resume().catch(() => { /* ignore */ });
@@ -288,7 +300,9 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       // Remplacer l'ancienne source micro
       if (micSourceRef.current) { try { micSourceRef.current.disconnect(); } catch { /* ignore */ } }
       const source = micCtx.createMediaStreamSource(stream);
-      source.connect(micGainRef.current!); // source → micGain → micStreamDest (+ monitor)
+      source.connect(micGainRef.current!); // source → micGain → micStreamDest (diffusion WebRTC)
+      // 3b : auto-écoute tapée sur la SOURCE (pré-boost) → indépendante du volume de diffusion.
+      if (monitorGainRef.current) source.connect(monitorGainRef.current);
       micSourceRef.current = source;
       return micStreamDestRef.current!.stream;
     } catch {
@@ -471,7 +485,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     const micCtx = micCtxRef.current;
     if (micCtx?.state === 'suspended') micCtx.resume().catch(() => { /* ignore */ });
     if (monitorGainRef.current) {
-      monitorGainRef.current.gain.setValueAtTime(on ? 1 : 0, micCtx?.currentTime || 0);
+      // 3b : niveau modéré (pas 1.0) → auto-écoute claire sans saturation ni larsen.
+      monitorGainRef.current.gain.setValueAtTime(on ? SELF_MONITOR_GAIN : 0, micCtx?.currentTime || 0);
     }
   }, []);
 

@@ -109,6 +109,16 @@ const RELAY_DEFAULT_GAIN = 1.4; // voix d'un autre participant (relayée) entend
 const HOST_VOICE_DEFAULT_GAIN = 1.4; // voix de l'hôte entendue par les participants (au-dessus de la musique)
 const VOICE_MAX_GAIN = 2.5;     // plafond d'amplification (≈250%)
 
+// 🍏 iOS (#7 / 3d) : mêmes contraintes que la MUSIQUE — NE PAS router la voix reçue de l'hôte dans
+//   Web Audio (un AudioContext se SUSPEND écran verrouillé / onglet en arrière-plan et rend l'élément
+//   routé MUET). Sur iOS, l'élément <audio playsinline> joue DIRECTEMENT sur le matériel → la lecture
+//   (voix + musique partagée véhiculées par ce flux) continue en arrière-plan. Compromis assumé :
+//   pas de boost > 100% de la voix hôte sur iPhone, au profit de la continuité en arrière-plan.
+const IS_IOS = typeof navigator !== 'undefined' && (
+  /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && (navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints ? ((navigator as unknown as { maxTouchPoints: number }).maxTouchPoints > 1) : false)
+);
+
 /**
  * POINT 1.3 : crée/récupère un <audio autoplay playsinline> DÉDIÉ par participant qui parle.
  * La voix distante est jouée en direct (aucun Web Audio, aucun buffer) → latence minimale.
@@ -279,11 +289,15 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         const master = ctx.createGain();
         master.gain.value = 1.25; // léger gain de sortie (makeup)
         const comp = ctx.createDynamicsCompressor();
-        comp.threshold.value = -18;
-        comp.knee.value = 20;
-        comp.ratio.value = 3;
-        comp.attack.value = 0.003;
-        comp.release.value = 0.25;
+        // 🔊 3c : limiteur QUASI TRANSPARENT (brickwall proche de 0 dBFS), plus un compresseur qui
+        //   écrase le volume. L'ancien réglage (seuil -18 dB, ratio 3) compressait la voix ~3:1 dès
+        //   -18 dB → voix des participants/hôte perçue FAIBLE. Ici on ne rattrape que les toutes
+        //   dernières crêtes pour éviter la distorsion quand les voix sont poussées (1.4×..2.5×).
+        comp.threshold.value = -1.5;
+        comp.knee.value = 0;
+        comp.ratio.value = 20;
+        comp.attack.value = 0.002;
+        comp.release.value = 0.1;
         master.connect(comp);
         comp.connect(ctx.destination);
         voiceMasterRef.current = master;
@@ -350,7 +364,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // Attach stream — voix de l'hôte routée via GainNode (amplification réelle > 100%),
     // fallback element.volume si Web Audio indisponible.
     audioEl.srcObject = stream;
-    const ctx = ensureVoiceCtx();
+    // 🍏 3d : sur iOS, NE PAS router via Web Audio (contexte suspendu écran verrouillé = muet).
+    //   L'élément <audio playsinline> joue en direct → voix/musique partagée continuent en arrière-plan.
+    const ctx = IS_IOS ? null : ensureVoiceCtx();
     let routed = false;
     if (ctx) {
       try {
@@ -412,9 +428,25 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     // Son peer doit pouvoir RÉPONDRE aux appels entrants (prise de parole participant) même micro coupé.
     // Le flux micro hôte est ajouté/retiré ensuite via broadcastAudio/stopBroadcast.
 
+    // 🔁 3a : le peer est peut-être déjà ouvert, mais avec la MAUVAISE identité pour le rôle courant.
+    //   Cause racine du symptôme « coach non-admin inaudible » : le rôle (isHost) d'un coach est
+    //   résolu de façon ASYNCHRONE (fetch backend). Si connect() s'exécute pendant que isHost vaut
+    //   encore false, le peer s'ouvre avec une identité PARTICIPANT (beattribe-<session>-<ts>) et des
+    //   handlers figés en mode participant. Quand isHost passe ensuite à true, l'ancien `return true`
+    //   ci-dessous empêchait toute recréation → le coach ne revendiquait JAMAIS l'ID hôte fixe
+    //   `beattribe-host-<session>`. Les participants s'y connectent mais n'atteignent jamais le coach
+    //   (dataConnectionsRef reste vide côté coach) : son micro est bien capté (niveau d'entrée qui
+    //   bouge) mais broadcastAudio n'a personne à appeler → participants muets. Chez l'admin, isHost
+    //   est vrai dès le départ → peer créé directement en hôte → ça marche. On détecte le décalage
+    //   d'identité et on RECRÉE le peer avec la bonne identité.
     if (peerRef.current?.open) {
-      // Production: log removed
-      return true;
+      const isHostPeer = peerRef.current.id === getHostPeerId();
+      if (isHost === isHostPeer) {
+        return true; // identité cohérente avec le rôle → rien à faire
+      }
+      // Rôle changé après ouverture → détruire et recréer avec la bonne identité (hôte/participant)
+      try { peerRef.current.destroy(); } catch { /* ignore */ }
+      peerRef.current = null;
     }
 
     // Destroy existing peer if not open
@@ -1098,6 +1130,19 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   // 🔁 P5 : garde une ref à jour de `connect` pour la reprise automatique de l'ID hôte
   //    (unavailable-id) déclenchée depuis le handler d'erreur du peer.
   useEffect(() => { connectRef.current = connect; }, [connect]);
+
+  // 🔁 3a : si isHost change APRÈS l'ouverture du peer (coach dont le rôle est résolu de façon
+  //   asynchrone → false puis true), on relance connect pour revendiquer la bonne identité (ID hôte
+  //   fixe). Sans ce filet, le peer reste un « participant » et la voix du coach n'atteint jamais les
+  //   participants. La recréation est gérée dans connect() (garde d'identité de rôle ci-dessus).
+  useEffect(() => {
+    const peer = peerRef.current;
+    if (!peer || !peer.open) return;
+    const isHostPeer = peer.id === getHostPeerId();
+    if (isHost !== isHostPeer) {
+      connectRef.current?.(currentStreamRef.current);
+    }
+  }, [isHost, getHostPeerId]);
 
   // Cleanup on unmount
   useEffect(() => {

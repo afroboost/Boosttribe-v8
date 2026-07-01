@@ -39,16 +39,20 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // Get auth context
-  const { isAdmin, isSubscribed, canUploadTrack, trackLimit } = useAuth();
+  const { isAdmin, isSubscribed, isUnlimited, canUploadTrack, trackLimit } = useAuth();
 
-  // Version gratuite = ni admin ni abonné (1 titre, 30s max)
-  const isFreeTier = !isAdmin && !isSubscribed;
+  // ♾️ Un coach illimité (comp pro/enterprise actif, enterprise ou admin) est traité EXACTEMENT
+  // comme l'admin : aucune limite d'upload, aucune durée d'essai, aucun message « version d'essai ».
+  const isUnlimitedUser = isAdmin || isUnlimited;
 
-  // Check upload limits - Admin bypasses all limits
-  const effectiveMaxTracks = isAdmin ? 999 : (trackLimit === -1 ? maxTracks : Math.min(maxTracks, trackLimit));
+  // Version gratuite = ni illimité ni abonné (1 titre, 30s max)
+  const isFreeTier = !isUnlimitedUser && !isSubscribed;
+
+  // Check upload limits - Admin / coach illimité bypass toutes les limites
+  const effectiveMaxTracks = isUnlimitedUser ? 999 : (trackLimit === -1 ? maxTracks : Math.min(maxTracks, trackLimit));
   const canUpload = canUploadTrack(currentTrackCount) && currentTrackCount < effectiveMaxTracks && !disabled;
   const isDemoMode = !isSupabaseConfigured;
-  const isTrialLimitReached = !isAdmin && trackLimit > 0 && currentTrackCount >= trackLimit;
+  const isTrialLimitReached = !isUnlimitedUser && trackLimit > 0 && currentTrackCount >= trackLimit;
 
   // Handle file selection
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {

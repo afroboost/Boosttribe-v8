@@ -492,7 +492,7 @@ export const SessionPage: React.FC = () => {
   const { showToast } = useToast();
   const { t } = useI18n();
   const socket = useSocket();
-  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, isFree, sessionLimit, refreshCredits } = useAuth();
+  const { isAdmin, user, profile, refreshProfile, isLoading: authLoading, isSubscribed, isUnlimited, isFree, sessionLimit, refreshCredits } = useAuth();
   
   // ADMIN BYPASS: Check email directly for instant host access
   const userEmail = user?.email?.toLowerCase() || '';
@@ -517,8 +517,16 @@ export const SessionPage: React.FC = () => {
   const [isHost, setIsHost] = useState<boolean>(() => {
     // Création de session (pas d'URL ID) = créateur = hôte
     if (!urlSessionId) return true;
-    // bypass admin instantané ; sinon participant tant que host_id non vérifié
-    return sessionStorage.getItem('bt_is_admin') === 'true';
+    // bypass admin instantané
+    if (sessionStorage.getItem('bt_is_admin') === 'true') return true;
+    // 🔑 ITEM 1 : le CRÉATEUR est reconnu HÔTE immédiatement, SANS attendre le round-trip host_id.
+    // createSessionNow pose un marqueur local (markActiveSession) puis navigue vers /session/:id → la
+    // page REMONTE avec urlSessionId défini. Sans ceci, isHost repartait à false → « En attente de
+    // l'hôte » jusqu'à un refresh. Le marqueur n'est posé QUE par le créateur (jamais un participant),
+    // donc aucun risque de « vol » d'hôte. L'auto-correction DB reste prioritaire (cf. effet ci-dessous).
+    if (user?.id && hasActiveSessionMarker(user.id, urlSessionId)) return true;
+    // sinon participant tant que host_id non vérifié
+    return false;
   });
   const [sessionId, setSessionId] = useState<string | null>(urlSessionId || null);
 
@@ -534,8 +542,17 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (isAdminUser) { setIsHost(true); return; }
     if (!urlSessionId) return;        // création → isHost déjà true (createSessionNow)
-    if (!sessionHostId) return;       // host_id pas encore connu → ne pas dégrader le créateur avant claim
-    setIsHost(!!user?.id && user.id === sessionHostId);
+    if (sessionHostId) {
+      // host_id connu depuis la DB = SOURCE DE VÉRITÉ (auto-correction incluse) :
+      // si la session appartient à un AUTRE compte, je redeviens participant.
+      setIsHost(!!user?.id && user.id === sessionHostId);
+      return;
+    }
+    // 🔑 ITEM 1 : host_id pas encore résolu → reconnaître le CRÉATEUR via le marqueur local
+    // (zéro refresh). Ne concerne que le créateur (marqueur posé par createSessionNow), jamais un
+    // participant. Dès que host_id est résolu, la branche ci-dessus reprend la main.
+    if (user?.id && hasActiveSessionMarker(user.id, urlSessionId)) { setIsHost(true); return; }
+    // sinon : rester participant tant que host_id non vérifié (ne pas dégrader avant claim)
   }, [isAdminUser, urlSessionId, sessionHostId, user?.id]);
 
   // Item 3 : mémoriser le code de session rejoint (participant) → reprise rapide depuis l'accueil
@@ -544,6 +561,19 @@ export const SessionPage: React.FC = () => {
       try { localStorage.setItem('bt_last_session_code', urlSessionId); } catch { /* ignore */ }
     }
   }, [urlSessionId, isHost]);
+
+  // 🔒 ITEM 2 (B) — FIABILITÉ DU PROFIL EN SESSION : recharge UNE fois le vrai profil au montage.
+  // Si l'auth a posé un profil minimal 'trial' (fallback timeout, sans comp_access_*), un coach
+  // illimité verrait réapparaître « limite version d'essai ». refreshProfile refait un select('*')
+  // complet → comp_access_plan/comp_access_until présents → compActive/isUnlimited corrects, zéro
+  // refresh manuel. Sans effet sur l'admin (bypass) ni sur un vrai coach gratuit (profil identique).
+  const profileEnsuredRef = useRef(false);
+  useEffect(() => {
+    if (!user?.id || isAdminUser) return;
+    if (profileEnsuredRef.current) return;
+    profileEnsuredRef.current = true;
+    refreshProfile();
+  }, [user?.id, isAdminUser, refreshProfile]);
   
   // Nickname state
   const [nickname, setNickname] = useState<string | null>(null);
@@ -705,7 +735,9 @@ export const SessionPage: React.FC = () => {
   const playTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if HOST is on free trial (participants are always unlimited)
-  const isFreeTrial = isHost && !isSubscribed;
+  // ♾️ Un coach illimité (comp pro/enterprise, enterprise, admin) n'est JAMAIS en essai gratuit :
+  //    aucune limite de 5 min. Un vrai coach gratuit (non-abonné, sans comp) garde son essai.
+  const isFreeTrial = isHost && !isSubscribed && !isUnlimited;
 
   // PeerJS for WebRTC voice broadcast
   const {

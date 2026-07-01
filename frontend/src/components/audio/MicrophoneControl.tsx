@@ -53,27 +53,30 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
     onMicActive?.(state.isCapturing && !state.isMuted);
   }, [state.isCapturing, state.isMuted, onMicActive]);
 
-  // Notify parent of stream changes for WebRTC
+  // Notify parent of stream changes for WebRTC.
+  // 🎤 STABILITÉ : on garde le MÊME flux tant que le micro est capté, INDÉPENDAMMENT du mute. Couper le
+  //    micro = track.enabled=false (via toggleMute) → le peer reçoit un flux silencieux SANS renégociation
+  //    (avant : envoyer null au mute déclenchait stopBroadcast → renégociation WebRTC fragile qui cassait).
+  //    Le flux n'est retiré (null) QUE lorsqu'on arrête réellement la capture.
   useEffect(() => {
-    if (state.isCapturing && !state.isMuted && audioStream) {
-      // Production: log removed
+    if (state.isCapturing && audioStream) {
       onStreamReady?.(audioStream);
     } else {
       onStreamReady?.(null);
     }
-  }, [state.isCapturing, state.isMuted, audioStream, onStreamReady]);
+  }, [state.isCapturing, audioStream, onStreamReady]);
 
   // Toggle capture - DIRECT getUserMedia call on click
+  // 🎤 STABILITÉ : on capte le micro UNE SEULE FOIS (au 1er clic), puis On/Off = MUTE/UNMUTE
+  //    (track.enabled) sans arrêter la capture ni renégocier le WebRTC → micro fiable à chaque bascule.
+  //    (L'arrêt réel de la capture a lieu au démontage / à la sortie de session.)
   const handleToggleCapture = useCallback(async () => {
-    // Production: log removed
-    
-    if (state.isCapturing) {
-      stopCapture();
+    if (!state.isCapturing) {
+      await startCapture(); // 1re activation : déclenche la permission navigateur
     } else {
-      // This will trigger the browser permission dialog
-      await startCapture();
+      toggleMute();         // bascules suivantes : mute/unmute sans couper le flux
     }
-  }, [state.isCapturing, startCapture, stopCapture]);
+  }, [state.isCapturing, startCapture, toggleMute]);
 
   // Retry permission
   const handleRetry = useCallback(async () => {

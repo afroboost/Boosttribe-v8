@@ -622,6 +622,9 @@ export const SessionPage: React.FC = () => {
   const [autoPlayPending, setAutoPlayPending] = useState<string | null>(null);
   // 🔊 BUG 1: autoplay bloqué côté participant (NotAllowedError) → bouton geste utilisateur
   const [audioBlocked, setAudioBlocked] = useState(false);
+  // 🔓 Une fois le son DÉBLOQUÉ par un geste, on ne réaffiche PLUS l'overlay « Activer le son »
+  //    (fin de la boucle : l'autoplay reste autorisé pour la suite de la session).
+  const audioUnlockedRef = useRef(false);
 
   // 🔇 Décisions de mute de l'hôte (persistées localement, indépendantes de la presence)
   const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set());
@@ -692,9 +695,11 @@ export const SessionPage: React.FC = () => {
 
   // 🎵 Cible l'élément <audio> de la MUSIQUE (et pas les <audio> de voix tribu/relay/hôte).
   const getMusicEl = useCallback((): HTMLAudioElement | null => {
-    return document.querySelector(
-      'audio:not(.bt-tribe-audio):not(.bt-relay-audio):not(#remote-voice-audio)'
-    ) as HTMLAudioElement | null;
+    // 🎵 Cible SANS AMBIGUÏTÉ l'élément MUSIQUE (id dédié), jamais un <audio> voix (usePeerAudio ajoute
+    //    des <audio> voix/tribu/relay au body → querySelector('audio') pouvait attraper le mauvais →
+    //    la synchro play/pause s'appliquait au mauvais élément (bug « pause non synchronisée »)).
+    return (document.getElementById('bt-music-audio')
+      || document.querySelector('audio:not(.bt-tribe-audio):not(.bt-relay-audio):not(#remote-voice-audio)')) as HTMLAudioElement | null;
   }, []);
 
   // 🎚️ "Volume Musique" : 0..100% via element.volume, 100..200% via le GainNode (boost réel).
@@ -1139,7 +1144,7 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (autoPlayPending && selectedTrack && selectedTrack.src === autoPlayPending) {
       const timer = setTimeout(() => {
-        const audioEl = document.querySelector('audio');
+        const audioEl = getMusicEl();
         if (audioEl) {
           audioEl.play().catch(err => {
             console.warn('[AUTOPLAY HOST] Play blocked:', err);
@@ -1401,13 +1406,13 @@ export const SessionPage: React.FC = () => {
         setSelectedTrack(targetTrack);
 
         setTimeout(() => {
-          const audioEl = document.querySelector('audio');
+          const audioEl = getMusicEl();
           if (audioEl && payload.isPlaying) {
             audioEl.currentTime = payload.currentTime || 0;
             audioEl.play().catch((err) => {
               // 🔊 BUG 1: autoplay bloqué (NotAllowedError) → demander un geste utilisateur
               console.warn('[PARTICIPANT] Autoplay bloqué:', err);
-              setAudioBlocked(true);
+              if (!audioUnlockedRef.current) setAudioBlocked(true);
             });
           }
         }, 100);
@@ -1608,7 +1613,7 @@ export const SessionPage: React.FC = () => {
             isPlaying?: boolean;
           };
 
-          const audioEl = document.querySelector('audio') as HTMLAudioElement;
+          const audioEl = getMusicEl();
           if (!audioEl) return;
 
           // Synchroniser la piste si fournie
@@ -1623,7 +1628,7 @@ export const SessionPage: React.FC = () => {
           const tryPlay = () => {
             audioEl.play().catch((err) => {
               console.warn('[PARTICIPANT] Autoplay bloqué (commande hôte):', err);
-              setAudioBlocked(true);
+              if (!audioUnlockedRef.current) setAudioBlocked(true);
             });
           };
 
@@ -1992,7 +1997,7 @@ export const SessionPage: React.FC = () => {
     if (!isFreeTrial || trialLimitReached) return;
 
     const checkPlayback = () => {
-      const audioEl = document.querySelector('audio') as HTMLAudioElement;
+      const audioEl = getMusicEl();
       if (audioEl && !audioEl.paused) {
         setTotalPlayTime(prev => {
           const newTime = prev + 1;
@@ -2674,14 +2679,14 @@ export const SessionPage: React.FC = () => {
 
   // 🔊 BUG 1: Le participant active le son via un geste utilisateur explicite
   const handleActivateSound = useCallback(() => {
-    const audioEl = document.querySelector('audio') as HTMLAudioElement | null;
+    const audioEl = getMusicEl();
     if (!audioEl) {
       setAudioBlocked(false);
       return;
     }
     audioEl
       .play()
-      .then(() => setAudioBlocked(false))
+      .then(() => { audioUnlockedRef.current = true; setAudioBlocked(false); })
       .catch((err) => {
         console.warn('[PARTICIPANT] Lecture toujours bloquée:', err);
         showToast('Impossible d\'activer le son, réessayez', 'error');

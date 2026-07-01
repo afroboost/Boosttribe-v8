@@ -196,7 +196,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     >
       {/* Hidden audio element */}
       {/* playsInline : iOS garde la lecture active (avec MediaSession) sans passer en plein écran. */}
-      <audio ref={audioRef} preload="metadata" crossOrigin="anonymous" playsInline />
+      <audio ref={audioRef} id="bt-music-audio" preload="metadata" crossOrigin="anonymous" playsInline />
 
       {/* Live/Sync Badge */}
       {syncState.isLive && (

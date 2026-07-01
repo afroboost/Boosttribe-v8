@@ -274,7 +274,12 @@ export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn
   // Load audio source
   const loadAudio = useCallback((src: string) => {
     if (!audioRef.current) return;
-    
+    // 🚫 ANTI-COUPURES : ne PAS recharger si la source est DÉJÀ chargée. L'effet appelant se ré-exécute
+    //    quand l'identité de loadAudio change (dépendances) → sans cette garde, `src=…; load()` était
+    //    rejoué → la lecture se coupait à chaque tick + re-déclenchait le blocage autoplay (boucle
+    //    « Activer le son »). On ne recharge que sur un VRAI changement de piste.
+    if (currentTrackSrcRef.current === src && audioRef.current.src) return;
+
     currentTrackSrcRef.current = src;
     updateAudioState({ isLoading: true, error: null });
     audioRef.current.src = src;

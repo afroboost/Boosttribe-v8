@@ -149,12 +149,28 @@ async function logSelectedCandidatePair(label: string, pc: RTCPeerConnection): P
   } catch { /* ignore */ }
 }
 
+// ⚡ TEMPS RÉEL : réduit au minimum le tampon de gigue (jitter buffer) des récepteurs audio → la voix
+//   sort en direct au lieu d'être accumulée puis vidée par à-coups (« rafale 10 s plus tard »).
+function minimizeAudioLatency(pc: RTCPeerConnection): void {
+  try {
+    pc.getReceivers().forEach((r) => {
+      if (r.track && r.track.kind === 'audio') {
+        // playoutDelayHint (Chrome) : 0 = latence mini. jitterBufferTarget (standard récent) idem.
+        try { (r as unknown as { playoutDelayHint?: number }).playoutDelayHint = 0; } catch { /* ignore */ }
+        try { (r as unknown as { jitterBufferTarget?: number }).jitterBufferTarget = 0; } catch { /* ignore */ }
+      }
+    });
+  } catch { /* ignore */ }
+}
+
 // Attache le suivi d'état ICE à une connexion média (call PeerJS) → révèle si le P2P s'établit.
 function traceIce(label: string, call: unknown): void {
   try {
     const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
     if (!pc) { VLOG(label, 'pas de peerConnection'); return; }
+    minimizeAudioLatency(pc);
     const report = () => {
+      minimizeAudioLatency(pc); // (les récepteurs peuvent apparaître après la négociation)
       VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState);
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') logSelectedCandidatePair(label, pc);
     };

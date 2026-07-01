@@ -625,6 +625,10 @@ export const SessionPage: React.FC = () => {
   // 🔓 Une fois le son DÉBLOQUÉ par un geste, on ne réaffiche PLUS l'overlay « Activer le son »
   //    (fin de la boucle : l'autoplay reste autorisé pour la suite de la session).
   const audioUnlockedRef = useRef(false);
+  // 🎯 SYNCHRO ROBUSTE (participant = suiveur pur). Refs de contrôle anti-boucle :
+  const loadedTrackIdRef = useRef<number | null>(null);  // piste RÉELLEMENT chargée (≠ selectedTrack qui peut lag)
+  const isApplyingRemoteRef = useRef(false);             // vrai pendant qu'on applique l'état hôte → ignore la ré-entrance
+  const lastRemotePlayingRef = useRef<boolean | null>(null); // dernier isPlaying appliqué (log seulement sur changement)
 
   // 🔇 Décisions de mute de l'hôte (persistées localement, indépendantes de la presence)
   const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set());
@@ -701,6 +705,48 @@ export const SessionPage: React.FC = () => {
     return (document.getElementById('bt-music-audio')
       || document.querySelector('audio:not(.bt-tribe-audio):not(.bt-relay-audio):not(#remote-voice-audio)')) as HTMLAudioElement | null;
   }, []);
+
+  // 🎯 POINT D'APPLICATION UNIQUE de l'état de lecture de l'HÔTE (source unique de vérité). TOUS les
+  //   transports de synchro (HOST_COMMAND supabase, socket) passent par ici → plus de va-et-vient.
+  //   Règles : le participant ne fait qu'APPLIQUER ; on ne change de piste QUE si trackId ≠ piste chargée ;
+  //   on marque isApplyingRemote pour ignorer les events <audio> auto-générés ; aucun rechargement inutile.
+  const applyRemoteState = useCallback((o: { trackId?: number | null; currentTime?: number; isPlaying?: boolean; reason: string; source: string }) => {
+    if (isHostRef.current) return; // l'hôte n'applique JAMAIS d'état distant
+    // 1) Changement de piste UNIQUEMENT sur vraie différence (anti-rechargement / anti-boucle).
+    if (o.trackId != null && o.trackId !== loadedTrackIdRef.current) {
+      const target = tracksRef.current.find((t) => t.id === o.trackId);
+      if (target) {
+        console.log('[SYNC] piste', loadedTrackIdRef.current, '→', o.trackId, '| raison=', o.reason, '| source=', o.source);
+        loadedTrackIdRef.current = o.trackId;
+        isApplyingRemoteRef.current = true;
+        setSelectedTrack(target); // le rechargement réel = effet src d'AudioPlayer (garde « même source » en place)
+        setTimeout(() => { isApplyingRemoteRef.current = false; }, 400);
+      }
+    }
+    const audioEl = getMusicEl();
+    if (!audioEl) return;
+    // 2) play / pause / seek — marqués « application distante ».
+    isApplyingRemoteRef.current = true;
+    try {
+      if (o.isPlaying != null) {
+        if (o.isPlaying) {
+          if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > 1.5) audioEl.currentTime = o.currentTime;
+          if (audioEl.paused && audioEl.src) {
+            audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
+          }
+          if (lastRemotePlayingRef.current !== true) console.log('[SYNC] ▶️ PLAY | raison=', o.reason, '| source=', o.source);
+        } else {
+          if (!audioEl.paused) audioEl.pause();
+          if (lastRemotePlayingRef.current !== false) console.log('[SYNC] ⏸️ PAUSE | raison=', o.reason, '| source=', o.source);
+        }
+        lastRemotePlayingRef.current = o.isPlaying;
+      } else if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > 1) {
+        audioEl.currentTime = o.currentTime; // SEEK pur (sans changer play/pause)
+      }
+    } finally {
+      setTimeout(() => { isApplyingRemoteRef.current = false; }, 150);
+    }
+  }, [getMusicEl]);
 
   // 🎚️ "Volume Musique" : 0..100% via element.volume, 100..200% via le GainNode (boost réel).
   // Pas de double atténuation : le gain reste ≥ 1.0 (cf. useAudioMixer.setMusicVolume).
@@ -1379,49 +1425,30 @@ export const SessionPage: React.FC = () => {
     if (isHost) return;
     
     const unsubPlaylist = socket.onPlaylistSync((payload) => {
+      // La LISTE des pistes est toujours mise à jour ; la SÉLECTION/lecture est pilotée par la source
+      // unique (HOST_COMMAND supabase) → en mode supabase on NE force PAS selectedTrack ici (2e transport
+      // = va-et-vient) et on ne spamme plus le toast « Piste suivante ».
       const safeTracks = Array.isArray(payload.tracks) ? payload.tracks : [];
       setTracks(safeTracks as Track[]);
-      
-      if (safeTracks.length > 0) {
-        const newSelected = safeTracks.find(t => t.id === payload.selectedTrackId);
-        if (newSelected) {
-          setSelectedTrack(newSelected as Track);
-          showToast(`Piste suivante : ${(newSelected as Track).title}`, 'default');
-        }
-      } else {
-        setSelectedTrack(null);
-      }
+      if (safeTracks.length === 0) { setSelectedTrack(null); loadedTrackIdRef.current = null; return; }
+      if (socket.isSupabaseMode) return; // HOST_COMMAND est l'autorité
+      applyRemoteState({ trackId: payload.selectedTrackId as number, reason: 'playlistSync', source: 'socket' });
     });
-    
-    return unsubPlaylist;
-  }, [socket, isHost, showToast]);
 
-  // Listen for playback sync (for participants to auto-play new tracks)
+    return unsubPlaylist;
+  }, [socket, isHost, applyRemoteState]);
+
+  // Listen for playback sync (for participants to auto-play new tracks) — inactif en mode supabase
   useEffect(() => {
     if (isHost) return;
-    
-    const unsubPlayback = socket.onPlaybackSync((payload) => {
-      const targetTrack = tracks.find(t => t.id === payload.trackId);
-      if (targetTrack) {
-        // POINT 1: synchro silencieuse (plus de toast "Enchaînement" qui spamme, surtout en repeat)
-        setSelectedTrack(targetTrack);
 
-        setTimeout(() => {
-          const audioEl = getMusicEl();
-          if (audioEl && payload.isPlaying) {
-            audioEl.currentTime = payload.currentTime || 0;
-            audioEl.play().catch((err) => {
-              // 🔊 BUG 1: autoplay bloqué (NotAllowedError) → demander un geste utilisateur
-              console.warn('[PARTICIPANT] Autoplay bloqué:', err);
-              if (!audioUnlockedRef.current) setAudioBlocked(true);
-            });
-          }
-        }, 100);
-      }
+    const unsubPlayback = socket.onPlaybackSync((payload) => {
+      if (socket.isSupabaseMode) return; // source unique = HOST_COMMAND (évite le 2e transport concurrent)
+      applyRemoteState({ trackId: payload.trackId as number, currentTime: payload.currentTime, isPlaying: payload.isPlaying, reason: 'playbackSync', source: 'socket' });
     });
-    
+
     return unsubPlayback;
-  }, [socket, isHost, tracks, showToast]);
+  }, [socket, isHost, applyRemoteState]);
 
   // 🩹 BUG 1 : refs vers les valeurs changeantes lues DANS l'effet realtime ci-dessous.
   // Elles permettent de ne dépendre QUE de [sessionId] → l'effet (fetch initial + abonnements)
@@ -1605,78 +1632,16 @@ export const SessionPage: React.FC = () => {
     const playbackChannel = supabase
       .channel(`playback:${sessionId}`)
       .on('broadcast', { event: 'HOST_COMMAND' }, (payload) => {
-        // ⚠️ PARTICIPANT ESCLAVE : écouter et obéir aux commandes de l'hôte
-        if (!isHostRef.current && payload.payload) {
-          const command = payload.payload as {
-            action: 'PLAY' | 'PAUSE' | 'SEEK' | 'STATE';
-            currentTime: number;
-            trackId?: number;
-            isPlaying?: boolean;
-          };
-
-          const audioEl = getMusicEl();
-          if (!audioEl) return;
-
-          // Synchroniser la piste si fournie
-          if (command.trackId && tracksRef.current.length > 0) {
-            const targetTrack = tracksRef.current.find(t => t.id === command.trackId);
-            if (targetTrack && selectedTrackRef.current?.id !== command.trackId) {
-              setSelectedTrack(targetTrack);
-            }
-          }
-
-          // 🔊 Lance la lecture côté participant ; ouvre l'overlay si autoplay bloqué
-          const tryPlay = () => {
-            audioEl.play().catch((err) => {
-              console.warn('[PARTICIPANT] Autoplay bloqué (commande hôte):', err);
-              if (!audioUnlockedRef.current) setAudioBlocked(true);
-            });
-          };
-
-          switch (command.action) {
-            case 'PAUSE':
-              // ⏸️ PAUSE IMMÉDIATE - L'esclave obéit (POINT 1: synchro silencieuse, plus de toast)
-              if (!audioEl.paused) {
-                audioEl.pause();
-              }
-              setHostIsPlaying(false);
-              break;
-
-            case 'PLAY':
-              // ▶️ LECTURE - L'esclave reprend à la position exacte (POINT 1: silencieux)
-              audioEl.currentTime = command.currentTime || 0;
-              tryPlay();
-              setHostIsPlaying(true);
-              break;
-
-            case 'SEEK':
-              // 🔄 SYNCHRONISATION DE POSITION
-              if (Math.abs(audioEl.currentTime - command.currentTime) > 1) {
-                audioEl.currentTime = command.currentTime;
-              }
-              break;
-
-            case 'STATE':
-              // 💓 POINT 3a: heartbeat de l'hôte → resynchro complète (reconnexion / arrière-plan)
-              if (command.isPlaying) {
-                if (audioEl.paused) {
-                  // Le participant avait raté le PLAY (join tardif) → on relance à la bonne position
-                  audioEl.currentTime = command.currentTime || 0;
-                  tryPlay();
-                } else if (Math.abs(audioEl.currentTime - command.currentTime) > 1.5) {
-                  // Dérive trop importante → on recale
-                  audioEl.currentTime = command.currentTime;
-                }
-                setHostIsPlaying(true);
-              } else {
-                if (!audioEl.paused) {
-                  audioEl.pause();
-                }
-                setHostIsPlaying(false);
-              }
-              break;
-          }
-        }
+        // ⚠️ PARTICIPANT ESCLAVE : source UNIQUE = l'hôte. Tout passe par applyRemoteState (anti-boucle).
+        if (isHostRef.current || !payload.payload) return;
+        const command = payload.payload as { action: 'PLAY' | 'PAUSE' | 'SEEK' | 'STATE'; currentTime: number; trackId?: number; isPlaying?: boolean };
+        // Mapping action → état voulu (PLAY/STATE portent isPlaying ; PAUSE=false ; SEEK=position pure).
+        const isPlaying = command.action === 'PAUSE' ? false
+          : command.action === 'PLAY' ? true
+          : command.action === 'STATE' ? !!command.isPlaying
+          : undefined; // SEEK
+        applyRemoteState({ trackId: command.trackId ?? null, currentTime: command.currentTime, isPlaying, reason: command.action, source: 'HOST_COMMAND' });
+        if (isPlaying != null) setHostIsPlaying(isPlaying);
       })
       // E : média partagé (vidéo/image/lien) — identité du média (partage/retrait)
       .on('broadcast', { event: 'MEDIA_COMMAND' }, (payload) => {

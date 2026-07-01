@@ -773,6 +773,7 @@ export const SessionPage: React.FC = () => {
     disconnect: disconnectPeer,
     broadcastAudio,
     stopBroadcast,
+    unlockAudio,
     talkToHost,
     stopTalkToHost,
     setTribeVolume: setTribeAudioVolume,
@@ -2677,21 +2678,20 @@ export const SessionPage: React.FC = () => {
     showToast('Nouveau code généré. Partagez-le avec vos participants.', 'success');
   }, [isHost, sessionId, tracks, selectedTrack, user?.id, navigate, showToast, disconnectPeer]);
 
-  // 🔊 BUG 1: Le participant active le son via un geste utilisateur explicite
+  // 🔊 BUG 1: Le participant débloque TOUT le son en UN geste (musique + voix présentes ET futures).
+  //   On marque débloqué IMMÉDIATEMENT (le clic est un vrai geste → la politique autoplay du navigateur
+  //   est levée pour la suite) puis on relance musique + voix. AUCUN toast d'erreur (l'unlock est fait ;
+  //   si la musique n'a pas encore de source, elle démarrera au prochain PLAY de l'hôte).
   const handleActivateSound = useCallback(() => {
+    audioUnlockedRef.current = true;
+    setAudioBlocked(false);
+    // 🎚️ réveiller le mixeur (musique routée en Web Audio sur desktop) dans le geste
+    try { initializeMixer(); } catch { /* ignore */ }
+    // 🔓 voix : réveiller le contexte voix + relancer tous les <audio> voix (présents), et autoriser les futurs
+    try { unlockAudio(); } catch { /* ignore */ }
     const audioEl = getMusicEl();
-    if (!audioEl) {
-      setAudioBlocked(false);
-      return;
-    }
-    audioEl
-      .play()
-      .then(() => { audioUnlockedRef.current = true; setAudioBlocked(false); })
-      .catch((err) => {
-        console.warn('[PARTICIPANT] Lecture toujours bloquée:', err);
-        showToast('Impossible d\'activer le son, réessayez', 'error');
-      });
-  }, [showToast]);
+    if (audioEl && audioEl.src) audioEl.play().catch((err) => console.warn('[PARTICIPANT] musique:', err));
+  }, [unlockAudio, initializeMixer, getMusicEl]);
 
   // Ref to track if "Go Live" toast has been shown (prevent infinite loop)
   const hasShownLiveToast = useRef(false);

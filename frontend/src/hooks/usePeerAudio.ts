@@ -38,6 +38,8 @@ export interface UsePeerAudioReturn {
   disconnect: () => void;
   broadcastAudio: (stream: MediaStream) => void;
   stopBroadcast: () => void;
+  // 🔓 débloque tout le son (voix) dans un geste utilisateur
+  unlockAudio: () => void;
   // 🎤 POINT 5: participant envoie son micro à l'hôte / arrête
   talkToHost: (stream: MediaStream) => void;
   stopTalkToHost: () => void;
@@ -91,18 +93,25 @@ function buildIceServers(): RTCIceServer[] {
   //   REACT_APP_TURN_URL (héritage CRA) était TOUJOURS undefined → aucun serveur TURN → sur 2 réseaux
   //   réels (mobile / NAT symétrique) le média P2P échoue silencieusement (la voix ne circule pas)
   //   alors que la synchro musique (WebSocket) marche. On lit désormais VITE_ (repli REACT_APP_).
+  // TURN (coturn auto-hébergé). Env prioritaire (Coolify) ; défaut codé en repli — le credential TURN
+  //   est de toute façon livré à CHAQUE navigateur dans le bundle (ce n'est pas un secret côté client).
+  //   Alias acceptés : VITE_TURN_USER/PASS (demandés) + VITE_TURN_USERNAME/CREDENTIAL + REACT_APP_*.
   const env = import.meta.env as Record<string, string | undefined>;
-  const turnUrl = env.VITE_TURN_URL || env.REACT_APP_TURN_URL;
+  const turnUrl = env.VITE_TURN_URL || env.REACT_APP_TURN_URL || 'turn:178.105.201.62:3478';
+  const turnUser = env.VITE_TURN_USER || env.VITE_TURN_USERNAME || env.REACT_APP_TURN_USERNAME || 'boosttribe';
+  const turnPass = env.VITE_TURN_PASS || env.VITE_TURN_CREDENTIAL || env.REACT_APP_TURN_CREDENTIAL || '02378011de85065d185ab7a3a05d1e09';
   if (turnUrl) {
-    iceServers.push({
-      urls: turnUrl.split(',').map((u) => u.trim()).filter(Boolean),
-      username: env.VITE_TURN_USERNAME || env.REACT_APP_TURN_USERNAME,
-      credential: env.VITE_TURN_CREDENTIAL || env.REACT_APP_TURN_CREDENTIAL,
-    });
+    // Expansion UDP + TCP (fiabilité : si l'UDP est bloqué sur un réseau, le TCP relaie quand même).
+    const urls: string[] = [];
+    for (const base of turnUrl.split(',').map((u) => u.trim()).filter(Boolean)) {
+      if (base.includes('?transport=') || base.startsWith('turns:')) urls.push(base);
+      else { urls.push(`${base}?transport=udp`); urls.push(`${base}?transport=tcp`); }
+    }
+    iceServers.push({ urls, username: turnUser, credential: turnPass });
   }
 
   // eslint-disable-next-line no-console
-  console.log('[VOICE] iceServers:', iceServers.length, 'serveur(s)', turnUrl ? '(TURN actif)' : '(STUN seul — pas de TURN)');
+  console.log('[VOICE] iceServers:', iceServers.length, 'serveur(s)', turnUrl ? `(TURN: ${turnUrl})` : '(STUN seul)');
   return iceServers;
 }
 
@@ -121,12 +130,34 @@ function peerServerOptions(): { host?: string; port?: number; path?: string; sec
 // 🔎 Diagnostic voix : log filtrable [VOICE]. Filtre la console sur "[VOICE]" pour tout voir.
 // eslint-disable-next-line no-console
 const VLOG = (...a: unknown[]) => console.log('[VOICE]', ...a);
+// 📊 getStats : logue le TYPE de la paire de candidats sélectionnée (host / srflx / relay). « relay » =
+//   la connexion passe par le TURN (attendu sur 2 réseaux différents). Décisif pour diagnostiquer la voix.
+async function logSelectedCandidatePair(label: string, pc: RTCPeerConnection): Promise<void> {
+  try {
+    const stats = await pc.getStats();
+    let pair: RTCIceCandidatePairStats | undefined;
+    const cands = new Map<string, { candidateType?: string; protocol?: string; address?: string }>();
+    stats.forEach((r) => {
+      if (r.type === 'candidate-pair' && (r as RTCIceCandidatePairStats).state === 'succeeded' && (r as RTCIceCandidatePairStats).nominated) pair = r as RTCIceCandidatePairStats;
+      if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands.set(r.id, r as { candidateType?: string; protocol?: string; address?: string });
+    });
+    if (!pair) { VLOG(label, 'getStats: aucune paire nominée (encore)'); return; }
+    const l = cands.get((pair as unknown as { localCandidateId: string }).localCandidateId);
+    const r = cands.get((pair as unknown as { remoteCandidateId: string }).remoteCandidateId);
+    VLOG(label, `📊 PAIRE SÉLECTIONNÉE local=${l?.candidateType}/${l?.protocol} remote=${r?.candidateType}/${r?.protocol}`,
+      (l?.candidateType === 'relay' || r?.candidateType === 'relay') ? '→ ✅ RELAY (TURN utilisé)' : '→ direct (host/srflx)');
+  } catch { /* ignore */ }
+}
+
 // Attache le suivi d'état ICE à une connexion média (call PeerJS) → révèle si le P2P s'établit.
 function traceIce(label: string, call: unknown): void {
   try {
     const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
     if (!pc) { VLOG(label, 'pas de peerConnection'); return; }
-    const report = () => VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState);
+    const report = () => {
+      VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState);
+      if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') logSelectedCandidatePair(label, pc);
+    };
     pc.addEventListener('iceconnectionstatechange', report);
     pc.addEventListener('connectionstatechange', report);
     report();
@@ -1220,12 +1251,22 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     };
   }, [disconnect]);
 
+  // 🔓 UNLOCK AUDIO (appelé dans un GESTE utilisateur) : réveille le contexte voix ET relance TOUS les
+  //   <audio> voix (hôte + tribu + relay). Autorise du même coup les FUTURS flux (la politique autoplay
+  //   du navigateur se débloque après un geste → les .play() suivants de forcePlayRemoteAudio réussissent).
+  const unlockAudio = useCallback(() => {
+    const ctx = voiceCtxRef.current;
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+    document.querySelectorAll('audio').forEach((el) => { (el as HTMLAudioElement).play().catch(() => { /* ignore */ }); });
+  }, []);
+
   return {
     state,
     connect,
     disconnect,
     broadcastAudio,
     stopBroadcast,
+    unlockAudio,
     talkToHost,
     stopTalkToHost,
     setTribeVolume,

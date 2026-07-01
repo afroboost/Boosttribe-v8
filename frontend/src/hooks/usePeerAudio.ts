@@ -93,13 +93,13 @@ function buildIceServers(): RTCIceServer[] {
   //   REACT_APP_TURN_URL (héritage CRA) était TOUJOURS undefined → aucun serveur TURN → sur 2 réseaux
   //   réels (mobile / NAT symétrique) le média P2P échoue silencieusement (la voix ne circule pas)
   //   alors que la synchro musique (WebSocket) marche. On lit désormais VITE_ (repli REACT_APP_).
-  // TURN (coturn auto-hébergé). Env prioritaire (Coolify) ; défaut codé en repli — le credential TURN
-  //   est de toute façon livré à CHAQUE navigateur dans le bundle (ce n'est pas un secret côté client).
+  // TURN (coturn auto-hébergé) — identifiants lus UNIQUEMENT depuis l'env (Coolify build-args), JAMAIS
+  //   codés en dur dans la source (repo public = abus possible du relais). Sans env → STUN seul.
   //   Alias acceptés : VITE_TURN_USER/PASS (demandés) + VITE_TURN_USERNAME/CREDENTIAL + REACT_APP_*.
   const env = import.meta.env as Record<string, string | undefined>;
-  const turnUrl = env.VITE_TURN_URL || env.REACT_APP_TURN_URL || 'turn:178.105.201.62:3478';
-  const turnUser = env.VITE_TURN_USER || env.VITE_TURN_USERNAME || env.REACT_APP_TURN_USERNAME || 'boosttribe';
-  const turnPass = env.VITE_TURN_PASS || env.VITE_TURN_CREDENTIAL || env.REACT_APP_TURN_CREDENTIAL || '02378011de85065d185ab7a3a05d1e09';
+  const turnUrl = env.VITE_TURN_URL || env.REACT_APP_TURN_URL;
+  const turnUser = env.VITE_TURN_USER || env.VITE_TURN_USERNAME || env.REACT_APP_TURN_USERNAME;
+  const turnPass = env.VITE_TURN_PASS || env.VITE_TURN_CREDENTIAL || env.REACT_APP_TURN_CREDENTIAL;
   if (turnUrl) {
     // Expansion UDP + TCP (fiabilité : si l'UDP est bloqué sur un réseau, le TCP relaie quand même).
     const urls: string[] = [];

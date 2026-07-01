@@ -87,16 +87,38 @@ function buildIceServers(): RTCIceServer[] {
     { urls: 'stun:stun.stunprotocol.org:3478' },
   ];
 
-  const turnUrl = import.meta.env.REACT_APP_TURN_URL;
+  // ⚠️ Vite : SEULES les variables préfixées VITE_ existent dans import.meta.env. L'ancien
+  //   REACT_APP_TURN_URL (héritage CRA) était TOUJOURS undefined → aucun serveur TURN → sur 2 réseaux
+  //   réels (mobile / NAT symétrique) le média P2P échoue silencieusement (la voix ne circule pas)
+  //   alors que la synchro musique (WebSocket) marche. On lit désormais VITE_ (repli REACT_APP_).
+  const env = import.meta.env as Record<string, string | undefined>;
+  const turnUrl = env.VITE_TURN_URL || env.REACT_APP_TURN_URL;
   if (turnUrl) {
     iceServers.push({
-      urls: turnUrl,
-      username: import.meta.env.REACT_APP_TURN_USERNAME,
-      credential: import.meta.env.REACT_APP_TURN_CREDENTIAL,
+      urls: turnUrl.split(',').map((u) => u.trim()).filter(Boolean),
+      username: env.VITE_TURN_USERNAME || env.REACT_APP_TURN_USERNAME,
+      credential: env.VITE_TURN_CREDENTIAL || env.REACT_APP_TURN_CREDENTIAL,
     });
   }
 
+  // eslint-disable-next-line no-console
+  console.log('[VOICE] iceServers:', iceServers.length, 'serveur(s)', turnUrl ? '(TURN actif)' : '(STUN seul — pas de TURN)');
   return iceServers;
+}
+
+// 🔎 Diagnostic voix : log filtrable [VOICE]. Filtre la console sur "[VOICE]" pour tout voir.
+// eslint-disable-next-line no-console
+const VLOG = (...a: unknown[]) => console.log('[VOICE]', ...a);
+// Attache le suivi d'état ICE à une connexion média (call PeerJS) → révèle si le P2P s'établit.
+function traceIce(label: string, call: unknown): void {
+  try {
+    const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
+    if (!pc) { VLOG(label, 'pas de peerConnection'); return; }
+    const report = () => VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState);
+    pc.addEventListener('iceconnectionstatechange', report);
+    pc.addEventListener('connectionstatechange', report);
+    report();
+  } catch { /* ignore */ }
 }
 
 // Classe commune des éléments audio "tribu" (voix montante des participants chez l'hôte)
@@ -488,16 +510,17 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             dataConn.on('open', () => {
               hostDataRetryRef.current = 0;
               dataConnectionsRef.current.set(hostPeerId, dataConn);
+              VLOG('participant → dataConn OUVERTE vers hôte', hostPeerId, '(l\'hôte devrait me rappeler avec sa voix)');
             });
             dataConn.on('error', (err) => {
-              console.warn('[PEER] ⚠️ Data connection error:', err);
+              VLOG('participant → dataConn ERREUR', err);
             });
           } catch { /* réessayé via le handler d'erreur peer-unavailable */ }
         };
 
         // Handle peer open
         peer.on('open', (id) => {
-          // Production: log removed
+          VLOG('peer OUVERT — id=', id, 'rôle=', isHost ? 'HÔTE' : 'participant', '| id hôte attendu=', hostPeerId);
           reconnectAttempts.current = 0;
           idRetryRef.current = 0; // 🔁 P5 : l'ID hôte a été obtenu → on remet le compteur à zéro
 
@@ -533,10 +556,13 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           // 👥 HÔTE: appel entrant = un participant "prend la parole".
           // POINT 1.3 : on joue le flux en DIRECT via un <audio> dédié (pas de Web Audio).
           if (isHost) {
+            VLOG('HÔTE ← APPEL entrant (participant prend la parole)', call.peer);
+            traceIce('participant→HÔTE ' + call.peer, call);
             call.answer(); // l'hôte ne renvoie pas de flux sur cet appel
             tribeCallsRef.current.set(call.peer, call);
 
             call.on('stream', (tribeStream) => {
+              VLOG('HÔTE ← FLUX voix reçu du participant', call.peer);
               const el = getOrCreateTribeAudioElement(call.peer);
               el.srcObject = tribeStream;
               const uid = peerIdToUserIdRef.current.get(call.peer);
@@ -631,11 +657,14 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           }
 
           // PARTICIPANT: appel entrant = voix de l'hôte
+          VLOG('participant ← APPEL entrant de l\'hôte', call.peer, '(voix hôte)');
+          traceIce('HÔTE→participant(moi) ' + call.peer, call);
           activeCallRef.current = call;
           call.answer(); // participant reçoit uniquement, pas de flux à envoyer ici
 
           // Handle incoming stream (host's voice)
           call.on('stream', async (remoteStream) => {
+            VLOG('participant ← FLUX voix hôte reçu — lecture', remoteStream.getAudioTracks().length, 'piste(s) audio');
             // Get or create the audio element
             const audioEl = getOrCreateRemoteAudioElement();
 
@@ -677,6 +706,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           
           dataConn.on('open', () => {
             dataConnectionsRef.current.set(dataConn.peer, dataConn);
+            VLOG('HÔTE ← participant CONNECTÉ', dataConn.peer, '| diffusion en cours ?', !!currentStreamRef.current);
             // POINT 3 : mémoriser le mapping peerId → userId (depuis la metadata du participant)
             const meta = (dataConn as unknown as { metadata?: { userId?: string } }).metadata;
             if (meta?.userId) peerIdToUserIdRef.current.set(dataConn.peer, meta.userId);
@@ -688,9 +718,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
             // If broadcasting, call the new peer immediately
             if (currentStreamRef.current && isHost) {
-              // Production: log removed
+              VLOG('HÔTE → appelle le nouveau participant', dataConn.peer, 'avec ma voix');
               const call = peerRef.current?.call(dataConn.peer, currentStreamRef.current);
               if (call) {
+                traceIce('HÔTE→participant ' + dataConn.peer, call);
                 connectionsRef.current.set(dataConn.peer, call);
                 // POINT 3 : appliquer la sélection privée à ce nouveau participant
                 call.on('stream', () => applyPrivacyToCall(call, dataConn.peer));
@@ -938,10 +969,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     }
 
     // Call all connected participants
+    VLOG('broadcastAudio — hôte diffuse à', dataConnectionsRef.current.size, 'participant(s) connecté(s)');
     dataConnectionsRef.current.forEach((_, peerId) => {
       if (!connectionsRef.current.has(peerId)) {
-        // Production: log removed
+        VLOG('HÔTE → appelle participant', peerId, 'avec ma voix (broadcast)');
         const call = peerRef.current!.call(peerId, stream);
+        traceIce('HÔTE→participant ' + peerId, call);
 
         // POINT 3 : appliquer la sélection privée dès que la connexion média est établie
         call.on('stream', () => applyPrivacyToCall(call, peerId));
@@ -999,11 +1032,13 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     }
 
     const hostPeerId = getHostPeerId();
+    VLOG('participant → PREND LA PAROLE : appelle l\'hôte', hostPeerId, 'avec', stream.getAudioTracks().length, 'piste(s)');
     const call = peerRef.current.call(hostPeerId, stream);
     if (call) {
+      traceIce('participant(moi)→HÔTE ' + hostPeerId, call);
       upstreamCallRef.current = call;
       call.on('error', (err) => {
-        console.error('[PEER] ❌ Upstream call error:', err);
+        VLOG('participant → appel montant ERREUR', err);
       });
     }
   }, [isHost, getHostPeerId]);

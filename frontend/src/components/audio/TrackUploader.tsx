@@ -14,6 +14,9 @@ interface TrackUploaderProps {
   // P3 : hôte de CETTE session (admin réel). Le bandeau "Mode Admin" n'est montré qu'à lui,
   // jamais à un co-animateur/participant (même si son compte a un flag admin global).
   isSessionHost?: boolean;
+  // ♾️ Statut illimité AUTORITAIRE (backend GET /coach/plan.unlimited) fourni par le parent : filet
+  //   anti « limite version d'essai » quand les champs comp_access_* du profil front tardent à charger.
+  forceUnlimited?: boolean;
   // POINT 4b: appelé quand un non-abonné atteint sa limite et tente d'ajouter un titre
   onUpgradeRequest?: () => void;
 }
@@ -30,6 +33,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
   maxTracks = 10,
   disabled = false,
   isSessionHost = false,
+  forceUnlimited = false,
   onUpgradeRequest,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -43,7 +47,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
 
   // ♾️ Un coach illimité (comp pro/enterprise actif, enterprise ou admin) est traité EXACTEMENT
   // comme l'admin : aucune limite d'upload, aucune durée d'essai, aucun message « version d'essai ».
-  const isUnlimitedUser = isAdmin || isUnlimited;
+  const isUnlimitedUser = isAdmin || isUnlimited || forceUnlimited;
 
   // Version gratuite = ni illimité ni abonné (1 titre, 30s max)
   const isFreeTier = !isUnlimitedUser && !isSubscribed;

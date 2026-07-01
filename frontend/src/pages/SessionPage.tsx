@@ -734,10 +734,17 @@ export const SessionPage: React.FC = () => {
   const [trialLimitReached, setTrialLimitReached] = useState(false);
   const playTimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // ♾️ SOURCE AUTORITAIRE (backend) du statut illimité : GET /coach/plan.unlimited reflète EXACTEMENT
+  //   is_coach_unlimited (comp_access pro/enterprise actif OU abo coach 'subscription' actif), sans
+  //   dépendre du timing de chargement des champs comp_access_* dans le profil front. Filet anti-régression
+  //   « limite version d'essai » chez un coach illimité. Ne s'applique qu'à l'hôte authentifié.
+  const [backendUnlimited, setBackendUnlimited] = useState(false); // alimenté par getCoachPlan (effet plus bas)
+
   // Check if HOST is on free trial (participants are always unlimited)
-  // ♾️ Un coach illimité (comp pro/enterprise, enterprise, admin) n'est JAMAIS en essai gratuit :
-  //    aucune limite de 5 min. Un vrai coach gratuit (non-abonné, sans comp) garde son essai.
-  const isFreeTrial = isHost && !isSubscribed && !isUnlimited;
+  // ♾️ Un coach illimité (comp pro/enterprise, enterprise, admin, OU backend unlimited) n'est JAMAIS en
+  //    essai gratuit : aucune limite de 5 min. Un vrai coach gratuit (non-abonné, sans comp) garde son essai.
+  const isUnlimitedHost = isUnlimited || backendUnlimited;
+  const isFreeTrial = isHost && !isSubscribed && !isUnlimitedHost;
 
   // PeerJS for WebRTC voice broadcast
   const {
@@ -1273,7 +1280,13 @@ export const SessionPage: React.FC = () => {
       if (data) setBillConfig({ price_min_chf: data.price_min_chf, price_max_chf: data.price_max_chf });
     });
     // 💳 Type de paiement du coach : en « abonnement », pas de mode Payante (il encaisse hors plateforme).
-    getCoachPlan().then(({ data }) => { if (data) setCoachPaymentType(data.payment_type); });
+    // ♾️ + statut illimité AUTORITAIRE (data.unlimited = is_coach_unlimited backend) → filet anti « limite essai ».
+    getCoachPlan().then(({ data }) => {
+      if (data) {
+        setCoachPaymentType(data.payment_type);
+        if (data.unlimited) setBackendUnlimited(true);
+      }
+    });
   }, [isHost]);
   const modeInitRef = useRef<string | null>(null);
   useEffect(() => {
@@ -3684,6 +3697,7 @@ export const SessionPage: React.FC = () => {
                     maxTracks={10}
                     disabled={!canShare}
                     isSessionHost={isHost}
+                    forceUnlimited={isUnlimitedHost}
                     onUpgradeRequest={handleUpgradeRequest}
                   />
                 ) : undefined}

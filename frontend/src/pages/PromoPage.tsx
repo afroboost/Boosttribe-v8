@@ -183,7 +183,14 @@ const PromoPage: React.FC = () => {
           <div className="w-full max-w-sm rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: promo?.format === '16:9' ? '16 / 9' : '9 / 16', maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
             {embedSrc ? (
               <iframe src={embedSrc} title="Vidéo de la session" className="w-full h-full"
-                allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                // 🔒 ZÉRO REDIRECTION : sans sandbox, un embed tiers (Instagram/TikTok/FB) peut naviguer
+                //   la fenêtre PARENTE (window.top) ou ouvrir un onglet au clic « play » → c'est la
+                //   « redirection » constatée. On autorise scripts + same-origin + présentation (lecture
+                //   in-page, plein écran) mais PAS allow-top-navigation ni allow-popups → impossible de
+                //   quitter la page. La lecture reste dans la modale.
+                sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
+                referrerPolicy="no-referrer-when-downgrade" allowFullScreen />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-center text-white/70 text-sm p-4">
                 Lecture intégrée indisponible pour ce lien.

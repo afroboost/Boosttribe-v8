@@ -18,8 +18,9 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon, MoreVertical, EyeOff, Eye, Share2 } from 'lucide-react';
+import { GripVertical, Music, Play, Trash2, Check, ChevronUp, ChevronDown, Pencil, X as XIcon, MoreVertical, EyeOff, Eye, Share2, Timer } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import type { IntervalConfig } from '@/components/session/IntervalTimer';
 
 export interface Track {
   id: number;
@@ -28,6 +29,7 @@ export interface Track {
   src: string;
   coverArt?: string;
   hidden?: boolean; // 🙈 masqué : invisible pour les participants, récupérable côté hôte (stocké dans le JSON)
+  interval?: IntervalConfig; // ⏱️ config interval training (optionnel, stocké dans le JSON tracks)
 }
 
 interface SortableTrackItemProps {
@@ -254,6 +256,7 @@ interface PlaylistDnDProps {
   onDeleteTracks: (tracks: Track[]) => void;
   onRenameTrack?: (trackId: number, title: string) => void; // ✏️ renommer un titre (persisté par le parent)
   onToggleHidden?: (trackId: number) => void;               // 🙈 masquer / ré-afficher (persisté par le parent)
+  onOpenInterval?: (trackId: number) => void;               // ⏱️ ouvrir la config interval training (géré par le parent)
   isHost: boolean;
   maxTracks?: number;
 }
@@ -266,6 +269,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   onDeleteTracks,
   onRenameTrack,
   onToggleHidden,
+  onOpenInterval,
   isHost,
   maxTracks = 20,
 }) => {
@@ -478,6 +482,11 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                 className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
                 data-testid={`hide-track-${menuTrack.id}`}>
                 {menuTrack.hidden ? <><Eye size={16} strokeWidth={2} /> Afficher la chanson</> : <><EyeOff size={16} strokeWidth={2} /> Masquer la chanson</>}
+              </button>
+              <button type="button" onClick={() => { const id = menuTrack.id; setMenuTrackId(null); onOpenInterval?.(id); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                data-testid={`interval-track-${menuTrack.id}`}>
+                <Timer size={16} strokeWidth={2} /> Interval training{menuTrack.interval ? ' ✓' : ''}
               </button>
               <div className="my-1 h-px bg-white/10" />
               <button type="button" onClick={() => { setMenuTrackId(null); handleDeleteSingle(menuTrack); }}

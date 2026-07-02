@@ -469,6 +469,35 @@ export async function uploadHomeImage(file: File): Promise<{ url?: string; error
 }
 
 /**
+ * ⏱️ Upload d'un son d'interval training (voix enregistrée ou fichier) vers le bucket PUBLIC "audio-tracks"
+ * (préfixe interval-sounds/). Réutilise le bucket audio existant → aucune migration/bucket supplémentaire.
+ */
+export async function uploadIntervalSound(file: Blob, sessionId: string, label: string): Promise<{ url?: string; error?: string }> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) return { error: 'Supabase non configuré' };
+  const ct = (file.type || 'audio/webm').toLowerCase();
+  const ext = ct.includes('mp4') || ct.includes('m4a') ? 'm4a'
+    : ct.includes('ogg') ? 'ogg'
+    : ct.includes('mpeg') || ct.includes('mp3') ? 'mp3'
+    : ct.includes('wav') ? 'wav'
+    : 'webm';
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess.session?.access_token || supabaseAnonKey;
+    const safe = (label || 'sound').replace(/[^a-z0-9_-]/gi, '').slice(0, 24) || 'sound';
+    const path = `interval-sounds/${sessionId}/${Date.now()}_${safe}.${ext}`;
+    const res = await fetch(`${supabaseUrl}/storage/v1/object/${AUDIO_BUCKET}/${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, apikey: supabaseAnonKey, 'Content-Type': ct, 'x-upsert': 'true' },
+      body: file,
+    });
+    if (!res.ok) return { error: `Upload échoué (${res.status})` };
+    return { url: `${supabaseUrl}/storage/v1/object/public/${AUDIO_BUCKET}/${path}` };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Erreur upload son' };
+  }
+}
+
+/**
  * Upload d'une image de session vers le bucket "session-media" (auth utilisateur requise).
  */
 export async function uploadSessionImage(file: File, sessionId: string): Promise<{ url?: string; error?: string }> {

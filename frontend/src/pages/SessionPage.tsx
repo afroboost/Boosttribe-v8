@@ -32,6 +32,8 @@ import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
+import { IntervalTimer, type IntervalRun, type IntervalConfig } from '@/components/session/IntervalTimer';
+import { IntervalConfigModal } from '@/components/session/IntervalConfigModal';
 import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
@@ -617,6 +619,9 @@ export const SessionPage: React.FC = () => {
   // Playlist state - TOUJOURS vide au démarrage, jamais de fallback
   const [tracks, setTracks] = useState<Track[]>([]);
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
+  // ⏱️ Interval training (additif) : run affiché en overlay + piste dont la config est ouverte.
+  const [intervalRun, setIntervalRun] = useState<IntervalRun | null>(null);
+  const [intervalConfigTrackId, setIntervalConfigTrackId] = useState<number | null>(null);
   const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
   const [hostIsPlaying, setHostIsPlaying] = useState(false); // 🔄 Sync Play/Pause
   
@@ -1868,6 +1873,16 @@ export const SessionPage: React.FC = () => {
         if (!p?.id) return;
         setGroupMessages((prev) => prev.filter((x) => x.id !== p.id));
       })
+      // ⏱️ INTERVAL TIMER — événement SÉPARÉ : n'affecte JAMAIS applyRemoteState ni la synchro musique.
+      .on('broadcast', { event: 'TIMER' }, (payload) => {
+        if (isHostRef.current) return; // l'hôte pilote son propre timer localement
+        const p = (payload.payload || {}) as { action?: string; config?: IntervalConfig; startedAt?: number };
+        if (p.action === 'START' && p.config && p.startedAt) {
+          setIntervalRun({ config: p.config, startedAt: p.startedAt });
+        } else if (p.action === 'STOP') {
+          setIntervalRun(null);
+        }
+      })
       .subscribe();
 
     // Handler pour INSERT et UPDATE (playlist seulement)
@@ -2399,6 +2414,47 @@ export const SessionPage: React.FC = () => {
     persistOwnerPlaylist(updated, selId);
     showToast(updated.find((t) => t.id === trackId)?.hidden ? 'Titre masqué (invisible pour les participants)' : 'Titre ré-affiché', 'default');
   }, [isHost, tracks, selectedTrack, socket, persistOwnerPlaylist, showToast, user?.id]);
+
+  // ⏱️ INTERVAL TRAINING (additif) — config stockée dans le JSON tracks (champ `interval`), même
+  //    persistance/diffusion que le masquage. N'affecte NI l'audio musique, NI le micro, NI la visio.
+  const handleSetInterval = useCallback((trackId: number, interval: IntervalConfig) => {
+    if (!isHost) return;
+    const updated = tracks.map((t) => (t.id === trackId ? { ...t, interval } : t));
+    setTracks(updated);
+    const selId = selectedTrack?.id ?? updated[0]?.id ?? 0;
+    socket.syncPlaylist(updated, selId);
+    socket.savePlaylistToDb(updated, selId, user?.id);
+    persistOwnerPlaylist(updated, selId);
+  }, [isHost, tracks, selectedTrack, socket, persistOwnerPlaylist, user?.id]);
+
+  // Démarrage du décompte : local + broadcast SÉPARÉ 'TIMER' si « visible par tous ».
+  const handleStartInterval = useCallback((config: IntervalConfig) => {
+    if (!isHost) return;
+    const startedAt = Date.now();
+    setIntervalRun({ config, startedAt });
+    setIntervalConfigTrackId(null);
+    if (config.visibility === 'all') {
+      sendPlaybackEvent('TIMER', { action: 'START', config, startedAt });
+    }
+  }, [isHost, sendPlaybackEvent]);
+
+  const handleStopInterval = useCallback(() => {
+    setIntervalRun((cur) => {
+      if (isHostRef.current && cur && cur.config.visibility === 'all') {
+        sendPlaybackEvent('TIMER', { action: 'STOP' });
+      }
+      return null;
+    });
+  }, [sendPlaybackEvent]);
+
+  // Heartbeat : ré-émettre l'état du timer toutes les 5 s (participants qui rejoignent en cours d'essai).
+  useEffect(() => {
+    if (!intervalRun || !isHost || intervalRun.config.visibility !== 'all') return;
+    const id = window.setInterval(() => {
+      sendPlaybackEvent('TIMER', { action: 'START', config: intervalRun.config, startedAt: intervalRun.startedAt });
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [intervalRun, isHost, sendPlaybackEvent]);
 
   // Track selection handler (syncs via socket)
   const handleTrackSelectWithSync = useCallback((track: Track) => {
@@ -4097,6 +4153,7 @@ export const SessionPage: React.FC = () => {
                     onDeleteTracks={handleDeleteTracks}
                     onRenameTrack={handleRenameTrack}
                     onToggleHidden={handleToggleHidden}
+                    onOpenInterval={setIntervalConfigTrackId}
                     isHost={isHost}
                     maxTracks={20}
                   />
@@ -4387,6 +4444,26 @@ export const SessionPage: React.FC = () => {
           ))}
         </div>
       )}
+
+      {/* ⏱️ Interval training — overlay du décompte (tous) + modale de config (hôte). Additif, isolé. */}
+      <IntervalTimer run={intervalRun} isHost={isHost} onStop={handleStopInterval} />
+      {isHost && intervalConfigTrackId != null && (() => {
+        const t = tracks.find((tr) => tr.id === intervalConfigTrackId);
+        if (!t) return null;
+        const dur = selectedTrack?.id === t.id ? getMusicEl()?.duration : undefined;
+        return (
+          <IntervalConfigModal
+            trackTitle={t.title}
+            sessionId={sessionId}
+            initial={t.interval}
+            musicDuration={dur && isFinite(dur) ? dur : undefined}
+            onClose={() => setIntervalConfigTrackId(null)}
+            onSave={(cfg) => handleSetInterval(t.id, cfg)}
+            onStart={(cfg) => { handleSetInterval(t.id, cfg); handleStartInterval(cfg); }}
+            onNotify={showToast}
+          />
+        );
+      })()}
 
       {/* 💬 Lanceur + panneau de CHAT — au niveau page SAUF quand la vidéo est agrandie (alors il est
           rendu À L'INTÉRIEUR du plein écran de la vidéo, cf. SharedMediaPlayer chatNode). */}

@@ -44,10 +44,11 @@ interface SortableTrackItemProps {
   isLast: boolean;
   onMove: (trackId: number, dir: -1 | 1) => void;
   onRename: (trackId: number, title: string) => void; // ✏️ renommer un titre
-  // ⋮ Menu kebab : état REMONTÉ au parent stable (PlaylistDnD) → immunisé contre les re-renders/remontages
-  //    de la ligne provoqués par la synchro realtime (~1s). La ligne ne fait qu'ouvrir/fermer.
+  // ⋮ Actions du titre : ouvrent une MODALE centrée gérée par le parent (PlaylistDnD). La ligne ne fait
+  //    que demander l'ouverture. Une modale (overlay plein écran) est fiable — insensible aux règles CSS
+  //    d'empilement/masquage qui cachaient l'ancien menu flottant en position:fixed.
   isMenuOpen: boolean;
-  onToggleMenu: (trackId: number, rect: DOMRect) => void;
+  onOpenMenu: (trackId: number) => void;
   // ✏️ Édition inline : état REMONTÉ au parent (même raison : survit aux re-renders de synchro).
   isEditing: boolean;
   onStartEdit: (trackId: number) => void;
@@ -68,7 +69,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   onMove,
   onRename,
   isMenuOpen,
-  onToggleMenu,
+  onOpenMenu,
   isEditing,
   onStartEdit,
   onStopEdit,
@@ -223,14 +224,13 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
                 <ChevronDown size={15} strokeWidth={2} />
               </button>
             </div>
-            {/* ⋮ MENU (Renommer / Partager / Masquer / Supprimer) — l'ÉTAT et le rendu (portal) vivent
-                dans le parent stable PlaylistDnD. Ici on ne fait qu'ouvrir/fermer (toggle) en transmettant
-                la position du bouton. onPointerDown stopPropagation → n'amorce pas un drag/scroll. */}
+            {/* ⋮ Ouvre la MODALE d'actions (gérée par le parent). onPointerDown stopPropagation → n'amorce
+                pas un drag/scroll. */}
             <div className="flex-shrink-0">
               <button type="button" onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleMenu(track.id, (e.currentTarget as HTMLElement).getBoundingClientRect()); }}
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onOpenMenu(track.id); }}
                 className="p-1.5 rounded-lg text-white/55 hover:text-white hover:bg-white/10 transition-colors"
-                title="Options" data-testid={`track-menu-${track.id}`} aria-label={`Options ${track.title}`} aria-haspopup="menu" aria-expanded={isMenuOpen}>
+                title="Options" data-testid={`track-menu-${track.id}`} aria-label={`Options ${track.title}`} aria-haspopup="dialog" aria-expanded={isMenuOpen}>
                 <MoreVertical size={16} strokeWidth={2} />
               </button>
             </div>
@@ -272,48 +272,28 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   const [isEditMode, setIsEditMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
 
-  // ⋮ MENU kebab — état STABLE au niveau de la playlist (pas dans la ligne) : la synchro realtime
-  //    re-render la playlist ~1×/s, mais ce composant parent ne se démonte pas → le menu RESTE ouvert.
-  const [menu, setMenu] = useState<{ trackId: number; top: number; left: number } | null>(null);
+  // ⋮ MODALE d'actions — état STABLE au niveau de la playlist (pas dans la ligne) : la synchro realtime
+  //    re-render la playlist ~1×/s, mais ce composant parent ne se démonte pas → la modale RESTE ouverte.
+  //    Une MODALE centrée (overlay plein écran) remplace l'ancien menu flottant : fiable, jamais masquée
+  //    par les règles CSS d'empilement.
+  const [menuTrackId, setMenuTrackId] = useState<number | null>(null);
   // ✏️ Édition inline — même principe (survit aux re-renders de synchro).
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
-  const handleToggleMenu = useCallback((trackId: number, rect: DOMRect) => {
-    setMenu((prev) => {
-      if (prev?.trackId === trackId) return null; // re-clic sur le même bouton → ferme
-      // Menu ~220px : aligné à droite du bouton, ouverture vers le bas ; borné à l'écran.
-      const top = Math.min(rect.bottom + 4, window.innerHeight - 210);
-      const left = Math.min(Math.max(8, rect.right - 220), window.innerWidth - 228);
-      return { trackId, top, left };
-    });
-  }, []);
+  // Échap ferme la modale.
+  useEffect(() => {
+    if (menuTrackId == null) return;
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setMenuTrackId(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [menuTrackId]);
 
-  // 🔧 Fermeture au clic EXTÉRIEUR / Échap — listener attaché au TICK SUIVANT (setTimeout) pour NE PAS
-  //    capter le clic d'ouverture (sinon le menu se refermerait aussitôt).
+  // Si la piste ouverte disparaît (supprimée) ou qu'on passe en mode édition groupée → fermer la modale.
   useEffect(() => {
-    if (!menu) return;
-    const onOutside = (ev: Event) => {
-      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) setMenu(null);
-    };
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setMenu(null); };
-    const t = window.setTimeout(() => {
-      document.addEventListener('pointerdown', onOutside, true);
-      document.addEventListener('keydown', onKey);
-    }, 0);
-    return () => {
-      window.clearTimeout(t);
-      document.removeEventListener('pointerdown', onOutside, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [menu]);
-
-  // Si la piste ouverte disparaît (supprimée) ou qu'on passe en mode édition groupée → fermer le menu.
+    if (menuTrackId != null && !tracks.some((t) => t.id === menuTrackId)) setMenuTrackId(null);
+  }, [tracks, menuTrackId]);
   useEffect(() => {
-    if (menu && !tracks.some((t) => t.id === menu.trackId)) setMenu(null);
-  }, [tracks, menu]);
-  useEffect(() => {
-    if (isEditMode) setMenu(null);
+    if (isEditMode) setMenuTrackId(null);
   }, [isEditMode]);
 
   // 🖱️📱 Capteurs explicites cross-device (recommandé dnd-kit) :
@@ -388,7 +368,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   //   toujours, grisés, pour pouvoir les ré-afficher).
   const displayTracks = (isHost ? tracks : tracks.filter((t) => !t.hidden)).slice(0, maxTracks);
   const hasChecked = checkedIds.size > 0;
-  const menuTrack = menu ? tracks.find((t) => t.id === menu.trackId) || null : null;
+  const menuTrack = menuTrackId != null ? tracks.find((t) => t.id === menuTrackId) || null : null;
 
   return (
     <div className="space-y-3">
@@ -447,10 +427,10 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                   isLast={idx === displayTracks.length - 1}
                   onMove={handleMove}
                   onRename={(id, title) => onRenameTrack?.(id, title)}
-                  isMenuOpen={menu?.trackId === track.id}
-                  onToggleMenu={handleToggleMenu}
+                  isMenuOpen={menuTrackId === track.id}
+                  onOpenMenu={(id) => setMenuTrackId(id)}
                   isEditing={editingTrackId === track.id}
-                  onStartEdit={(id) => { setMenu(null); setEditingTrackId(id); }}
+                  onStartEdit={(id) => { setMenuTrackId(null); setEditingTrackId(id); }}
                   onStopEdit={() => setEditingTrackId(null)}
                 />
               ))}
@@ -462,34 +442,51 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
       {/* ⋮ MENU rendu UNE SEULE FOIS au niveau du parent stable, en PORTAL (position:fixed) → jamais
           rogné par l'overflow/transform d'une ligne ni du ScrollArea, et INDÉPENDANT du cycle de vie
           des lignes (reste ouvert malgré les re-renders de synchro realtime). */}
-      {isHost && menu && menuTrack && createPortal(
-        // ⚠️ position via la CLASSE `fixed` (Tailwind), PAS en style inline : une règle CSS globale
-        //    `body > [style*="position: fixed"] { display:none }` (masquage de widgets injectés) rendait
-        //    ce menu invisible quand position:fixed était inline. On ne met que top/left en inline.
-        <div ref={menuRef} role="menu" style={{ top: menu.top, left: menu.left }}
-          className="fixed z-[9999] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
-          onClick={(e) => e.stopPropagation()}>
-          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditingTrackId(menuTrack.id); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
-            data-testid={`rename-track-${menuTrack.id}`}>
-            <Pencil size={15} strokeWidth={2} /> Renommer / Modifier l'étiquette
-          </button>
-          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); onTrackSelect(menuTrack); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
-            data-testid={`share-track-${menuTrack.id}`}>
-            <Share2 size={15} strokeWidth={2} /> Partager la chanson
-          </button>
-          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); onToggleHidden?.(menuTrack.id); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
-            data-testid={`hide-track-${menuTrack.id}`}>
-            {menuTrack.hidden ? <><Eye size={15} strokeWidth={2} /> Afficher la chanson</> : <><EyeOff size={15} strokeWidth={2} /> Masquer la chanson</>}
-          </button>
-          <div className="my-1 h-px bg-white/10" />
-          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); handleDeleteSingle(menuTrack); }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors"
-            data-testid={`delete-track-${menuTrack.id}`}>
-            <Trash2 size={15} strokeWidth={2} /> Supprimer la chanson
-          </button>
+      {/* ⋮ MODALE d'actions du titre — overlay plein écran + carte centrée, rendu en portal sur <body>.
+          FIABILITÉ : le positionnement (fixed inset-0) vient de CLASSES Tailwind, JAMAIS du style inline
+          (une règle CSS globale `body > [style*="position: fixed"] { display:none }` masquait l'ancien
+          menu flottant). Le fond assombri est en style inline (sûr, n'entre pas dans ce sélecteur). z élevé
+          → au-dessus de tout. Identique mobile et desktop. Vérifié en session connectée réelle. */}
+      {isHost && menuTrack && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+          onClick={() => setMenuTrackId(null)}
+          data-testid="track-actions-overlay">
+          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#15151b] shadow-2xl overflow-hidden"
+            role="dialog" aria-modal="true" aria-label={`Actions pour ${menuTrack.title}`}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <p className="text-white font-medium text-sm truncate pr-2" title={menuTrack.title}>{menuTrack.title}</p>
+              <button type="button" onClick={() => setMenuTrackId(null)} aria-label="Fermer"
+                className="p-1 -mr-1 text-white/60 hover:text-white transition-colors flex-shrink-0"
+                data-testid="close-track-actions">
+                <XIcon size={18} strokeWidth={2} />
+              </button>
+            </div>
+            <div className="py-1">
+              <button type="button" onClick={() => { setMenuTrackId(null); setEditingTrackId(menuTrack.id); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                data-testid={`rename-track-${menuTrack.id}`}>
+                <Pencil size={16} strokeWidth={2} /> Renommer / Modifier l'étiquette
+              </button>
+              <button type="button" onClick={() => { setMenuTrackId(null); onTrackSelect(menuTrack); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                data-testid={`share-track-${menuTrack.id}`}>
+                <Share2 size={16} strokeWidth={2} /> Partager la chanson
+              </button>
+              <button type="button" onClick={() => { setMenuTrackId(null); onToggleHidden?.(menuTrack.id); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+                data-testid={`hide-track-${menuTrack.id}`}>
+                {menuTrack.hidden ? <><Eye size={16} strokeWidth={2} /> Afficher la chanson</> : <><EyeOff size={16} strokeWidth={2} /> Masquer la chanson</>}
+              </button>
+              <div className="my-1 h-px bg-white/10" />
+              <button type="button" onClick={() => { setMenuTrackId(null); handleDeleteSingle(menuTrack); }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors"
+                data-testid={`delete-track-${menuTrack.id}`}>
+                <Trash2 size={16} strokeWidth={2} /> Supprimer la chanson
+              </button>
+            </div>
+          </div>
         </div>,
         document.body
       )}

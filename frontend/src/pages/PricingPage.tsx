@@ -440,9 +440,6 @@ const PricingPage: React.FC = () => {
             </div>
           )}
 
-          {packs.length === 0 && (
-            <p className="text-center text-white/50 py-12">Aucun pack disponible pour le moment.</p>
-          )}
         </>
       )}
 

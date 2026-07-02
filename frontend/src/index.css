@@ -43,9 +43,11 @@ body > a[style*="fixed"][style*="bottom"] {
     clip-path: inset(100%) !important;
 }
 
-/* Hide ANY fixed element at bottom of page */
-body > *[style*="fixed"][style*="bottom"],
-body > *[style*="position: fixed"] {
+/* Masque le badge Emergent (élément fixed collé EN BAS injecté sur <body>).
+   ⚠️ On NE cible QUE le cas "fixed + bottom". Le sélecteur nu `body > *[style*="position: fixed"]`
+   a été retiré : il masquait par erreur TOUT élément fixed porté sur <body> (ex. modales/portals en
+   position:fixed inline) → piège de régression. */
+body > *[style*="fixed"][style*="bottom"] {
     display: none !important;
 }
 

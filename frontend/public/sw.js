@@ -11,15 +11,14 @@
  * ⚠️ Incrémenter CACHE_NAME à chaque changement de stratégie pour invalider l'ancien cache.
  */
 
-const CACHE_NAME = 'boosttribe-v9-auto-update';
-const CACHE_VERSION = '2.0.0';
+const CACHE_NAME = 'boosttribe-v10-auto-update';
+const CACHE_VERSION = '2.1.0';
 
 // Assets à pré-cacher lors de l'installation
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/favicon.ico',
   '/icon-192x192.png',
   '/icon-512x512.png',
   '/icon-512x512-maskable.png'
@@ -70,11 +69,13 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => {
-        // Pré-cacher les assets statiques
-        return cache.addAll(STATIC_ASSETS);
+        // Pré-cache RÉSILIENT : un asset manquant (404) ne DOIT PLUS faire échouer tout l'install.
+        // (cache.addAll est atomique → un seul 404 rejetait install → skipWaiting jamais appelé →
+        //  l'ancien SW continuait de servir un bundle périmé.) allSettled tolère les échecs unitaires.
+        return Promise.allSettled(STATIC_ASSETS.map((u) => cache.add(u)));
       })
       .then(() => {
-        // Force activation immédiate
+        // Force activation immédiate (même si un asset a échoué au pré-cache)
         return self.skipWaiting();
       })
   );

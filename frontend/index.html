@@ -215,7 +215,7 @@
                         window.location.reload();
                     });
 
-                    navigator.serviceWorker.register('/sw.js')
+                    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
                         .then(function (registration) {
                             console.log('🚀 Boosttribe PWA: Service Worker registered');
 

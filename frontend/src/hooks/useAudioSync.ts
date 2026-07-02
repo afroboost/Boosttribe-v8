@@ -281,7 +281,10 @@ export function useAudioSync(options: AudioSyncOptions = {}): UseAudioSyncReturn
     if (currentTrackSrcRef.current === src && audioRef.current.src) return;
 
     currentTrackSrcRef.current = src;
-    updateAudioState({ isLoading: true, error: null });
+    // 🎯 SYNC (hôte) : changer de piste PAUSE réellement l'élément (nouvelle source). On remet donc
+    //   isPlaying=false pour que le bouton reflète l'état réel → 1 SEUL clic relance (avant : isPlaying
+    //   restait true (périmé de la piste précédente) → le 1er clic faisait PAUSE, il en fallait 2).
+    updateAudioState({ isLoading: true, error: null, isPlaying: false });
     audioRef.current.src = src;
     audioRef.current.load();
   }, [updateAudioState]);

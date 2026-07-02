@@ -749,14 +749,22 @@ export const SessionPage: React.FC = () => {
       return; // ne pas exécuter play/seek sur l'ancienne piste ce tick
     }
     if (!audioEl) return;
-    // 2) play / pause / seek sur la MÊME piste — marqués « application distante ». Seuil de dérive
-    //    SYNC_DRIFT (0,75 s) : sous ce seuil on LAISSE JOUER (pas de hard-seek → fini le micro-décalage
-    //    qui provoquait des re-seek en boucle).
+    // 2) play / pause / seek sur la MÊME piste — marqués « application distante ». Re-synchro via
+    //    needsResync() (asymétrique) : on rattrape le RETARD (>0,75s) mais on TOLÈRE l'AVANCE due à la
+    //    latence (jusqu'à 1,75s) → JAMAIS de re-seek arrière en boucle vers une position figée.
     isApplyingRemoteRef.current = true;
     try {
       if (o.isPlaying != null) {
         if (o.isPlaying) {
-          if (typeof o.currentTime === 'number' && needsResync(audioEl.currentTime, o.currentTime)) audioEl.currentTime = o.currentTime;
+          if (typeof o.currentTime === 'number') {
+            const drift = audioEl.currentTime - o.currentTime; // >0 : participant en avance (latence normale)
+            if (needsResync(audioEl.currentTime, o.currentTime)) {
+              audioEl.currentTime = o.currentTime;
+              console.log('[SYNC] participant applique seek=', o.currentTime.toFixed(2), '(drift', drift.toFixed(2), 's)');
+            } else {
+              console.log('[SYNC] participant pas de seek (drift', drift.toFixed(2), 's ok)');
+            }
+          }
           if (audioEl.paused && audioEl.src) {
             audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
           }
@@ -766,8 +774,14 @@ export const SessionPage: React.FC = () => {
           if (lastRemotePlayingRef.current !== false) console.log('[SYNC] ⏸️ PAUSE | raison=', o.reason, '| source=', o.source);
         }
         lastRemotePlayingRef.current = o.isPlaying;
-      } else if (typeof o.currentTime === 'number' && needsResync(audioEl.currentTime, o.currentTime)) {
-        audioEl.currentTime = o.currentTime; // SEEK pur (sans changer play/pause)
+      } else if (typeof o.currentTime === 'number') {
+        const drift = audioEl.currentTime - o.currentTime;
+        if (needsResync(audioEl.currentTime, o.currentTime)) {
+          audioEl.currentTime = o.currentTime; // SEEK pur (sans changer play/pause)
+          console.log('[SYNC] participant applique seek=', o.currentTime.toFixed(2), '(drift', drift.toFixed(2), 's)');
+        } else {
+          console.log('[SYNC] participant pas de seek (drift', drift.toFixed(2), 's ok)');
+        }
       }
     } finally {
       setTimeout(() => { isApplyingRemoteRef.current = false; }, 150);
@@ -787,7 +801,9 @@ export const SessionPage: React.FC = () => {
       pendingRemoteRef.current = null;
       isApplyingRemoteRef.current = true;
       try {
-        if (p.currentTime > 0 && needsResync(audioEl.currentTime, p.currentTime)) audioEl.currentTime = p.currentTime;
+        const didSeek = p.currentTime > 0 && needsResync(audioEl.currentTime, p.currentTime);
+        if (didSeek) audioEl.currentTime = p.currentTime;
+        console.log('[SYNC] participant nouvelle piste prête → cale', didSeek ? 'seek=' + p.currentTime.toFixed(2) : 'position=0', '| play=', p.isPlaying);
         if (p.isPlaying) {
           if (audioEl.paused && audioEl.src) audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
         } else if (!audioEl.paused) {
@@ -2759,7 +2775,7 @@ export const SessionPage: React.FC = () => {
       
       if (playStateChanged) {
         lastPlayingState.current = state.isPlaying;
-        
+        console.log('[SYNC] hôte', state.isPlaying ? 'PLAY' : 'PAUSE', 'piste', selectedTrack?.id ?? null, 'position=', state.currentTime.toFixed(2));
         // Envoyer la commande appropriée
         supabase.channel(`playback:${sessionId}`).send({
           type: 'broadcast',

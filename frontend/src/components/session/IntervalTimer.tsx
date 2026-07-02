@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useImperativeHandle } from 'react';
 import { X, Pause } from 'lucide-react';
 
 // ===========================================================================
@@ -71,33 +71,87 @@ function computePhase(c: IntervalConfig, t: number): PhaseState {
 const PHASE_LABEL: Record<IntervalPhaseKey, string> = {
   prepare: 'Préparation', work: 'Effort', rest: 'Repos', done: 'Terminé',
 };
+// 🎨 Couleurs de la marque BoostTribe (violet → magenta).
+const AFRO_GRADIENT = 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)';
+// Phases aux couleurs du site, tout en restant distinguables : effort = magenta, repos = violet,
+// préparation = ambre (« prépare-toi »), terminé = magenta profond.
 const PHASE_COLOR: Record<IntervalPhaseKey, string> = {
-  prepare: '#F5A524', work: '#16C784', rest: '#3B82F6', done: '#D91CD2',
+  prepare: '#F5A524', work: '#FF2FB3', rest: '#8A2EFF', done: '#D91CD2',
 };
 
 interface Props {
   run: IntervalRun | null;
   isHost: boolean;
   onStop: () => void;
+  // 🔊 Mixeur optionnel (PC/Android) : si fourni, les sons du timer sont MÉLANGÉS à la musique/voix
+  //    et capturés dans l'enregistrement. iOS : non fourni (musique hors Web Audio) → sons via <audio>.
+  getMixerContext?: () => AudioContext | null;
+  getTimerOutput?: () => AudioNode | null;
 }
 
-export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
+export interface IntervalTimerHandle {
+  /** Débloque le moteur son du timer — à appeler sur le MÊME geste que « Activer le son » de la musique. */
+  unlock: () => void;
+}
+
+const IS_IOS = typeof navigator !== 'undefined' && (
+  /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && ((navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints || 0) > 1)
+);
+
+export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
+  { run, isHost, onStop, getMixerContext, getTimerOutput }, ref,
+) => {
   const [phase, setPhase] = useState<PhaseState | null>(null);
 
-  // 🔊 Moteur son ISOLÉ (jamais le mixeur musique/micro).
-  const ctxRef = useRef<AudioContext | null>(null);
+  // 🔊 Moteur son. PC/Android : réutilise le CONTEXTE DU MIXEUR + une sortie dédiée (getTimerOutput)
+  //    → mélangé avec musique/voix ET capturé dans l'enregistrement. iOS / pas de mixeur : contexte
+  //    propre + élément <audio> (la musique iOS reste hors Web Audio, intacte).
+  const ownCtxRef = useRef<AudioContext | null>(null);
+  const usingMixerRef = useRef(false);
   const voiceElRef = useRef<HTMLAudioElement | null>(null);
+  const voiceSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
   const soundStateRef = useRef<{ key: IntervalPhaseKey; round: number; lastCount: number | null }>({ key: 'done', round: -1, lastCount: null });
   const doneFiredRef = useRef(false);
 
-  const ensureCtx = useCallback((): AudioContext | null => {
-    if (!ctxRef.current) {
+  // Contexte courant : mixeur (PC/Android) si dispo, sinon contexte propre (fallback / iOS).
+  const getCtx = useCallback((): AudioContext | null => {
+    if (!IS_IOS && getMixerContext) {
+      const mc = getMixerContext();
+      if (mc) { usingMixerRef.current = true; return mc; }
+    }
+    usingMixerRef.current = false;
+    if (!ownCtxRef.current) {
       const Ctor = (window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
       if (!Ctor) return null;
-      try { ctxRef.current = new Ctor(); } catch { return null; }
+      try { ownCtxRef.current = new Ctor(); } catch { return null; }
     }
-    if (ctxRef.current.state === 'suspended') ctxRef.current.resume().catch(() => {});
-    return ctxRef.current;
+    return ownCtxRef.current;
+  }, [getMixerContext]);
+
+  const ensureCtx = useCallback((): AudioContext | null => {
+    const ctx = getCtx();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    return ctx;
+  }, [getCtx]);
+
+  // Nœud de sortie : sortie dédiée du mixeur (mélange + enregistrement) si dispo, sinon HP directs.
+  const outputNode = useCallback((ctx: AudioContext): AudioNode => {
+    if (usingMixerRef.current && getTimerOutput) {
+      const out = getTimerOutput();
+      if (out) return out;
+    }
+    return ctx.destination;
+  }, [getTimerOutput]);
+
+  const ensureVoiceEl = useCallback((): HTMLAudioElement => {
+    if (!voiceElRef.current) {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.setAttribute('playsinline', 'true');
+      voiceElRef.current = a;
+    }
+    return voiceElRef.current;
   }, []);
 
   const beep = useCallback((freq: number, durMs: number, gain = 0.25) => {
@@ -108,7 +162,7 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
       const g = ctx.createGain();
       o.type = 'sine';
       o.frequency.value = freq;
-      o.connect(g); g.connect(ctx.destination);
+      o.connect(g); g.connect(outputNode(ctx));
       const t = ctx.currentTime;
       g.gain.setValueAtTime(0.0001, t);
       g.gain.exponentialRampToValueAtTime(gain, t + 0.01);
@@ -116,18 +170,22 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
       o.start(t);
       o.stop(t + durMs / 1000 + 0.03);
     } catch { /* no-op */ }
-  }, [ensureCtx]);
+  }, [ensureCtx, outputNode]);
 
   const playUrl = useCallback((url?: string) => {
     if (!url) return;
     try {
-      if (!voiceElRef.current) { voiceElRef.current = new Audio(); voiceElRef.current.preload = 'auto'; }
-      const a = voiceElRef.current;
+      const a = ensureVoiceEl();
+      const ctx = ensureCtx(); // met à jour usingMixerRef (mixeur dispo ?) avant de décider du routage
+      // PC/Android : router l'élément <audio> via le mixeur (mélange + enregistrement), une seule fois.
+      if (!IS_IOS && usingMixerRef.current && getTimerOutput && ctx && !voiceSrcRef.current) {
+        try { voiceSrcRef.current = ctx.createMediaElementSource(a); voiceSrcRef.current.connect(outputNode(ctx)); } catch { /* déjà routé */ }
+      }
       a.src = url;
       a.currentTime = 0;
       a.play().catch(() => {});
     } catch { /* no-op */ }
-  }, []);
+  }, [ensureVoiceEl, ensureCtx, getTimerOutput, outputNode]);
 
   const onEnterPhase = useCallback((cfg: IntervalConfig, ph: PhaseState) => {
     if (cfg.soundMode === 'voice') {
@@ -148,13 +206,39 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
     else { beep(660, 500, 0.3); }
   }, [beep, playUrl]);
 
-  // Débloquer l'autoplay des sons du timer sur un geste (participants qui n'ont pas cliqué « Démarrer »).
+  // 🔓 Débloquer le moteur son : (a) API impérative appelée par « Activer le son » de la musique
+  //    (même geste hôte→participant), (b) 1er geste local, (c) retour au 1er plan → resume du contexte
+  //    PROPRE du timer UNIQUEMENT (jamais celui de la musique).
+  const unlock = useCallback(() => {
+    ensureCtx();
+    try {
+      const a = ensureVoiceEl();
+      a.muted = true;
+      const p = a.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; });
+      } else { a.muted = false; }
+    } catch { /* no-op */ }
+  }, [ensureCtx, ensureVoiceEl]);
+
+  useImperativeHandle(ref, () => ({ unlock }), [unlock]);
+
   useEffect(() => {
     if (!run) return;
-    const unlock = () => { ensureCtx(); };
-    window.addEventListener('pointerdown', unlock, { once: true });
-    return () => window.removeEventListener('pointerdown', unlock);
-  }, [run, ensureCtx]);
+    const onGesture = () => { unlock(); };
+    window.addEventListener('pointerdown', onGesture, { once: true });
+    const onVis = () => {
+      // resume UNIQUEMENT le contexte propre du timer (jamais celui de la musique/mixeur).
+      if (document.visibilityState === 'visible' && ownCtxRef.current?.state === 'suspended') {
+        ownCtxRef.current.resume().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pointerdown', onGesture);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [run, unlock]);
 
   // Boucle de tick : recalcule la phase depuis le timestamp partagé (pas de dérive).
   useEffect(() => {
@@ -178,12 +262,12 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
         }
         soundStateRef.current = { key: ph.key, round: ph.round, lastCount: null };
       }
-      // décompte 3-2-1 en fin de préparation / repos (bips uniquement)
-      if (run.config.soundMode === 'beep' && (ph.key === 'prepare' || ph.key === 'rest') && !ph.done) {
+      // décompte 3-2-1 en fin de préparation / repos / EFFORT (bips ; fin d'effort = bip plus grave).
+      if (run.config.soundMode === 'beep' && (ph.key === 'prepare' || ph.key === 'rest' || ph.key === 'work') && !ph.done) {
         const c = Math.ceil(ph.remaining);
         if (c <= 3 && c >= 1 && c !== soundStateRef.current.lastCount) {
           soundStateRef.current.lastCount = c;
-          beep(1000, 90, 0.2);
+          beep(ph.key === 'work' ? 700 : 1000, 90, 0.2);
         }
       }
     };
@@ -204,7 +288,7 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
     <div className="fixed inset-0 z-[130] pointer-events-none flex items-start justify-center pt-20 sm:pt-24">
       <div
         className="pointer-events-none select-none rounded-3xl px-8 py-6 text-center shadow-2xl backdrop-blur-md"
-        style={{ background: 'rgba(10,10,15,0.72)', border: `2px solid ${color}`, minWidth: 260 }}
+        style={{ background: 'rgba(10,10,15,0.72)', border: `2px solid ${color}`, minWidth: 260, boxShadow: `0 0 44px ${color}55, 0 10px 44px rgba(138,46,255,0.30)` }}
         data-testid="interval-timer-overlay"
       >
         <div className="text-sm font-semibold tracking-wide mb-1" style={{ color }}>
@@ -226,7 +310,8 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
           <button
             type="button"
             onClick={onStop}
-            className="pointer-events-auto mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white/90 text-sm font-medium bg-white/10 hover:bg-white/20 transition-colors"
+            className="pointer-events-auto mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold hover:opacity-90 transition-opacity"
+            style={{ background: AFRO_GRADIENT }}
             data-testid="interval-timer-stop"
           >
             {phase.key === 'done' ? <X size={16} /> : <Pause size={16} />}
@@ -236,6 +321,8 @@ export const IntervalTimer: React.FC<Props> = ({ run, isHost, onStop }) => {
       </div>
     </div>
   );
-};
+});
+
+IntervalTimer.displayName = 'IntervalTimer';
 
 export default IntervalTimer;

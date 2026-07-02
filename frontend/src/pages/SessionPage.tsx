@@ -32,7 +32,7 @@ import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
-import { IntervalTimer, type IntervalRun, type IntervalConfig } from '@/components/session/IntervalTimer';
+import { IntervalTimer, type IntervalRun, type IntervalConfig, type IntervalTimerHandle } from '@/components/session/IntervalTimer';
 import { IntervalConfigModal } from '@/components/session/IntervalConfigModal';
 import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
@@ -622,6 +622,7 @@ export const SessionPage: React.FC = () => {
   // ⏱️ Interval training (additif) : run affiché en overlay + piste dont la config est ouverte.
   const [intervalRun, setIntervalRun] = useState<IntervalRun | null>(null);
   const [intervalConfigTrackId, setIntervalConfigTrackId] = useState<number | null>(null);
+  const intervalTimerRef = useRef<IntervalTimerHandle | null>(null); // ⏱️ débloquer le son du timer au geste musique
   const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
   const [hostIsPlaying, setHostIsPlaying] = useState(false); // 🔄 Sync Play/Pause
   
@@ -712,6 +713,7 @@ export const SessionPage: React.FC = () => {
     getMusicStream,
     setSelfMonitor,
     getContext: getMixerContext,
+    getTimerOutput,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -2806,6 +2808,8 @@ export const SessionPage: React.FC = () => {
     try { unlockAudio(); } catch { /* ignore */ }
     const audioEl = getMusicEl();
     if (audioEl && audioEl.src) audioEl.play().catch((err) => console.warn('[PARTICIPANT] musique:', err));
+    // ⏱️ débloquer le moteur son du timer sur CE MÊME geste (participant qui n'a pas cliqué « Démarrer »).
+    try { intervalTimerRef.current?.unlock(); } catch { /* ignore */ }
   }, [unlockAudio, initializeMixer, getMusicEl]);
 
   // Ref to track if "Go Live" toast has been shown (prevent infinite loop)
@@ -4446,7 +4450,14 @@ export const SessionPage: React.FC = () => {
       )}
 
       {/* ⏱️ Interval training — overlay du décompte (tous) + modale de config (hôte). Additif, isolé. */}
-      <IntervalTimer run={intervalRun} isHost={isHost} onStop={handleStopInterval} />
+      <IntervalTimer
+        ref={intervalTimerRef}
+        run={intervalRun}
+        isHost={isHost}
+        onStop={handleStopInterval}
+        getMixerContext={getMixerContext}
+        getTimerOutput={getTimerOutput}
+      />
       {isHost && intervalConfigTrackId != null && (() => {
         const t = tracks.find((tr) => tr.id === intervalConfigTrackId);
         if (!t) return null;

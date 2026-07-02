@@ -178,9 +178,18 @@ function getApprovedRequestId(sessionId: string): number | null {
 // Une session est considérée active si son heartbeat date de moins de 90 s.
 const ACTIVE_SESSION_TTL_MS = 90 * 1000;
 
-// 🎯 SYNC : seuil de dérive de lecture (participant). Sous ce seuil on LAISSE JOUER (pas de hard-seek)
-//   → supprime les micro-décalages qui re-seekaient en boucle. Au-dessus → un seul repositionnement.
-const SYNC_DRIFT = 0.75;
+// 🎯 SYNC : re-synchro ASYMÉTRIQUE (participant). drift = position participant − position hôte reçue.
+//   - Le participant reçoit une position déjà « vieille » de la latence réseau → il est NORMALEMENT
+//     légèrement EN AVANCE. On TOLÈRE cette avance (jusqu'à SYNC_AHEAD) → JAMAIS de re-seek arrière en
+//     boucle (c'était la cause du « reboucle sur un segment » : un seuil symétrique serré renvoyait le
+//     participant en arrière à chaque heartbeat).
+//   - S'il est EN RETARD de plus de SYNC_BEHIND (buffering, onglet réveillé…), on rattrape vers l'avant.
+const SYNC_BEHIND = 0.75; // retard toléré avant rattrapage (réduit le décalage ressenti)
+const SYNC_AHEAD = 1.75;  // avance tolérée (latence normale) avant correction → anti-boucle
+function needsResync(participantTime: number, hostTime: number): boolean {
+  const drift = participantTime - hostTime; // >0 : participant en avance
+  return drift < -SYNC_BEHIND || drift > SYNC_AHEAD;
+}
 
 function activeSessionKey(userId: string): string {
   return `bt_active_session_${userId}`;
@@ -747,7 +756,7 @@ export const SessionPage: React.FC = () => {
     try {
       if (o.isPlaying != null) {
         if (o.isPlaying) {
-          if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > SYNC_DRIFT) audioEl.currentTime = o.currentTime;
+          if (typeof o.currentTime === 'number' && needsResync(audioEl.currentTime, o.currentTime)) audioEl.currentTime = o.currentTime;
           if (audioEl.paused && audioEl.src) {
             audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
           }
@@ -757,7 +766,7 @@ export const SessionPage: React.FC = () => {
           if (lastRemotePlayingRef.current !== false) console.log('[SYNC] ⏸️ PAUSE | raison=', o.reason, '| source=', o.source);
         }
         lastRemotePlayingRef.current = o.isPlaying;
-      } else if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > SYNC_DRIFT) {
+      } else if (typeof o.currentTime === 'number' && needsResync(audioEl.currentTime, o.currentTime)) {
         audioEl.currentTime = o.currentTime; // SEEK pur (sans changer play/pause)
       }
     } finally {
@@ -778,7 +787,7 @@ export const SessionPage: React.FC = () => {
       pendingRemoteRef.current = null;
       isApplyingRemoteRef.current = true;
       try {
-        if (p.currentTime > 0 && Math.abs(audioEl.currentTime - p.currentTime) > SYNC_DRIFT) audioEl.currentTime = p.currentTime;
+        if (p.currentTime > 0 && needsResync(audioEl.currentTime, p.currentTime)) audioEl.currentTime = p.currentTime;
         if (p.isPlaying) {
           if (audioEl.paused && audioEl.src) audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
         } else if (!audioEl.paused) {

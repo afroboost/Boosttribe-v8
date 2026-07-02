@@ -463,8 +463,11 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
           rogné par l'overflow/transform d'une ligne ni du ScrollArea, et INDÉPENDANT du cycle de vie
           des lignes (reste ouvert malgré les re-renders de synchro realtime). */}
       {isHost && menu && menuTrack && createPortal(
-        <div ref={menuRef} role="menu" style={{ position: 'fixed', top: menu.top, left: menu.left }}
-          className="z-[9999] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
+        // ⚠️ position via la CLASSE `fixed` (Tailwind), PAS en style inline : une règle CSS globale
+        //    `body > [style*="position: fixed"] { display:none }` (masquage de widgets injectés) rendait
+        //    ce menu invisible quand position:fixed était inline. On ne met que top/left en inline.
+        <div ref={menuRef} role="menu" style={{ top: menu.top, left: menu.left }}
+          className="fixed z-[9999] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
           onClick={(e) => e.stopPropagation()}>
           <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditingTrackId(menuTrack.id); }}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"

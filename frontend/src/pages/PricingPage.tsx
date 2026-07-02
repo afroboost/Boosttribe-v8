@@ -5,12 +5,12 @@ import { useAuth } from '@/context/AuthContext';
 import { Footer } from '@/components/layout/Footer';
 import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
-import { getCreditsConfig, buyCredits, getBilletterieConfig, type CreditsConfig, type CreditPack } from '@/lib/paymentApi';
+import { getCreditsConfig, buyCredits, getBilletterieConfig, createCheckout, type CreditsConfig, type CreditPack } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
-  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2, FileText,
+  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2, FileText, CreditCard,
 } from 'lucide-react';
 
 // 🎨 Couleurs Afroboost
@@ -49,16 +49,14 @@ const PricingPage: React.FC = () => {
   // 💎 Prix de l'abonnement coach (lu depuis la config admin, exposé publiquement).
   const [coachSubPrice, setCoachSubPrice] = useState<number>(99.99);
 
-  // 💎 Devenir coach : connecté → espace coach ; sinon → connexion puis retour vers /wallet.
-  const goCoach = useCallback(() => {
-    if (isAuthenticated) navigate('/wallet');
-    else navigate('/login', { state: { from: '/wallet' } });
-  }, [isAuthenticated, navigate]);
-
   const [termsChecked, setTermsChecked] = useState(hasAcceptedTerms);
   const [isAccepting, setIsAccepting] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
   const [pendingPack, setPendingPack] = useState<CreditPack | null>(null);
+  // 💳 Abonnements (offres Utilisateur/Coach) : intervalle + état de redirection + action en attente de consentement.
+  const [billing, setBilling] = useState<'month' | 'year'>('month');
+  const [subscribingPlan, setSubscribingPlan] = useState<'pro' | 'enterprise' | null>(null);
+  const [pendingPlan, setPendingPlan] = useState<'pro' | 'enterprise' | null>(null);
 
   // Charge la config publique (packs + offres + réglages) — tout est éditable en admin.
   const loadConfig = useCallback(async () => {
@@ -120,12 +118,49 @@ const PricingPage: React.FC = () => {
     await startCheckout(pack);
   };
 
+  // 💳 Abonnement (offre Utilisateur=pro / Coach=enterprise) → Checkout Stripe avec essai + carte.
+  const startSubscribe = useCallback(async (plan: 'pro' | 'enterprise') => {
+    setSubscribingPlan(plan);
+    try {
+      const { url, error } = await createCheckout(plan, billing);
+      if (url) window.location.href = url;
+      else showToast(error || 'Impossible de démarrer l\'abonnement', 'error');
+    } finally {
+      setSubscribingPlan(null);
+    }
+  }, [billing, showToast]);
+
+  const handleSubscribe = async (plan: 'pro' | 'enterprise') => {
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: '/pricing' } });
+      return;
+    }
+    if (!hasAcceptedTerms && !termsChecked) {
+      setPendingPlan(plan);
+      setShowTermsModal(true);
+      return;
+    }
+    if (termsChecked && !hasAcceptedTerms) await handleAcceptTerms();
+    await startSubscribe(plan);
+  };
+
   const packs = config?.packs || [];
   const participantPacks = packs.filter((p) => p.audience === 'participant');
   const creatorPacks = packs.filter((p) => p.audience === 'creator');
   const offers = config?.offers || {};
   const validityMonths = config?.credit_validity_months ?? 12;
   const services = config?.services_shown || [];
+
+  // 💳 Offres d'abonnement (essai illimité → débit auto). Source : /credits/config (config.plans).
+  const plansCfg = config?.plans;
+  const trialDays = config?.trial_days ?? 7;
+  const proCredits = config?.plan_pro_monthly_credits ?? 20;
+  const proVisible = plansCfg?.pro?.visible ?? true;
+  const entVisible = plansCfg?.enterprise?.visible ?? true;
+  const proLabel = plansCfg?.pro?.label || 'Utilisateur';
+  const entLabel = plansCfg?.enterprise?.label || 'Coach';
+  const proPrice = Number((billing === 'month' ? plansCfg?.pro?.price_monthly : plansCfg?.pro?.price_yearly) || (billing === 'month' ? '14.99' : '149.90'));
+  const entPrice = Number((billing === 'month' ? plansCfg?.enterprise?.price_monthly : plansCfg?.enterprise?.price_yearly) || (billing === 'month' ? '99.99' : '999.00'));
 
   // Offres actives à mettre en avant (toggle admin via pricing_settings.offers[key].enabled)
   const activeOffers = Object.entries(offers)
@@ -253,6 +288,108 @@ const PricingPage: React.FC = () => {
         </div>
       </div>
 
+      {/* 💳 ABONNEMENTS — 2 offres avec essai gratuit illimité → débit auto (crédits conservés en parallèle) */}
+      {(proVisible || entVisible) && (
+        <div className="max-w-5xl mx-auto mb-12">
+          <div className="text-center mb-6">
+            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold mb-3" style={{ background: AFRO.gradient, color: '#fff' }}>
+              <Gift size={14} /> {trialDays} jours d'essai gratuit
+            </span>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-2" style={{ fontFamily: theme.fonts.heading }}>
+              Passe en illimité
+            </h2>
+            <p className="text-white/60 text-sm max-w-2xl mx-auto">
+              Essai <span className="text-white font-semibold">{trialDays} jours illimité</span>, sans engagement.
+              Carte demandée aujourd'hui, <span className="text-white font-semibold">0 CHF</span> maintenant —
+              débit automatique à la fin de l'essai.
+            </p>
+            {/* Toggle mensuel / annuel */}
+            <div className="inline-flex items-center gap-1 p-1 rounded-full bg-white/5 border border-white/10 mt-4">
+              <button
+                onClick={() => setBilling('month')}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${billing === 'month' ? 'text-white' : 'text-white/50'}`}
+                style={billing === 'month' ? { background: AFRO.gradient } : {}}
+              >
+                Mensuel
+              </button>
+              <button
+                onClick={() => setBilling('year')}
+                className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${billing === 'year' ? 'text-white' : 'text-white/50'}`}
+                style={billing === 'year' ? { background: AFRO.gradient } : {}}
+              >
+                Annuel
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            {/* Offre Utilisateur (pro) */}
+            {proVisible && (
+              <Card className="relative border-white/10 bg-white/5 backdrop-blur-sm">
+                <CardHeader className="text-center pb-2">
+                  <div className="w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.1)' }}>
+                    <Coins className="w-6 h-6 text-white" />
+                  </div>
+                  <CardTitle className="text-white">{proLabel}</CardTitle>
+                  <CardDescription className="text-white/50">{proCredits} sessions / mois</CardDescription>
+                </CardHeader>
+                <CardContent className="text-center">
+                  <div className="mb-2">
+                    <span className="text-4xl font-bold text-white">{proPrice.toFixed(2)}</span>
+                    <span className="text-white/50 text-sm ml-1">CHF / {billing === 'month' ? 'mois' : 'an'}</span>
+                  </div>
+                  <p className="text-white/40 text-xs mb-6">{trialDays} jours gratuits, puis débit auto</p>
+                  <ul className="space-y-3 mb-6 text-left">
+                    <li className="flex items-center gap-2 text-white/70 text-sm"><Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />{proCredits} sessions/mois (rejoindre ou animer)</li>
+                    <li className="flex items-center gap-2 text-white/70 text-sm"><Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />Accès illimité pendant l'essai</li>
+                    <li className="flex items-center gap-2 text-white/70 text-sm"><Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />Sans engagement, résiliable à tout moment</li>
+                  </ul>
+                  <Button onClick={() => handleSubscribe('pro')} disabled={subscribingPlan === 'pro'} className="w-full text-white border-0" style={{ background: AFRO.gradient }}>
+                    {subscribingPlan === 'pro' ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>) : (<>Commencer l'essai gratuit</>)}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Offre Coach (enterprise) — illimité */}
+            {entVisible && (
+              <Card className="relative border-white/10 bg-white/5 backdrop-blur-sm ring-2 scale-[1.02]" style={{ borderColor: AFRO.magenta }}>
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                  <Badge className="px-3 py-1 text-white border-0" style={{ background: AFRO.gradient }}>Illimité</Badge>
+                </div>
+                <CardHeader className="text-center pb-2">
+                  <div className="w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center" style={{ background: AFRO.gradient }}>
+                    <Star className="w-6 h-6 text-white" />
+                  </div>
+                  <CardTitle className="text-white">{entLabel}</CardTitle>
+                  <CardDescription className="text-white/50">Sessions illimitées + 0% commission</CardDescription>
+                </CardHeader>
+                <CardContent className="text-center">
+                  <div className="mb-2">
+                    <span className="text-4xl font-bold text-white">{entPrice.toFixed(2)}</span>
+                    <span className="text-white/50 text-sm ml-1">CHF / {billing === 'month' ? 'mois' : 'an'}</span>
+                  </div>
+                  <p className="text-white/40 text-xs mb-6">{trialDays} jours gratuits, puis débit auto</p>
+                  <ul className="space-y-3 mb-6 text-left">
+                    <li className="flex items-center gap-2 text-white/70 text-sm"><Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />Crédits / sessions illimités</li>
+                    <li className="flex items-center gap-2 text-white/70 text-sm"><Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />0% de commission sur tes élèves</li>
+                    <li className="flex items-center gap-2 text-white/70 text-sm"><Check size={16} style={{ color: AFRO.pink }} className="flex-shrink-0" />Enregistrement + transcription IA offerts</li>
+                  </ul>
+                  <Button onClick={() => handleSubscribe('enterprise')} disabled={subscribingPlan === 'enterprise'} className="w-full text-white border-0" style={{ background: AFRO.gradient }}>
+                    {subscribingPlan === 'enterprise' ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>) : (<>Commencer l'essai gratuit</>)}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          <p className="text-center text-white/40 text-xs mt-4 max-w-2xl mx-auto flex items-center justify-center gap-1.5">
+            <CreditCard size={13} /> Débit auto à la fin de l'essai. Sans engagement, résiliable à tout moment.{' '}
+            <span className="text-white/60 font-semibold">Non remboursable.</span>
+          </p>
+        </div>
+      )}
+
       {/* Offres mises en avant (configurables en admin) */}
       {activeOffers.length > 0 && (
         <div className="max-w-5xl mx-auto mb-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -367,16 +504,18 @@ const PricingPage: React.FC = () => {
               <span className="text-white/60 text-base ml-1">CHF / mois</span>
             </div>
             <button
-              onClick={goCoach}
-              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold transition-transform hover:scale-[1.02] w-full sm:w-auto"
+              onClick={() => handleSubscribe('enterprise')}
+              disabled={subscribingPlan === 'enterprise'}
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold transition-transform hover:scale-[1.02] w-full sm:w-auto disabled:opacity-60"
               style={{ background: AFRO.gradient }}
               data-testid="become-coach-cta"
             >
-              <Star size={18} />
-              {isAuthenticated ? 'Devenir Coach — m\'abonner' : 'Devenir Coach'}
+              {subscribingPlan === 'enterprise' ? <Loader2 size={18} className="animate-spin" /> : <Star size={18} />}
+              {isAuthenticated ? 'Devenir Coach — essai 7 jours' : 'Devenir Coach'}
             </button>
             <p className="text-white/40 text-xs">
-              {isAuthenticated ? 'Gère ton abonnement et tes virements dans ton Espace Coach.' : 'Connexion requise — tu seras redirigé vers ton Espace Coach.'}
+              {trialDays} jours d'essai illimité, puis débit auto. Sans engagement, résiliable à tout moment.{' '}
+              <span className="text-white/60 font-semibold">Non remboursable.</span>
             </p>
           </div>
         </div>
@@ -396,9 +535,17 @@ const PricingPage: React.FC = () => {
               <p>BoostTribe fonctionne avec des crédits : 1 crédit donne accès à un live (rejoindre ou animer). Les crédits achetés sont valables {validityMonths} mois.</p>
               <h3 className="text-white font-semibold">3. Paiements</h3>
               <p>Les achats de crédits sont des paiements uniques traités de manière sécurisée via Stripe, en CHF.</p>
-              <h3 className="text-white font-semibold">4. Propriété intellectuelle</h3>
+              <h3 className="text-white font-semibold">4. Abonnements &amp; essai gratuit</h3>
+              <p>
+                L'essai gratuit donne un accès illimité pendant {trialDays} jours. Une carte est demandée dès l'inscription :
+                aucun montant n'est débité aujourd'hui, puis le plan choisi est{' '}
+                <span className="text-white font-semibold">débité automatiquement à la fin de l'essai</span>, et à chaque échéance.
+                L'abonnement est <span className="text-white font-semibold">résiliable à tout moment</span> (arrêt des renouvellements)
+                mais <span className="text-white font-semibold">non remboursable</span> : aucune période déjà payée n'est remboursée.
+              </p>
+              <h3 className="text-white font-semibold">5. Propriété intellectuelle</h3>
               <p>Les utilisateurs sont responsables des contenus qu'ils partagent et doivent disposer des droits nécessaires.</p>
-              <h3 className="text-white font-semibold">5. Protection des données</h3>
+              <h3 className="text-white font-semibold">6. Protection des données</h3>
               <p>Nous collectons uniquement les données nécessaires au fonctionnement du service.</p>
             </div>
             {/* Barre d'actions responsive : case sur sa propre ligne, boutons empilés en mobile
@@ -411,7 +558,7 @@ const PricingPage: React.FC = () => {
                   onChange={(e) => setTermsChecked(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-white/30 bg-transparent flex-shrink-0"
                 />
-                <span className="text-white/80 text-sm">J'ai lu et j'accepte les CGU</span>
+                <span className="text-white/80 text-sm">J'ai lu et j'accepte les CGU, le débit automatique à la fin de l'essai et le caractère non remboursable de l'abonnement.</span>
               </label>
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
                 <Button variant="outline" onClick={() => setShowTermsModal(false)} className="w-full sm:w-auto border-white/20 text-white/70">
@@ -423,6 +570,7 @@ const PricingPage: React.FC = () => {
                     await handleAcceptTerms();
                     setShowTermsModal(false);
                     if (pendingPack) { const p = pendingPack; setPendingPack(null); await startCheckout(p); }
+                    else if (pendingPlan) { const pl = pendingPlan; setPendingPlan(null); await startSubscribe(pl); }
                   }}
                   disabled={!termsChecked || isAccepting}
                   className="w-full sm:w-auto text-white border-0"

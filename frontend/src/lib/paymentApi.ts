@@ -119,6 +119,13 @@ export interface CreditsConfig {
   credit_validity_months: number;
   signup_free_credits: number;
   currency: string;
+  trial_days: number;
+  auto_charge_enabled: boolean;
+  plan_pro_monthly_credits: number;
+  plans: {
+    pro: { label: string; visible: boolean; price_monthly: string | null; price_yearly: string | null };
+    enterprise: { label: string; visible: boolean; price_monthly: string | null; price_yearly: string | null };
+  };
 }
 
 /** Config publique (page tarifaire + assistant) : packs actifs + offres + réglages. */
@@ -256,6 +263,7 @@ export interface PricingSettings {
   cost_record_transcribe: number;
   credit_validity_months: number;
   signup_free_credits: number;
+  plan_pro_monthly_credits: number;
 }
 
 export async function getCreditAdminConfig(): Promise<{ packs: CreditPack[]; settings: PricingSettings | null; error?: string }> {

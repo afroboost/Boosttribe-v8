@@ -103,6 +103,8 @@ interface SiteSettings {
   plan_pro_price_yearly: string;
   plan_enterprise_price_monthly: string;
   plan_enterprise_price_yearly: string;
+  plan_pro_label: string;
+  plan_enterprise_label: string;
   // Language
   default_language: string;
   updated_at?: string;
@@ -136,6 +138,8 @@ const DEFAULT_SETTINGS: SiteSettings = {
   plan_pro_price_yearly: '99.99',
   plan_enterprise_price_monthly: '29.99',
   plan_enterprise_price_yearly: '299.99',
+  plan_pro_label: 'Utilisateur',
+  plan_enterprise_label: 'Coach',
   // Language
   default_language: 'fr',
 };
@@ -533,6 +537,7 @@ const Dashboard: React.FC = () => {
         credit_validity_months: pricingSettings.credit_validity_months,
         signup_free_credits: pricingSettings.signup_free_credits,
         cost_record_transcribe: pricingSettings.cost_record_transcribe,
+        plan_pro_monthly_credits: pricingSettings.plan_pro_monthly_credits,
         services_shown: pricingSettings.services_shown,
         offers: pricingSettings.offers,
       });
@@ -833,6 +838,14 @@ const Dashboard: React.FC = () => {
         stripe_pro_yearly: settings.stripe_pro_yearly || '',
         stripe_enterprise_monthly: settings.stripe_enterprise_monthly || '',
         stripe_enterprise_yearly: settings.stripe_enterprise_yearly || '',
+        plan_pro_visible: settings.plan_pro_visible,
+        plan_enterprise_visible: settings.plan_enterprise_visible,
+        plan_pro_price_monthly: settings.plan_pro_price_monthly,
+        plan_pro_price_yearly: settings.plan_pro_price_yearly,
+        plan_enterprise_price_monthly: settings.plan_enterprise_price_monthly,
+        plan_enterprise_price_yearly: settings.plan_enterprise_price_yearly,
+        plan_pro_label: settings.plan_pro_label,
+        plan_enterprise_label: settings.plan_enterprise_label,
       };
 
       const { error } = await supabase.from('site_settings').upsert(dataToSave);
@@ -852,7 +865,7 @@ const Dashboard: React.FC = () => {
       for (const plan of ['pro', 'enterprise'] as const) {
         const monthly = num(plan === 'pro' ? settings.plan_pro_price_monthly : settings.plan_enterprise_price_monthly);
         const annual = num(plan === 'pro' ? settings.plan_pro_price_yearly : settings.plan_enterprise_price_yearly);
-        const res = await syncPlan({ plan, monthly_price: monthly, annual_price: annual, currency: 'eur' });
+        const res = await syncPlan({ plan, monthly_price: monthly, annual_price: annual, currency: 'chf' });
         stripeMessages.push(res.ok ? `Stripe ${plan} : OK` : `Stripe ${plan} : ${res.error}`);
       }
 
@@ -1553,7 +1566,7 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Zap size={20} className="text-yellow-400" />
-                    <h3 className="text-white font-semibold">Plan Pro</h3>
+                    <h3 className="text-white font-semibold">{settings.plan_pro_label || 'Utilisateur'}</h3>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <span className="text-white/70 text-sm">Visible</span>
@@ -1579,9 +1592,18 @@ const Dashboard: React.FC = () => {
                   </label>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="text-white/70">Libellé affiché</Label>
+                    <Input
+                      value={settings.plan_pro_label}
+                      onChange={(e) => handleUpdate('plan_pro_label', e.target.value)}
+                      placeholder="Utilisateur"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                    />
+                  </div>
                   <div className="space-y-2">
                     <Label className="text-white/70">Prix Mensuel (€)</Label>
-                    <Input 
+                    <Input
                       value={settings.plan_pro_price_monthly}
                       onChange={(e) => handleUpdate('plan_pro_price_monthly', e.target.value)}
                       placeholder="9.99"
@@ -1592,7 +1614,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="space-y-2">
                     <Label className="text-white/70">Prix Annuel (€)</Label>
-                    <Input 
+                    <Input
                       value={settings.plan_pro_price_yearly}
                       onChange={(e) => handleUpdate('plan_pro_price_yearly', e.target.value)}
                       placeholder="99.99"
@@ -1609,7 +1631,7 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <Building2 size={20} className="text-purple-400" />
-                    <h3 className="text-white font-semibold">Plan Enterprise</h3>
+                    <h3 className="text-white font-semibold">{settings.plan_enterprise_label || 'Coach'}</h3>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
                     <span className="text-white/70 text-sm">Visible</span>
@@ -1635,9 +1657,18 @@ const Dashboard: React.FC = () => {
                   </label>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2 md:col-span-2">
+                    <Label className="text-white/70">Libellé affiché</Label>
+                    <Input
+                      value={settings.plan_enterprise_label}
+                      onChange={(e) => handleUpdate('plan_enterprise_label', e.target.value)}
+                      placeholder="Coach"
+                      className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
+                    />
+                  </div>
                   <div className="space-y-2">
                     <Label className="text-white/70">Prix Mensuel (€)</Label>
-                    <Input 
+                    <Input
                       value={settings.plan_enterprise_price_monthly}
                       onChange={(e) => handleUpdate('plan_enterprise_price_monthly', e.target.value)}
                       placeholder="29.99"
@@ -1648,7 +1679,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="space-y-2">
                     <Label className="text-white/70">Prix Annuel (€)</Label>
-                    <Input 
+                    <Input
                       value={settings.plan_enterprise_price_yearly}
                       onChange={(e) => handleUpdate('plan_enterprise_price_yearly', e.target.value)}
                       placeholder="299.99"
@@ -1697,8 +1728,8 @@ const Dashboard: React.FC = () => {
                   <h3 className="text-white font-semibold">Essai gratuit → paiement automatique</h3>
                 </div>
                 <p className="text-white/50 text-sm mb-4">
-                  Prépare le flux d'abonnement récurrent Stripe : durée de l'essai puis prélèvement
-                  automatique à la fin de la période d'essai.
+                  Essai gratuit ILLIMITÉ pendant la durée choisie, puis débit automatique de l'offre
+                  sélectionnée (Utilisateur ou Coach). La carte bancaire est demandée dès l'inscription.
                 </p>
                 {trialLoading ? (
                   <p className="text-white/40 text-sm py-2">Chargement…</p>
@@ -1734,8 +1765,8 @@ const Dashboard: React.FC = () => {
                       </div>
                     </div>
                     <p className="text-white/40 text-xs">
-                      Ce réglage prépare le flux d'abonnement récurrent Stripe : à la fin de l'essai,
-                      le client est prélevé automatiquement si l'option est activée.
+                      Essai gratuit ILLIMITÉ de {trialConfig.trial_days} jours, puis débit automatique
+                      de l'offre choisie (carte demandée à l'inscription) si l'option est activée.
                     </p>
                     <Button
                       onClick={handleSaveTrialConfig}
@@ -1803,6 +1834,13 @@ const Dashboard: React.FC = () => {
                         <Input type="number" min={0} value={pricingSettings.cost_record_transcribe}
                           onChange={(e) => setPricingSettings({ ...pricingSettings, cost_record_transcribe: parseInt(e.target.value) || 0 })}
                           className="bg-white/5 border-white/10 text-white" />
+                      </div>
+                      <div>
+                        <Label className="text-white/70">Crédits/mois offre Utilisateur</Label>
+                        <Input type="number" min={0} value={pricingSettings?.plan_pro_monthly_credits ?? 20}
+                          onChange={(e) => setPricingSettings(s => s ? { ...s, plan_pro_monthly_credits: Number(e.target.value) } : s)}
+                          className="bg-white/5 border-white/10 text-white" />
+                        <p className="text-white/40 text-xs mt-1">Crédités à chaque facture payée (× 12 si annuel)</p>
                       </div>
                     </div>
 

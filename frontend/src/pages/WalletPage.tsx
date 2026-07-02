@@ -5,7 +5,7 @@ import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
 import {
-  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, subscribeCoach, getRecordings, deleteRecording,
+  getCoachWallet, saveCoachBank, requestPayout, getCoachPlan, createCheckout, getRecordings, deleteRecording,
   type CoachWallet, type CoachPlan, type RecordingRow,
 } from '@/lib/paymentApi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -90,10 +90,12 @@ const WalletPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 💎 Abonnement Coach UNIFIÉ : même parcours que la page tarifs → Checkout Stripe avec essai 7 j + carte.
+  //    (L'ancien /coach/subscribe reste en repli backend, mais n'est plus utilisé côté UI.)
   const handleSubscribe = useCallback(async () => {
     setSubscribing(true);
     try {
-      const { url, error } = await subscribeCoach();
+      const { url, error } = await createCheckout('enterprise', 'month');
       if (url) { window.location.href = url; return; }
       showToast(error || 'Abonnement impossible', 'error');
     } finally {

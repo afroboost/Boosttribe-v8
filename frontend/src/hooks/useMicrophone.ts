@@ -18,6 +18,7 @@ export interface UseMicrophoneOptions {
   echoCancellation?: boolean;
   noiseSuppression?: boolean;
   onAudioLevel?: (level: number) => void;
+  initialVolume?: number; // 🔊 makeup par défaut (ex. 150 = 1.5× pour un participant audible sans réglage)
 }
 
 export interface UseMicrophoneReturn {
@@ -30,6 +31,7 @@ export interface UseMicrophoneReturn {
   refreshDevices: () => Promise<MediaDeviceInfo[]>;
   retryCapture: () => Promise<boolean>;
   audioStream: MediaStream | null;
+  broadcastStream: MediaStream | null; // 🔊 flux SORTANT gainé (source→gain→limiteur→dest) à diffuser
   audioContext: AudioContext | null;
   gainNode: GainNode | null;
 }
@@ -58,10 +60,14 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
     echoCancellation = false,
     noiseSuppression = false,
     onAudioLevel,
+    initialVolume,
   } = options;
 
-  const [state, setState] = useState<MicrophoneState>(initialState);
-  
+  const [state, setState] = useState<MicrophoneState>(() => ({
+    ...initialState,
+    volume: typeof initialVolume === 'number' ? Math.max(0, Math.min(250, initialVolume)) : initialState.volume,
+  }));
+
   // Refs for audio processing
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -69,6 +75,10 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
   const gainNodeRef = useRef<GainNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  // 🔊 PARTICIPANT — chaîne de DIFFUSION gainée (séparée du vumètre) : source → gain → limiteur → destination.
+  const limiterRef = useRef<DynamicsCompressorNode | null>(null);
+  const broadcastDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const broadcastStreamRef = useRef<MediaStream | null>(null);
 
   // Update state helper
   const updateState = useCallback((updates: Partial<MicrophoneState>) => {
@@ -201,9 +211,31 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       analyser.smoothingTimeConstant = 0.8;
       analyserRef.current = analyser;
 
-      // Connect nodes: source -> gain -> analyser
+      // Connect nodes: source -> gain -> analyser (vumètre)
       source.connect(gainNode);
       gainNode.connect(analyser);
+
+      // 🔊 DIFFUSION GAINÉE (participant) : source -> gain -> limiteur anti-clip -> destination.
+      //    On EXPOSE ce flux (broadcastStream) pour la diffusion WebRTC → voix RÉELLEMENT boostée
+      //    (le flux brut streamRef reste pour tracks/mute/stop). Fallback si indispo : broadcastStream=null
+      //    → SessionPage diffuse le flux brut comme avant.
+      try {
+        const limiter = audioContext.createDynamicsCompressor();
+        limiter.threshold.setValueAtTime(-3, audioContext.currentTime);
+        limiter.knee.setValueAtTime(0, audioContext.currentTime);
+        limiter.ratio.setValueAtTime(20, audioContext.currentTime);
+        limiter.attack.setValueAtTime(0.003, audioContext.currentTime);
+        limiter.release.setValueAtTime(0.25, audioContext.currentTime);
+        const dest = audioContext.createMediaStreamDestination();
+        gainNode.connect(limiter);
+        limiter.connect(dest);
+        limiterRef.current = limiter;
+        broadcastDestRef.current = dest;
+        broadcastStreamRef.current = dest.stream;
+      } catch (e) {
+        console.warn('[MIC] flux gainé indisponible → diffusion brute:', e);
+        broadcastStreamRef.current = null;
+      }
 
       // 6. Start VU meter animation
       calculateAudioLevel();
@@ -309,6 +341,9 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
     analyserRef.current = null;
     gainNodeRef.current = null;
     sourceRef.current = null;
+    limiterRef.current = null;
+    broadcastDestRef.current = null;
+    broadcastStreamRef.current = null;
 
     updateState({
       isCapturing: false,
@@ -332,8 +367,8 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
 
   // Set volume
   const setVolume = useCallback((volume: number) => {
-    const clampedVolume = Math.max(0, Math.min(100, volume));
-    
+    const clampedVolume = Math.max(0, Math.min(250, volume)); // 🔊 jusqu'à 250% (gain = volume/100)
+
     if (gainNodeRef.current) {
       gainNodeRef.current.gain.value = clampedVolume / 100;
     }
@@ -383,6 +418,7 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
     refreshDevices,
     retryCapture,
     audioStream: streamRef.current,
+    broadcastStream: broadcastStreamRef.current,
     audioContext: audioContextRef.current,
     gainNode: gainNodeRef.current,
   };

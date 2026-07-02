@@ -231,6 +231,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                       icon={<Mic size={14} className="sm:w-4 sm:h-4" />}
                       value={participantMicVolume}
                       onChange={onParticipantMicVolumeChange}
+                      maxValue={2.5}
                       color="#10B981"
                       compact={true}
                     />

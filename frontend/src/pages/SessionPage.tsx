@@ -1008,15 +1008,18 @@ export const SessionPage: React.FC = () => {
     echoCancellation: false,
     noiseSuppression: false,
     autoGainControl: false,
+    initialVolume: 150, // 🔊 makeup par défaut → participant audible même sans toucher au curseur
   });
 
   // Quand le micro participant est prêt et qu'il a pris la parole → envoyer à l'hôte
   useEffect(() => {
     if (isHost || !isTalking) return;
-    if (participantMic.state.isCapturing && participantMic.audioStream) {
-      talkToHost(participantMic.audioStream);
+    // 🔊 diffuser le flux GAINÉ (broadcastStream) si dispo, sinon le flux brut (fallback).
+    const outStream = participantMic.broadcastStream || participantMic.audioStream;
+    if (participantMic.state.isCapturing && outStream) {
+      talkToHost(outStream);
     }
-  }, [isHost, isTalking, participantMic.state.isCapturing, participantMic.audioStream, talkToHost]);
+  }, [isHost, isTalking, participantMic.state.isCapturing, participantMic.audioStream, participantMic.broadcastStream, talkToHost]);
 
   const handleToggleTalk = useCallback(async () => {
     if (isTalking) {

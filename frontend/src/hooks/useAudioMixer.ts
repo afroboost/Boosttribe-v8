@@ -40,6 +40,9 @@ export interface UseAudioMixerReturn {
   // 🔴 Flux de la musique (son RÉEL post-gain) pour l'enregistrement — jamais muet contrairement à
   //    element.captureStream() (l'élément est routé via createMediaElementSource).
   getMusicStream: () => MediaStream | null;
+  // ⏱️ Sortie ADDITIVE pour les sons du timer interval (bips/voix) → master (HP) + recTap (enregistrement).
+  //    Crée un GainNode dédié à la volée ; n'affecte AUCUN canal existant (musique/tribu/voix/micro).
+  getTimerOutput: () => GainNode | null;
   // 🔊 « M'entendre » : l'hôte s'écoute (monitoring local, anti-larsen, on/off).
   setSelfMonitor: (on: boolean) => void;
 }
@@ -99,6 +102,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   //    Capte la MUSIQUE post-gain (élément routé via createMediaElementSource → captureStream() serait MUET).
   //    La voix de l'hôte et des participants est captée séparément par le recorder (clone micro + flux tribu).
   const musicTapDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  // ⏱️ Sortie ADDITIVE pour le timer interval (créée à la demande via getTimerOutput).
+  const timerOutputRef = useRef<GainNode | null>(null);
   // 🔊 MONITORING « M'entendre » (#6) : micSource → monitorGain(0 par défaut) → master.
   //    Activable par l'hôte pour s'écouter (anti-larsen : gain 0 tant que désactivé).
   const monitorGainRef = useRef<GainNode | null>(null);
@@ -478,6 +483,25 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   }, []);
 
   /**
+   * ⏱️ Sortie ADDITIVE pour les sons du timer interval (bips oscillateur + voix/fichier via
+   * MediaElementSource). Crée un GainNode dédié branché sur master (HP) ET recTap (enregistrement),
+   * SANS toucher aux canaux musique/tribu/voix/micro. Renvoie null si le contexte n'existe pas encore.
+   */
+  const getTimerOutput = useCallback((): GainNode | null => {
+    const ctx = audioContextRef.current;
+    if (!ctx) return null;
+    // (re)créer si absent ou rattaché à un ancien contexte fermé
+    if (!timerOutputRef.current || timerOutputRef.current.context !== ctx) {
+      const g = ctx.createGain();
+      g.gain.value = 1.0;
+      if (masterGainRef.current) g.connect(masterGainRef.current);       // → HP (avec la musique/voix)
+      if (musicTapDestRef.current) g.connect(musicTapDestRef.current);   // → enregistrement
+      timerOutputRef.current = g;
+    }
+    return timerOutputRef.current;
+  }, []);
+
+  /**
    * 🔊 « M'entendre » (#6) : active/désactive le monitoring local de la voix de l'hôte.
    * micSource → monitorGain → master. Gain 0 = silencieux (anti-larsen). Geste utilisateur requis.
    */
@@ -521,6 +545,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     disconnectMic,
     getContext,
     getMusicStream,
+    getTimerOutput,
     setSelfMonitor,
   };
 }

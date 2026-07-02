@@ -178,6 +178,10 @@ function getApprovedRequestId(sessionId: string): number | null {
 // Une session est considérée active si son heartbeat date de moins de 90 s.
 const ACTIVE_SESSION_TTL_MS = 90 * 1000;
 
+// 🎯 SYNC : seuil de dérive de lecture (participant). Sous ce seuil on LAISSE JOUER (pas de hard-seek)
+//   → supprime les micro-décalages qui re-seekaient en boucle. Au-dessus → un seul repositionnement.
+const SYNC_DRIFT = 0.75;
+
 function activeSessionKey(userId: string): string {
   return `bt_active_session_${userId}`;
 }
@@ -629,6 +633,9 @@ export const SessionPage: React.FC = () => {
   const loadedTrackIdRef = useRef<number | null>(null);  // piste RÉELLEMENT chargée (≠ selectedTrack qui peut lag)
   const isApplyingRemoteRef = useRef(false);             // vrai pendant qu'on applique l'état hôte → ignore la ré-entrance
   const lastRemotePlayingRef = useRef<boolean | null>(null); // dernier isPlaying appliqué (log seulement sur changement)
+  // 🎯 Position/état distant à appliquer QUAND la nouvelle piste est prête (anti-boucle au changement de piste)
+  const pendingRemoteRef = useRef<{ currentTime: number; isPlaying: boolean } | null>(null);
+  const lastSeekSecRef = useRef<number>(-1);             // dernière seconde de resynchro SEEK émise (anti-rafale ~60/s)
 
   // 🔇 Décisions de mute de l'hôte (persistées localement, indépendantes de la presence)
   const [mutedUserIds, setMutedUserIds] = useState<Set<string>>(new Set());
@@ -712,25 +719,35 @@ export const SessionPage: React.FC = () => {
   //   on marque isApplyingRemote pour ignorer les events <audio> auto-générés ; aucun rechargement inutile.
   const applyRemoteState = useCallback((o: { trackId?: number | null; currentTime?: number; isPlaying?: boolean; reason: string; source: string }) => {
     if (isHostRef.current) return; // l'hôte n'applique JAMAIS d'état distant
-    // 1) Changement de piste UNIQUEMENT sur vraie différence (anti-rechargement / anti-boucle).
+    const audioEl = getMusicEl();
+    // 1) CHANGEMENT DE PISTE — anti-boucle : on NE touche PAS l'élément encore chargé avec l'ANCIENNE
+    //    piste (avant : on le seek à 0 + play, puis reload → glissement/boucle sur un segment). On
+    //    mémorise la position/état à appliquer UNE SEULE FOIS quand la nouvelle piste est prête (effet
+    //    'canplay' plus bas), et on sort immédiatement.
     if (o.trackId != null && o.trackId !== loadedTrackIdRef.current) {
       const target = tracksRef.current.find((t) => t.id === o.trackId);
       if (target) {
         console.log('[SYNC] piste', loadedTrackIdRef.current, '→', o.trackId, '| raison=', o.reason, '| source=', o.source);
         loadedTrackIdRef.current = o.trackId;
+        pendingRemoteRef.current = {
+          currentTime: typeof o.currentTime === 'number' ? o.currentTime : 0,
+          isPlaying: o.isPlaying !== false, // défaut : jouer la nouvelle piste
+        };
         isApplyingRemoteRef.current = true;
-        setSelectedTrack(target); // le rechargement réel = effet src d'AudioPlayer (garde « même source » en place)
+        setSelectedTrack(target); // rechargement réel = effet src d'AudioPlayer → 'canplay' applique le pending
         setTimeout(() => { isApplyingRemoteRef.current = false; }, 400);
       }
+      return; // ne pas exécuter play/seek sur l'ancienne piste ce tick
     }
-    const audioEl = getMusicEl();
     if (!audioEl) return;
-    // 2) play / pause / seek — marqués « application distante ».
+    // 2) play / pause / seek sur la MÊME piste — marqués « application distante ». Seuil de dérive
+    //    SYNC_DRIFT (0,75 s) : sous ce seuil on LAISSE JOUER (pas de hard-seek → fini le micro-décalage
+    //    qui provoquait des re-seek en boucle).
     isApplyingRemoteRef.current = true;
     try {
       if (o.isPlaying != null) {
         if (o.isPlaying) {
-          if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > 1.5) audioEl.currentTime = o.currentTime;
+          if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > SYNC_DRIFT) audioEl.currentTime = o.currentTime;
           if (audioEl.paused && audioEl.src) {
             audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
           }
@@ -740,13 +757,48 @@ export const SessionPage: React.FC = () => {
           if (lastRemotePlayingRef.current !== false) console.log('[SYNC] ⏸️ PAUSE | raison=', o.reason, '| source=', o.source);
         }
         lastRemotePlayingRef.current = o.isPlaying;
-      } else if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > 1) {
+      } else if (typeof o.currentTime === 'number' && Math.abs(audioEl.currentTime - o.currentTime) > SYNC_DRIFT) {
         audioEl.currentTime = o.currentTime; // SEEK pur (sans changer play/pause)
       }
     } finally {
       setTimeout(() => { isApplyingRemoteRef.current = false; }, 150);
     }
   }, [getMusicEl]);
+
+  // 🎯 Participant — applique la position/état distant MÉMORISÉ dès que la NOUVELLE piste peut jouer
+  //   (anti-boucle : la nouvelle chanson démarre proprement, positionnée une seule fois, au lieu de
+  //   rejouer un segment de l'ancienne piste). Le listener vit sur l'élément musique stable.
+  useEffect(() => {
+    if (isHost) return;
+    const audioEl = getMusicEl();
+    if (!audioEl) return;
+    const applyPending = () => {
+      const p = pendingRemoteRef.current;
+      if (!p) return;
+      pendingRemoteRef.current = null;
+      isApplyingRemoteRef.current = true;
+      try {
+        if (p.currentTime > 0 && Math.abs(audioEl.currentTime - p.currentTime) > SYNC_DRIFT) audioEl.currentTime = p.currentTime;
+        if (p.isPlaying) {
+          if (audioEl.paused && audioEl.src) audioEl.play().catch((err) => { console.warn('[SYNC] play bloqué (autoplay)', err); if (!audioUnlockedRef.current) setAudioBlocked(true); });
+        } else if (!audioEl.paused) {
+          audioEl.pause();
+        }
+        lastRemotePlayingRef.current = p.isPlaying;
+      } finally {
+        setTimeout(() => { isApplyingRemoteRef.current = false; }, 150);
+      }
+    };
+    audioEl.addEventListener('canplay', applyPending);
+    audioEl.addEventListener('loadeddata', applyPending);
+    // Anti-course : si la piste est DÉJÀ prête (canplay déjà passé avant l'abonnement), appliquer tout de suite.
+    if (audioEl.readyState >= 2 && pendingRemoteRef.current) applyPending();
+    return () => {
+      audioEl.removeEventListener('canplay', applyPending);
+      audioEl.removeEventListener('loadeddata', applyPending);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, getMusicEl, selectedTrack?.id]);
 
   // 🎚️ "Volume Musique" : 0..100% via element.volume, 100..200% via le GainNode (boost réel).
   // Pas de double atténuation : le gain reste ≥ 1.0 (cf. useAudioMixer.setMusicVolume).
@@ -2710,17 +2762,23 @@ export const SessionPage: React.FC = () => {
           },
         });
       }
-      // Sync position toutes les 5 secondes pendant la lecture
-      else if (state.isPlaying && Math.floor(state.currentTime) % 5 === 0) {
-        supabase.channel(`playback:${sessionId}`).send({
-          type: 'broadcast',
-          event: 'HOST_COMMAND',
-          payload: {
-            action: 'SEEK',
-            currentTime: state.currentTime,
-            trackId: selectedTrack?.id || null,
-          },
-        });
+      // Resynchro de position toutes les 5 s pendant la lecture — UNE SEULE émission par frontière de
+      //   5 s (avant : la condition floor%5===0 était vraie ~60×/s → rafale de SEEK → gigue/re-seek chez
+      //   le participant). On mémorise la dernière seconde émise.
+      else if (state.isPlaying) {
+        const sec = Math.floor(state.currentTime);
+        if (sec % 5 === 0 && sec !== lastSeekSecRef.current) {
+          lastSeekSecRef.current = sec;
+          supabase.channel(`playback:${sessionId}`).send({
+            type: 'broadcast',
+            event: 'HOST_COMMAND',
+            payload: {
+              action: 'SEEK',
+              currentTime: state.currentTime,
+              trackId: selectedTrack?.id || null,
+            },
+          });
+        }
       }
     }
   }, [isHost, sessionId, selectedTrack?.id]);

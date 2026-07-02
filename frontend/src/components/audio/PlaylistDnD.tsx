@@ -44,7 +44,14 @@ interface SortableTrackItemProps {
   isLast: boolean;
   onMove: (trackId: number, dir: -1 | 1) => void;
   onRename: (trackId: number, title: string) => void; // ✏️ renommer un titre
-  onToggleHidden: (trackId: number) => void;          // 🙈 masquer / ré-afficher
+  // ⋮ Menu kebab : état REMONTÉ au parent stable (PlaylistDnD) → immunisé contre les re-renders/remontages
+  //    de la ligne provoqués par la synchro realtime (~1s). La ligne ne fait qu'ouvrir/fermer.
+  isMenuOpen: boolean;
+  onToggleMenu: (trackId: number, rect: DOMRect) => void;
+  // ✏️ Édition inline : état REMONTÉ au parent (même raison : survit aux re-renders de synchro).
+  isEditing: boolean;
+  onStartEdit: (trackId: number) => void;
+  onStopEdit: () => void;
 }
 
 const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
@@ -60,48 +67,20 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
   isLast,
   onMove,
   onRename,
-  onToggleHidden,
+  isMenuOpen,
+  onToggleMenu,
+  isEditing,
+  onStartEdit,
+  onStopEdit,
 }) => {
-  // ✏️ Édition inline du nom (local à la ligne).
-  const [editing, setEditing] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false); // ⋮ menu kebab (Renommer / Supprimer)
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const openMenu = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    if (menuOpen) { setMenuOpen(false); return; }
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // Menu ~220px : aligné à droite du bouton, ouverture vers le bas ; borné à l'écran.
-    const top = Math.min(r.bottom + 4, window.innerHeight - 210);
-    const left = Math.min(Math.max(8, r.right - 220), window.innerWidth - 228);
-    setMenuPos({ top, left });
-    setMenuOpen(true);
-  };
-  // 🔧 Fermeture au clic EXTÉRIEUR — listener attaché au TICK SUIVANT (setTimeout) pour NE PAS capter
-  //    le clic d'ouverture (sinon le menu se refermait aussitôt → « ouvert avant = false » à chaque clic).
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onOutside = (ev: Event) => {
-      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setMenuOpen(false); };
-    const t = window.setTimeout(() => {
-      document.addEventListener('pointerdown', onOutside, true);
-      document.addEventListener('keydown', onKey);
-    }, 0);
-    return () => {
-      window.clearTimeout(t);
-      document.removeEventListener('pointerdown', onOutside, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [menuOpen]);
   const [draft, setDraft] = useState(track.title);
-  const startRename = () => { setDraft(track.title); setEditing(true); };
+  // À chaque entrée en édition, (ré)initialise le brouillon depuis le titre courant.
+  useEffect(() => { if (isEditing) setDraft(track.title); }, [isEditing, track.title]);
+  const startRename = () => onStartEdit(track.id);
   const saveRename = () => {
     const t = draft.trim();
     if (t && t !== track.title) onRename(track.id, t);
-    setEditing(false);
+    onStopEdit();
   };
 
   // 🔒 PARTICIPANT: Désactive complètement le drag-and-drop
@@ -112,7 +91,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: track.id, disabled: !isHost || isEditMode || editing });
+  } = useSortable({ id: track.id, disabled: !isHost || isEditMode || isEditing });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -141,8 +120,8 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
           onClick={() => onToggleCheck(track.id)}
           className={`
             w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all
-            ${isChecked 
-              ? 'bg-[#8A2EFF] border-[#8A2EFF]' 
+            ${isChecked
+              ? 'bg-[#8A2EFF] border-[#8A2EFF]'
               : 'border-white/30 hover:border-white/50'
             }
           `}
@@ -169,8 +148,8 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
 
       {/* Track Info - Cliquable pour l'hôte seulement. min-w-0 → le nom se tronque, jamais les boutons. */}
       <div
-        onClick={() => { if (!editing && isHost && !isEditMode) onSelect(track); }}
-        className={`flex-1 min-w-0 flex items-center gap-2 sm:gap-3 text-left ${isHost && !isEditMode && !editing ? 'cursor-pointer' : 'cursor-default'}`}
+        onClick={() => { if (!isEditing && isHost && !isEditMode) onSelect(track); }}
+        className={`flex-1 min-w-0 flex items-center gap-2 sm:gap-3 text-left ${isHost && !isEditMode && !isEditing ? 'cursor-pointer' : 'cursor-default'}`}
       >
         {/* Cover Art */}
         <div
@@ -186,13 +165,13 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
 
         {/* Title & Artist (édition inline du nom) */}
         <div className="flex-1 min-w-0">
-          {editing ? (
+          {isEditing ? (
             <input
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value.slice(0, 120))}
               onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); else if (e.key === 'Escape') setEditing(false); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); else if (e.key === 'Escape') onStopEdit(); }}
               onBlur={saveRename}
               className="w-full bg-black/40 border border-[#8A2EFF]/60 rounded px-2 py-1 text-white text-sm focus:outline-none"
               data-testid={`rename-input-${track.id}`}
@@ -215,7 +194,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
       {/* 🎛️ ACTIONS HÔTE — groupe unique aligné à DROITE, flex-shrink-0 → toujours visibles/cliquables
           même avec un nom long (le nom se tronque dans le conteneur min-w-0 ci-dessus). */}
       {isHost && !isEditMode && (
-        editing ? (
+        isEditing ? (
           <div className="flex items-center gap-1 flex-shrink-0">
             {/* onMouseDown preventDefault → garde le focus sur l'input (évite que onBlur déclenche avant le clic). */}
             <button onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); saveRename(); }}
@@ -223,7 +202,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
               title="Valider" data-testid={`rename-save-${track.id}`}>
               <Check size={16} strokeWidth={2.5} />
             </button>
-            <button onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); setEditing(false); }}
+            <button onMouseDown={(e) => e.preventDefault()} onClick={(e) => { e.stopPropagation(); onStopEdit(); }}
               className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
               title="Annuler">
               <XIcon size={16} strokeWidth={2.5} />
@@ -244,51 +223,23 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
                 <ChevronDown size={15} strokeWidth={2} />
               </button>
             </div>
-            {/* ⋮ MENU (Renommer / Supprimer) — remplace les boutons directs crayon + corbeille.
-                Ouvert en PORTAL position:fixed → jamais rogné par l'overflow de la ligne ni du ScrollArea. */}
+            {/* ⋮ MENU (Renommer / Partager / Masquer / Supprimer) — l'ÉTAT et le rendu (portal) vivent
+                dans le parent stable PlaylistDnD. Ici on ne fait qu'ouvrir/fermer (toggle) en transmettant
+                la position du bouton. onPointerDown stopPropagation → n'amorce pas un drag/scroll. */}
             <div className="flex-shrink-0">
-              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={openMenu}
+              <button type="button" onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); onToggleMenu(track.id, (e.currentTarget as HTMLElement).getBoundingClientRect()); }}
                 className="p-1.5 rounded-lg text-white/55 hover:text-white hover:bg-white/10 transition-colors"
-                title="Options" data-testid={`track-menu-${track.id}`} aria-label={`Options ${track.title}`} aria-haspopup="menu" aria-expanded={menuOpen}>
+                title="Options" data-testid={`track-menu-${track.id}`} aria-label={`Options ${track.title}`} aria-haspopup="menu" aria-expanded={isMenuOpen}>
                 <MoreVertical size={16} strokeWidth={2} />
               </button>
-              {menuOpen && menuPos && createPortal(
-                <>
-                  <div ref={menuRef} role="menu" style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
-                    className="z-[9999] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
-                    onClick={(e) => e.stopPropagation()}>
-                    <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); startRename(); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
-                      data-testid={`rename-track-${track.id}`}>
-                      <Pencil size={15} strokeWidth={2} /> Renommer / Modifier l'étiquette
-                    </button>
-                    <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onSelect(track); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
-                      data-testid={`share-track-${track.id}`}>
-                      <Share2 size={15} strokeWidth={2} /> Partager la chanson
-                    </button>
-                    <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onToggleHidden(track.id); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
-                      data-testid={`hide-track-${track.id}`}>
-                      {track.hidden ? <><Eye size={15} strokeWidth={2} /> Afficher la chanson</> : <><EyeOff size={15} strokeWidth={2} /> Masquer la chanson</>}
-                    </button>
-                    <div className="my-1 h-px bg-white/10" />
-                    <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDeleteSingle(track); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors"
-                      data-testid={`delete-track-${track.id}`}>
-                      <Trash2 size={15} strokeWidth={2} /> Supprimer la chanson
-                    </button>
-                  </div>
-                </>,
-                document.body
-              )}
             </div>
           </div>
         )
       )}
 
       {/* Indicateur de sélection (desktop seulement, ne prend pas de place sur mobile) */}
-      {isSelected && !isEditMode && !editing && (
+      {isSelected && !isEditMode && !isEditing && (
         <div className="hidden sm:block w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#8A2EFF' }} />
       )}
     </div>
@@ -320,6 +271,50 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
 }) => {
   const [isEditMode, setIsEditMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
+
+  // ⋮ MENU kebab — état STABLE au niveau de la playlist (pas dans la ligne) : la synchro realtime
+  //    re-render la playlist ~1×/s, mais ce composant parent ne se démonte pas → le menu RESTE ouvert.
+  const [menu, setMenu] = useState<{ trackId: number; top: number; left: number } | null>(null);
+  // ✏️ Édition inline — même principe (survit aux re-renders de synchro).
+  const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  const handleToggleMenu = useCallback((trackId: number, rect: DOMRect) => {
+    setMenu((prev) => {
+      if (prev?.trackId === trackId) return null; // re-clic sur le même bouton → ferme
+      // Menu ~220px : aligné à droite du bouton, ouverture vers le bas ; borné à l'écran.
+      const top = Math.min(rect.bottom + 4, window.innerHeight - 210);
+      const left = Math.min(Math.max(8, rect.right - 220), window.innerWidth - 228);
+      return { trackId, top, left };
+    });
+  }, []);
+
+  // 🔧 Fermeture au clic EXTÉRIEUR / Échap — listener attaché au TICK SUIVANT (setTimeout) pour NE PAS
+  //    capter le clic d'ouverture (sinon le menu se refermerait aussitôt).
+  useEffect(() => {
+    if (!menu) return;
+    const onOutside = (ev: Event) => {
+      if (menuRef.current && !menuRef.current.contains(ev.target as Node)) setMenu(null);
+    };
+    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setMenu(null); };
+    const t = window.setTimeout(() => {
+      document.addEventListener('pointerdown', onOutside, true);
+      document.addEventListener('keydown', onKey);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener('pointerdown', onOutside, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
+  // Si la piste ouverte disparaît (supprimée) ou qu'on passe en mode édition groupée → fermer le menu.
+  useEffect(() => {
+    if (menu && !tracks.some((t) => t.id === menu.trackId)) setMenu(null);
+  }, [tracks, menu]);
+  useEffect(() => {
+    if (isEditMode) setMenu(null);
+  }, [isEditMode]);
 
   // 🖱️📱 Capteurs explicites cross-device (recommandé dnd-kit) :
   //  - Souris (desktop) : drag dès 8px de déplacement.
@@ -393,6 +388,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
   //   toujours, grisés, pour pouvoir les ré-afficher).
   const displayTracks = (isHost ? tracks : tracks.filter((t) => !t.hidden)).slice(0, maxTracks);
   const hasChecked = checkedIds.size > 0;
+  const menuTrack = menu ? tracks.find((t) => t.id === menu.trackId) || null : null;
 
   return (
     <div className="space-y-3">
@@ -419,7 +415,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
             <span className="ml-2 text-purple-400">(lecture seule)</span>
           )}
         </p>
-        
+
         {/* ⋮ Le bouton « Modifier » a été retiré : toutes les actions (renommer/étiquette, masquer,
             partager, supprimer) sont désormais dans le menu 3 points de chaque ligne. */}
       </div>
@@ -451,13 +447,49 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
                   isLast={idx === displayTracks.length - 1}
                   onMove={handleMove}
                   onRename={(id, title) => onRenameTrack?.(id, title)}
-                  onToggleHidden={(id) => onToggleHidden?.(id)}
+                  isMenuOpen={menu?.trackId === track.id}
+                  onToggleMenu={handleToggleMenu}
+                  isEditing={editingTrackId === track.id}
+                  onStartEdit={(id) => { setMenu(null); setEditingTrackId(id); }}
+                  onStopEdit={() => setEditingTrackId(null)}
                 />
               ))}
             </div>
           </SortableContext>
         </DndContext>
       </ScrollArea>
+
+      {/* ⋮ MENU rendu UNE SEULE FOIS au niveau du parent stable, en PORTAL (position:fixed) → jamais
+          rogné par l'overflow/transform d'une ligne ni du ScrollArea, et INDÉPENDANT du cycle de vie
+          des lignes (reste ouvert malgré les re-renders de synchro realtime). */}
+      {isHost && menu && menuTrack && createPortal(
+        <div ref={menuRef} role="menu" style={{ position: 'fixed', top: menu.top, left: menu.left }}
+          className="z-[9999] min-w-[210px] rounded-xl border border-white/10 bg-[#15151b] shadow-2xl py-1 overflow-hidden"
+          onClick={(e) => e.stopPropagation()}>
+          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); setEditingTrackId(menuTrack.id); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+            data-testid={`rename-track-${menuTrack.id}`}>
+            <Pencil size={15} strokeWidth={2} /> Renommer / Modifier l'étiquette
+          </button>
+          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); onTrackSelect(menuTrack); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+            data-testid={`share-track-${menuTrack.id}`}>
+            <Share2 size={15} strokeWidth={2} /> Partager la chanson
+          </button>
+          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); onToggleHidden?.(menuTrack.id); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-white/85 hover:bg-white/10 text-left transition-colors"
+            data-testid={`hide-track-${menuTrack.id}`}>
+            {menuTrack.hidden ? <><Eye size={15} strokeWidth={2} /> Afficher la chanson</> : <><EyeOff size={15} strokeWidth={2} /> Masquer la chanson</>}
+          </button>
+          <div className="my-1 h-px bg-white/10" />
+          <button type="button" role="menuitem" onClick={(e) => { e.stopPropagation(); setMenu(null); handleDeleteSingle(menuTrack); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 text-left transition-colors"
+            data-testid={`delete-track-${menuTrack.id}`}>
+            <Trash2 size={15} strokeWidth={2} /> Supprimer la chanson
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

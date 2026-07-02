@@ -331,7 +331,11 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                onClick={(e) => e.stopPropagation()}>
             {embedSrc ? (
               <iframe src={embedSrc} title="Aperçu de la vidéo" className="w-full h-full"
-                allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                // 🔒 ZÉRO REDIRECTION (aligné sur PromoPage) : pas d'allow-top-navigation ni allow-popups
+                //   → l'embed tiers (Instagram/TikTok/FB) ne peut plus quitter la page au clic play.
+                sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"
+                referrerPolicy="no-referrer-when-downgrade" allowFullScreen />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-center text-white/70 text-sm p-4">
                 Lecture intégrée indisponible pour ce lien.

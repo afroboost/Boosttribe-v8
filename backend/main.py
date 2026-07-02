@@ -1317,10 +1317,10 @@ async def sync_plan(body: SyncPlanBody, authorization: Optional[str] = Header(de
 
 @app.post("/stripe/create-checkout")
 async def create_checkout(body: CheckoutBody, authorization: Optional[str] = Header(default=None)):
-    # ❌ Abonnements désactivés : BoostTribe fonctionne désormais 100% en CRÉDITS.
-    #    Utiliser POST /stripe/buy-credits (paiement unique CHF) pour acheter un pack.
-    raise HTTPException(status_code=410, detail="Les abonnements ne sont plus proposés. Achetez des crédits.")
-    if not await apply_stripe_key():  # noqa: B018  (code conservé pour rollback éventuel)
+    # 💳 Abonnement public : offres « Utilisateur » (pro) / « Coach » (enterprise), mensuel/annuel.
+    #    ESSAI GRATUIT ILLIMITÉ (config admin) → carte demandée + débit auto à la fin de l'essai.
+    #    ⚠️ Le système de CRÉDITS reste en parallèle (packs à l'unité toujours achetables).
+    if not await apply_stripe_key():
         raise HTTPException(status_code=500, detail="Stripe non configuré")
     if body.plan not in PLANS:
         raise HTTPException(status_code=400, detail="Plan inconnu")
@@ -1335,7 +1335,18 @@ async def create_checkout(body: CheckoutBody, authorization: Optional[str] = Hea
     settings = await get_site_settings()
     price_id = settings.get(PRICE_KEY[(body.plan, cms_interval)])
     if not price_id:
-        raise HTTPException(status_code=400, detail="Plan non configuré (price manquant)")
+        raise HTTPException(status_code=400, detail="Plan non configuré (price manquant) — sync admin requise")
+
+    # Essai gratuit illimité (table pricing_settings) → carte obligatoire + débit auto à J+N.
+    pricing = await get_pricing_settings()
+    trial_days = int(pricing.get("trial_days") or 0)
+    auto_charge = bool(pricing.get("auto_charge_enabled"))
+
+    sub_meta = {"user_id": user_id, "plan": body.plan, "interval": cms_interval}
+    sub_data: Dict[str, Any] = {"metadata": sub_meta}
+    # N'accorder l'essai qu'à un NOUVEL abonné (jamais deux essais pour le même profil).
+    if auto_charge and trial_days > 0 and not await _has_prior_subscription(user_id):
+        sub_data["trial_period_days"] = trial_days
 
     session = stripe.checkout.Session.create(
         mode="subscription",
@@ -1344,8 +1355,9 @@ async def create_checkout(body: CheckoutBody, authorization: Optional[str] = Hea
         cancel_url=f"{FRONTEND_URL}/pricing?canceled=1",
         client_reference_id=user_id,
         customer_email=email,
-        metadata={"user_id": user_id, "plan": body.plan},
-        subscription_data={"metadata": {"user_id": user_id, "plan": body.plan}},
+        payment_method_collection="always",  # carte obligatoire même pendant l'essai
+        metadata=sub_meta,
+        subscription_data=sub_data,
     )
     return {"url": session.url}
 
@@ -1493,6 +1505,7 @@ class PricingSettingsBody(BaseModel):
     cost_record_transcribe: Optional[int] = None
     credit_validity_months: Optional[int] = None
     signup_free_credits: Optional[int] = None
+    plan_pro_monthly_credits: Optional[int] = None
 
 
 async def get_pricing_settings() -> Dict[str, Any]:
@@ -1570,8 +1583,9 @@ async def _spend_credits(user_id: str, amount: int, reason: str, ref: str, note:
 
 @app.get("/credits/config")
 async def credits_config():
-    """Config publique pour la page tarifaire + l'assistant : packs actifs + réglages/offres."""
+    """Config publique pour la page tarifaire + l'assistant : packs actifs + réglages/offres + 2 offres d'abo."""
     settings = await get_pricing_settings()
+    site = await get_site_settings()
     packs = await get_credit_packs(active_only=True)
     return {
         "packs": packs,
@@ -1582,6 +1596,25 @@ async def credits_config():
         "cost_record_transcribe": settings.get("cost_record_transcribe", 4),
         "credit_validity_months": settings.get("credit_validity_months", 12),
         "signup_free_credits": settings.get("signup_free_credits", 1),
+        # 💳 Offres d'abonnement (essai illimité → payant). Prix/labels dans site_settings ;
+        #    durée d'essai + crédits mensuels de l'offre Utilisateur dans pricing_settings.
+        "trial_days": int(settings.get("trial_days") or 0),
+        "auto_charge_enabled": bool(settings.get("auto_charge_enabled")),
+        "plan_pro_monthly_credits": int(settings.get("plan_pro_monthly_credits") or 20),
+        "plans": {
+            "pro": {
+                "label": site.get("plan_pro_label") or "Utilisateur",
+                "visible": bool(site.get("plan_pro_visible", True)),
+                "price_monthly": site.get("plan_pro_price_monthly"),
+                "price_yearly": site.get("plan_pro_price_yearly"),
+            },
+            "enterprise": {
+                "label": site.get("plan_enterprise_label") or "Coach",
+                "visible": bool(site.get("plan_enterprise_visible", True)),
+                "price_monthly": site.get("plan_enterprise_price_monthly"),
+                "price_yearly": site.get("plan_enterprise_price_yearly"),
+            },
+        },
         "currency": "CHF",
     }
 
@@ -1834,7 +1867,7 @@ async def admin_delete_pack(pack_id: int, authorization: Optional[str] = Header(
 async def admin_save_pricing_settings(body: PricingSettingsBody, authorization: Optional[str] = Header(default=None)):
     await require_admin(authorization)
     patch: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
-    for k in ("services_shown", "offers", "cost_join", "cost_host", "cost_record_transcribe", "credit_validity_months", "signup_free_credits"):
+    for k in ("services_shown", "offers", "cost_join", "cost_host", "cost_record_transcribe", "credit_validity_months", "signup_free_credits", "plan_pro_monthly_credits"):
         v = getattr(body, k)
         if v is not None:
             patch[k] = v
@@ -2676,6 +2709,69 @@ def _plan_from_price_id(price_id: Optional[str], settings: Dict[str, Any]) -> Op
     return None
 
 
+async def _has_prior_subscription(uid: str) -> bool:
+    """Vrai si le profil a déjà (eu) un abonnement Stripe → pas de nouvel essai gratuit."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
+                                params={"id": f"eq.{uid}",
+                                        "select": "stripe_subscription_id,subscription_status"})
+    if resp.status_code == 200 and resp.json():
+        r = resp.json()[0]
+        if r.get("stripe_subscription_id"):
+            return True
+        if str(r.get("subscription_status") or "") in ("pro", "enterprise", "trial"):
+            return True
+    return False
+
+
+async def _clear_sub_comp_access(uid: str, sub_id: Optional[str]) -> None:
+    """Retire l'illimité d'essai/abonnement SANS écraser un accès offert par l'admin.
+    On ne nettoie comp_access que si le profil est bien lié à CET abonnement Stripe."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
+                                params={"id": f"eq.{uid}", "select": "stripe_subscription_id"})
+    owned = (resp.status_code == 200 and resp.json()
+             and resp.json()[0].get("stripe_subscription_id") == sub_id)
+    if owned:
+        await update_profile(uid, {"comp_access_plan": None, "comp_access_until": None})
+
+
+async def _grant_pro_monthly_credits(invoice: Dict[str, Any]) -> None:
+    """Offre « Utilisateur » (pro) : créditer plan_pro_monthly_credits à CHAQUE facture payée
+    (×12 si annuel). Idempotent par facture (ref=stripe:invoice:<id>). Aucun crédit pendant l'essai
+    (amount_paid=0). Enterprise = illimité → pas de crédits."""
+    if (invoice.get("amount_paid") or 0) <= 0:
+        return  # facture d'essai (0 CHF) ou non payée → rien
+    sub_id = invoice.get("subscription")
+    lines = (invoice.get("lines") or {}).get("data") or []
+    price = ((lines[0].get("price") if lines else None) or {})
+    interval = (price.get("recurring") or {}).get("interval")
+    settings = await get_site_settings()
+    plan = _plan_from_price_id(price.get("id"), settings)
+    if plan is None and sub_id:
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+            plan = (sub.get("metadata") or {}).get("plan")
+            if not interval:
+                it = (sub.get("items") or {}).get("data") or []
+                interval = ((it[0]["price"].get("recurring") or {}).get("interval")) if it else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("invoice pro: retrieve sub %s échec: %s", sub_id, exc)
+    if plan != "pro":
+        return
+    prof = await find_profile_by_subscription(sub_id) if sub_id else None
+    uid = (prof or {}).get("id") or (invoice.get("metadata") or {}).get("user_id")
+    if not uid:
+        logger.warning("invoice pro: utilisateur introuvable (sub=%s, invoice=%s)", sub_id, invoice.get("id"))
+        return
+    per_month = int((await get_pricing_settings()).get("plan_pro_monthly_credits") or 20)
+    amount = per_month * (12 if interval == "year" else 1)
+    months = await _credit_validity_months()
+    await _add_credits(uid, amount, "purchase", ref=f"stripe:invoice:{invoice.get('id')}",
+                       note=f"Offre Utilisateur ({'annuel' if interval == 'year' else 'mensuel'})",
+                       expires_months=months)
+
+
 @app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
@@ -2748,28 +2844,37 @@ async def stripe_webhook(request: Request):
                     await upsert_coach_subscription(cuid, {"stripe_subscription_id": sub_id,
                                                            "status": status, "current_period_end": period_end})
                 return {"received": True}
-            # (Ancien modèle abonnement public — conservé pour compat)
+            # 💳 Abonnement public (offres Utilisateur=pro / Coach=enterprise) : essai illimité → payant.
             settings = await get_site_settings()
             items = (obj.get("items") or {}).get("data") or []
             price_id = items[0]["price"]["id"] if items else None
             plan = sub_meta.get("plan") or _plan_from_price_id(price_id, settings)
             user_id = sub_meta.get("user_id")
-
             if not user_id:
                 prof = await find_profile_by_subscription(sub_id)
                 user_id = prof.get("id") if prof else None
 
-            if user_id:
-                if status in ("active", "trialing") and plan in PLANS:
-                    await update_profile(
-                        user_id,
-                        {
-                            "subscription_status": plan,
-                            "stripe_customer_id": obj.get("customer"),
-                            "stripe_subscription_id": sub_id,
-                        },
-                    )
-                elif status in ("canceled", "unpaid", "incomplete_expired"):
+            if user_id and plan in PLANS:
+                cpe = obj.get("current_period_end")
+                until = datetime.fromtimestamp(cpe, tz=timezone.utc).isoformat() if cpe else None
+                base = {"stripe_customer_id": obj.get("customer"), "stripe_subscription_id": sub_id}
+                if status == "trialing":
+                    # Essai en cours → accès ILLIMITÉ (les 2 offres), quel que soit le plan.
+                    await update_profile(user_id, {**base, "subscription_status": "trial",
+                                                   "comp_access_plan": plan, "comp_access_until": until})
+                elif status == "active":
+                    if plan == "enterprise":
+                        # Coach payant → ILLIMITÉ via comp_access (miroir is_coach_unlimited).
+                        await update_profile(user_id, {**base, "subscription_status": "enterprise",
+                                                       "comp_access_plan": "enterprise",
+                                                       "comp_access_until": until})
+                    else:
+                        # Utilisateur payant → PAS illimité : on retire l'illimité d'essai.
+                        #   Les crédits mensuels sont ajoutés sur invoice.paid (idempotent/facture).
+                        await update_profile(user_id, {**base, "subscription_status": "pro"})
+                        await _clear_sub_comp_access(user_id, sub_id)
+                elif status in ("canceled", "unpaid", "past_due", "incomplete_expired"):
+                    await _clear_sub_comp_access(user_id, sub_id)
                     await update_profile(user_id, {"subscription_status": "none"})
 
         elif etype == "customer.subscription.deleted":
@@ -2784,14 +2889,26 @@ async def stripe_webhook(request: Request):
                 prof = await find_profile_by_subscription(sub_id)
                 user_id = prof.get("id") if prof else None
             if user_id:
+                await _clear_sub_comp_access(user_id, sub_id)
                 await update_profile(user_id, {"subscription_status": "none"})
 
-        elif etype == "invoice.paid":
-            # 💎 Renouvellement d'abo coach payé → prolonge la période + statut actif.
+        elif etype in ("invoice.paid", "invoice.payment_succeeded"):
             sub_id = obj.get("subscription")
+            # 💎 Renouvellement d'abo coach payé → prolonge la période + statut actif.
             if sub_id and await find_coach_sub_by_stripe_id(sub_id):
                 coach = await find_coach_sub_by_stripe_id(sub_id)
                 await _sync_coach_subscription(coach["user_id"], sub_id)
+            # 💳 Offre « Utilisateur » (pro) : chaque facture payée → recharge de crédits (idempotent/facture).
+            elif sub_id:
+                await _grant_pro_monthly_credits(obj)
+
+        elif etype == "customer.subscription.trial_will_end":
+            # 📧 Rappel légal (CH/UE) avant débit. Stripe envoie aussi son email natif si activé (dashboard).
+            sub_meta = obj.get("metadata") or {}
+            cpe = obj.get("trial_end") or obj.get("current_period_end")
+            when = datetime.fromtimestamp(cpe, tz=timezone.utc).date().isoformat() if cpe else "?"
+            logger.info("Rappel fin d'essai (user=%s, sub=%s) → débit prévu le %s",
+                        sub_meta.get("user_id"), obj.get("id"), when)
 
         elif etype == "charge.refunded":
             # 🎟️ Remboursement → billet invalidé + ajustement du solde coach (net retiré).

@@ -51,6 +51,33 @@ export function suggestRounds(c: IntervalConfig, durationSec?: number): number |
   return Math.max(1, Math.floor((durationSec - Math.max(0, c.prepare)) / cycle));
 }
 
+// 🍏 iOS : l'oscillateur Web Audio est suspendu écran verrouillé. On génère (UNE SEULE FOIS, sans réseau)
+//    un court bip WAV en data-URI, rejoué via un <audio playsinline> dédié. Best effort.
+let BEEP_URI: string | null = null;
+function beepDataUri(): string {
+  if (BEEP_URI) return BEEP_URI;
+  const sr = 8000, dur = 0.09, freq = 880, n = Math.floor(sr * dur);
+  const dataSize = n * 2;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const dv = new DataView(buf);
+  const wr = (off: number, s: string) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+  wr(0, 'RIFF'); dv.setUint32(4, 36 + dataSize, true); wr(8, 'WAVE');
+  wr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wr(36, 'data'); dv.setUint32(40, dataSize, true);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    const env = Math.max(0, Math.min(1, t / 0.005, (dur - t) / 0.005)); // fondu anti-clic
+    const v = Math.sin(2 * Math.PI * freq * t) * 0.6 * env;
+    dv.setInt16(44 + i * 2, Math.round(v * 32767), true);
+  }
+  let bin = '';
+  const u8 = new Uint8Array(buf);
+  for (let i = 0; i < u8.length; i++) bin += String.fromCharCode(u8[i]);
+  BEEP_URI = 'data:audio/wav;base64,' + btoa(bin);
+  return BEEP_URI;
+}
+
 function computePhase(c: IntervalConfig, t: number): PhaseState {
   const prepare = Math.max(0, c.prepare);
   const work = Math.max(0, c.work);
@@ -111,6 +138,7 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
   const usingMixerRef = useRef(false);
   const voiceElRef = useRef<HTMLAudioElement | null>(null);
   const voiceSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const beepElRef = useRef<HTMLAudioElement | null>(null); // 🍏 iOS : bips via asset WAV data-URI
   const soundStateRef = useRef<{ key: IntervalPhaseKey; round: number; lastCount: number | null }>({ key: 'done', round: -1, lastCount: null });
   const doneFiredRef = useRef(false);
 
@@ -154,7 +182,24 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
     return voiceElRef.current;
   }, []);
 
+  const ensureBeepEl = useCallback((): HTMLAudioElement => {
+    if (!beepElRef.current) {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.setAttribute('playsinline', 'true');
+      a.src = beepDataUri();
+      beepElRef.current = a;
+    }
+    return beepElRef.current;
+  }, []);
+
+  const playBeepAsset = useCallback(() => {
+    try { const a = ensureBeepEl(); a.currentTime = 0; a.play().catch(() => {}); } catch { /* no-op */ }
+  }, [ensureBeepEl]);
+
   const beep = useCallback((freq: number, durMs: number, gain = 0.25) => {
+    // 🍏 iOS : oscillateur Web Audio suspendu écran verrouillé → asset WAV via <audio> dédié (best effort).
+    if (IS_IOS) { playBeepAsset(); return; }
     const ctx = ensureCtx();
     if (!ctx) return;
     try {
@@ -170,7 +215,7 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
       o.start(t);
       o.stop(t + durMs / 1000 + 0.03);
     } catch { /* no-op */ }
-  }, [ensureCtx, outputNode]);
+  }, [ensureCtx, outputNode, playBeepAsset]);
 
   const playUrl = useCallback((url?: string) => {
     if (!url) return;
@@ -211,15 +256,18 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
   //    PROPRE du timer UNIQUEMENT (jamais celui de la musique).
   const unlock = useCallback(() => {
     ensureCtx();
-    try {
-      const a = ensureVoiceEl();
-      a.muted = true;
-      const p = a.play();
-      if (p && typeof p.then === 'function') {
-        p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; });
-      } else { a.muted = false; }
-    } catch { /* no-op */ }
-  }, [ensureCtx, ensureVoiceEl]);
+    const prime = (a: HTMLAudioElement) => {
+      try {
+        a.muted = true;
+        const p = a.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; });
+        } else { a.muted = false; }
+      } catch { /* no-op */ }
+    };
+    prime(ensureVoiceEl());
+    if (IS_IOS) prime(ensureBeepEl()); // 🍏 débloquer aussi l'<audio> des bips sur ce même geste
+  }, [ensureCtx, ensureVoiceEl, ensureBeepEl]);
 
   useImperativeHandle(ref, () => ({ unlock }), [unlock]);
 

@@ -23,8 +23,13 @@ async function getAccessToken(forceRefresh = false): Promise<string | null> {
     // Si on force, on attend d'abord la fin d'un éventuel refresh en cours (sérialisation).
     if (forceRefresh && _tokenInFlight) { try { await _tokenInFlight; } catch { /* ignore */ } }
     if (!supabase) return null;
-    const { data } = await supabase.auth.getSession();
-    let session = data.session;
+    // ⏳ Course post-inscription : après signUp, le jeton de session est attaché de façon ASYNCHRONE.
+    //    On poll brièvement getSession (~jusqu'à 2.4 s) avant d'abandonner → évite les 401 immédiats.
+    let session = (await supabase.auth.getSession()).data.session;
+    for (let i = 0; !session && i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      session = (await supabase.auth.getSession()).data.session;
+    }
     const expiresAtMs = session?.expires_at ? session.expires_at * 1000 : 0;
     if (forceRefresh || !session || expiresAtMs - Date.now() < 60_000) {
       const { data: refreshed } = await supabase.auth.refreshSession();
@@ -77,21 +82,13 @@ export async function createCheckout(
   interval: StripeInterval,
 ): Promise<{ url?: string; error?: string }> {
   if (!API_URL) return { error: 'API de paiement non configurée (REACT_APP_API_URL)' };
-  const token = await getAccessToken();
-  if (!token) return { error: 'Connectez-vous pour souscrire' };
-
-  try {
-    const res = await fetch(`${API_URL}/stripe/create-checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ plan, interval }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
-    return { url: data.url };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
-  }
+  // adminFetch = jeton frais + polling de session (course post-inscription) + réessai auto sur 401.
+  const { data, error } = await adminFetch('/stripe/create-checkout', {
+    method: 'POST',
+    body: JSON.stringify({ plan, interval }),
+  });
+  if (error) return { error };
+  return { url: data?.url };
 }
 
 // ===========================================================================
@@ -167,19 +164,10 @@ export async function getMyCredits(): Promise<{ balance: number; ledger: LedgerR
 /** Réclame le 1er cours offert (idempotent côté backend). */
 export async function claimSignupBonus(): Promise<{ balance?: number; granted?: number; error?: string }> {
   if (!API_URL) return { error: 'API non configurée' };
-  const token = await getAccessToken();
-  if (!token) return { error: 'Connectez-vous' };
-  try {
-    const res = await fetch(`${API_URL}/credits/signup-bonus`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
-    return { balance: data.balance, granted: data.granted };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
-  }
+  // adminFetch = jeton frais + polling de session (course post-inscription) + réessai auto sur 401.
+  const { data, error } = await adminFetch('/credits/signup-bonus', { method: 'POST' });
+  if (error) return { error };
+  return { balance: data?.balance, granted: data?.granted };
 }
 
 /** Débite un crédit pour rejoindre (join) ou animer (host) un live. 402 si solde insuffisant. */

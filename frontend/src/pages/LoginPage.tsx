@@ -28,8 +28,11 @@ const LoginPage: React.FC = () => {
 
   // Redirect to intended destination after login
   const from = (location.state as { from?: string })?.from || '/session';
+  // 🔁 Parcours essai : si on arrive avec mode:'signup' (depuis « Commencer l'essai gratuit »),
+  //    ouvrir directement le formulaire d'INSCRIPTION.
+  const initialMode: AuthMode = (location.state as { mode?: AuthMode })?.mode === 'signup' ? 'signup' : 'login';
 
-  const [mode, setMode] = useState<AuthMode>('login');
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   // 🎁 Essai gratuit : nombre de crédits offerts à l'inscription (admin-éditable, défaut 1).
   const [freeCredits, setFreeCredits] = useState(1);
   useEffect(() => { getCreditsConfig().then(({ data }) => { if (data?.signup_free_credits != null) setFreeCredits(data.signup_free_credits); }); }, []);

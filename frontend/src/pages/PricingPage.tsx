@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
@@ -132,7 +132,9 @@ const PricingPage: React.FC = () => {
 
   const handleSubscribe = async (plan: 'pro' | 'enterprise') => {
     if (!isAuthenticated) {
-      navigate('/login', { state: { from: '/pricing' } });
+      // 🔁 Mémoriser l'offre choisie + l'intervalle, puis aller à l'INSCRIPTION → reprise auto au retour.
+      try { sessionStorage.setItem('bt_pending_subscribe', JSON.stringify({ plan, billing })); } catch { /* ignore */ }
+      navigate('/login', { state: { from: '/pricing', mode: 'signup' } });
       return;
     }
     if (!hasAcceptedTerms && !termsChecked) {
@@ -143,6 +145,32 @@ const PricingPage: React.FC = () => {
     if (termsChecked && !hasAcceptedTerms) await handleAcceptTerms();
     await startSubscribe(plan);
   };
+
+  // 🔁 Reprise AUTO du checkout après inscription/connexion : on relance l'offre mémorisée dès que
+  //    l'utilisateur est authentifié (la gestion des CGU existante est conservée via handleSubscribe).
+  const [resumePlan, setResumePlan] = useState<'pro' | 'enterprise' | null>(null);
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (!isAuthenticated || resumedRef.current) return;
+    let pending: { plan?: 'pro' | 'enterprise'; billing?: 'month' | 'year' } | null = null;
+    try {
+      const raw = sessionStorage.getItem('bt_pending_subscribe');
+      if (raw) pending = JSON.parse(raw);
+    } catch { /* ignore */ }
+    if (pending?.plan !== 'pro' && pending?.plan !== 'enterprise') return;
+    resumedRef.current = true;
+    try { sessionStorage.removeItem('bt_pending_subscribe'); } catch { /* ignore */ }
+    if (pending.billing === 'month' || pending.billing === 'year') setBilling(pending.billing);
+    setResumePlan(pending.plan);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!resumePlan) return;
+    const p = resumePlan;
+    setResumePlan(null);
+    handleSubscribe(p);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumePlan]);
 
   const packs = config?.packs || [];
   const participantPacks = packs.filter((p) => p.audience === 'participant');

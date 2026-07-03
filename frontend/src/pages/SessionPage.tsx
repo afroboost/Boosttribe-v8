@@ -730,6 +730,29 @@ export const SessionPage: React.FC = () => {
       || document.querySelector('audio:not(.bt-tribe-audio):not(.bt-relay-audio):not(#remote-voice-audio)')) as HTMLAudioElement | null;
   }, []);
 
+  // 🎵 RÉCUPÉRATION APRÈS LIBÉRATION DU MICRO : couper un micro (track.stop) déclenche un changement de
+  //    périphérique OS qui peut SUSPENDRE le contexte audio du mixeur et/ou METTRE EN PAUSE l'élément
+  //    musique. On rétablit sur ~1.2 s SANS JAMAIS recharger (load() réinitialiserait la position) :
+  //    resume() du contexte mixeur + play() si l'élément s'est mis en pause alors qu'il DEVAIT jouer.
+  //    → la musique reste CONTINUE et retrouve sa qualité (iOS : musique hors Web Audio, resume inoffensif).
+  const recoverMusicAfterMicRelease = useCallback(() => {
+    const audioEl = getMusicEl();
+    if (!audioEl) return;
+    const wasPlaying = !audioEl.paused && !audioEl.ended && !!audioEl.src; // intention : la musique jouait
+    let tries = 0;
+    const tick = () => {
+      try {
+        const ctx = getMixerContext();
+        if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+      } catch { /* ignore */ }
+      if (wasPlaying && audioEl.paused && audioEl.src) {
+        audioEl.play().catch(() => { /* geste éventuellement requis → ignore, jamais load() */ });
+      }
+      if (++tries < 6) setTimeout(tick, 200);
+    };
+    tick();
+  }, [getMusicEl, getMixerContext]);
+
   // 🎯 POINT D'APPLICATION UNIQUE de l'état de lecture de l'HÔTE (source unique de vérité). TOUS les
   //   transports de synchro (HOST_COMMAND supabase, socket) passent par ici → plus de va-et-vient.
   //   Règles : le participant ne fait qu'APPLIQUER ; on ne change de piste QUE si trackId ≠ piste chargée ;
@@ -998,6 +1021,7 @@ export const SessionPage: React.FC = () => {
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
     } else {
       stopBroadcast(); // retire le flux sortant, garde le peer actif
+      recoverMusicAfterMicRelease(); // 🎵 la coupure du micro ne doit ni figer ni couper la musique
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
@@ -1037,6 +1061,7 @@ export const SessionPage: React.FC = () => {
       participantMic.stopCapture();
       setIsTalking(false);
       showToast('Vous avez rendu la parole', 'default');
+      recoverMusicAfterMicRelease(); // 🎵 la coupure de sa parole ne doit pas figer/couper sa musique
     } else {
       const ok = await participantMic.startCapture();
       if (ok) {
@@ -1044,7 +1069,7 @@ export const SessionPage: React.FC = () => {
         showToast('Vous avez la parole', 'success');
       }
     }
-  }, [isTalking, participantMic, stopTalkToHost, showToast]);
+  }, [isTalking, participantMic, stopTalkToHost, showToast, recoverMusicAfterMicRelease]);
 
   // 🎤 L'HÔTE donne/coupe la parole à distance à CE participant. Réutilise EXACTEMENT le flux
   //    « prendre la parole » (startCapture → isTalking → effet talkToHost). Additif, rien d'existant modifié.
@@ -1068,9 +1093,10 @@ export const SessionPage: React.FC = () => {
         participantMic.stopCapture();
         setIsTalking(false);
         showToast('Le coach a coupé ton micro', 'default');
+        recoverMusicAfterMicRelease(); // 🎵 récupère la qualité + continuité de sa musique locale
       }
     }
-  }, [isTalking, participantMic, stopTalkToHost, showToast]);
+  }, [isTalking, participantMic, stopTalkToHost, showToast, recoverMusicAfterMicRelease]);
   const applyHostMicRef = useRef(applyHostMic);
   useEffect(() => { applyHostMicRef.current = applyHostMic; }, [applyHostMic]);
 
@@ -2120,8 +2146,14 @@ export const SessionPage: React.FC = () => {
     [participantsState, peerState.remoteMicUsers, remoteMicVolumes],
   );
 
-  // 🎤 IDs des participants dont le micro est ACTIF (parle) — pour l'état réel du bouton hôte « Donner/Couper ».
-  const micActiveIds = useMemo(() => new Set(peerState.remoteMicUsers), [peerState.remoteMicUsers]);
+  // 🎤 Participants à qui l'hôte a DONNÉ la parole (INTENTION) — rend le bouton « Donner/Couper » toggle
+  //    immédiatement, même avant que le participant ne tape l'invite (permission micro).
+  const [micGivenIds, setMicGivenIds] = useState<Set<string>>(new Set());
+  // 🎤 IDs affichés « micro actif » = parle réellement (remoteMicUsers) OU parole donnée par l'hôte.
+  const micActiveIds = useMemo(
+    () => new Set<string>([...peerState.remoteMicUsers, ...micGivenIds]),
+    [peerState.remoteMicUsers, micGivenIds],
+  );
 
   // FREE TRIAL TIME TRACKING
   useEffect(() => {
@@ -2284,9 +2316,15 @@ export const SessionPage: React.FC = () => {
     setStageRequests((prev) => prev.filter((r) => r.userId !== userId));
   }, [sendPlaybackEvent]);
 
-  // 🎤 HÔTE — « donner la parole » / « couper le micro » d'un participant précis (à sa place).
+  // 🎤 HÔTE — TOGGLE « donner la parole » / « couper le micro » d'un participant précis (à sa place).
+  //    Mémorise l'intention (micGivenIds) → 2e clic sur le même participant = coupe sa parole.
   const handleToggleHostMic = useCallback((userId: string, on: boolean) => {
     sendPlaybackEvent('HOST_MIC_TOGGLE', { userId, on });
+    setMicGivenIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(userId); else next.delete(userId);
+      return next;
+    });
     showToast(on ? 'Parole donnée au participant 🎤' : 'Micro du participant coupé', 'default');
   }, [sendPlaybackEvent, showToast]);
 

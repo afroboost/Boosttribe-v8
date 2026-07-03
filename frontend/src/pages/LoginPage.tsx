@@ -31,6 +31,9 @@ const LoginPage: React.FC = () => {
   // 🔁 Parcours essai : si on arrive avec mode:'signup' (depuis « Commencer l'essai gratuit »),
   //    ouvrir directement le formulaire d'INSCRIPTION.
   const initialMode: AuthMode = (location.state as { mode?: AuthMode })?.mode === 'signup' ? 'signup' : 'login';
+  // 🔁 Intention d'ABONNEMENT (essai 7 j) : venu de « Commencer l'essai gratuit » (/pricing) ou offre en attente.
+  const subscribeIntent = (location.state as { mode?: AuthMode })?.mode === 'signup'
+    || (() => { try { return !!localStorage.getItem('bt_pending_subscribe'); } catch { return false; } })();
 
   const [mode, setMode] = useState<AuthMode>(initialMode);
   // 🎁 Essai gratuit : nombre de crédits offerts à l'inscription (admin-éditable, défaut 1).
@@ -309,7 +312,20 @@ const LoginPage: React.FC = () => {
           {/* Signup Form */}
           {mode === 'signup' && (
             <form onSubmit={handleSignup} className="space-y-4">
-              {freeCredits > 0 && (
+              {subscribeIntent ? (
+                <div className="flex items-center gap-3 rounded-xl border border-[#FF2DAA]/40 bg-[#D91CD2]/10 p-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
+                       style={{ background: theme.colors.gradient.primary }}>
+                    <Gift size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-white text-sm font-semibold">🎁 Essai gratuit 7 jours</p>
+                    <p className="text-white/60 text-xs">
+                      Crée ton compte pour démarrer ton essai — 0 CHF aujourd'hui, sans engagement.
+                    </p>
+                  </div>
+                </div>
+              ) : freeCredits > 0 ? (
                 <div className="flex items-center gap-3 rounded-xl border border-[#FF2DAA]/40 bg-[#D91CD2]/10 p-3">
                   <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
                        style={{ background: theme.colors.gradient.primary }}>
@@ -322,7 +338,7 @@ const LoginPage: React.FC = () => {
                     </p>
                   </div>
                 </div>
-              )}
+              ) : null}
               <div className="space-y-2">
                 <Label htmlFor="fullName" className="text-white/70">Nom complet</Label>
                 <div className="relative">
@@ -516,9 +532,10 @@ const LoginPage: React.FC = () => {
       </Card>
       </main>
 
-      {/* Back to home */}
-      <div className="fixed top-4 left-4">
-        <Link 
+      {/* Back to home — z-20 pour rester cliquable AU-DESSUS de la carte (z-10), sinon le formulaire
+          d'inscription (haut, surtout mobile) recouvrait le lien et interceptait le clic. */}
+      <div className="fixed top-4 left-4 z-20">
+        <Link
           to="/"
           className="flex items-center gap-2 text-white/60 hover:text-white transition-colors text-sm"
         >

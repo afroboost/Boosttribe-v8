@@ -1010,6 +1010,9 @@ export const SessionPage: React.FC = () => {
 
   // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
   const [isTalking, setIsTalking] = useState(false);
+  // 🎤 L'hôte peut « donner la parole » à distance ; si le micro n'a jamais été autorisé (getUserMedia
+  //    refusé sans geste), on affiche une invite : un simple tap suffit ensuite pour activer.
+  const [coachMicInvite, setCoachMicInvite] = useState(false);
   const participantMic = useMicrophone({
     // 🎚️ AEC/AGC/NS OFF : sinon la musique du participant chute quand il prend la parole (ducking Chrome).
     echoCancellation: false,
@@ -1042,6 +1045,34 @@ export const SessionPage: React.FC = () => {
       }
     }
   }, [isTalking, participantMic, stopTalkToHost, showToast]);
+
+  // 🎤 L'HÔTE donne/coupe la parole à distance à CE participant. Réutilise EXACTEMENT le flux
+  //    « prendre la parole » (startCapture → isTalking → effet talkToHost). Additif, rien d'existant modifié.
+  const applyHostMic = useCallback(async (on: boolean) => {
+    if (on) {
+      if (isTalking) { setCoachMicInvite(false); return; }   // déjà en parole → rien à faire
+      const ok = await participantMic.startCapture();         // OK direct si permission déjà accordée
+      if (ok) {
+        setIsTalking(true);
+        setCoachMicInvite(false);
+        showToast('🎤 Le coach t\'a donné la parole', 'success');
+      } else {
+        // Permission non accordée / geste requis → on ne peut pas forcer : invite au tap.
+        setCoachMicInvite(true);
+        showToast('🎤 Le coach t\'invite à parler — appuie pour activer ton micro', 'default');
+      }
+    } else {
+      setCoachMicInvite(false);
+      if (isTalking) {
+        stopTalkToHost();
+        participantMic.stopCapture();
+        setIsTalking(false);
+        showToast('Le coach a coupé ton micro', 'default');
+      }
+    }
+  }, [isTalking, participantMic, stopTalkToHost, showToast]);
+  const applyHostMicRef = useRef(applyHostMic);
+  useEffect(() => { applyHostMicRef.current = applyHostMic; }, [applyHostMic]);
 
   // 🎥 MODE LIVE / VISIO (Zoom-like) — module ISOLÉ (son propre Peer + canal de signaling).
   // N'altère rien de l'audio/mixeur/synchro existants : purement additif.
@@ -1872,6 +1903,13 @@ export const SessionPage: React.FC = () => {
           showToastRef.current('Tu n\'es plus à l\'écran', 'warning');
         }
       })
+      // 🎤 L'HÔTE donne/coupe la parole à CE participant (additif — n'affecte que la cible non-hôte).
+      .on('broadcast', { event: 'HOST_MIC_TOGGLE' }, (payload) => {
+        const p = payload.payload as { userId?: string; on?: boolean };
+        if (isHostRef.current) return;                              // l'hôte ne s'auto-cible pas
+        if (!p?.userId || p.userId !== myUserIdRef.current) return; // seulement la cible réagit
+        applyHostMicRef.current?.(!!p.on);
+      })
       // 💬 CHAT GROUPÉ (Pro) — message visible par tout le groupe
       .on('broadcast', { event: 'CHAT_GROUP' }, (payload) => {
         if (!isProRef.current || !payload.payload) return;
@@ -2082,6 +2120,9 @@ export const SessionPage: React.FC = () => {
     [participantsState, peerState.remoteMicUsers, remoteMicVolumes],
   );
 
+  // 🎤 IDs des participants dont le micro est ACTIF (parle) — pour l'état réel du bouton hôte « Donner/Couper ».
+  const micActiveIds = useMemo(() => new Set(peerState.remoteMicUsers), [peerState.remoteMicUsers]);
+
   // FREE TRIAL TIME TRACKING
   useEffect(() => {
     if (!isFreeTrial || trialLimitReached) return;
@@ -2242,6 +2283,12 @@ export const SessionPage: React.FC = () => {
     sendPlaybackEvent('STAGE_REFUSE', { userId });
     setStageRequests((prev) => prev.filter((r) => r.userId !== userId));
   }, [sendPlaybackEvent]);
+
+  // 🎤 HÔTE — « donner la parole » / « couper le micro » d'un participant précis (à sa place).
+  const handleToggleHostMic = useCallback((userId: string, on: boolean) => {
+    sendPlaybackEvent('HOST_MIC_TOGGLE', { userId, on });
+    showToast(on ? 'Parole donnée au participant 🎤' : 'Micro du participant coupé', 'default');
+  }, [sendPlaybackEvent, showToast]);
 
   // Hôte : scène pleine → retirer un participant choisi, puis faire monter le nouveau (anti-dépassement 10).
   const handleSwapStage = useCallback(async (acceptUserId: string, removedUserId: string) => {
@@ -4125,6 +4172,18 @@ export const SessionPage: React.FC = () => {
                         {participantMic.state.error}
                       </p>
                     )}
+
+                    {/* 🎤 Le coach t'a donné la parole mais le micro n'est pas encore autorisé → un tap suffit */}
+                    {coachMicInvite && !isTalking && (
+                      <button
+                        onClick={() => { setCoachMicInvite(false); handleToggleTalk(); }}
+                        className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-[#8A2EFF]/20 text-[#c9a3ff] border border-[#8A2EFF]/40 hover:bg-[#8A2EFF]/30 transition-colors animate-pulse"
+                        data-testid="coach-mic-invite"
+                      >
+                        <Mic className="w-4 h-4 flex-shrink-0" />
+                        <span>🎤 Le coach t'invite à parler — appuie pour activer ton micro</span>
+                      </button>
+                    )}
                   </div>
                 )}
                 
@@ -4406,6 +4465,8 @@ export const SessionPage: React.FC = () => {
                   onToggleCoHost={isHost ? handleToggleCoHost : undefined}
                   privateTargetIds={privateTargets}
                   onTogglePrivate={isHost ? handleTogglePrivateTalk : undefined}
+                  micActiveIds={micActiveIds}
+                  onToggleHostMic={isHost ? handleToggleHostMic : undefined}
                   theme={theme}
                 />
               </CardContent>

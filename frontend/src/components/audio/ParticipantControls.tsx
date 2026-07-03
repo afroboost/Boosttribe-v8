@@ -28,6 +28,8 @@ interface ParticipantItemProps {
   onToggleCoHost?: (id: string, makeCoHost: boolean) => void;
   isPrivateTarget?: boolean;
   onTogglePrivate?: (id: string) => void;
+  isMicOn?: boolean; // le micro de ce participant est-il actif (parle) en ce moment
+  onToggleHostMic?: (id: string, on: boolean) => void; // hôte : donner/couper la parole
   theme: {
     colors: {
       gradient: {
@@ -46,6 +48,8 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
   onToggleCoHost,
   isPrivateTarget,
   onTogglePrivate,
+  isMicOn,
+  onToggleHostMic,
   theme,
 }) => {
   const volume = participant.volume ?? 100;
@@ -87,7 +91,7 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
               <Crown size={10} strokeWidth={2} fill="currentColor" />
             </span>
           )}
-          {participant.isMicActive && (
+          {(participant.isMicActive || isMicOn) && (
             <span className="absolute -bottom-0.5 -right-0.5 p-0.5 rounded-full bg-green-500 border border-black pointer-events-none">
               <Mic size={8} strokeWidth={2} className="text-white" />
             </span>
@@ -155,6 +159,23 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
             </button>
           )}
 
+          {/* 🎤 Donner la parole / Couper le micro de ce participant (hôte agit à sa place) */}
+          {onToggleHostMic && (
+            <button
+              onClick={() => onToggleHostMic(participant.id, !isMicOn)}
+              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                isMicOn
+                  ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                  : 'bg-white/10 text-white/70 hover:bg-white/20'
+              }`}
+              title={isMicOn ? 'Couper le micro de ce participant' : 'Donner la parole à ce participant'}
+              data-testid="host-mic-toggle"
+            >
+              <Mic size={13} strokeWidth={2} />
+              <span>{isMicOn ? 'Couper le micro' : 'Donner la parole'}</span>
+            </button>
+          )}
+
           {/* Couper / réactiver */}
           <button
             onClick={() => onMuteToggle(participant.id)}
@@ -204,6 +225,8 @@ interface ParticipantControlsProps {
   onToggleCoHost?: (id: string, makeCoHost: boolean) => void;
   privateTargetIds?: Set<string>;
   onTogglePrivate?: (id: string) => void;
+  micActiveIds?: Set<string>; // participants dont le micro est actif (parle)
+  onToggleHostMic?: (id: string, on: boolean) => void; // hôte : donner/couper la parole
   theme: {
     colors: {
       gradient: {
@@ -222,6 +245,8 @@ export const ParticipantControls: React.FC<ParticipantControlsProps> = ({
   onToggleCoHost,
   privateTargetIds,
   onTogglePrivate,
+  micActiveIds,
+  onToggleHostMic,
   theme,
 }) => {
   return (
@@ -238,6 +263,8 @@ export const ParticipantControls: React.FC<ParticipantControlsProps> = ({
             onToggleCoHost={onToggleCoHost}
             isPrivateTarget={privateTargetIds?.has(participant.id)}
             onTogglePrivate={onTogglePrivate}
+            isMicOn={micActiveIds?.has(participant.id)}
+            onToggleHostMic={onToggleHostMic}
             theme={theme}
           />
         ))}

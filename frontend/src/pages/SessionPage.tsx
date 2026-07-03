@@ -956,6 +956,7 @@ export const SessionPage: React.FC = () => {
     broadcastAudio,
     stopBroadcast,
     unlockAudio,
+    ensureVoiceAudible,
     talkToHost,
     stopTalkToHost,
     setTribeVolume: setTribeAudioVolume,
@@ -1842,6 +1843,7 @@ export const SessionPage: React.FC = () => {
           : undefined; // SEEK
         applyRemoteState({ trackId: command.trackId ?? null, currentTime: command.currentTime, isPlaying, reason: command.action, source: 'HOST_COMMAND' });
         if (isPlaying != null) setHostIsPlaying(isPlaying);
+        if (isPlaying === false) ensureVoiceAudible(); // 🔊 pause reçue → garantir la voix audible (musique en pause)
       })
       // E : média partagé (vidéo/image/lien) — identité du média (partage/retrait)
       .on('broadcast', { event: 'MEDIA_COMMAND' }, (payload) => {

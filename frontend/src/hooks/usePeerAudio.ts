@@ -45,6 +45,9 @@ export interface UsePeerAudioReturn {
   stopBroadcast: () => void;
   // 🔓 débloque tout le son (voix) dans un geste utilisateur
   unlockAudio: () => void;
+  // 🔊 garantit la voix audible (resume contexte voix + démute de secours) — voix toujours entendue même
+  //    quand la musique/vidéo est en pause à distance. Ne touche jamais l'état play/pause de la musique.
+  ensureVoiceAudible: () => void;
   // 🎤 POINT 5: participant envoie son micro à l'hôte / arrête
   talkToHost: (stream: MediaStream) => void;
   stopTalkToHost: () => void;
@@ -1381,6 +1384,37 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     };
   }, [disconnect]);
 
+  // 🔊 WATCHDOG VOIX (~500 ms) : une voix routée en Web Audio sort par le GainNode → son <audio> est MUTÉ.
+  //   Si le contexte voix se retrouve SUSPENDU (musique/vidéo mise en pause à distance, SANS geste sur
+  //   l'appareil qui écoute), élément muté + contexte suspendu = SILENCE. On tente resume() ; si le contexte
+  //   n'est pas 'running', on bascule les éléments voix routés en lecture DIRECTE (démute + volume selon le
+  //   gain — gain 0 = muet respecté). Dès que le contexte redevient 'running', on re-mute (retour Web Audio).
+  //   N'affecte QUE la couche de lecture voix : ni PeerJS, ni la musique, ni le play/pause.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const ctx = voiceCtxRef.current;
+      if (!ctx) return; // pas de contexte voix (ex. voix hôte directe iOS) → rien à surveiller
+      const nodes: Array<{ gain: GainNode; el: HTMLAudioElement }> = [];
+      if (hostVoiceNodeRef.current) nodes.push(hostVoiceNodeRef.current);
+      tribeNodesRef.current.forEach((n) => nodes.push(n));
+      relayNodesRef.current.forEach((n) => nodes.push(n));
+      if (nodes.length === 0) return;
+      if (ctx.state !== 'running') {
+        ctx.resume().catch(() => { /* ignore */ });
+        nodes.forEach(({ gain, el }) => {
+          if (el.muted) {
+            el.muted = false;                          // secours : lecture directe de l'élément
+            el.volume = Math.min(1, gain.gain.value);  // respecte le niveau voulu (gain 0 → 0)
+            el.play().catch(() => { /* ignore */ });
+          }
+        });
+      } else {
+        nodes.forEach(({ el }) => { if (!el.muted) el.muted = true; }); // contexte OK → retour Web Audio
+      }
+    }, 500);
+    return () => clearInterval(iv);
+  }, []);
+
   // 🔓 UNLOCK AUDIO (appelé dans un GESTE utilisateur) : réveille le contexte voix ET relance TOUS les
   //   <audio> voix (hôte + tribu + relay). Autorise du même coup les FUTURS flux (la politique autoplay
   //   du navigateur se débloque après un geste → les .play() suivants de forcePlayRemoteAudio réussissent).
@@ -1390,6 +1424,26 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     document.querySelectorAll('audio').forEach((el) => { (el as HTMLAudioElement).play().catch(() => { /* ignore */ }); });
   }, []);
 
+  // 🔊 ENSURE VOICE AUDIBLE : resume du contexte voix + démute de secours des éléments voix si le contexte
+  //   n'est pas 'running'. Appelé à l'onset de parole (VAD) et à la réception d'un HOST_COMMAND PAUSE →
+  //   la voix reste NETTE même musique/vidéo en pause. NE TOUCHE JAMAIS l'état play/pause de la musique.
+  const ensureVoiceAudible = useCallback(() => {
+    const ctx = voiceCtxRef.current;
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+    const running = !!ctx && ctx.state === 'running';
+    const nodes: Array<{ gain: GainNode; el: HTMLAudioElement }> = [];
+    if (hostVoiceNodeRef.current) nodes.push(hostVoiceNodeRef.current);
+    tribeNodesRef.current.forEach((n) => nodes.push(n));
+    relayNodesRef.current.forEach((n) => nodes.push(n));
+    nodes.forEach(({ gain, el }) => {
+      if (!running) { el.muted = false; el.volume = Math.min(1, gain.gain.value); }
+      el.play().catch(() => { /* ignore */ });
+    });
+    // Filet : élément voix hôte même si aucun node routé n'existe encore.
+    const hostEl = hostVoiceNodeRef.current?.el || (document.getElementById(REMOTE_AUDIO_ID) as HTMLAudioElement | null);
+    if (hostEl && !running) { hostEl.muted = false; hostEl.volume = Math.min(1, hostVoiceVolumeRef.current); hostEl.play().catch(() => { /* ignore */ }); }
+  }, []);
+
   return {
     state,
     connect,
@@ -1397,6 +1451,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     broadcastAudio,
     stopBroadcast,
     unlockAudio,
+    ensureVoiceAudible,
     talkToHost,
     stopTalkToHost,
     setTribeVolume,

@@ -133,7 +133,7 @@ const PricingPage: React.FC = () => {
   const handleSubscribe = async (plan: 'pro' | 'enterprise') => {
     if (!isAuthenticated) {
       // 🔁 Mémoriser l'offre choisie + l'intervalle, puis aller à l'INSCRIPTION → reprise auto au retour.
-      try { sessionStorage.setItem('bt_pending_subscribe', JSON.stringify({ plan, billing })); } catch { /* ignore */ }
+      try { localStorage.setItem('bt_pending_subscribe', JSON.stringify({ plan, billing })); } catch { /* ignore */ }
       navigate('/login', { state: { from: '/pricing', mode: 'signup' } });
       return;
     }
@@ -154,12 +154,12 @@ const PricingPage: React.FC = () => {
     if (!isAuthenticated || resumedRef.current) return;
     let pending: { plan?: 'pro' | 'enterprise'; billing?: 'month' | 'year' } | null = null;
     try {
-      const raw = sessionStorage.getItem('bt_pending_subscribe');
+      const raw = localStorage.getItem('bt_pending_subscribe');
       if (raw) pending = JSON.parse(raw);
     } catch { /* ignore */ }
     if (pending?.plan !== 'pro' && pending?.plan !== 'enterprise') return;
     resumedRef.current = true;
-    try { sessionStorage.removeItem('bt_pending_subscribe'); } catch { /* ignore */ }
+    try { localStorage.removeItem('bt_pending_subscribe'); } catch { /* ignore */ }
     if (pending.billing === 'month' || pending.billing === 'year') setBilling(pending.billing);
     setResumePlan(pending.plan);
   }, [isAuthenticated]);

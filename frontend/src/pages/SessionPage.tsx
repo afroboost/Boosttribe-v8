@@ -730,23 +730,51 @@ export const SessionPage: React.FC = () => {
       || document.querySelector('audio:not(.bt-tribe-audio):not(.bt-relay-audio):not(#remote-voice-audio)')) as HTMLAudioElement | null;
   }, []);
 
-  // 🎵 RÉCUPÉRATION APRÈS LIBÉRATION DU MICRO : couper un micro (track.stop) déclenche un changement de
-  //    périphérique OS qui peut SUSPENDRE le contexte audio du mixeur et/ou METTRE EN PAUSE l'élément
-  //    musique. On rétablit sur ~1.2 s SANS JAMAIS recharger (load() réinitialiserait la position) :
-  //    resume() du contexte mixeur + play() si l'élément s'est mis en pause alors qu'il DEVAIT jouer.
-  //    → la musique reste CONTINUE et retrouve sa qualité (iOS : musique hors Web Audio, resume inoffensif).
-  const recoverMusicAfterMicRelease = useCallback(() => {
-    const audioEl = getMusicEl();
-    if (!audioEl) return;
-    const wasPlaying = !audioEl.paused && !audioEl.ended && !!audioEl.src; // intention : la musique jouait
+  // 🎵 AUTO-PAUSE / AUTO-RESUME de la musique pendant la parole — piloté par l'HÔTE et synchronisé à TOUS
+  //    via le mécanisme play/pause EXISTANT : pause()/play() de l'élément musique → event 'pause'/'play'
+  //    → handleAudioStateChange → HOST_COMMAND PAUSE/PLAY broadcast. On ne réinvente rien.
+  //    Plusieurs micros peuvent tenir la pause (micro hôte + participants à qui on donne la parole) : on
+  //    ne relance la musique que lorsque PLUS AUCUN ne la tient, et UNIQUEMENT si elle jouait avant.
+  const micHoldRef = useRef<Set<string>>(new Set());
+  const musicWasPlayingRef = useRef(false);
+
+  // Réveille le contexte mixeur que la libération du micro a pu suspendre (changement de périphérique OS),
+  // sur ~1.2 s. Ne touche PAS l'état play/pause (piloté par la synchro). Utilisé côté participant.
+  const resumeMixerContextSoon = useCallback(() => {
     let tries = 0;
     const tick = () => {
-      try {
-        const ctx = getMixerContext();
-        if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
-      } catch { /* ignore */ }
-      if (wasPlaying && audioEl.paused && audioEl.src) {
-        audioEl.play().catch(() => { /* geste éventuellement requis → ignore, jamais load() */ });
+      try { const ctx = getMixerContext(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+      if (++tries < 6) setTimeout(tick, 200);
+    };
+    tick();
+  }, [getMixerContext]);
+
+  // Un micro s'ACTIVE → auto-pause la musique (si elle jouait) et mémorise l'intention pour l'auto-resume.
+  const addMicHold = useCallback((key: string) => {
+    const wasEmpty = micHoldRef.current.size === 0;
+    micHoldRef.current.add(key);
+    if (!wasEmpty) return; // déjà en pause pour un autre micro actif
+    const audioEl = getMusicEl();
+    if (!audioEl) return;
+    musicWasPlayingRef.current = !audioEl.paused && !audioEl.ended && !!audioEl.src;
+    if (musicWasPlayingRef.current) audioEl.pause(); // → event 'pause' → HOST_COMMAND PAUSE synchronisé à tous
+  }, [getMusicEl]);
+
+  // Un micro se DÉSACTIVE (libération déjà faite par l'appelant). Quand PLUS AUCUN micro n'est actif :
+  //   resume() du contexte mixeur (suspendu par le changement de périphérique) + play() de l'élément
+  //   (→ HOST_COMMAND PLAY synchronisé) UNIQUEMENT si la musique jouait avant l'auto-pause. JAMAIS load().
+  const removeMicHold = useCallback((key: string) => {
+    micHoldRef.current.delete(key);
+    if (micHoldRef.current.size > 0) return; // un autre micro tient encore la pause
+    const shouldResume = musicWasPlayingRef.current;
+    musicWasPlayingRef.current = false;
+    const audioEl = getMusicEl();
+    if (!audioEl) return;
+    let tries = 0;
+    const tick = () => {
+      try { const ctx = getMixerContext(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+      if (shouldResume && audioEl.paused && audioEl.src) {
+        audioEl.play().catch(() => { /* geste requis ? ignore, jamais load() → reprise à la position courante */ });
       }
       if (++tries < 6) setTimeout(tick, 200);
     };
@@ -1019,9 +1047,10 @@ export const SessionPage: React.FC = () => {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
+      addMicHold('host'); // 🎵 micro hôte activé → AUTO-PAUSE la musique pour tous (synchro)
     } else {
       stopBroadcast(); // retire le flux sortant, garde le peer actif
-      recoverMusicAfterMicRelease(); // 🎵 la coupure du micro ne doit ni figer ni couper la musique
+      removeMicHold('host'); // 🎵 micro hôte libéré → AUTO-RESUME si la musique jouait avant
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
@@ -1061,7 +1090,7 @@ export const SessionPage: React.FC = () => {
       participantMic.stopCapture();
       setIsTalking(false);
       showToast('Vous avez rendu la parole', 'default');
-      recoverMusicAfterMicRelease(); // 🎵 la coupure de sa parole ne doit pas figer/couper sa musique
+      resumeMixerContextSoon(); // 🎵 réveille son contexte musique local (la synchro hôte gère play/pause)
     } else {
       const ok = await participantMic.startCapture();
       if (ok) {
@@ -1069,7 +1098,7 @@ export const SessionPage: React.FC = () => {
         showToast('Vous avez la parole', 'success');
       }
     }
-  }, [isTalking, participantMic, stopTalkToHost, showToast, recoverMusicAfterMicRelease]);
+  }, [isTalking, participantMic, stopTalkToHost, showToast, resumeMixerContextSoon]);
 
   // 🎤 L'HÔTE donne/coupe la parole à distance à CE participant. Réutilise EXACTEMENT le flux
   //    « prendre la parole » (startCapture → isTalking → effet talkToHost). Additif, rien d'existant modifié.
@@ -1093,10 +1122,10 @@ export const SessionPage: React.FC = () => {
         participantMic.stopCapture();
         setIsTalking(false);
         showToast('Le coach a coupé ton micro', 'default');
-        recoverMusicAfterMicRelease(); // 🎵 récupère la qualité + continuité de sa musique locale
+        resumeMixerContextSoon(); // 🎵 réveille son contexte musique local (la synchro hôte relance le PLAY)
       }
     }
-  }, [isTalking, participantMic, stopTalkToHost, showToast, recoverMusicAfterMicRelease]);
+  }, [isTalking, participantMic, stopTalkToHost, showToast, resumeMixerContextSoon]);
   const applyHostMicRef = useRef(applyHostMic);
   useEffect(() => { applyHostMicRef.current = applyHostMic; }, [applyHostMic]);
 
@@ -2325,8 +2354,10 @@ export const SessionPage: React.FC = () => {
       if (on) next.add(userId); else next.delete(userId);
       return next;
     });
+    // 🎵 c'est l'hôte qui pilote la musique : donner la parole = AUTO-PAUSE synchro ; couper = AUTO-RESUME.
+    if (on) addMicHold(userId); else removeMicHold(userId);
     showToast(on ? 'Parole donnée au participant 🎤' : 'Micro du participant coupé', 'default');
-  }, [sendPlaybackEvent, showToast]);
+  }, [sendPlaybackEvent, showToast, addMicHold, removeMicHold]);
 
   // Hôte : scène pleine → retirer un participant choisi, puis faire monter le nouveau (anti-dépassement 10).
   const handleSwapStage = useCallback(async (acceptUserId: string, removedUserId: string) => {

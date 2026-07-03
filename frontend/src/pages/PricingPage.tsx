@@ -133,7 +133,7 @@ const PricingPage: React.FC = () => {
   const handleSubscribe = async (plan: 'pro' | 'enterprise') => {
     if (!isAuthenticated) {
       // 🔁 Mémoriser l'offre choisie + l'intervalle, puis aller à l'INSCRIPTION → reprise auto au retour.
-      try { localStorage.setItem('bt_pending_subscribe', JSON.stringify({ plan, billing })); } catch { /* ignore */ }
+      try { localStorage.setItem('bt_pending_subscribe', JSON.stringify({ plan, billing, ts: Date.now() })); } catch { /* ignore */ }
       navigate('/login', { state: { from: '/pricing', mode: 'signup' } });
       return;
     }
@@ -152,14 +152,18 @@ const PricingPage: React.FC = () => {
   const resumedRef = useRef(false);
   useEffect(() => {
     if (!isAuthenticated || resumedRef.current) return;
-    let pending: { plan?: 'pro' | 'enterprise'; billing?: 'month' | 'year' } | null = null;
+    let pending: { plan?: 'pro' | 'enterprise'; billing?: 'month' | 'year'; ts?: number } | null = null;
     try {
       const raw = localStorage.getItem('bt_pending_subscribe');
       if (raw) pending = JSON.parse(raw);
     } catch { /* ignore */ }
     if (pending?.plan !== 'pro' && pending?.plan !== 'enterprise') return;
     resumedRef.current = true;
+    // Toujours nettoyer la clé (même périmée) pour ne pas la voir relancer plus tard.
     try { localStorage.removeItem('bt_pending_subscribe'); } catch { /* ignore */ }
+    // ⏳ N'honorer que les intentions RÉCENTES (< 30 min) : évite qu'une clé périmée déclenche un
+    //    checkout pour un AUTRE utilisateur qui se connecte plus tard sur le même appareil partagé.
+    if (!pending.ts || Date.now() - pending.ts > 30 * 60 * 1000) return;
     if (pending.billing === 'month' || pending.billing === 'year') setBilling(pending.billing);
     setResumePlan(pending.plan);
   }, [isAuthenticated]);

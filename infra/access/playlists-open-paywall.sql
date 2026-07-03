@@ -37,6 +37,7 @@ drop policy if exists playlists_select on public.playlists;
 create policy playlists_select on public.playlists for select to public
 using (
   mode is distinct from 'open'                                           -- privée / payante / non-configuré : libre
+  or access_mode = 'guest'                                               -- 🚪 accès SANS INSCRIPTION = lecture libre (aucun crédit)
   or host_id = auth.uid()                                                -- hôte
   or cohosts @> to_jsonb((auth.uid())::text)                             -- co-hôte
   or coalesce(auth.jwt() ->> 'email', '') = 'contact.artboost@gmail.com' -- admin

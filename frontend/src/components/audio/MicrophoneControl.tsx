@@ -54,10 +54,9 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   }, [state.isCapturing, state.isMuted, onMicActive]);
 
   // Notify parent of stream changes for WebRTC.
-  // 🎤 STABILITÉ : on garde le MÊME flux tant que le micro est capté, INDÉPENDAMMENT du mute. Couper le
-  //    micro = track.enabled=false (via toggleMute) → le peer reçoit un flux silencieux SANS renégociation
-  //    (avant : envoyer null au mute déclenchait stopBroadcast → renégociation WebRTC fragile qui cassait).
-  //    Le flux n'est retiré (null) QUE lorsqu'on arrête réellement la capture.
+  // 🎤 Le flux sortant existe tant que le micro est CAPTÉ. Un mute rapide (petit bouton) ne fait que
+  //    track.enabled=false → flux silencieux SANS renégociation. Le flux n'est retiré (null → stopBroadcast)
+  //    QUE lorsqu'on ÉTEINT réellement (stopCapture), ce qui libère aussi le micro OS (musique rétablie).
   useEffect(() => {
     if (state.isCapturing && audioStream) {
       onStreamReady?.(audioStream);
@@ -67,16 +66,18 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   }, [state.isCapturing, audioStream, onStreamReady]);
 
   // Toggle capture - DIRECT getUserMedia call on click
-  // 🎤 STABILITÉ : on capte le micro UNE SEULE FOIS (au 1er clic), puis On/Off = MUTE/UNMUTE
-  //    (track.enabled) sans arrêter la capture ni renégocier le WebRTC → micro fiable à chaque bascule.
-  //    (L'arrêt réel de la capture a lieu au démontage / à la sortie de session.)
+  // 🎤 CORRECTION SON : « éteindre » LIBÈRE vraiment le micro (stopCapture → track.stop() + release
+  //    getUserMedia + fermeture AudioContext). Sinon l'OS reste en mode « communication » et la musique
+  //    reste dégradée même micro coupé. Pour une simple PAUSE brève, utiliser le petit bouton mute
+  //    (track.enabled) qui n'arrête pas la capture. Ré-activer = nouveau getUserMedia (permission déjà
+  //    accordée → rapide) via le même chemin de broadcast que la 1re activation (éprouvé, fiable).
   const handleToggleCapture = useCallback(async () => {
     if (!state.isCapturing) {
       await startCapture(); // 1re activation : déclenche la permission navigateur
     } else {
-      toggleMute();         // bascules suivantes : mute/unmute sans couper le flux
+      stopCapture();        // ÉTEINDRE : libère le micro → l'OS quitte le mode comm, musique rétablie
     }
-  }, [state.isCapturing, startCapture, toggleMute]);
+  }, [state.isCapturing, startCapture, stopCapture]);
 
   // Retry permission
   const handleRetry = useCallback(async () => {

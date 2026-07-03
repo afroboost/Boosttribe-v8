@@ -34,7 +34,7 @@ import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
 import { IntervalTimer, type IntervalRun, type IntervalConfig, type IntervalTimerHandle } from '@/components/session/IntervalTimer';
 import { IntervalConfigModal } from '@/components/session/IntervalConfigModal';
-import type { RemoteMediaState } from '@/components/session/SharedMediaPlayer';
+import type { RemoteMediaState, SharedMediaPlayerHandle } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
@@ -739,6 +739,9 @@ export const SessionPage: React.FC = () => {
   //    ne relance la musique que lorsque PLUS AUCUN ne la tient, et UNIQUEMENT si elle jouait avant.
   const micHoldRef = useRef<Set<string>>(new Set());
   const musicWasPlayingRef = useRef(false);
+  // 🎬 Média partagé (vidéo/YouTube/Vimeo) piloté par le MÊME compteur : pause à la parole, reprise au silence.
+  const sharedMediaPlayerRef = useRef<SharedMediaPlayerHandle | null>(null);
+  const sharedMediaWasPlayingRef = useRef(false);
 
   // Réveille le contexte mixeur que la libération du micro a pu suspendre (changement de périphérique OS),
   // sur ~1.2 s. Ne touche PAS l'état play/pause (piloté par la synchro). Utilisé côté participant.
@@ -756,10 +759,17 @@ export const SessionPage: React.FC = () => {
     const wasEmpty = micHoldRef.current.size === 0;
     micHoldRef.current.add(key);
     if (!wasEmpty) return; // déjà en pause pour un autre micro actif
+    // 🎵 Musique
     const audioEl = getMusicEl();
-    if (!audioEl) return;
-    musicWasPlayingRef.current = !audioEl.paused && !audioEl.ended && !!audioEl.src;
-    if (musicWasPlayingRef.current) audioEl.pause(); // → event 'pause' → HOST_COMMAND PAUSE synchronisé à tous
+    if (audioEl) {
+      musicWasPlayingRef.current = !audioEl.paused && !audioEl.ended && !!audioEl.src;
+      if (musicWasPlayingRef.current) audioEl.pause(); // → event 'pause' → HOST_COMMAND PAUSE synchronisé à tous
+    } else {
+      musicWasPlayingRef.current = false;
+    }
+    // 🎬 Média partagé (vidéo/YouTube/Vimeo) : pause via le chemin hôte existant → VIDEO_SYNC propage à tous.
+    try { sharedMediaWasPlayingRef.current = sharedMediaPlayerRef.current?.pauseSharedMedia() ?? false; }
+    catch { sharedMediaWasPlayingRef.current = false; }
   }, [getMusicEl]);
 
   // Un micro se DÉSACTIVE (libération déjà faite par l'appelant). Quand PLUS AUCUN micro n'est actif :
@@ -770,6 +780,10 @@ export const SessionPage: React.FC = () => {
     if (micHoldRef.current.size > 0) return; // un autre micro tient encore la pause
     const shouldResume = musicWasPlayingRef.current;
     musicWasPlayingRef.current = false;
+    // 🎬 Média partagé : reprise UNE fois (le heartbeat cale la position) UNIQUEMENT s'il jouait avant.
+    const resumeShared = sharedMediaWasPlayingRef.current;
+    sharedMediaWasPlayingRef.current = false;
+    if (resumeShared) { try { sharedMediaPlayerRef.current?.resumeSharedMedia(true); } catch { /* ignore */ } }
     const audioEl = getMusicEl();
     if (!audioEl) return;
     let tries = 0;
@@ -3976,6 +3990,7 @@ export const SessionPage: React.FC = () => {
             {shareMode !== 'audio' && sharedMedia && (
               <div className="bt-tab-diffusion">
               <SharedMediaPlayer
+                ref={sharedMediaPlayerRef}
                 media={sharedMedia}
                 isHost={canShare}
                 onState={canShare ? handleMediaState : undefined}

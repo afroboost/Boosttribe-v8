@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
+import React, { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import { Maximize2, ArrowLeft, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube, Volume2 } from 'lucide-react';
 import Vimeo from '@vimeo/player';
 import type { SharedMedia } from '@/lib/supabaseClient';
@@ -8,6 +8,13 @@ export interface RemoteMediaState {
   isPlaying: boolean;
   currentTime: number;
   seq: number; // incrémenté à chaque commande pour forcer la ré-application
+}
+
+// 🎙️ Handle impératif (VAD mains-libres) : l'hôte met en pause / reprend le média partagé via le
+//    chemin lecteur EXISTANT → la synchro (heartbeat VIDEO_SYNC) propage à tous. Aucune nouvelle synchro.
+export interface SharedMediaPlayerHandle {
+  pauseSharedMedia: () => boolean;                 // pause le média ; renvoie true s'il JOUAIT (pour reprise conditionnelle)
+  resumeSharedMedia: (wasPlaying: boolean) => void; // reprend UNIQUEMENT s'il jouait ; ne touche jamais muted/pendingUnmute
 }
 
 interface SharedMediaPlayerProps {
@@ -56,7 +63,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode }) => {
+export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // 🔍 Racine du lecteur : c'est ELLE qu'on passe en plein écran (contient vidéo + overlay caméras + bouton Retour).
   const rootRef = useRef<HTMLDivElement>(null);
@@ -89,7 +96,11 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
 
   // 🎬 HÔTE = SOURCE UNIQUE : émettre l'état (lu sur le lecteur LIVE) vers le parent, qui le
   // diffuse en VIDEO_SYNC. Pas de throttle ici : appelé par l'UNIQUE interval (700ms) + à chaque action.
+  // Dernier état de lecture connu (mis à jour à chaque émission hôte) — utilisé par pauseSharedMedia
+  //   pour Vimeo dont getPaused() est asynchrone. Best-effort, rafraîchi ~700ms + à chaque action.
+  const lastPlayingRef = useRef(false);
   const emitHostState = useCallback((isPlaying: boolean, currentTime: number) => {
+    lastPlayingRef.current = isPlaying;
     onStateRef.current?.({ isPlaying, currentTime: currentTime || 0 });
   }, []);
 
@@ -483,6 +494,46 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
     } catch { /* ignore */ }
   }, [media.type]);
 
+  // 🎙️ VAD mains-libres : pause/reprise du média partagé pilotées par l'HÔTE (chemin lecteur EXISTANT).
+  //    Appeler pause()/play() sur le lecteur hôte → la synchro (emitHostState → VIDEO_SYNC → participants)
+  //    propage. On NE force PAS de seek (le heartbeat cale la position) et on NE touche PAS muted.
+  useImperativeHandle(ref, (): SharedMediaPlayerHandle => ({
+    pauseSharedMedia: () => {
+      try {
+        if (media.type === 'video') {
+          const v = videoRef.current;
+          if (!v) return false;
+          const was = !v.paused;
+          if (was) v.pause();
+          return was;
+        }
+        if (media.type === 'youtube') {
+          const p = ytPlayerRef.current;
+          if (!p || !ytReadyRef.current || !p.getPlayerState) return false;
+          const was = p.getPlayerState() === 1; // 1 = PLAYING
+          if (was) p.pauseVideo();
+          return was;
+        }
+        if (media.type === 'vimeo') {
+          const p = vimeoPlayerRef.current;
+          if (!p || !vimeoReadyRef.current) return false;
+          const was = lastPlayingRef.current; // getPaused() est async → best-effort via dernier état émis
+          p.pause().catch(() => { /* ignore */ });
+          return was;
+        }
+      } catch { /* ignore */ }
+      return false;
+    },
+    resumeSharedMedia: (wasPlaying: boolean) => {
+      if (!wasPlaying) return; // ne relance QUE si le média jouait avant l'auto-pause
+      try {
+        if (media.type === 'video') { videoRef.current?.play?.().catch(() => { /* ignore */ }); }
+        else if (media.type === 'youtube') { if (ytReadyRef.current) ytPlayerRef.current?.playVideo?.(); }
+        else if (media.type === 'vimeo') { if (vimeoReadyRef.current) vimeoPlayerRef.current?.play?.().catch(() => { /* ignore */ }); }
+      } catch { /* ignore */ }
+    },
+  }), [media.type]);
+
   const icon =
     media.type === 'image' ? <ImageIcon className="w-4 h-4" /> :
     media.type === 'youtube' ? <Youtube className="w-4 h-4" /> :
@@ -699,6 +750,8 @@ export const SharedMediaPlayer: React.FC<SharedMediaPlayerProps> = ({ media, isH
       {enlarged && chatNode}
     </div>
   );
-};
+});
+
+SharedMediaPlayer.displayName = 'SharedMediaPlayer';
 
 export default SharedMediaPlayer;

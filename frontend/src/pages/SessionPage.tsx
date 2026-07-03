@@ -1133,14 +1133,18 @@ export const SessionPage: React.FC = () => {
   const [showPromoEditor, setShowPromoEditor] = useState(false); // 📣 éditeur de la page promo
   // 🚪 Mode d'accès : 'account' (avec nom → chat + visio) ou 'guest' (sans inscription → écoute/lecture seule).
   const [accessMode, setAccessMode] = useState<AccessMode>('account');
+  // 🚪 Le type d'accès (guest/account) est-il RÉSOLU depuis la DB ? Le gating paywall doit l'attendre
+  //    (sinon course : accessInfo backend arrive avant, accessMode vaut 'account' par défaut → faux paywall).
+  const [accessModeResolved, setAccessModeResolved] = useState<boolean>(() => !isSupabaseConfigured);
   const [savingAccessMode, setSavingAccessMode] = useState(false);
   const handleAccessMode = useCallback(async (mode: AccessMode) => {
     setAccessMode(mode);
     if (!sessionId) return;
     setSavingAccessMode(true);
-    await saveAccessMode(sessionId, mode, user?.id);
+    const ok = await saveAccessMode(sessionId, mode, user?.id); // ⚠️ vérifier le retour (échec silencieux avant)
     setSavingAccessMode(false);
-    showToast(mode === 'guest' ? 'Accès sans inscription activé' : 'Accès avec inscription activé', 'success');
+    if (ok) showToast(mode === 'guest' ? 'Accès sans inscription activé' : 'Accès avec inscription activé', 'success');
+    else showToast('Échec d\'enregistrement du mode d\'accès — réessaie', 'error');
   }, [sessionId, user?.id, showToast]);
   // Invité = mode guest ET pas l'hôte → pas de chat ni de visio (écoute/lecture seule).
   const isGuestRestricted = accessMode === 'guest' && !isHost;
@@ -1361,6 +1365,7 @@ export const SessionPage: React.FC = () => {
     if (!sessionId) return;
     if (!accessInfo) return;                          // attendre le mode d'accès (open/paid/private)
     if (accessInfo.mode !== 'open') return;           // seul « open » est gaté ici (privée/payante ailleurs)
+    if (!accessModeResolved) return;                  // 🚪 attendre le type (guest/account) → pas de faux paywall
     // 🚪 PARTIE 4 — Mode « sans inscription » (guest) = accès LIBRE : l'hôte a choisi l'entrée directe
     //    par pseudo → aucun crédit requis, même pour un participant anonyme (pas de paywall).
     if (accessMode === 'guest') { setCreditsBlocked(null); return; }
@@ -1384,7 +1389,7 @@ export const SessionPage: React.FC = () => {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, user?.id, nickname, isHost, isAdminUser, accessInfo, accessMode]);
+  }, [sessionId, user?.id, nickname, isHost, isAdminUser, accessInfo, accessMode, accessModeResolved]);
 
   // 🎟️ Infos d'accès de la session (mode/prix/capacité) — publiques, pour tous.
   const refreshAccess = useCallback(async () => {
@@ -1477,17 +1482,20 @@ export const SessionPage: React.FC = () => {
         price_chf: modeDraft.mode === 'paid' ? Number(modeDraft.price) : null,
         capacity: modeDraft.mode === 'paid' && modeDraft.capacity ? Number(modeDraft.capacity) : null,
       });
-      if (ok) {
+      // 🚪 Persister AUSSI le type d'accès (guest/account) sur le MÊME bouton « Enregistrer »
+      //    (avant : commité seulement au clic de carte, échec silencieux possible). Contrôle du retour.
+      const accessOk = await saveAccessMode(sessionId, accessMode, user?.id);
+      if (ok && accessOk) {
         showToast('Mode d\'accès enregistré', 'success');
         setShowSessionSettings(false);
         await refreshAccess();
       } else {
-        showToast(error || 'Échec', 'error');
+        showToast(error || (!accessOk ? 'Échec d\'enregistrement du type d\'accès (colonne DB ?)' : 'Échec'), 'error');
       }
     } finally {
       setSavingMode(false);
     }
-  }, [sessionId, modeDraft, refreshAccess, showToast]);
+  }, [sessionId, modeDraft, accessMode, user?.id, refreshAccess, showToast]);
 
   // Listen for remote mute commands (for participants)
   useEffect(() => {
@@ -1594,7 +1602,7 @@ export const SessionPage: React.FC = () => {
       try {
         const { data, error } = await supabase
           .from('playlists')
-          .select('tracks, description, shared_media, host_id, access_mode')
+          .select('tracks, description, shared_media, host_id')
           .eq('session_id', sessionId)
           .maybeSingle();
 
@@ -1611,9 +1619,6 @@ export const SessionPage: React.FC = () => {
 
         // C : charger la description ; E : média partagé courant ; 🔒 host_id (propriétaire)
         if (data) {
-          // 🚪 Mode d'accès (invité vs avec inscription) — défaut 'account'.
-          const am = (data as { access_mode?: string }).access_mode;
-          if (am === 'guest' || am === 'account') setAccessMode(am);
           if (typeof data.description === 'string') setDescription(data.description);
           if (data.shared_media) {
             const sm = data.shared_media as SharedMedia;
@@ -1647,6 +1652,21 @@ export const SessionPage: React.FC = () => {
           if (!perr) setIsPrivate(!!(pd as { is_private?: boolean } | null)?.is_private);
         } catch { /* colonne is_private pas encore créée → public */ }
         setPrivacyChecked(true);
+
+        // 🚪 Mode d'accès (guest/account) — requête séparée TOLÉRANTE (colonne access_mode optionnelle).
+        //    On marque TOUJOURS la résolution → le gating peut décider (défaut 'account' si colonne absente).
+        try {
+          const { data: ad, error: aerr } = await supabase
+            .from('playlists')
+            .select('access_mode')
+            .eq('session_id', sessionId)
+            .maybeSingle();
+          if (!aerr) {
+            const am = (ad as { access_mode?: string } | null)?.access_mode;
+            if (am === 'guest' || am === 'account') setAccessMode(am);
+          }
+        } catch { /* colonne access_mode pas encore créée → défaut 'account' */ }
+        setAccessModeResolved(true);
 
         if (data && data.tracks && Array.isArray(data.tracks) && data.tracks.length > 0) {
           setTracks(data.tracks as Track[]);

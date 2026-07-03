@@ -714,6 +714,7 @@ export const SessionPage: React.FC = () => {
     setSelfMonitor,
     getContext: getMixerContext,
     getTimerOutput,
+    setMicDuckCompensation,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -1000,6 +1001,12 @@ export const SessionPage: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
+
+  // 🎚️ Anti-DUCKING : quand le micro HÔTE est actif, le navigateur/OS baisse ~20% la musique. On la
+  //    remonte du facteur de compensation (méthode neutre sur iOS). Le slider Volume Musique reste maître.
+  useEffect(() => {
+    setMicDuckCompensation(hostMicActive);
+  }, [hostMicActive, setMicDuckCompensation]);
 
   // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
   const [isTalking, setIsTalking] = useState(false);

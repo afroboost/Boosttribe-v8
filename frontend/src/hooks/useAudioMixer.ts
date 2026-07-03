@@ -29,6 +29,8 @@ export interface UseAudioMixerReturn {
   setMicVolume: (volume: number) => void;
   setTribeVolume: (volume: number) => void;
   setHostVoiceVolume: (volume: number) => void;
+  // 🎚️ Compense le ducking (musique ~-20%) quand le micro hôte est actif (additif, no-op sur iOS).
+  setMicDuckCompensation: (active: boolean) => void;
   connectMusicSource: (audioElement: HTMLAudioElement) => void;
   connectMicSource: (stream: MediaStream) => MediaStream;
   connectTribeStream: (stream: MediaStream, peerId: string) => void;
@@ -50,6 +52,10 @@ export interface UseAudioMixerReturn {
 // 🔊 Plages : 1.0 = pleine puissance RÉELLE (aucune atténuation) ; au-delà = amplification (headroom).
 const MUSIC_MAX_GAIN = 2.5; // musique amplifiable jusqu'à 250%
 const MIC_MAX_GAIN = 2.5;   // micro hôte amplifiable jusqu'à 250% (indépendant de la musique)
+// 🎚️ Compense le DUCKING navigateur/OS (Chrome/macOS baissent ~20% les autres sons quand un micro est
+//    actif). Facteur multiplicatif appliqué SUR la musique quand le micro hôte est actif. Ajustable ici
+//    si le duck réel n'est pas exactement 20% (1.25 = +25% ≈ annule -20%).
+const MIC_DUCK_COMPENSATION = 1.25;
 const MASTER_MAKEUP_GAIN = 1.0; // 🔊 sortie maître à l'UNITÉ : 100% = plein volume réel (plus d'atténuation)
 const SELF_MONITOR_GAIN = 0.6;  // 🔊 3b : niveau d'auto-écoute (« M'entendre ») modéré → anti-saturation/larsen
 
@@ -75,6 +81,9 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   
   // GainNodes séparés
   const musicGainRef = useRef<GainNode | null>(null);
+  // 🎚️ Compensation du ducking (1 = neutre) appliquée PAR-DESSUS le slider Volume Musique, sans en
+  //    changer la valeur. Passe à MIC_DUCK_COMPENSATION quand le micro hôte est actif.
+  const micDuckCompRef = useRef(1);
   const micGainRef = useRef<GainNode | null>(null);
   const tribeGainRef = useRef<GainNode | null>(null);
   const hostVoiceGainRef = useRef<GainNode | null>(null);
@@ -397,9 +406,25 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     // Le GainNode ne sert QUE de boost (≥ 1.0) : l'atténuation 0..100% reste pilotée par
     // element.volume (côté SessionPage) → pas de double atténuation, et headroom > 100% réel.
     if (musicGainRef.current) {
-      musicGainRef.current.gain.setValueAtTime(Math.max(1, clamped), audioContextRef.current?.currentTime || 0);
+      // La compensation de ducking (micDuckCompRef) s'ajoute par-dessus, de façon transparente.
+      musicGainRef.current.gain.setValueAtTime(Math.max(1, clamped) * micDuckCompRef.current, audioContextRef.current?.currentTime || 0);
     }
   }, []);
+
+  /**
+   * 🎚️ Compense le DUCKING (le navigateur/OS baisse ~20% les autres sons quand un micro est actif).
+   * Applique/retire un facteur multiplicatif sur le canal MUSIQUE, SANS toucher la valeur du slider
+   * « Volume Musique » (celui-ci continue de piloter le mix). iOS : la musique ne passe pas par le Web
+   * Audio (pas de ducking Web Audio) → méthode NEUTRE, aucun impact sur la lecture écran verrouillé.
+   */
+  const setMicDuckCompensation = useCallback((active: boolean) => {
+    if (isIOS) return; // musique iOS hors Web Audio → ne rien changer
+    micDuckCompRef.current = active ? MIC_DUCK_COMPENSATION : 1;
+    if (musicGainRef.current) {
+      const base = Math.max(1, state.musicVolume);
+      musicGainRef.current.gain.setValueAtTime(base * micDuckCompRef.current, audioContextRef.current?.currentTime || 0);
+    }
+  }, [isIOS, state.musicVolume]);
 
   /**
    * Définit le volume du micro (avec un peu de marge pour passer au-dessus de la musique)
@@ -546,6 +571,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     getContext,
     getMusicStream,
     getTimerOutput,
+    setMicDuckCompensation,
     setSelfMonitor,
   };
 }

@@ -715,6 +715,8 @@ export const SessionPage: React.FC = () => {
     getContext: getMixerContext,
     getTimerOutput,
     setMicDuckCompensation,
+    startVoiceActivity,
+    stopVoiceActivity,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -1038,6 +1040,17 @@ export const SessionPage: React.FC = () => {
   // 🎤 OBJECTIF A + POINT 5: l'activation du micro hôte ne fait qu'AJOUTER/RETIRER le flux
   // sortant via le GainNode "Mon Micro" (anti-larsen). Le peer reste connecté indépendamment.
   // On n'agit que sur un VRAI changement de flux (on/off) → pas de churn de source audio.
+  // 🎙️ VAD MAINS-LIBRES (hôte) : le micro reste allumé en continu ; c'est la DÉTECTION DE PAROLE qui
+  //    pilote l'auto-pause. Parler → auto-pause musique (synchro tous) + voix garantie audible ; se taire
+  //    (après hangover ~900ms) → auto-resume. Réutilise le compteur micHoldRef (clé 'host-vad').
+  const handleSpeechStart = useCallback(() => {
+    ensureVoiceAudible();    // voix nette immédiatement, même musique/vidéo en pause
+    addMicHold('host-vad');  // auto-pause musique (+ vidéo partagée) synchronisée à tous
+  }, [ensureVoiceAudible, addMicHold]);
+  const handleSpeechEnd = useCallback(() => {
+    removeMicHold('host-vad'); // auto-resume quand plus aucun micro/parole n'est actif
+  }, [removeMicHold]);
+
   const broadcastedStreamRef = useRef<MediaStream | null>(null);
   useEffect(() => {
     if (!isHost) return;
@@ -1048,10 +1061,12 @@ export const SessionPage: React.FC = () => {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
-      addMicHold('host'); // 🎵 micro hôte activé → AUTO-PAUSE la musique pour tous (synchro)
+      // 🎙️ Le micro reste diffusé en continu ; la VAD décide de l'auto-pause (plus d'addMicHold direct ici).
+      startVoiceActivity(handleSpeechStart, handleSpeechEnd);
     } else {
       stopBroadcast(); // retire le flux sortant, garde le peer actif
-      removeMicHold('host'); // 🎵 micro hôte libéré → AUTO-RESUME si la musique jouait avant
+      stopVoiceActivity();
+      removeMicHold('host-vad'); // sécurité : libère un hold VAD éventuellement resté actif
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);

@@ -47,6 +47,9 @@ export interface UseAudioMixerReturn {
   getTimerOutput: () => GainNode | null;
   // 🔊 « M'entendre » : l'hôte s'écoute (monitoring local, anti-larsen, on/off).
   setSelfMonitor: (on: boolean) => void;
+  // 🎙️ VAD mains-libres : détecte la parole (analyser en dérivation) → onSpeechStart/onSpeechEnd.
+  startVoiceActivity: (onSpeechStart: () => void, onSpeechEnd: () => void, opts?: { thresholdOffsetDb?: number }) => void;
+  stopVoiceActivity: () => void;
 }
 
 // 🔊 Plages : 1.0 = pleine puissance RÉELLE (aucune atténuation) ; au-delà = amplification (headroom).
@@ -116,6 +119,13 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   // 🔊 MONITORING « M'entendre » (#6) : micSource → monitorGain(0 par défaut) → master.
   //    Activable par l'hôte pour s'écouter (anti-larsen : gain 0 tant que désactivé).
   const monitorGainRef = useRef<GainNode | null>(null);
+
+  // 🎙️ VAD (voix mains-libres) : AnalyserNode en DÉRIVATION sur la source micro (dead-end, non connecté
+  //    en aval) + boucle ~50ms. N'altère PAS le graphe de diffusion. Vit sur micCtx (fermé au démontage).
+  const vadAnalyserRef = useRef<AnalyserNode | null>(null);
+  const vadTimerRef = useRef<number | null>(null);
+  const vadStartCbRef = useRef<(() => void) | null>(null);
+  const vadEndCbRef = useRef<(() => void) | null>(null);
 
   // Track connected elements
   const connectedMusicElement = useRef<HTMLAudioElement | null>(null);
@@ -318,6 +328,14 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       // 3b : auto-écoute tapée sur la SOURCE (pré-boost) → indépendante du volume de diffusion.
       if (monitorGainRef.current) source.connect(monitorGainRef.current);
       micSourceRef.current = source;
+      // 🎙️ VAD : analyser branché EN PARALLÈLE sur la source (dead-end, aucun aval) → ne modifie NI la
+      //    diffusion WebRTC NI le monitoring. Recréé si le contexte a changé.
+      if (!vadAnalyserRef.current || vadAnalyserRef.current.context !== micCtx) {
+        const analyser = micCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        vadAnalyserRef.current = analyser;
+      }
+      try { source.connect(vadAnalyserRef.current); } catch { /* ignore */ }
       return micStreamDestRef.current!.stream;
     } catch {
       return stream; // Fallback : flux brut si Web Audio indisponible
@@ -491,6 +509,11 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
       }
       micSourceRef.current = null;
     }
+    // 🎙️ VAD : arrêter la boucle + libérer l'analyser (dérivation) — pas de fuite.
+    if (vadTimerRef.current != null) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+    vadStartCbRef.current = null;
+    vadEndCbRef.current = null;
+    if (vadAnalyserRef.current) { try { vadAnalyserRef.current.disconnect(); } catch { /* ignore */ } vadAnalyserRef.current = null; }
   }, []);
 
   /**
@@ -539,6 +562,80 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     }
   }, []);
 
+  /**
+   * 🎙️ VAD MAINS-LIBRES : détecte la parole sur la source micro (analyser en dérivation) et appelle
+   * onSpeechStart / onSpeechEnd. Le micro reste TOUJOURS diffusé (on ne touche pas au broadcast) ; seule
+   * la détection pilote l'auto-pause musique côté SessionPage.
+   *  - Onset : RMS > seuil pendant ≥120ms → onSpeechStart.
+   *  - Fin   : RMS < seuil pendant ≥900ms (hangover) → onSpeechEnd.
+   *  - Seuil adaptatif anti-bleed : plancher de bruit calibré ~500ms (musique incluse) puis threshold =
+   *    plancher + offset dB (défaut 8), réajusté doucement pendant les silences confirmés.
+   */
+  const startVoiceActivity = useCallback((
+    onSpeechStart: () => void,
+    onSpeechEnd: () => void,
+    opts?: { thresholdOffsetDb?: number },
+  ) => {
+    const analyser = vadAnalyserRef.current;
+    if (!analyser) return; // micro pas encore connecté → rien à analyser
+    const micCtx = micCtxRef.current;
+    if (micCtx?.state === 'suspended') micCtx.resume().catch(() => { /* ignore */ });
+    vadStartCbRef.current = onSpeechStart;
+    vadEndCbRef.current = onSpeechEnd;
+    if (vadTimerRef.current != null) return; // déjà en cours (callbacks rafraîchis ci-dessus)
+
+    const OFFSET = opts?.thresholdOffsetDb ?? 8; // dB au-dessus du plancher de bruit
+    const ONSET_MS = 120, HANG_MS = 900, CALIB_MS = 500;
+    const buf = new Float32Array(analyser.fftSize);
+    let speaking = false;
+    let overSince = 0, underSince = 0;
+    let noiseFloor = -50, calibrated = false;
+    const t0 = Date.now();
+
+    const tick = () => {
+      const a = vadAnalyserRef.current;
+      if (!a) return;
+      a.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      const db = rms > 1e-7 ? 20 * Math.log10(rms) : -120;
+      const now = Date.now();
+
+      // Calibration initiale du plancher de bruit (musique ambiante incluse) → anti-bleed.
+      if (now - t0 < CALIB_MS) {
+        noiseFloor = calibrated ? noiseFloor * 0.8 + db * 0.2 : db;
+        calibrated = true;
+        return; // pas de déclenchement pendant la calibration
+      }
+
+      const threshold = noiseFloor + OFFSET;
+      if (db > threshold) {
+        underSince = 0;
+        if (!speaking) {
+          if (overSince === 0) overSince = now;
+          else if (now - overSince >= ONSET_MS) { speaking = true; overSince = 0; vadStartCbRef.current?.(); }
+        }
+      } else {
+        overSince = 0;
+        if (speaking) {
+          if (underSince === 0) underSince = now;
+          else if (now - underSince >= HANG_MS) { speaking = false; underSince = 0; vadEndCbRef.current?.(); }
+        } else {
+          // Silence confirmé → réajuste doucement le plancher (dérive du bruit/musique).
+          noiseFloor = noiseFloor * 0.98 + db * 0.02;
+        }
+      }
+    };
+    vadTimerRef.current = window.setInterval(tick, 50);
+  }, []);
+
+  const stopVoiceActivity = useCallback(() => {
+    if (vadTimerRef.current != null) { clearInterval(vadTimerRef.current); vadTimerRef.current = null; }
+    vadStartCbRef.current = null;
+    vadEndCbRef.current = null;
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -573,6 +670,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     getTimerOutput,
     setMicDuckCompensation,
     setSelfMonitor,
+    startVoiceActivity,
+    stopVoiceActivity,
   };
 }
 

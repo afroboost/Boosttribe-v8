@@ -75,15 +75,21 @@ export async function uploadAudioFile(
     };
   }
 
-  // Validate file type
-  if (!file.type.includes('audio/') && !file.name.toLowerCase().endsWith('.mp3')) {
-    return { success: false, error: 'Seuls les fichiers audio sont acceptés' };
+  // Validate file type (mp3 + formats courants m4a/aac/wav/ogg)
+  if (!file.type.includes('audio/') && !/\.(mp3|m4a|aac|wav|ogg)$/i.test(file.name)) {
+    return { success: false, error: 'Formats audio acceptés : MP3, M4A, AAC, WAV, OGG' };
   }
 
-  // Validate file size (max 50MB)
-  const maxSize = 50 * 1024 * 1024;
+  // Validate file size (max 300MB — mix long ~90 min possible)
+  const maxSize = 300 * 1024 * 1024;
   if (file.size > maxSize) {
-    return { success: false, error: 'Le fichier ne doit pas dépasser 50 Mo' };
+    return { success: false, error: 'Le fichier ne doit pas dépasser 300 Mo' };
+  }
+
+  // 🎵 Gros fichier (>40 Mo) → chemin RÉSUMABLE (tus) : robuste pour les mix longs (~90 min), reprend
+  //    après coupure et évite les timeouts du POST direct. Petits fichiers → POST direct (plus simple).
+  if (file.size > 40 * 1024 * 1024) {
+    return uploadAudioResumable(file, sessionId, onProgress);
   }
 
   // Generate unique filename
@@ -144,6 +150,65 @@ export async function uploadAudioFile(
       success: false, 
       error: err instanceof Error ? err.message : 'Erreur lors de l\'upload' 
     };
+  }
+}
+
+/**
+ * 🎵 Upload audio RÉSUMABLE (tus) pour les gros fichiers (mix longs ~90 min). Reprend après coupure,
+ * pas de timeout du POST direct. Requiert un JWT utilisateur (le serveur résumable le vérifie).
+ */
+async function uploadAudioResumable(
+  file: File,
+  sessionId: string,
+  onProgress?: (progress: number) => void,
+): Promise<UploadResult> {
+  if (!supabase || !supabaseUrl || !supabaseAnonKey) {
+    return { success: false, error: 'Supabase non configuré' };
+  }
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token || token.trim() === '') {
+      return { success: false, error: 'Reconnecte-toi pour envoyer un fichier volumineux' };
+    }
+    const timestamp = Date.now();
+    const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const objectName = `${sessionId}/${timestamp}_${sanitizedName}`;
+    const publicUrl = await new Promise<string>((resolve, reject) => {
+      const upload = new tus.Upload(file, {
+        endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          apikey: supabaseAnonKey as string,
+          'x-upsert': 'true',
+        },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        chunkSize: 25 * 1024 * 1024, // gros morceaux → moins d'allers-retours
+        metadata: {
+          bucketName: AUDIO_BUCKET,
+          objectName,
+          contentType: file.type || 'audio/mpeg',
+          cacheControl: '3600',
+        },
+        onShouldRetry: (err) => {
+          const status = (err as { originalResponse?: { getStatus?: () => number } })?.originalResponse?.getStatus?.() ?? 0;
+          if (status === 400 || status === 401 || status === 403) return false;
+          return true;
+        },
+        onError: (err) => {
+          let body = '';
+          try { body = (err as { originalResponse?: { getBody?: () => string } })?.originalResponse?.getBody?.() || ''; } catch { /* ignore */ }
+          reject(new Error(body || (err instanceof Error ? err.message : 'Échec de l\'envoi du fichier audio')));
+        },
+        onProgress: (sent, total) => { if (total && onProgress) onProgress(Math.round((sent / total) * 100)); },
+        onSuccess: () => { resolve(`${supabaseUrl}/storage/v1/object/public/${AUDIO_BUCKET}/${objectName}`); },
+      });
+      upload.start();
+    });
+    return { success: true, url: publicUrl, path: objectName };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Erreur lors de l\'upload' };
   }
 }
 

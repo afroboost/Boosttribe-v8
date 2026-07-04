@@ -63,16 +63,16 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate file type
-    if (!file.type.includes('audio/') && !file.name.endsWith('.mp3')) {
-      setError('Seuls les fichiers MP3 sont acceptés');
+    // Validate file type (mp3 + formats courants m4a/aac/wav/ogg)
+    if (!file.type.includes('audio/') && !/\.(mp3|m4a|aac|wav|ogg)$/i.test(file.name)) {
+      setError('Formats audio acceptés : MP3, M4A, AAC, WAV, OGG');
       setStatus('error');
       return;
     }
 
-    // Validate file size (max 50MB)
-    if (file.size > 50 * 1024 * 1024) {
-      setError('Le fichier ne doit pas dépasser 50 Mo');
+    // Validate file size (max 300MB — mix long ~90 min possible)
+    if (file.size > 300 * 1024 * 1024) {
+      setError('Le fichier ne doit pas dépasser 300 Mo');
       setStatus('error');
       return;
     }
@@ -217,7 +217,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept="audio/mp3,audio/mpeg,.mp3"
+        accept="audio/mp3,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/ogg,.mp3,.m4a,.aac,.wav,.ogg"
         onChange={handleFileSelect}
         className="hidden"
         disabled={!canUpload || status === 'uploading'}
@@ -303,7 +303,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
                 }
               </span>
               <span className="text-xs text-white/30">
-                {currentTrackCount}/{effectiveMaxTracks} titres • Max 50 Mo
+                {currentTrackCount}/{effectiveMaxTracks} titres • Max 300 Mo
                 {isAdmin && isSessionHost && ' • Admin'}
               </span>
             </>

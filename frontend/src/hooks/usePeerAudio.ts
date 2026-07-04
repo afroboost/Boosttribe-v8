@@ -1384,32 +1384,27 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     };
   }, [disconnect]);
 
-  // 🔊 WATCHDOG VOIX (~500 ms) : une voix routée en Web Audio sort par le GainNode → son <audio> est MUTÉ.
-  //   Si le contexte voix se retrouve SUSPENDU (musique/vidéo mise en pause à distance, SANS geste sur
-  //   l'appareil qui écoute), élément muté + contexte suspendu = SILENCE. On tente resume() ; si le contexte
-  //   n'est pas 'running', on bascule les éléments voix routés en lecture DIRECTE (démute + volume selon le
-  //   gain — gain 0 = muet respecté). Dès que le contexte redevient 'running', on re-mute (retour Web Audio).
-  //   N'affecte QUE la couche de lecture voix : ni PeerJS, ni la musique, ni le play/pause.
+  // 🔊 WATCHDOG VOIX (~500 ms) — UNIQUEMENT la voix de l'HÔTE (élément #remote-voice-audio).
+  //   La voix hôte sort par le GainNode (élément MUTÉ) quand le contexte voix est 'running'. Si ce contexte
+  //   se retrouve SUSPENDU (pause à distance sans geste) → élément muté + contexte suspendu = SILENCE. On
+  //   tente resume() ; si non 'running', lecture DIRECTE (démute + volume) ; dès qu'il redevient 'running',
+  //   re-mute (retour Web Audio). ⚠️ On NE TOUCHE PAS tribu/relay ici : les re-muter pouvait les rendre
+  //   INAUDIBLES (contexte 'running' mais sortie Web Audio silencieuse). Leur audibilité est garantie à
+  //   l'attache + par ensureVoiceAudible (qui ne fait que DÉMUTER, jamais muter).
   useEffect(() => {
     const iv = setInterval(() => {
       const ctx = voiceCtxRef.current;
-      if (!ctx) return; // pas de contexte voix (ex. voix hôte directe iOS) → rien à surveiller
-      const nodes: Array<{ gain: GainNode; el: HTMLAudioElement }> = [];
-      if (hostVoiceNodeRef.current) nodes.push(hostVoiceNodeRef.current);
-      tribeNodesRef.current.forEach((n) => nodes.push(n));
-      relayNodesRef.current.forEach((n) => nodes.push(n));
-      if (nodes.length === 0) return;
+      const host = hostVoiceNodeRef.current;
+      if (!ctx || !host) return;
       if (ctx.state !== 'running') {
         ctx.resume().catch(() => { /* ignore */ });
-        nodes.forEach(({ gain, el }) => {
-          if (el.muted) {
-            el.muted = false;                          // secours : lecture directe de l'élément
-            el.volume = Math.min(1, gain.gain.value);  // respecte le niveau voulu (gain 0 → 0)
-            el.play().catch(() => { /* ignore */ });
-          }
-        });
-      } else {
-        nodes.forEach(({ el }) => { if (!el.muted) el.muted = true; }); // contexte OK → retour Web Audio
+        if (host.el.muted) {
+          host.el.muted = false;                                 // secours : lecture directe
+          host.el.volume = Math.min(1, host.gain.gain.value);
+          host.el.play().catch(() => { /* ignore */ });
+        }
+      } else if (!host.el.muted) {
+        host.el.muted = true;                                    // contexte OK → retour Web Audio
       }
     }, 500);
     return () => clearInterval(iv);
@@ -1431,12 +1426,14 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     const ctx = voiceCtxRef.current;
     if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
     const running = !!ctx && ctx.state === 'running';
+    // ⚠️ On ne fait que DÉMUTER (jamais muter) → ne peut JAMAIS rendre une voix inaudible. Si le contexte
+    //   n'est pas 'running' (Web Audio silencieux), on passe les éléments voix en lecture DIRECTE.
     const nodes: Array<{ gain: GainNode; el: HTMLAudioElement }> = [];
     if (hostVoiceNodeRef.current) nodes.push(hostVoiceNodeRef.current);
     tribeNodesRef.current.forEach((n) => nodes.push(n));
     relayNodesRef.current.forEach((n) => nodes.push(n));
     nodes.forEach(({ gain, el }) => {
-      if (!running) { el.muted = false; el.volume = Math.min(1, gain.gain.value); }
+      if (!running && el.muted) { el.muted = false; el.volume = Math.min(1, gain.gain.value); }
       el.play().catch(() => { /* ignore */ });
     });
     // Filet : élément voix hôte même si aucun node routé n'existe encore.

@@ -1770,16 +1770,18 @@ export const SessionPage: React.FC = () => {
         setPrivacyChecked(true);
 
         // 🚪 Mode d'accès (guest/account) — requête séparée TOLÉRANTE (colonne access_mode optionnelle).
-        //    On marque TOUJOURS la résolution → le gating peut décider (défaut 'account' si colonne absente).
+        //    ROBUSTE AUX DOUBLONS : on liste les lignes (jamais maybeSingle qui ERRE sur >1 ligne → défaut
+        //    account) et on prend la PLUS RÉCENTE avec un access_mode valide. On marque toujours la résolution.
         try {
-          const { data: ad, error: aerr } = await supabase
+          const { data: adRows, error: aerr } = await supabase
             .from('playlists')
-            .select('access_mode')
+            .select('access_mode, updated_at')
             .eq('session_id', sessionId)
-            .maybeSingle();
-          if (!aerr) {
-            const am = (ad as { access_mode?: string } | null)?.access_mode;
-            if (am === 'guest' || am === 'account') setAccessMode(am);
+            .order('updated_at', { ascending: false }); // la plus récente en tête
+          if (!aerr && Array.isArray(adRows)) {
+            const rows = adRows as Array<{ access_mode?: string }>;
+            const pick = rows.find((r) => r.access_mode === 'guest' || r.access_mode === 'account');
+            if (pick?.access_mode === 'guest' || pick?.access_mode === 'account') setAccessMode(pick.access_mode);
           }
         } catch { /* colonne access_mode pas encore créée → défaut 'account' */ }
         setAccessModeResolved(true);

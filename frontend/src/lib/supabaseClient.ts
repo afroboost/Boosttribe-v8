@@ -663,9 +663,23 @@ export async function saveSessionPrivacy(sessionId: string, isPrivate: boolean):
  */
 export async function saveAccessMode(sessionId: string, mode: 'guest' | 'account', hostId?: string): Promise<boolean> {
   if (!supabase) return false;
+  // ROBUSTE (persistance fiable même sans contrainte unique / avec doublons) : UPDATE si une ligne existe
+  //   déjà (met à jour TOUTES les lignes de la session), sinon INSERT. Évite un upsert onConflict qui
+  //   pouvait échouer ou créer un doublon → mode d'accès non persistant à la reconnexion.
+  const { data: existing } = await supabase
+    .from('playlists')
+    .select('session_id')
+    .eq('session_id', sessionId)
+    .limit(1);
+  if (existing && existing.length > 0) {
+    const upd: Record<string, unknown> = { access_mode: mode, updated_at: new Date().toISOString() };
+    if (hostId) upd.host_id = hostId; // revendique host_id si NULL (satisfait le WITH CHECK RLS)
+    const { error } = await supabase.from('playlists').update(upd).eq('session_id', sessionId);
+    return !error;
+  }
   const row: Record<string, unknown> = { session_id: sessionId, access_mode: mode, updated_at: new Date().toISOString() };
-  if (hostId) row.host_id = hostId; // RLS : permet l'UPDATE si host_id encore NULL
-  const { error } = await supabase.from('playlists').upsert(row, { onConflict: 'session_id' });
+  if (hostId) row.host_id = hostId;
+  const { error } = await supabase.from('playlists').insert(row);
   return !error;
 }
 

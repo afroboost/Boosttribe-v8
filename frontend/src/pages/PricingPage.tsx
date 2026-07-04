@@ -52,6 +52,7 @@ const PricingPage: React.FC = () => {
   const [termsChecked, setTermsChecked] = useState(hasAcceptedTerms);
   const [isAccepting, setIsAccepting] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showFullTerms, setShowFullTerms] = useState(false); // texte complet CGU replié par défaut (déplié via le lien « CGU »)
   const [pendingPack, setPendingPack] = useState<CreditPack | null>(null);
   // 💳 Abonnements (offres Utilisateur/Coach) : intervalle + état de redirection + action en attente de consentement.
   const [billing, setBilling] = useState<'month' | 'year'>('month');
@@ -557,6 +558,8 @@ const PricingPage: React.FC = () => {
             <div className="p-6 border-b border-white/10">
               <h2 className="text-xl font-bold text-white">Conditions Générales d'Utilisation</h2>
             </div>
+            {/* Texte complet REPLIÉ par défaut — ouvert uniquement via le lien « CGU » de la case. */}
+            {showFullTerms && (
             <div className="p-6 overflow-y-auto max-h-[50vh] text-white/70 text-sm space-y-4">
               <h3 className="text-white font-semibold">1. Acceptation des conditions</h3>
               <p>En utilisant BoostTribe, vous acceptez les présentes conditions générales d'utilisation.</p>
@@ -577,6 +580,7 @@ const PricingPage: React.FC = () => {
               <h3 className="text-white font-semibold">6. Protection des données</h3>
               <p>Nous collectons uniquement les données nécessaires au fonctionnement du service.</p>
             </div>
+            )}
             {/* Barre d'actions responsive : case sur sa propre ligne, boutons empilés en mobile
                 (pleine largeur) et côte à côte en desktop — tout reste visible et cliquable. */}
             <div className="p-4 sm:p-6 border-t border-white/10 space-y-4">
@@ -587,7 +591,17 @@ const PricingPage: React.FC = () => {
                   onChange={(e) => setTermsChecked(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-white/30 bg-transparent flex-shrink-0"
                 />
-                <span className="text-white/80 text-sm">J'ai lu et j'accepte les CGU, le débit automatique à la fin de l'essai et le caractère non remboursable de l'abonnement.</span>
+                <span className="text-white/80 text-sm">
+                  J'ai lu et j'accepte les{' '}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowFullTerms((v) => !v); }}
+                    className="text-purple-400 hover:text-purple-300 underline font-medium"
+                  >
+                    CGU
+                  </button>
+                  , le débit automatique à la fin de l'essai et le caractère non remboursable de l'abonnement.
+                </span>
               </label>
               <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
                 <Button variant="outline" onClick={() => setShowTermsModal(false)} className="w-full sm:w-auto border-white/20 text-white/70">

@@ -632,6 +632,12 @@ export const SessionPage: React.FC = () => {
   // Host mic state
   const [hostMicActive, setHostMicActive] = useState(false);
   const [hostMicStream, setHostMicStream] = useState<MediaStream | null>(null);
+  // 🎙️ Mode du micro hôte : 'voice' (VAD mains-libres, défaut) ou 'manual' (l'hôte coupe/relance la
+  //    musique à la main). Persisté localement. Utile sur haut-parleurs (VAD peu fiable).
+  const [micMode, setMicMode] = useState<'voice' | 'manual'>(() => {
+    try { return localStorage.getItem('bt_mic_mode') === 'manual' ? 'manual' : 'voice'; } catch { return 'voice'; }
+  });
+  const [manualMusicPaused, setManualMusicPaused] = useState(false);
   
   const [audioState, setAudioState] = useState<AudioState | null>(null);
   const [syncState, setSyncState] = useState<SyncState | null>(null);
@@ -1065,6 +1071,36 @@ export const SessionPage: React.FC = () => {
     removeMicHold('host-vad'); // auto-resume quand plus aucun micro/parole n'est actif
   }, [removeMicHold]);
 
+  // 🎙️ Bascule VOIX (VAD) ↔ MANUEL (double-clic sur le micro). Persistée localement.
+  const handleToggleMicMode = useCallback(() => {
+    setMicMode((prev) => {
+      const next = prev === 'voice' ? 'manual' : 'voice';
+      try { localStorage.setItem('bt_mic_mode', next); } catch { /* ignore */ }
+      if (next === 'manual') {
+        // MANUEL : couper la VAD + libérer un hold VAD → la musique reprend ; l'hôte pilotera à la main.
+        stopVoiceActivity();
+        removeMicHold('host-vad');
+        setManualMusicPaused(false);
+      } else {
+        // VOIX : réinitialiser un hold manuel puis (ré)armer la VAD si le micro est allumé.
+        removeMicHold('host-manual');
+        setManualMusicPaused(false);
+        if (hostMicStream) startVoiceActivity(handleSpeechStart, handleSpeechEnd);
+      }
+      return next;
+    });
+  }, [stopVoiceActivity, removeMicHold, startVoiceActivity, hostMicStream, handleSpeechStart, handleSpeechEnd]);
+
+  // 🎚️ MANUEL : couper / reprendre la musique (+ vidéo partagée) à la main — même mécanisme synchronisé.
+  const handleToggleManualMusic = useCallback(() => {
+    setManualMusicPaused((paused) => {
+      if (paused) { removeMicHold('host-manual'); return false; }
+      ensureVoiceAudible();       // voix nette pendant la coupure
+      addMicHold('host-manual');  // pause synchronisée musique + vidéo partagée
+      return true;
+    });
+  }, [addMicHold, removeMicHold, ensureVoiceAudible]);
+
   const broadcastedStreamRef = useRef<MediaStream | null>(null);
   useEffect(() => {
     if (!isHost) return;
@@ -1075,12 +1111,14 @@ export const SessionPage: React.FC = () => {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
-      // 🎙️ Le micro reste diffusé en continu ; la VAD décide de l'auto-pause (plus d'addMicHold direct ici).
-      startVoiceActivity(handleSpeechStart, handleSpeechEnd);
+      // 🎙️ Micro diffusé en continu. En mode VOIX, la VAD décide de l'auto-pause ; en MANUEL, l'hôte pilote.
+      if (micMode === 'voice') startVoiceActivity(handleSpeechStart, handleSpeechEnd);
     } else {
       stopBroadcast(); // retire le flux sortant, garde le peer actif
       stopVoiceActivity();
-      removeMicHold('host-vad'); // sécurité : libère un hold VAD éventuellement resté actif
+      removeMicHold('host-vad');    // sécurité : libère un hold VAD éventuel
+      removeMicHold('host-manual'); // sécurité : libère un hold manuel éventuel
+      setManualMusicPaused(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
@@ -3906,7 +3944,23 @@ export const SessionPage: React.FC = () => {
                   isHost={true}
                   onMicActive={setHostMicActive}
                   onStreamReady={setHostMicStream}
+                  mode={micMode}
+                  onToggleMode={handleToggleMicMode}
                 />
+                {/* 🎚️ MANUEL : contrôle visible pour couper/reprendre la musique (micro allumé) */}
+                {micMode === 'manual' && hostMicActive && (
+                  <button
+                    onClick={handleToggleManualMusic}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                      manualMusicPaused
+                        ? 'bg-green-500/20 text-green-300 border border-green-500/40 hover:bg-green-500/30'
+                        : 'bg-white/10 text-white/80 border border-white/20 hover:bg-white/20'
+                    }`}
+                    data-testid="manual-music-toggle"
+                  >
+                    {manualMusicPaused ? '▶️ Reprendre la musique' : '⏸️ Couper la musique'}
+                  </button>
+                )}
                 <span className="w-px h-6 bg-white/10 mx-1 hidden sm:block" />
                 {/* Principal : enregistrement complet + transcription IA */}
                 {!premiumRecActive ? (

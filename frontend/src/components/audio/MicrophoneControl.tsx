@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Mic, MicOff, Volume2, AlertCircle, Lock, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VuMeterSegmented } from './VuMeter';
@@ -10,6 +10,9 @@ interface MicrophoneControlProps {
   onAudioLevel?: (level: number) => void;
   onStreamReady?: (stream: MediaStream | null) => void;
   className?: string;
+  // 🎙️ Mode voix mains-libres (VAD) vs manuel. Double-clic sur le bouton micro = bascule (micro allumé).
+  mode?: 'voice' | 'manual';
+  onToggleMode?: () => void;
 }
 
 /**
@@ -22,6 +25,8 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   onAudioLevel,
   onStreamReady,
   className = '',
+  mode = 'voice',
+  onToggleMode,
 }) => {
   const [showDevices, setShowDevices] = useState(false);
 
@@ -79,6 +84,26 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
     }
   }, [state.isCapturing, startCapture, stopCapture]);
 
+  // 🎙️ Discrimination simple-clic / double-clic (hôte, si onToggleMode fourni) :
+  //   - micro ÉTEINT : simple clic = allumer IMMÉDIATEMENT (garde le geste utilisateur pour getUserMedia) ;
+  //     pas de bascule de mode (le mode ne concerne que micro allumé).
+  //   - micro ALLUMÉ : simple clic (différé ~250ms) = éteindre ; double-clic = bascule VOIX↔MANUEL (reste allumé).
+  const clickTimerRef = useRef<number | null>(null);
+  const handleMainButton = useCallback(() => {
+    if (!onToggleMode) { handleToggleCapture(); return; } // pas de mode (non-hôte) → comportement simple
+    if (!state.isCapturing) { handleToggleCapture(); return; } // allumage : immédiat (geste préservé)
+    if (clickTimerRef.current != null) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      onToggleMode(); // double-clic → change de mode, micro reste allumé
+      return;
+    }
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      handleToggleCapture(); // simple clic → éteindre (stopCapture, pas de geste requis)
+    }, 250);
+  }, [onToggleMode, state.isCapturing, handleToggleCapture]);
+
   // Retry permission
   const handleRetry = useCallback(async () => {
     // Production: log removed
@@ -96,12 +121,13 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   return (
     <div className={`relative ${className}`}>
       <div className="flex items-center gap-2">
-        {/* Main Mic Button */}
+        {/* Main Mic Button — simple clic on/off ; double-clic (allumé) bascule VOIX/MANUEL */}
         <Button
-          onClick={handleToggleCapture}
+          onClick={handleMainButton}
           variant="outline"
           size="sm"
           data-testid="mic-toggle-btn"
+          title={onToggleMode && state.isCapturing ? 'Double-clic : basculer Voix ↔ Manuel' : undefined}
           className={`
             relative overflow-hidden transition-all
             ${state.isCapturing
@@ -130,6 +156,23 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
             <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
           )}
         </Button>
+
+        {/* 🎙️ Badge du mode (hôte, micro allumé) : Voix (VAD) ou Manuel. Double-clic sur le micro pour basculer. */}
+        {onToggleMode && state.isCapturing && (
+          <button
+            type="button"
+            onClick={onToggleMode}
+            title="Double-clic sur le micro (ou ce badge) : basculer Voix ↔ Manuel"
+            data-testid="mic-mode-badge"
+            className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${
+              mode === 'manual'
+                ? 'border-amber-500/50 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
+                : 'border-[#8A2EFF]/50 text-[#c9a3ff] bg-[#8A2EFF]/10 hover:bg-[#8A2EFF]/20'
+            }`}
+          >
+            {mode === 'manual' ? '🎚️ Manuel' : '🎙️ Voix'}
+          </button>
+        )}
 
         {/* Mute button (when capturing) */}
         {state.isCapturing && (

@@ -3,13 +3,12 @@
 > Statut : **conception, en attente de validation**. Aucune ligne de code produite avant approbation.
 > Date : 2026-07-11. Cible : `afroboost/Boosttribe-v8`, front `frontend/` (React/Vite), natif `frontend/android/` (Capacitor 7).
 
-## 0. Décisions adoptées (défauts recommandés — à confirmer)
-
-Trois questions ont été posées ; sans réponse, on adopte les défauts recommandés. **À reconfirmer avant implémentation.**
+## 0. Décisions adoptées (CONFIRMÉES par l'utilisateur — feu vert 2026-07-11)
 
 1. **Livraison = par étapes sûres.** Le natif charge le site LIVE (`server.url = https://boosttribe.pro`), donc tout changement web part en prod dès le déploiement Coolify. On livre en 4 étapes indépendantes, chacune rétro-compatible web, non-régression validée à chaque étape.
 2. **SIMULTANÉ = hôte ET participants.** Le correctif natif s'applique sur l'appareil de quiconque ouvre son micro. Sur navigateur web, best-effort (sans garantie).
-3. **Mixeur = curseur adaptatif** (Musique↔Vidéo selon ce qui joue) + curseurs voix existants + **nouveau curseur « Timer/Bips »**. Pas de recâblage de `mediaVolume`.
+3. **Mixeur = curseurs SÉPARÉS Musique ET Vidéo** (indépendants, PAS adaptatif) + curseurs voix existants + **nouveau curseur « Timer/Bips »**. Chaque source a son volume propre, réglage local par personne. ⇒ nouvel état `videoVolume` distinct de `musicVolume`, qui pilote `mediaVolume` de `SharedMediaPlayer`.
+4. **Sélecteur de modes = vrai contrôle segmenté à 3 boutons visibles** (Auto-stop / Pause-parole / Simultané), pas un badge ni un double-clic.
 
 ## 1. Contexte — architecture existante (à NE PAS casser)
 
@@ -81,9 +80,9 @@ Appels côté `SessionPage` : `setAudioMode(nativeModeFor(micMode))` à l'activa
 
 Mapping mode appli → natif : `simultaneous` → `'simultaneous'` ; `voice`/`manual` → `'music'` (musique en qualité média dès qu'un micro est ouvert, même si elle sera mise en pause en VAD/manuel).
 
-### Partie D — Sélecteur 3 modes (étend l'existant)
+### Partie D — Sélecteur 3 modes (contrôle segmenté)
 - Étendre `micMode` → `'voice' | 'manual' | 'simultaneous'` (`SessionPage`, `localStorage bt_mic_mode`).
-- `MicrophoneControl` : le badge et le double-clic **cyclent sur 3** : `🎙️ Voix → 🎚️ Manuel → 🎶 Simultané → …`. (double-clic = mode suivant ; badge cliquable = idem.)
+- **Nouveau composant `SessionModeSelector`** : contrôle segmenté à **3 boutons visibles** — `Auto-stop` / `Pause-parole` / `Simultané` — bouton actif surligné. **Hôte** : cliquable (change le mode). **Participant** : lecture seule (affiche le mode courant de l'hôte). Remplace le double-clic/badge ; `MicrophoneControl` est simplifié (micro on/off + mute uniquement, on retire les props `mode`/`onToggleMode` et le badge).
 - Comportements :
   - **AUTO-STOP** (`voice`) = VAD existant (parole → pause musique/vidéo, reprise au silence).
   - **PAUSE-PAROLE** (`manual`) = toggle manuel existant.
@@ -91,10 +90,11 @@ Mapping mode appli → natif : `simultaneous` → `'simultaneous'` ; `voice`/`ma
 - **Synchro** : l'hôte diffuse le mode via un **NOUVEL évènement** sur le canal `playback:${sessionId}` (ex. `SESSION_MODE` `{ mode }`), traité **séparément** de `HOST_COMMAND`/`applyRemoteState` (aucune modification de ces derniers). Les participants : stockent `hostMode`, affichent le badge (lecture seule), et appellent `setAudioMode(...)` sur leur appareil. Re-émission dans le heartbeat existant pour les arrivants tardifs.
 
 ### Partie C — Mixeur par personne (surtout de l'ajout)
-Déjà en place : curseurs Musique/Vidéo (adaptatif), Mon Micro (hôte), Volume Tribu (hôte), par-participant (hôte + participant), Volume Hôte (participant). **Ajouts :**
+Déjà en place : curseur Musique/Vidéo (adaptatif), Mon Micro (hôte), Volume Tribu (hôte), par-participant (hôte + participant), Volume Hôte (participant). **Ajouts :**
+- **Séparer Musique et Vidéo** (décision 3) : nouvel état `videoVolume` (0–1, défaut 1.0), **indépendant** de `musicVolume`. Comme l'audio de la vidéo vit dans l'élément HTML/iframe (hors Web Audio), `videoVolume` est un simple nombre — pas de GainNode. Il pilote `mediaVolume` de `SharedMediaPlayer` (à la place de `mixerState.musicVolume`). Dans `AudioMixerPanel` : garder le curseur **« Musique »** (toujours), ajouter un curseur **« Vidéo »** affiché quand une vidéo est partagée (`isVideoShared`). Retirer le comportement « le curseur Musique devient Vidéo ».
 - **Curseur « Timer/Bips »** : rendre `getTimerOutput()` réglable. Ajouter `timerVolume` à l'état de `useAudioMixer` + `setTimerVolume(v)` (applique `timerOutputRef.gain`). Nouveau `MixerSlider` dans `AudioMixerPanel` (hôte ET participant), 0–100 %, défaut 100 %.
-- **Persistance locale par utilisateur** : sauver dans `localStorage` (clés `bt_mixer_*`) au minimum musique, tribu, voix-hôte, timer ; restaurer à l'init de la session. (Les maps par-userId : persistées si l'userId est stable ; sinon best-effort — à préciser à l'implémentation.)
-- **NE PAS recâbler le graphe** : réutiliser les nœuds de gain existants. `mediaVolume` reste piloté par `mixerState.musicVolume` (adaptatif).
+- **Persistance locale par utilisateur** : sauver dans `localStorage` (clés `bt_mixer_*`) au minimum musique, vidéo, tribu, voix-hôte, timer ; restaurer à l'init de la session. Maps par-userId : best-effort si l'userId est stable.
+- **NE PAS recâbler le graphe Web Audio** : réutiliser les nœuds de gain existants ; le seul « recâblage » est de brancher `mediaVolume` sur `videoVolume` au lieu de `musicVolume`.
 
 ### Partie E — Volume micro (hôte + participant)
 - Vérifier/relever le makeup gain sortant : hôte via `useAudioMixer.setMicVolume` / `micGain` ; participant via `useMicrophone` (`initialVolume`). En SIMULTANÉ, garantir un niveau micro suffisant pour passer au-dessus de la musique (ex. plancher `micVolume ≥ 1.6`), **sans saturer** (limiteur brickwall déjà présent). But : fin du « micro trop bas ».
@@ -108,7 +108,7 @@ Déjà en place : curseurs Musique/Vidéo (adaptatif), Mon Micro (hôte), Volume
 
 ### Partie G — Même système pour la vidéo partagée
 - AUTO-STOP / PAUSE-PAROLE : pause/reprise déjà câblées (`micHold` → `pauseSharedMedia/resumeSharedMedia`).
-- SIMULTANÉ : aucun `micHold` déclenché ⇒ la vidéo n'est pas mise en pause ; son son reste propre pendant la parole ; volume réglable via le curseur adaptatif.
+- SIMULTANÉ : aucun `micHold` déclenché ⇒ la vidéo n'est pas mise en pause ; son son reste propre pendant la parole ; volume réglable via le curseur **« Vidéo »** dédié (`videoVolume`).
 - Sons du timer : déjà mixés via `getTimerOutput()` (→ master), **indépendants de l'élément vidéo** ⇒ audibles et propres pendant le partage vidéo ; jamais coupés. Curseur dédié (Partie C).
 
 ## 4. Gestion des erreurs / garde-fous
@@ -140,8 +140,9 @@ Déjà en place : curseurs Musique/Vidéo (adaptatif), Mon Micro (hôte), Volume
 - Bandeau casque discret et pertinent.
 - Zéro régression web/mobile/visio/iOS.
 
-## 7. Points ouverts à confirmer
-1. Les 3 défauts §0 (livraison par étapes / SIMULTANÉ hôte+participants / curseur adaptatif).
-2. Cycle du badge à 3 modes via double-clic — OK ou préférence pour un vrai sélecteur segmenté ?
-3. Persistance mixeur : périmètre (juste les curseurs maîtres, ou aussi par-participant) ?
-4. En SIMULTANÉ, boost micro auto (plancher 1.6) — valeur à ajuster au test.
+## 7. Points ouverts (mineurs — à caler au test, non bloquants)
+1. Persistance mixeur : périmètre exact des maps par-participant (userId stable ?) — best-effort.
+2. En SIMULTANÉ, boost micro auto (plancher ~1.6) — valeur à ajuster au test sur appareil.
+3. Position UI du sélecteur segmenté et du curseur « Vidéo » dans le panneau — à ajuster visuellement.
+
+**Décisions §0 : toutes CONFIRMÉES (feu vert utilisateur).**

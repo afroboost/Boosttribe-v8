@@ -50,6 +50,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest } from '@/lib/paymentApi';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
+import { setAudioMode, deactivateAudioSession } from '@/lib/nativeAudio';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   type SessionAccessInfo,
@@ -1111,6 +1112,8 @@ export const SessionPage: React.FC = () => {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
+      // 📱 Natif Android : force le mode média (MODE_NORMAL) → la musique reste HiFi micro ouvert. No-op web.
+      setAudioMode('music');
       // 🎙️ Micro diffusé en continu. En mode VOIX, la VAD décide de l'auto-pause ; en MANUEL, l'hôte pilote.
       if (micMode === 'voice') startVoiceActivity(handleSpeechStart, handleSpeechEnd);
     } else {
@@ -1119,6 +1122,7 @@ export const SessionPage: React.FC = () => {
       removeMicHold('host-vad');    // sécurité : libère un hold VAD éventuel
       removeMicHold('host-manual'); // sécurité : libère un hold manuel éventuel
       setManualMusicPaused(false);
+      deactivateAudioSession(); // 📱 abandonne le focus audio natif. No-op web.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
@@ -1159,11 +1163,13 @@ export const SessionPage: React.FC = () => {
       setIsTalking(false);
       showToast('Vous avez rendu la parole', 'default');
       resumeMixerContextSoon(); // 🎵 réveille son contexte musique local (la synchro hôte gère play/pause)
+      deactivateAudioSession();  // 📱 abandonne le focus audio natif. No-op web.
     } else {
       const ok = await participantMic.startCapture();
       if (ok) {
         setIsTalking(true);
         showToast('Vous avez la parole', 'success');
+        setAudioMode('music'); // 📱 Natif : parler par-dessus la musique sans dégradation. No-op web.
       }
     }
   }, [isTalking, participantMic, stopTalkToHost, showToast, resumeMixerContextSoon]);

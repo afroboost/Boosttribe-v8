@@ -1156,6 +1156,15 @@ export const SessionPage: React.FC = () => {
     }
   }, [isHost, isTalking, participantMic.state.isCapturing, participantMic.audioStream, participantMic.broadcastStream, talkToHost]);
 
+  // 📱 Natif Android : applique le mode média dès qu'un micro participant s'ouvre — quelle que soit
+  //    l'entrée (prise de parole locale OU parole donnée à distance par l'hôte via applyHostMic).
+  //    Les deux passent par l'état `isTalking`. No-op sur web.
+  useEffect(() => {
+    if (isHost) return;
+    if (isTalking) setAudioMode('music');
+    else deactivateAudioSession();
+  }, [isHost, isTalking]);
+
   const handleToggleTalk = useCallback(async () => {
     if (isTalking) {
       stopTalkToHost();
@@ -1163,13 +1172,11 @@ export const SessionPage: React.FC = () => {
       setIsTalking(false);
       showToast('Vous avez rendu la parole', 'default');
       resumeMixerContextSoon(); // 🎵 réveille son contexte musique local (la synchro hôte gère play/pause)
-      deactivateAudioSession();  // 📱 abandonne le focus audio natif. No-op web.
     } else {
       const ok = await participantMic.startCapture();
       if (ok) {
         setIsTalking(true);
         showToast('Vous avez la parole', 'success');
-        setAudioMode('music'); // 📱 Natif : parler par-dessus la musique sans dégradation. No-op web.
       }
     }
   }, [isTalking, participantMic, stopTalkToHost, showToast, resumeMixerContextSoon]);

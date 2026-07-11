@@ -1,5 +1,6 @@
 package pro.boosttribe.app.audio
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
@@ -30,6 +31,7 @@ class AudioSessionPlugin : Plugin() {
 
     @PluginMethod
     fun setMode(call: PluginCall) {
+        mainHandler.removeCallbacksAndMessages(null) // annule tout réassert MODE_NORMAL en attente d'un appel précédent
         when (call.getString("mode") ?: "music") {
             "voice" -> applyVoiceMode()
             else -> {
@@ -86,6 +88,7 @@ class AudioSessionPlugin : Plugin() {
 
     @PluginMethod
     fun deactivate(call: PluginCall) {
+        mainHandler.removeCallbacksAndMessages(null) // ne pas reforcer MODE_NORMAL après désactivation
         val am = audioManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             focusRequest?.let { am.abandonAudioFocusRequest(it) }
@@ -110,6 +113,7 @@ class AudioSessionPlugin : Plugin() {
         call.resolve(ret)
     }
 
+    @SuppressLint("InlinedApi")
     private fun headsetConnected(): Boolean {
         val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         for (d in devices) {

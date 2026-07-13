@@ -58,10 +58,12 @@ export interface UseAudioMixerReturn {
 // 🔊 Plages : 1.0 = pleine puissance RÉELLE (aucune atténuation) ; au-delà = amplification (headroom).
 const MUSIC_MAX_GAIN = 2.5; // musique amplifiable jusqu'à 250%
 const MIC_MAX_GAIN = 2.5;   // micro hôte amplifiable jusqu'à 250% (indépendant de la musique)
-// 🎚️ Compense le DUCKING navigateur/OS (Chrome/macOS baissent ~20% les autres sons quand un micro est
-//    actif). Facteur multiplicatif appliqué SUR la musique quand le micro hôte est actif. Ajustable ici
-//    si le duck réel n'est pas exactement 20% (1.25 = +25% ≈ annule -20%).
-const MIC_DUCK_COMPENSATION = 1.25;
+// 🎚️ Compense le DUCKING navigateur/OS (théorie : Chrome/macOS baisseraient ~20% les autres sons quand un
+//    micro est actif). Facteur multiplicatif appliqué SUR la musique quand le micro hôte est actif.
+//    ⚠️ BUG 4 : sur le web (Chrome/Firefox desktop), ouvrir un micro NE ducke PAS l'audio Web Audio de la
+//    même page → aucun -20% à compenser ; il ne restait qu'un boost +25% audible à l'activation (et -20% à
+//    la coupure) = « le volume monte quand j'active le micro ». Neutralisé à 1.0 (aucun saut de volume).
+const MIC_DUCK_COMPENSATION = 1.0;
 const MASTER_MAKEUP_GAIN = 1.0; // 🔊 sortie maître à l'UNITÉ : 100% = plein volume réel (plus d'atténuation)
 const SELF_MONITOR_GAIN = 0.6;  // 🔊 3b : niveau d'auto-écoute (« M'entendre ») modéré → anti-saturation/larsen
 

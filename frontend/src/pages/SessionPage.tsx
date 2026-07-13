@@ -714,6 +714,7 @@ export const SessionPage: React.FC = () => {
     setMicVolume,
     setTribeVolume,
     setHostVoiceVolume,
+    setTimerVolume,
     connectMicSource,
     connectMusicSource,
     getMusicStream,
@@ -728,6 +729,19 @@ export const SessionPage: React.FC = () => {
       // Silencieux - démarrage réussi
     },
   });
+
+  // ⏱️ Curseur « Timer / Bips » : volume LOCAL persisté par utilisateur (localStorage). Additif — pilote
+  //    UNIQUEMENT le GainNode du timer (getTimerOutput → master + recTap), aucun autre canal.
+  const handleTimerVolumeChange = useCallback((v: number) => {
+    setTimerVolume(v);
+    try { localStorage.setItem('bt_mixer_timer_vol', String(v)); } catch { /* ignore */ }
+  }, [setTimerVolume]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('bt_mixer_timer_vol');
+      if (raw != null) { const v = parseFloat(raw); if (!Number.isNaN(v)) setTimerVolume(v); }
+    } catch { /* ignore */ }
+  }, [setTimerVolume]);
 
   // 🎵 Cible l'élément <audio> de la MUSIQUE (et pas les <audio> de voix tribu/relay/hôte).
   const getMusicEl = useCallback((): HTMLAudioElement | null => {
@@ -4572,6 +4586,8 @@ export const SessionPage: React.FC = () => {
               onMicVolumeChange={setMicVolume}
               onTribeVolumeChange={handleTribeVolumeChange}
               onHostVoiceVolumeChange={handleHostVoiceVolumeChange}
+              timerVolume={mixerState.timerVolume}
+              onTimerVolumeChange={handleTimerVolumeChange}
               isMicActive={hostMicActive}
               defaultCollapsed={false}
               isVideoShared={isVideoShared}

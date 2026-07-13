@@ -15,6 +15,7 @@ export interface MixerState {
   micVolume: number;        // 0-1 - Volume micro hôte
   tribeVolume: number;      // 0-1 - Volume participants (pour l'hôte)
   hostVoiceVolume: number;  // 0-1 - Volume voix hôte (pour participants)
+  timerVolume: number;      // 0-1 - Volume des sons de l'Interval Training (bips/voix/fichier)
   isInitialized: boolean;
 }
 
@@ -29,6 +30,8 @@ export interface UseAudioMixerReturn {
   setMicVolume: (volume: number) => void;
   setTribeVolume: (volume: number) => void;
   setHostVoiceVolume: (volume: number) => void;
+  // ⏱️ Volume des sons du timer interval (bips/voix/fichier) — pilote le GainNode de getTimerOutput().
+  setTimerVolume: (volume: number) => void;
   // 🎚️ Compense le ducking (musique ~-20%) quand le micro hôte est actif (additif, no-op sur iOS).
   setMicDuckCompensation: (active: boolean) => void;
   connectMusicSource: (audioElement: HTMLAudioElement) => void;
@@ -67,6 +70,7 @@ const initialState: MixerState = {
   micVolume: 1.0,
   tribeVolume: 1.0,
   hostVoiceVolume: 1.4, // 🔊 voix de l'hôte au-dessus de la musique par défaut
+  timerVolume: 1.0,     // ⏱️ sons du timer à plein volume par défaut
   isInitialized: false,
 };
 
@@ -116,6 +120,9 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
   const musicTapDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
   // ⏱️ Sortie ADDITIVE pour le timer interval (créée à la demande via getTimerOutput).
   const timerOutputRef = useRef<GainNode | null>(null);
+  // ⏱️ Volume voulu pour le timer (0..1). Mémorisé même si le GainNode n'est pas encore créé → appliqué
+  //    à la création dans getTimerOutput. Piloté par setTimerVolume (curseur « Timer / Bips »).
+  const timerVolumeRef = useRef(1);
   // 🔊 MONITORING « M'entendre » (#6) : micSource → monitorGain(0 par défaut) → master.
   //    Activable par l'hôte pour s'écouter (anti-larsen : gain 0 tant que désactivé).
   const monitorGainRef = useRef<GainNode | null>(null);
@@ -541,12 +548,26 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     // (re)créer si absent ou rattaché à un ancien contexte fermé
     if (!timerOutputRef.current || timerOutputRef.current.context !== ctx) {
       const g = ctx.createGain();
-      g.gain.value = 1.0;
+      g.gain.value = timerVolumeRef.current; // ⏱️ respecte le volume « Timer / Bips » courant dès la création
       if (masterGainRef.current) g.connect(masterGainRef.current);       // → HP (avec la musique/voix)
       if (musicTapDestRef.current) g.connect(musicTapDestRef.current);   // → enregistrement
       timerOutputRef.current = g;
     }
     return timerOutputRef.current;
+  }, []);
+
+  /**
+   * ⏱️ Volume des sons du timer interval (bips/voix/fichier). Pilote le GainNode ADDITIF de getTimerOutput()
+   * (→ master + recTap). Strictement additif : ne touche AUCUN autre canal. Mémorise la valeur même si le
+   * GainNode n'existe pas encore (appliqué à sa création).
+   */
+  const setTimerVolume = useCallback((volume: number) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    timerVolumeRef.current = clamped;
+    setState(prev => ({ ...prev, timerVolume: clamped }));
+    if (timerOutputRef.current) {
+      timerOutputRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
+    }
   }, []);
 
   /**
@@ -658,6 +679,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     setMicVolume,
     setTribeVolume,
     setHostVoiceVolume,
+    setTimerVolume,
     connectMusicSource,
     connectMicSource,
     connectTribeStream,

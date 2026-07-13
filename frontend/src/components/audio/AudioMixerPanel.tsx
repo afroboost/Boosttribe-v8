@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Volume2, Mic, MicOff, Users, Headphones, ChevronDown, ChevronUp, Music, Video } from 'lucide-react';
+import { Volume2, VolumeX, Mic, MicOff, Users, Headphones, ChevronDown, ChevronUp, Music, Video, Timer } from 'lucide-react';
 
 /**
  * 🎚️ AUDIO MIXER PANEL - Boosttribe V8 Stable Gold
@@ -85,6 +85,9 @@ interface AudioMixerPanelProps {
   onMicVolumeChange: (volume: number) => void;
   onTribeVolumeChange: (volume: number) => void;
   onHostVoiceVolumeChange: (volume: number) => void;
+  // ⏱️ Timer / Bips (Interval Training) — réglage LOCAL, commun hôte + participant
+  timerVolume: number;
+  onTimerVolumeChange: (volume: number) => void;
   isMicActive?: boolean;
   className?: string;
   defaultCollapsed?: boolean;
@@ -109,6 +112,8 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
   onMicVolumeChange,
   onTribeVolumeChange,
   onHostVoiceVolumeChange,
+  timerVolume,
+  onTimerVolumeChange,
   isMicActive = false,
   className = '',
   defaultCollapsed = false,
@@ -122,7 +127,14 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
 }) => {
   // 📱 Mobile: Panneau escamotable par défaut sur mobile
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
-  
+  // ⏱️ Mute Timer/Bips : mémorise le volume avant coupure pour le rétablir.
+  const [timerPreMute, setTimerPreMute] = useState<number | null>(null);
+  const timerMuted = timerVolume === 0;
+  const toggleTimerMute = () => {
+    if (timerMuted) { onTimerVolumeChange(timerPreMute ?? 1); setTimerPreMute(null); }
+    else { setTimerPreMute(timerVolume); onTimerVolumeChange(0); }
+  };
+
   return (
     <div 
       className={`rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm ${className}`}
@@ -181,7 +193,30 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
             compact={true}
             maxValue={2.5}
           />
-          
+
+          {/* ⏱️ Timer / Bips (Interval Training) — réglage LOCAL, commun HÔTE + PARTICIPANT */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <MixerSlider
+                label="Timer / Bips"
+                icon={<Timer size={14} className="sm:w-4 sm:h-4" />}
+                value={timerVolume}
+                onChange={onTimerVolumeChange}
+                color="#38BDF8"
+                compact={true}
+                maxValue={1}
+              />
+            </div>
+            <button
+              onClick={toggleTimerMute}
+              title={timerMuted ? 'Rétablir le son du timer' : 'Couper le son du timer'}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 border transition-colors ${timerMuted ? 'bg-red-500/20 text-red-400 border-red-500/40' : 'bg-white/10 text-white/60 border-white/15 hover:bg-white/20'}`}
+              data-testid="mixer-timer-mute"
+            >
+              {timerMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+            </button>
+          </div>
+
           {isHost ? (
             <>
               {/* Mon Micro - Host only — amplifiable jusqu'à 250% (indépendant de la musique) */}

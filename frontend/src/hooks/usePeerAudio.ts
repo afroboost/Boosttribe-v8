@@ -384,7 +384,24 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     try {
       if (!voiceCtxRef.current) {
         const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        voiceCtxRef.current = new Ctx();
+        // ⚡ BUG 1 : latencyHint 'interactive' = tampon de sortie mini (voix conversationnelle temps réel).
+        voiceCtxRef.current = new Ctx({ latencyHint: 'interactive' });
+        // ⚡ BUG 1 : réagir IMMÉDIATEMENT à un changement d'état (suspend/resume) au lieu d'attendre le
+        //   watchdog 500 ms → la voix hôte ne « disparaît » plus ~½ s à chaque suspension du contexte.
+        voiceCtxRef.current.onstatechange = () => {
+          const c = voiceCtxRef.current;
+          if (!c) return;
+          if (c.state === 'suspended') c.resume().catch(() => { /* ignore */ });
+          const host = hostVoiceNodeRef.current;
+          if (!host) return;
+          if (c.state !== 'running' && host.el.muted) {
+            host.el.muted = false; // secours immédiat : lecture directe
+            host.el.volume = Math.min(1, host.gain.gain.value);
+            host.el.play().catch(() => { /* ignore */ });
+          } else if (c.state === 'running' && !host.el.muted) {
+            host.el.muted = true;  // contexte revenu → retour Web Audio
+          }
+        };
       }
       const ctx = voiceCtxRef.current;
       if (!voiceMasterRef.current) {
@@ -735,16 +752,21 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             call.answer(); // l'hôte ne renvoie pas de flux sur cet appel
             tribeCallsRef.current.set(call.peer, call);
 
-            call.on('stream', (tribeStream) => {
+            call.on('stream', async (tribeStream) => {
               VLOG('HÔTE ← FLUX voix reçu du participant', call.peer);
               const el = getOrCreateTribeAudioElement(call.peer);
               el.srcObject = tribeStream;
               const uid = peerIdToUserIdRef.current.get(call.peer);
               // 🔊 P4 : sortie via Web Audio (gain réglable >100%) ; l'élément reste attaché
               // (muet) pour maintenir le pipeline WebRTC. Fallback sur el.volume si Web Audio KO.
-              const ctx = ensureVoiceCtx();
+              // ⚠️ BUG 2 : on NE route via Web Audio QUE si le contexte tourne RÉELLEMENT. Sinon (contexte
+              //   suspendu par la politique autoplay — créé sur un event WebRTC, pas un geste) un élément
+              //   MUTÉ + contexte suspendu = SILENCE total → l'hôte n'entendait plus le participant.
+              //   Motif identique à forcePlayRemoteAudio (voix hôte, qui marchait).
+              const ctx = IS_IOS ? null : ensureVoiceCtx();
+              if (ctx && ctx.state === 'suspended') { try { await ctx.resume(); } catch { /* ignore */ } }
               let routed = false;
-              if (ctx) {
+              if (ctx && ctx.state === 'running') {
                 try {
                   const source = ctx.createMediaStreamSource(tribeStream);
                   const gain = ctx.createGain();
@@ -790,14 +812,18 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           if (meta?.kind === 'relay' && meta.fromUserId) {
             const fromUserId = meta.fromUserId;
             call.answer();
-            call.on('stream', (relayStream) => {
+            call.on('stream', async (relayStream) => {
               const el = getOrCreateRelayAudioElement(fromUserId);
               el.srcObject = relayStream;
               const vol = relayVolumesRef.current.get(fromUserId) ?? RELAY_DEFAULT_GAIN;
               // 🔊 P4 : amplification réelle via GainNode (au-dessus de la musique), fallback el.volume.
-              const ctx = ensureVoiceCtx();
+              // ⚠️ BUG 2 : même correctif que la tribu — router via Web Audio UNIQUEMENT si le contexte
+              //   tourne, sinon lecture DIRECTE (élément démuté). Contexte suspendu + élément muté = SILENCE
+              //   → les autres participants n'entendaient pas la voix relayée.
+              const ctx = IS_IOS ? null : ensureVoiceCtx();
+              if (ctx && ctx.state === 'suspended') { try { await ctx.resume(); } catch { /* ignore */ } }
               let routed = false;
-              if (ctx) {
+              if (ctx && ctx.state === 'running') {
                 try {
                   const source = ctx.createMediaStreamSource(relayStream);
                   const gain = ctx.createGain();
@@ -839,6 +865,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
           // Handle incoming stream (host's voice)
           call.on('stream', async (remoteStream) => {
             VLOG('participant ← FLUX voix hôte reçu — lecture', remoteStream.getAudioTracks().length, 'piste(s) audio');
+            // ⚡ BUG 1 : (RE)appliquer la latence minimale ICI, au 1er frame — à ce moment les récepteurs
+            //   audio EXISTENT (ils étaient vides quand traceIce a couru avant call.answer()). Garantit
+            //   playoutDelayHint=0 / jitterBufferTarget=0 sur le bon récepteur → voix hôte quasi temps réel.
+            const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+            if (pc) minimizeAudioLatency(pc);
             // Get or create the audio element
             const audioEl = getOrCreateRemoteAudioElement();
 

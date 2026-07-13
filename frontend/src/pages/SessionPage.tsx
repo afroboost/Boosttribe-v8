@@ -50,7 +50,6 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest } from '@/lib/paymentApi';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
-import { setAudioMode, deactivateAudioSession } from '@/lib/nativeAudio';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   type SessionAccessInfo,
@@ -1112,8 +1111,6 @@ export const SessionPage: React.FC = () => {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
-      // 📱 Natif Android : force le mode média (MODE_NORMAL) → la musique reste HiFi micro ouvert. No-op web.
-      setAudioMode('music');
       // 🎙️ Micro diffusé en continu. En mode VOIX, la VAD décide de l'auto-pause ; en MANUEL, l'hôte pilote.
       if (micMode === 'voice') startVoiceActivity(handleSpeechStart, handleSpeechEnd);
     } else {
@@ -1122,7 +1119,6 @@ export const SessionPage: React.FC = () => {
       removeMicHold('host-vad');    // sécurité : libère un hold VAD éventuel
       removeMicHold('host-manual'); // sécurité : libère un hold manuel éventuel
       setManualMusicPaused(false);
-      deactivateAudioSession(); // 📱 abandonne le focus audio natif. No-op web.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
@@ -1155,15 +1151,6 @@ export const SessionPage: React.FC = () => {
       talkToHost(outStream);
     }
   }, [isHost, isTalking, participantMic.state.isCapturing, participantMic.audioStream, participantMic.broadcastStream, talkToHost]);
-
-  // 📱 Natif Android : applique le mode média dès qu'un micro participant s'ouvre — quelle que soit
-  //    l'entrée (prise de parole locale OU parole donnée à distance par l'hôte via applyHostMic).
-  //    Les deux passent par l'état `isTalking`. No-op sur web.
-  useEffect(() => {
-    if (isHost) return;
-    if (isTalking) setAudioMode('music');
-    else deactivateAudioSession();
-  }, [isHost, isTalking]);
 
   const handleToggleTalk = useCallback(async () => {
     if (isTalking) {

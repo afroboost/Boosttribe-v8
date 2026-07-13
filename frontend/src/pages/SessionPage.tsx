@@ -1924,7 +1924,15 @@ export const SessionPage: React.FC = () => {
           : command.action === 'PLAY' ? true
           : command.action === 'STATE' ? !!command.isPlaying
           : undefined; // SEEK
-        applyRemoteState({ trackId: command.trackId ?? null, currentTime: command.currentTime, isPlaying, reason: command.action, source: 'HOST_COMMAND' });
+        // 🔧 BUG 3 : SEULS PLAY/PAUSE font autorité sur l'IDENTITÉ de piste. SEEK@5s et STATE@4s portent un
+        //   trackId lu d'un état React qui TRAÎNE pendant une transition (closure selectedTrack vs heartbeat)
+        //   → un trackId périmé faisait BASCULER puis REBASCULER la piste chez le participant (va-et-vient +
+        //   coupures). On les traite donc en POSITION PURE (pas de changement de piste). Exception : tout
+        //   premier chargement (aucune piste encore chargée) → on accepte le trackId du heartbeat pour qu'un
+        //   participant qui REJOINT en cours de session cale la bonne piste sans attendre un PLAY/PAUSE.
+        const authoritative = command.action === 'PLAY' || command.action === 'PAUSE';
+        const trackId = (authoritative || loadedTrackIdRef.current == null) ? (command.trackId ?? null) : null;
+        applyRemoteState({ trackId, currentTime: command.currentTime, isPlaying, reason: command.action, source: 'HOST_COMMAND' });
         if (isPlaying != null) setHostIsPlaying(isPlaying);
         if (isPlaying === false) ensureVoiceAudible(); // 🔊 pause reçue → garantir la voix audible (musique en pause)
       })

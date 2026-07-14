@@ -1092,12 +1092,22 @@ export const SessionPage: React.FC = () => {
   // 🎙️ VAD MAINS-LIBRES (hôte) : le micro reste allumé en continu ; c'est la DÉTECTION DE PAROLE qui
   //    pilote l'auto-pause. Parler → auto-pause musique (synchro tous) + voix garantie audible ; se taire
   //    (après hangover ~900ms) → auto-resume. Réutilise le compteur micHoldRef (clé 'host-vad').
+  // 🔧 Anti-spam VAD : minuterie de reprise différée. La détection de parole « clignote » entre les mots
+  //   (parole/silence/parole) → sans hystérésis, on enchaînait PAUSE→PLAY→PAUSE en rafale (coupures de
+  //   musique chez le participant). On ne RELANCE la musique qu'après un silence PROLONGÉ ; si la parole
+  //   reprend avant, on annule la reprise → la musique reste en pause proprement.
+  const vadResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleSpeechStart = useCallback(() => {
+    if (vadResumeTimerRef.current) { clearTimeout(vadResumeTimerRef.current); vadResumeTimerRef.current = null; }
     ensureVoiceAudible();    // voix nette immédiatement, même musique/vidéo en pause
-    addMicHold('host-vad');  // auto-pause musique (+ vidéo partagée) synchronisée à tous
+    addMicHold('host-vad');  // auto-pause musique (+ vidéo partagée) synchronisée à tous (idempotent)
   }, [ensureVoiceAudible, addMicHold]);
   const handleSpeechEnd = useCallback(() => {
-    removeMicHold('host-vad'); // auto-resume quand plus aucun micro/parole n'est actif
+    if (vadResumeTimerRef.current) clearTimeout(vadResumeTimerRef.current);
+    vadResumeTimerRef.current = setTimeout(() => {
+      vadResumeTimerRef.current = null;
+      removeMicHold('host-vad'); // auto-resume seulement après ~1,4 s de vrai silence
+    }, 1400);
   }, [removeMicHold]);
 
   // 🎙️ Bascule VOIX (VAD) ↔ MANUEL (double-clic sur le micro). Persistée localement.
@@ -1145,6 +1155,7 @@ export const SessionPage: React.FC = () => {
     } else {
       stopBroadcast(); // retire le flux sortant, garde le peer actif
       stopVoiceActivity();
+      if (vadResumeTimerRef.current) { clearTimeout(vadResumeTimerRef.current); vadResumeTimerRef.current = null; }
       removeMicHold('host-vad');    // sécurité : libère un hold VAD éventuel
       removeMicHold('host-manual'); // sécurité : libère un hold manuel éventuel
       setManualMusicPaused(false);

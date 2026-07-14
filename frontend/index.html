@@ -201,6 +201,29 @@
 
         <!-- 🚀 PWA Service Worker Registration + mise à jour AUTOMATIQUE -->
         <script>
+          (function () {
+            // 📱 APP NATIVE (Capacitor) : AUCUN service worker. L'app est déjà installée ; un SW ne ferait
+            //    que servir des versions périmées. On DÉSENREGISTRE tout SW existant et on VIDE tous les
+            //    caches au démarrage → l'app native charge TOUJOURS la dernière version du site live.
+            var CAP = window.Capacitor;
+            var isNative = !!(CAP && typeof CAP.isNativePlatform === 'function' && CAP.isNativePlatform());
+            if (isNative) {
+                try {
+                    if ('serviceWorker' in navigator) {
+                        navigator.serviceWorker.getRegistrations()
+                            .then(function (regs) { regs.forEach(function (r) { r.unregister(); }); })
+                            .catch(function () {});
+                    }
+                    if (window.caches && caches.keys) {
+                        caches.keys()
+                            .then(function (keys) { keys.forEach(function (k) { caches.delete(k); }); })
+                            .catch(function () {});
+                    }
+                } catch (e) { /* ignore */ }
+                return; // ne JAMAIS enregistrer de SW dans l'app native
+            }
+
+            // 🌐 WEB uniquement : SW (app shell TOUJOURS réseau via sw.js) + mise à jour automatique.
             if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function () {
                     var refreshing = false;
@@ -246,6 +269,7 @@
                         });
                 });
             }
+          })();
         </script>
     </body>
 </html>

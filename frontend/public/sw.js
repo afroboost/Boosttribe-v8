@@ -11,13 +11,13 @@
  * ⚠️ Incrémenter CACHE_NAME à chaque changement de stratégie pour invalider l'ancien cache.
  */
 
-const CACHE_NAME = 'boosttribe-v10-auto-update';
-const CACHE_VERSION = '2.1.0';
+const CACHE_NAME = 'boosttribe-v11-shell-network-only';
+const CACHE_VERSION = '2.2.0';
 
-// Assets à pré-cacher lors de l'installation
+// Assets à pré-cacher lors de l'installation.
+// ⚠️ On NE pré-cache PLUS l'app shell (« / » et « /index.html ») : il doit TOUJOURS venir du réseau
+//    (cf. networkOnlyNoStore) → plus jamais de version périmée servie après un déploiement.
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon-192x192.png',
   '/icon-512x512.png',
@@ -121,7 +121,15 @@ self.addEventListener('fetch', (event) => {
   if (shouldNeverCache(url)) {
     return; // Laisser le navigateur gérer normalement
   }
-  
+
+  // 🌐 APP SHELL / NAVIGATION (index.html) : RÉSEAU UNIQUEMENT en no-store → JAMAIS servi depuis le cache.
+  //    C'est LA cause des « vieilles versions après déploiement » : un shell caché référence d'anciens
+  //    bundles hachés. On ne le met plus jamais en cache ; le repli cache ne sert qu'HORS-LIGNE.
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(networkOnlyNoStore(request));
+    return;
+  }
+
   // 🔄 NETWORK FIRST : Sessions, Admin, Pricing
   if (shouldNetworkFirst(url)) {
     event.respondWith(networkFirstStrategy(request));
@@ -144,6 +152,21 @@ self.addEventListener('fetch', (event) => {
   // 🌐 NETWORK FIRST par défaut pour la navigation / pages HTML
   event.respondWith(networkFirstStrategy(request));
 });
+
+/**
+ * Stratégie Network Only (no-store) pour l'APP SHELL / la navigation.
+ * Toujours le réseau, JAMAIS le cache (ni lecture ni écriture) → la dernière version se charge après
+ * chaque déploiement, sans vider le cache. Repli sur cache UNIQUEMENT hors-ligne (dernier recours).
+ */
+async function networkOnlyNoStore(request) {
+  try {
+    return await fetch(request, { cache: 'no-store' });
+  } catch (error) {
+    // Hors-ligne uniquement : dernier recours (un shell éventuellement présent, sinon message hors-ligne).
+    const cached = await caches.match('/index.html') || await caches.match('/');
+    return cached || new Response('Hors ligne', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+}
 
 /**
  * Stratégie Cache First

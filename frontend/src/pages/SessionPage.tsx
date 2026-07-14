@@ -652,6 +652,11 @@ export const SessionPage: React.FC = () => {
   const audioUnlockedRef = useRef(false);
   // 🎯 SYNCHRO ROBUSTE (participant = suiveur pur). Refs de contrôle anti-boucle :
   const loadedTrackIdRef = useRef<number | null>(null);  // piste RÉELLEMENT chargée (≠ selectedTrack qui peut lag)
+  // 🔧 BUG 3 (émission HÔTE) : trackId TOUJOURS FRAIS pour les commandes PLAY/PAUSE/SEEK/STATE. La closure
+  //   `selectedTrack?.id` de handleAudioStateChange TRAÎNE d'un render pendant une transition de piste →
+  //   elle diffusait un trackId périmé → le participant basculait/rebasculait (oscillation + coupures).
+  //   On lit ce ref (synchronisé ci-dessous sur selectedTrack) au lieu de la closure.
+  const currentTrackIdRef = useRef<number | null>(null);
   const isApplyingRemoteRef = useRef(false);             // vrai pendant qu'on applique l'état hôte → ignore la ré-entrance
   const lastRemotePlayingRef = useRef<boolean | null>(null); // dernier isPlaying appliqué (log seulement sur changement)
   // 🎯 Position/état distant à appliquer QUAND la nouvelle piste est prête (anti-boucle au changement de piste)
@@ -919,6 +924,13 @@ export const SessionPage: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, getMusicEl, selectedTrack?.id]);
+
+  // 🔧 BUG 3 : garder currentTrackIdRef synchronisé sur la piste sélectionnée. Cet effet s'exécute au
+  //   commit du render (donc AVANT l'événement 'play' de la nouvelle piste, qui suit le chargement du
+  //   nouveau src) → les émetteurs HOST_COMMAND lisent toujours le BON trackId, jamais une closure périmée.
+  useEffect(() => {
+    currentTrackIdRef.current = selectedTrack?.id ?? null;
+  }, [selectedTrack?.id]);
 
   // 🎚️ "Volume Musique" : 0..100% via element.volume, 100..200% via le GainNode (boost réel).
   // Pas de double atténuation : le gain reste ≥ 1.0 (cf. useAudioMixer.setMusicVolume).
@@ -3052,11 +3064,12 @@ export const SessionPage: React.FC = () => {
   const handleAudioStateChange = useCallback((state: AudioState) => {
     setAudioState(state);
 
-    // 💓 POINT 3a: mémoriser le dernier état pour le heartbeat de resynchro
+    // 💓 POINT 3a: mémoriser le dernier état pour le heartbeat de resynchro.
+    //   🔧 BUG 3 : trackId lu du ref FRAIS (pas de la closure selectedTrack qui traîne à la transition).
     heartbeatStateRef.current = {
       isPlaying: state.isPlaying,
       currentTime: state.currentTime,
-      trackId: selectedTrack?.id ?? null,
+      trackId: currentTrackIdRef.current,
     };
 
     // 🔄 MAÎTRE: L'hôte envoie des commandes PLAY/PAUSE explicites
@@ -3066,15 +3079,15 @@ export const SessionPage: React.FC = () => {
       
       if (playStateChanged) {
         lastPlayingState.current = state.isPlaying;
-        console.log('[SYNC] hôte', state.isPlaying ? 'PLAY' : 'PAUSE', 'piste', selectedTrack?.id ?? null, 'position=', state.currentTime.toFixed(2));
-        // Envoyer la commande appropriée
+        console.log('[SYNC] hôte', state.isPlaying ? 'PLAY' : 'PAUSE', 'piste', currentTrackIdRef.current, 'position=', state.currentTime.toFixed(2));
+        // Envoyer la commande appropriée (🔧 BUG 3 : trackId FRAIS via le ref)
         supabase.channel(`playback:${sessionId}`).send({
           type: 'broadcast',
           event: 'HOST_COMMAND',
           payload: {
             action: state.isPlaying ? 'PLAY' : 'PAUSE',
             currentTime: state.currentTime,
-            trackId: selectedTrack?.id || null,
+            trackId: currentTrackIdRef.current,
           },
         });
       }
@@ -3091,7 +3104,7 @@ export const SessionPage: React.FC = () => {
             payload: {
               action: 'SEEK',
               currentTime: state.currentTime,
-              trackId: selectedTrack?.id || null,
+              trackId: currentTrackIdRef.current, // 🔧 BUG 3 : trackId FRAIS
             },
           });
         }

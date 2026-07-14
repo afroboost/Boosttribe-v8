@@ -126,6 +126,9 @@ const IS_IOS = typeof navigator !== 'undefined' && (
   || (navigator.platform === 'MacIntel' && ((navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints || 0) > 1)
 );
 
+// ✋ #3 : clé localStorage de la position mémorisée de la fenêtre du minuteur.
+const POS_KEY = 'bt_interval_timer_pos';
+
 export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
   { run, isHost, onStop, getMixerContext, getTimerOutput }, ref,
 ) => {
@@ -324,6 +327,52 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
     return () => window.clearInterval(id);
   }, [run, onEnterPhase, onDone, beep, ensureCtx]);
 
+  // ✋ #3 : fenêtre DÉPLAÇABLE (souris + tactile via Pointer Events), BORNÉE à l'écran, position MÉMORISÉE.
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number }>(() => {
+    try {
+      const raw = localStorage.getItem(POS_KEY);
+      if (raw) { const p = JSON.parse(raw); if (typeof p?.x === 'number' && typeof p?.y === 'number') return p; }
+    } catch { /* ignore */ }
+    const w = 300;
+    const x = typeof window !== 'undefined' ? Math.max(8, (window.innerWidth - w) / 2) : 8;
+    return { x, y: 84 }; // défaut : centré en haut (comme avant)
+  });
+  const clampPos = useCallback((x: number, y: number) => {
+    const w = cardRef.current?.offsetWidth ?? 300;
+    const h = cardRef.current?.offsetHeight ?? 200;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 360;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 640;
+    return { x: Math.min(Math.max(8, x), Math.max(8, vw - w - 8)), y: Math.min(Math.max(8, y), Math.max(8, vh - h - 8)) };
+  }, []);
+  // Re-borne à l'ouverture (taille réelle connue) et au redimensionnement / rotation de l'écran.
+  useEffect(() => {
+    if (!run) return;
+    setPos((p) => clampPos(p.x, p.y));
+    const onResize = () => setPos((p) => clampPos(p.x, p.y));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [run, clampPos]);
+  const onDragStart = useCallback((e: React.PointerEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return; // ne pas gêner le bouton « Arrêter »
+    dragRef.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y };
+    setDragging(true);
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  }, [pos.x, pos.y]);
+  const onDragMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    setPos(clampPos(e.clientX - dragRef.current.dx, e.clientY - dragRef.current.dy));
+  }, [clampPos]);
+  const onDragEnd = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    setPos((p) => { try { localStorage.setItem(POS_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
+  }, []);
+
   if (!run || !phase) return null;
 
   const color = PHASE_COLOR[phase.key];
@@ -333,10 +382,15 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
   const rounds = Math.max(0, run.config.rounds);
 
   return (
-    <div className="fixed inset-0 z-[130] pointer-events-none flex items-start justify-center pt-20 sm:pt-24">
+    <div className="fixed inset-0 z-[130] pointer-events-none">
       <div
-        className="pointer-events-none select-none rounded-3xl px-8 py-6 text-center shadow-2xl backdrop-blur-md"
-        style={{ background: 'rgba(10,10,15,0.72)', border: `2px solid ${color}`, minWidth: 260, boxShadow: `0 0 44px ${color}55, 0 10px 44px rgba(138,46,255,0.30)` }}
+        ref={cardRef}
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragEnd}
+        className="pointer-events-auto select-none rounded-3xl px-8 py-6 text-center shadow-2xl backdrop-blur-md"
+        style={{ position: 'fixed', left: pos.x, top: pos.y, touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab', background: 'rgba(10,10,15,0.72)', border: `2px solid ${color}`, minWidth: 260, boxShadow: `0 0 44px ${color}55, 0 10px 44px rgba(138,46,255,0.30)` }}
         data-testid="interval-timer-overlay"
       >
         <div className="text-sm font-semibold tracking-wide mb-1" style={{ color }}>

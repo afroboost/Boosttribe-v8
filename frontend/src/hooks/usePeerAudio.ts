@@ -120,6 +120,14 @@ function buildIceServers(): RTCIceServer[] {
 
   // eslint-disable-next-line no-console
   console.log('[VOICE] iceServers:', iceServers.length, 'serveur(s)', turnUrl ? `(TURN: ${turnUrl})` : '(STUN seul)');
+  if (!turnUrl) {
+    // 🔴 DIAGNOSTIC CRITIQUE : sans TURN, la voix NE PASSERA PAS entre deux appareils sur des réseaux
+    //   différents (NAT). La synchro musique (WebSocket) continue de marcher → symptôme trompeur.
+    //   À CORRIGER dans le build (Coolify) : REACT_APP_TURN_URL, REACT_APP_TURN_USERNAME,
+    //   REACT_APP_TURN_CREDENTIAL (ou équivalents VITE_TURN_*).
+    console.warn('[VOICE] 🔴 AUCUN SERVEUR TURN CONFIGURÉ → la voix échouera entre 2 réseaux différents. '
+      + 'Ajouter REACT_APP_TURN_URL / REACT_APP_TURN_USERNAME / REACT_APP_TURN_CREDENTIAL au BUILD (Coolify).');
+  }
   return iceServers;
 }
 
@@ -181,6 +189,12 @@ function traceIce(label: string, call: unknown): void {
       minimizeAudioLatency(pc); // (les récepteurs peuvent apparaître après la négociation)
       VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState);
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') logSelectedCandidatePair(label, pc);
+      // 🔴 DIAGNOSTIC : si ICE échoue, le média (voix) ne peut PAS circuler → cause n°1 « voix muette ».
+      //   Le plus souvent : pas de TURN (2 réseaux) OU coturn injoignable / identifiants invalides.
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected') {
+        console.warn('[VOICE] 🔴', label, '→ ICE', pc.iceConnectionState,
+          '= la voix ne passe pas. Vérifier le serveur TURN (joignable ? identifiants ?) et la config build.');
+      }
     };
     pc.addEventListener('iceconnectionstatechange', report);
     pc.addEventListener('connectionstatechange', report);

@@ -729,7 +729,6 @@ export const SessionPage: React.FC = () => {
     setSelfMonitor,
     getContext: getMixerContext,
     getTimerOutput,
-    setMicDuckCompensation,
     startVoiceActivity,
     stopVoiceActivity,
   } = useAudioMixer({
@@ -1167,11 +1166,15 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, hostMicStream]);
 
-  // 🎚️ Anti-DUCKING : quand le micro HÔTE est actif, le navigateur/OS baisse ~20% la musique. On la
-  //    remonte du facteur de compensation (méthode neutre sur iOS). Le slider Volume Musique reste maître.
+  // 🎚️ #4 — VOLUME STABLE AU MICRO : on NE réécrit PLUS le gain de la musique à la bascule du micro. La
+  //    « compensation de ducking » est neutralisée (MIC_DUCK_COMPENSATION=1.0) car sur le web aucun ducking
+  //    OS n'a lieu → la « compenser » ne faisait que faire SAUTER le volume (monte à l'activation, baisse à
+  //    la coupure). À la place, on RÉVEILLE le contexte mixeur : ouvrir/fermer le micro peut le SUSPENDRE →
+  //    la musique (routée via Web Audio par createMediaElementSource) devenait muette/faible et il fallait
+  //    RECHARGER la page. resume() idempotent → volume restauré sans rechargement, sans toucher au gain.
   useEffect(() => {
-    setMicDuckCompensation(hostMicActive);
-  }, [hostMicActive, setMicDuckCompensation]);
+    try { const ctx = getMixerContext(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+  }, [hostMicActive, getMixerContext]);
 
   // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
   const [isTalking, setIsTalking] = useState(false);

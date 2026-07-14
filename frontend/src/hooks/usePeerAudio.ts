@@ -624,22 +624,21 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     //   bouge) mais broadcastAudio n'a personne à appeler → participants muets. Chez l'admin, isHost
     //   est vrai dès le départ → peer créé directement en hôte → ça marche. On détecte le décalage
     //   d'identité et on RECRÉE le peer avec la bonne identité.
-    if (peerRef.current?.open) {
-      // 🆕 L'id n'encode plus le rôle → on compare au rôle avec lequel le peer a été CRÉÉ (peerRoleRef).
+    // 🔒 STABILITÉ PEER (anti-boucle de création) : si un peer existe déjà et n'est PAS détruit — qu'il
+    //   soit OUVERT ou ENCORE EN COURS DE CONNEXION (WebSocket de signalisation en train de s'établir) — et
+    //   que son rôle est cohérent, on le GARDE. Avant, on détruisait tout peer « non open » : cela tuait la
+    //   connexion en cours (« WebSocket is closed before the connection is established » → « Connection
+    //   timeout »), et connect() recréait un peer avec un NOUVEL id → BOUCLE infinie de création, le micro
+    //   n'était jamais diffusé (broadcastAudio : « peer pas encore ouvert »). On ne recrée donc QUE sur un
+    //   vrai changement de rôle (participant→hôte résolu de façon asynchrone) ou si le peer est détruit.
+    if (peerRef.current && !peerRef.current.destroyed) {
       if (isHost === peerRoleRef.current) {
-        return true; // identité cohérente avec le rôle → rien à faire
+        return true; // même rôle → peer conservé (ouvert OU en cours de connexion) : aucune recréation
       }
-      // Rôle changé après ouverture → détruire et recréer avec la bonne identité (hôte/participant)
+      // Rôle changé → détruire et recréer avec la bonne identité (hôte/participant)
       try { peerRef.current.destroy(); } catch { /* ignore */ }
       peerRef.current = null;
       teardownPresence(); // l'ancienne présence portait l'ancien id/rôle → on la retire
-    }
-
-    // Destroy existing peer if not open
-    if (peerRef.current) {
-      // Production: log removed
-      peerRef.current.destroy();
-      peerRef.current = null;
     }
 
     return new Promise((resolve) => {
@@ -1444,10 +1443,17 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     }
   }, [isHost]);
 
-  // Cleanup on unmount
+  // 🔒 Ref vers le disconnect courant. Le cleanup de démontage ci-dessous NE doit PAS dépendre de
+  //   l'identité de `disconnect` (elle change quand isHost se résout de false→true) : sinon React
+  //   exécuterait le cleanup (= disconnect → DESTRUCTION du peer) au beau milieu de la session, à chaque
+  //   changement de dépendance. On appelle donc toujours la DERNIÈRE version via ce ref, deps = [].
+  const disconnectRef = useRef(disconnect);
+  useEffect(() => { disconnectRef.current = disconnect; }, [disconnect]);
+
+  // Cleanup on unmount (DÉMONTAGE RÉEL uniquement — jamais sur un re-render/changement de rôle)
   useEffect(() => {
     return () => {
-      disconnect();
+      disconnectRef.current();
       // Remove audio element on unmount
       const audioEl = document.getElementById(REMOTE_AUDIO_ID);
       if (audioEl) {
@@ -1461,7 +1467,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
         voiceCompRef.current = null;
       }
     };
-  }, [disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 🔊 WATCHDOG VOIX (~500 ms) — UNIQUEMENT la voix de l'HÔTE (élément #remote-voice-audio).
   //   La voix hôte sort par le GainNode (élément MUTÉ) quand le contexte voix est 'running'. Si ce contexte

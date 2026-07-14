@@ -1073,10 +1073,14 @@ export const SessionPage: React.FC = () => {
   const peerConnectedRef = useRef(false);
   useEffect(() => {
     if (!sessionId || !nickname || peerConnectedRef.current) return;
+    // ⏳ CORRECTIF « hôte enregistré comme participant » : ne créer le peer qu'une fois le PROFIL chargé
+    //   (authLoading=false) → isHost est proche de sa valeur finale (admin/marqueur connus). Le cas
+    //   coach-non-admin résolu via la DB est rattrapé par la réconciliation à l'ouverture (usePeerAudio).
+    if (authLoading) return;
     peerConnectedRef.current = true;
     connectPeer(); // sans flux : l'hôte répond aux appels, le participant rejoint l'hôte
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, nickname]);
+  }, [sessionId, nickname, authLoading]);
 
   // Nettoyage propre du peer à la sortie de la session
   useEffect(() => {

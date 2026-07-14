@@ -380,6 +380,10 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
   // 🆕 Rôle avec lequel le peer courant a été CRÉÉ (l'id n'encode plus le rôle → on le mémorise ici pour
   //   la garde d'identité « coach dont isHost passe false→true en asynchrone »).
   const peerRoleRef = useRef<boolean>(isHost);
+  // 🆕 Miroir du prop isHost COURANT (≠ closure figée). Sert à réconcilier le rôle à l'OUVERTURE du peer :
+  //   si isHost a été résolu (false→true) entre la création et l'ouverture, on recrée avec la bonne identité.
+  const isHostPropRef = useRef<boolean>(isHost);
+  useEffect(() => { isHostPropRef.current = isHost; }, [isHost]);
   // 🆕 Id du peer HÔTE : pour l'hôte = son propre id ; pour un participant = id DÉCOUVERT via présence.
   const hostPeerIdRef = useRef<string | null>(null);
   // 🆕 Canal de découverte Supabase (présence + broadcast). Un canal par peer (clé = id unique du peer).
@@ -748,6 +752,17 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
 
         // Handle peer open
         peer.on('open', (id) => {
+          // 🔒 RÉCONCILIATION DE RÔLE — cause racine « hôte enregistré comme participant » : le rôle
+          //   (isHost) d'un coach non-admin se résout de façon ASYNCHRONE (profil/DB). Si le peer a été
+          //   créé pendant qu'isHost valait encore false, il s'ouvre avec la MAUVAISE identité (id SANS
+          //   « -host- ») → les participants cherchent « beattribe-host-… » inexistant → 0 connecté →
+          //   aucune voix. On détecte l'écart au moment de l'ouverture et on recrée UNE fois avec la
+          //   bonne identité. connect() est idempotent (même rôle → conservé) → aucune boucle.
+          if (isHostPropRef.current !== isHost) {
+            VLOG('⟳ rôle résolu après création (', isHost ? 'HÔTE' : 'participant', '→', isHostPropRef.current ? 'HÔTE' : 'participant', ') → recréation du peer avec la bonne identité');
+            connectRef.current?.(currentStreamRef.current);
+            return;
+          }
           // 🆕 Confirme l'identité réelle attribuée par le serveur (== peerId unique demandé).
           myPeerIdRef.current = id;
           peerRoleRef.current = isHost;

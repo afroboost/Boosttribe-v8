@@ -66,12 +66,17 @@ const MIC_MAX_GAIN = 2.5;   // micro hôte amplifiable jusqu'à 250% (indépenda
 const MIC_DUCK_COMPENSATION = 1.0;
 const MASTER_MAKEUP_GAIN = 1.0; // 🔊 sortie maître à l'UNITÉ : 100% = plein volume réel (plus d'atténuation)
 const SELF_MONITOR_GAIN = 0.6;  // 🔊 3b : niveau d'auto-écoute (« M'entendre ») modéré → anti-saturation/larsen
+// 🔔 #2 : makeup des sons du TIMER (bips/voix/fichier). Le curseur « Timer / Bips » (0..1) est multiplié par
+//   ce facteur → à 100% les bips PERCENT clairement la musique (protégés par le limiteur maître). L'oscillateur
+//   des bips est de faible amplitude (~0,2-0,3) : sans ce makeup ils restaient quasi inaudibles sous la musique.
+const TIMER_MAKEUP_GAIN = 3.0;
 
 const initialState: MixerState = {
   musicVolume: 1.0, // 🔊 plein volume par défaut (avant : 0.8 → atténuation perçue)
-  micVolume: 1.0,
+  micVolume: 1.5,   // 🔊 #1 : makeup micro HÔTE à l'émission = 150% (comme le participant initialVolume:150)
+                    //   → la voix de l'hôte n'était plus 2× plus faible que celle des participants. Réglable 0..250%.
   tribeVolume: 1.0,
-  hostVoiceVolume: 1.4, // 🔊 voix de l'hôte au-dessus de la musique par défaut
+  hostVoiceVolume: 1.6, // 🔊 voix de l'hôte au-dessus de la musique par défaut (≥ voix participant)
   timerVolume: 1.0,     // ⏱️ sons du timer à plein volume par défaut
   isInitialized: false,
 };
@@ -307,7 +312,16 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
         const micGain = micCtx.createGain();
         micGain.gain.value = state.micVolume;
         const micDest = micCtx.createMediaStreamDestination();
-        micGain.connect(micDest);
+        // 🔊 #1 : limiteur brickwall anti-clip à l'ÉMISSION (comme la chaîne participant) — la voix hôte
+        //   est maintenant boostée (micVolume 150% + 250% possible) → on l'empêche de saturer avant l'envoi.
+        const micLimiter = micCtx.createDynamicsCompressor();
+        micLimiter.threshold.setValueAtTime(-3, micCtx.currentTime);
+        micLimiter.knee.setValueAtTime(0, micCtx.currentTime);
+        micLimiter.ratio.setValueAtTime(20, micCtx.currentTime); // brickwall (anti-saturation), pas un compresseur
+        micLimiter.attack.setValueAtTime(0.003, micCtx.currentTime);
+        micLimiter.release.setValueAtTime(0.25, micCtx.currentTime);
+        micGain.connect(micLimiter);
+        micLimiter.connect(micDest); // source → micGain → limiteur → dest (diffusion WebRTC)
         micGainRef.current = micGain;
         micStreamDestRef.current = micDest;
         // « M'entendre » (monitoring local, #6 / 3b) : SÉPARÉ du chemin diffusé et NON saturant.
@@ -550,7 +564,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     // (re)créer si absent ou rattaché à un ancien contexte fermé
     if (!timerOutputRef.current || timerOutputRef.current.context !== ctx) {
       const g = ctx.createGain();
-      g.gain.value = timerVolumeRef.current; // ⏱️ respecte le volume « Timer / Bips » courant dès la création
+      g.gain.value = timerVolumeRef.current * TIMER_MAKEUP_GAIN; // ⏱️ #2 : makeup → les bips percent la musique
       if (masterGainRef.current) g.connect(masterGainRef.current);       // → HP (avec la musique/voix)
       if (musicTapDestRef.current) g.connect(musicTapDestRef.current);   // → enregistrement
       timerOutputRef.current = g;
@@ -568,7 +582,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     timerVolumeRef.current = clamped;
     setState(prev => ({ ...prev, timerVolume: clamped }));
     if (timerOutputRef.current) {
-      timerOutputRef.current.gain.setValueAtTime(clamped, audioContextRef.current?.currentTime || 0);
+      timerOutputRef.current.gain.setValueAtTime(clamped * TIMER_MAKEUP_GAIN, audioContextRef.current?.currentTime || 0);
     }
   }, []);
 

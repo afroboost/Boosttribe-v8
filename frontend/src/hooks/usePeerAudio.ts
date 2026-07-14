@@ -242,7 +242,7 @@ const TRIBE_AUDIO_CLASS = 'bt-tribe-audio';
 // HTMLAudioElement.volume). Niveaux par défaut RELEVÉS pour passer au-dessus de la musique/vidéo.
 const TRIBE_DEFAULT_GAIN = 1.6; // voix d'un participant entendue par l'hôte
 const RELAY_DEFAULT_GAIN = 1.4; // voix d'un autre participant (relayée) entendue par un participant
-const HOST_VOICE_DEFAULT_GAIN = 1.4; // voix de l'hôte entendue par les participants (au-dessus de la musique)
+const HOST_VOICE_DEFAULT_GAIN = 1.6; // voix de l'hôte entendue par les participants (au moins = voix participant)
 const VOICE_MAX_GAIN = 2.5;     // plafond d'amplification (≈250%)
 
 // 🍏 iOS (#7 / 3d) : mêmes contraintes que la MUSIQUE — NE PAS router la voix reçue de l'hôte dans

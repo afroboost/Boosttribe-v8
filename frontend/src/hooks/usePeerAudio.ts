@@ -185,9 +185,41 @@ function traceIce(label: string, call: unknown): void {
     const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
     if (!pc) { VLOG(label, 'pas de peerConnection'); return; }
     minimizeAudioLatency(pc);
+
+    // 🔎 CANDIDATS ICE récoltés : on veut voir apparaître au moins un « typ relay » (= le TURN a répondu
+    //   et alloué une adresse). Si la récolte se termine SANS aucun relay → l'app ne joint/authentifie
+    //   PAS le serveur TURN (cohérent avec « coturn ne voit aucune allocation pour l'user boosttribe »).
+    let relaySeen = false;
+    pc.addEventListener('icecandidate', (ev: RTCPeerConnectionIceEvent) => {
+      const cand = ev.candidate;
+      if (!cand) { // récolte terminée
+        VLOG(label, 'récolte ICE terminée —', relaySeen ? '✅ candidat RELAY obtenu (TURN joint)' : '❌ AUCUN candidat relay');
+        if (!relaySeen) {
+          console.warn('[VOICE] 🔴', label,
+            '→ AUCUN candidat RELAY récolté : le serveur TURN n\'a pas répondu (injoignable depuis le navigateur, '
+            + 'bloqué par un pare-feu/UDP, ou identifiants refusés). C\'est la cause probable de la voix muette sur 2 réseaux.');
+        }
+        return;
+      }
+      const type = cand.type || (cand.candidate.match(/ typ (\w+)/)?.[1]) || '?';
+      if (type === 'relay') relaySeen = true;
+      VLOG(label, 'candidat ICE:', type, cand.protocol || '', type === 'relay' ? '(via TURN ✅)' : '');
+    });
+
+    // 🔴 ERREUR de candidat ICE : réponse d'un serveur STUN/TURN. Code 401 = identifiants TURN refusés ;
+    //   701 = serveur injoignable ; timeout. C'est le signal le plus direct de « l'app n'atteint pas le TURN ».
+    pc.addEventListener('icecandidateerror', (ev: Event) => {
+      const e = ev as RTCPeerConnectionIceErrorEvent;
+      // On ignore le bruit STUN Google (503/701 fréquents) : on n'alerte que si l'URL vise NOTRE TURN.
+      const isTurn = typeof e.url === 'string' && e.url.startsWith('turn');
+      const line = `${label} → icecandidateerror url=${e.url} code=${e.errorCode} texte="${e.errorText}"`;
+      if (isTurn) console.warn('[VOICE] 🔴 TURN', line, e.errorCode === 401 ? '(401 = identifiants TURN REFUSÉS)' : e.errorCode === 701 ? '(701 = serveur TURN INJOIGNABLE)' : '');
+      else VLOG(line);
+    });
+
     const report = () => {
       minimizeAudioLatency(pc); // (les récepteurs peuvent apparaître après la négociation)
-      VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState);
+      VLOG(label, 'ICE=', pc.iceConnectionState, 'conn=', pc.connectionState, '| gathering=', pc.iceGatheringState);
       if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') logSelectedCandidatePair(label, pc);
       // 🔴 DIAGNOSTIC : si ICE échoue, le média (voix) ne peut PAS circuler → cause n°1 « voix muette ».
       //   Le plus souvent : pas de TURN (2 réseaux) OU coturn injoignable / identifiants invalides.
@@ -198,6 +230,7 @@ function traceIce(label: string, call: unknown): void {
     };
     pc.addEventListener('iceconnectionstatechange', report);
     pc.addEventListener('connectionstatechange', report);
+    pc.addEventListener('icegatheringstatechange', report);
     report();
   } catch { /* ignore */ }
 }
@@ -1070,6 +1103,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       if (relayCallsRef.current.has(key)) return; // relais déjà actif
       try {
         const relay = peerRef.current!.call(toPeerId, stream, { metadata: { kind: 'relay', fromUserId } });
+        traceIce('relay ' + fromPeerId + '→' + toPeerId, relay);
         relayCallsRef.current.set(key, relay);
         relay.on('close', () => relayCallsRef.current.delete(key));
         relay.on('error', () => relayCallsRef.current.delete(key));

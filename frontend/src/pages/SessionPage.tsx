@@ -632,10 +632,13 @@ export const SessionPage: React.FC = () => {
   // Host mic state
   const [hostMicActive, setHostMicActive] = useState(false);
   const [hostMicStream, setHostMicStream] = useState<MediaStream | null>(null);
-  // 🎙️ Mode du micro hôte : 'voice' (VAD mains-libres, défaut) ou 'manual' (l'hôte coupe/relance la
-  //    musique à la main). Persisté localement. Utile sur haut-parleurs (VAD peu fiable).
+  // 🎙️ Mode du micro hôte :
+  //   'manual' (DÉFAUT) = l'hôte PARLE PAR-DESSUS la musique (elle CONTINUE) ; il coupe/relance à la main.
+  //   'voice' = VAD mains-libres : la musique s'AUTO-PAUSE dès que l'hôte parle (auto-reprise après).
+  //   Persisté localement (le choix de l'hôte prime sur le défaut). Bascule par double-clic sur le micro.
+  //   POINT #3 : défaut = manual pour restaurer « parler par-dessus la musique » (musique qui continue).
   const [micMode, setMicMode] = useState<'voice' | 'manual'>(() => {
-    try { return localStorage.getItem('bt_mic_mode') === 'manual' ? 'manual' : 'voice'; } catch { return 'voice'; }
+    try { return localStorage.getItem('bt_mic_mode') === 'voice' ? 'voice' : 'manual'; } catch { return 'manual'; }
   });
   const [manualMusicPaused, setManualMusicPaused] = useState(false);
   

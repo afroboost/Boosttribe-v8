@@ -39,7 +39,8 @@ const LoginPage: React.FC = () => {
   // 🎁 Essai gratuit : nombre de crédits offerts à l'inscription (admin-éditable, défaut 1).
   const [freeCredits, setFreeCredits] = useState(1);
   useEffect(() => { getCreditsConfig().then(({ data }) => { if (data?.signup_free_credits != null) setFreeCredits(data.signup_free_credits); }); }, []);
-  const [email, setEmail] = useState('');
+  // 📱 Email prérempli (ex. paiement mobile money AVANT inscription → on crée le compte sur cet email).
+  const [email, setEmail] = useState((location.state as { email?: string })?.email || '');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [showPassword, setShowPassword] = useState(false);

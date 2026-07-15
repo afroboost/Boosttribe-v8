@@ -79,6 +79,8 @@ export interface MobileMoneyOpts {
   currency?: string;       // devise locale (XOF, XAF, GHS, KES, NGN…) — Flutterwave (dormant)
   country?: string;        // PawaPay : code ISO-3 (CIV, SEN, GHA…) ; Flutterwave : ISO-2
   correspondent?: string;  // PawaPay : opérateur (info ; choisi sur la page PawaPay)
+  email?: string;          // PawaPay : payer AVANT inscription (requis si non connecté)
+  name?: string;
 }
 
 /**
@@ -93,12 +95,21 @@ export async function createCheckout(
 ): Promise<{ url?: string; error?: string }> {
   if (!API_URL) return { error: 'API de paiement non configurée (REACT_APP_API_URL)' };
   if (opts?.provider === 'pawapay') {
-    const { data, error } = await adminFetch('/pawapay/create-subscription', {
-      method: 'POST',
-      body: JSON.stringify({ plan, interval, country: opts.country, correspondent: opts.correspondent }),
-    });
-    if (error) return { error };
-    return { url: data?.url };
+    // 📱 Auth OPTIONNELLE : connecté → token ; sinon email (paiement avant inscription).
+    const token = await getAccessToken();
+    if (!token && !opts.email) return { error: 'Ton email est requis pour payer sans compte' };
+    try {
+      const res = await fetch(`${API_URL}/pawapay/create-subscription`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ plan, interval, country: opts.country, correspondent: opts.correspondent, email: opts.email, name: opts.name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+      return { url: data?.url };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+    }
   }
   if (opts?.provider === 'flutterwave') {
     const { data, error } = await adminFetch('/flutterwave/create-subscription', {
@@ -140,6 +151,15 @@ export async function getPawapayConfig(): Promise<{ data?: PawapayConfig; error?
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
+}
+
+// 📱 Rattache à l'utilisateur connecté ses accès mobile money PAYÉS avant inscription (même email).
+//    Idempotent côté backend. tickets = sessions dont le billet vient d'être attaché ; subscription = plan activé.
+export interface ClaimResult { tickets: string[]; subscription: string | null }
+export async function claimPendingAccess(): Promise<{ data?: ClaimResult; error?: string }> {
+  const { data, error } = await adminFetch('/pawapay/claim', { method: 'POST' });
+  if (error) return { error };
+  return { data: data as ClaimResult };
 }
 
 // ===========================================================================
@@ -608,12 +628,15 @@ export async function buyTicket(
 ): Promise<{ url?: string; already?: boolean; error?: string }> {
   if (!API_URL) return { error: 'API non configurée' };
   const token = await getAccessToken();
-  if (!token) return { error: 'Connectez-vous pour acheter votre place' };
+  const isPawapay = opts?.provider === 'pawapay';
+  // 📱 PawaPay : auth OPTIONNELLE (email → paiement avant inscription). Autres → connexion requise.
+  if (!token && !isPawapay) return { error: 'Connectez-vous pour acheter votre place' };
+  if (!token && isPawapay && !opts?.email) return { error: 'Ton email est requis pour payer sans compte' };
   let path = '/tickets/buy';
   let payload: Record<string, unknown> = { session_id: sessionId };
-  if (opts?.provider === 'pawapay') {
+  if (isPawapay) {
     path = '/pawapay/tickets/buy';
-    payload = { session_id: sessionId, country: opts.country, correspondent: opts.correspondent };
+    payload = { session_id: sessionId, country: opts?.country, correspondent: opts?.correspondent, email: opts?.email, name: opts?.name };
   } else if (opts?.provider === 'flutterwave') {
     path = '/flutterwave/tickets/buy';
     payload = { session_id: sessionId, currency: opts.currency, country: opts.country };
@@ -621,7 +644,7 @@ export async function buyTicket(
   try {
     const res = await fetch(`${API_URL}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));

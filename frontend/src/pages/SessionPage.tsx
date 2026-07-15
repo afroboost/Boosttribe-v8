@@ -52,10 +52,10 @@ import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessReq
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
-  getPawapayConfig,
+  getPawapayConfig, claimPendingAccess,
   type SessionAccessInfo, type PawapayConfig,
 } from '@/lib/paymentApi';
-import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause } from 'lucide-react';
+import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone } from 'lucide-react';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
 
 // LocalStorage key for nickname
@@ -1367,6 +1367,10 @@ export const SessionPage: React.FC = () => {
   const [ppConfig, setPpConfig] = useState<PawapayConfig | null>(null);
   const [ppCountry, setPpCountry] = useState<string>('');
   const [showMobileMoney, setShowMobileMoney] = useState(false);
+  // 📱 Payer AVANT inscription : email saisi si non connecté + écran « paiement reçu, crée ton compte ».
+  const [ppEmail, setPpEmail] = useState('');
+  const [paidAwaitingSignup, setPaidAwaitingSignup] = useState(false);
+  const ppReturnHandledRef = useRef(false);
   // Réglages billetterie pour le configurateur hôte (garde-fous de prix).
   const [billConfig, setBillConfig] = useState<{ price_min_chf: number; price_max_chf: number } | null>(null);
   const [savingMode, setSavingMode] = useState(false);
@@ -1659,21 +1663,40 @@ export const SessionPage: React.FC = () => {
   // 🎟️ Retour de paiement (?ticket=success Stripe OU ?ticket=pp Mobile Money PawaPay) → re-vérifie le
   //    billet (le callback peut avoir un léger délai). Même re-poll pour les deux moyens de paiement.
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId || ppReturnHandledRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const t = params.get('ticket');
-    if (t !== 'success' && t !== 'pp') return;
+    let claimFlag = false;
+    try { claimFlag = localStorage.getItem('bt_pp_claim') === '1'; } catch { /* ignore */ }
+    if (t !== 'success' && t !== 'pp' && !claimFlag) return;
+
+    // 📱 Retour mobile money SANS être connecté → écran « paiement reçu, crée ton compte » (email prérempli).
+    if (t === 'pp' && !user?.id) {
+      let em = ''; try { em = localStorage.getItem('bt_pp_pending_email') || ''; } catch { /* ignore */ }
+      setPpEmail(em);
+      setPaidAwaitingSignup(true);
+      return;
+    }
+    if (!user?.id) return;  // besoin d'être connecté pour rattacher/vérifier
+
+    ppReturnHandledRef.current = true;
     showToast('Paiement reçu — accès en cours d\'activation…', 'success');
     let tries = 0;
     const tick = async () => {
       tries += 1;
       const { has_ticket } = await checkTicket(sessionId);
-      if (has_ticket) { setHasTicket(true); refreshAccess(); return; }
+      if (has_ticket) {
+        setHasTicket(true); refreshAccess();
+        try { localStorage.removeItem('bt_pp_claim'); localStorage.removeItem('bt_pp_pending_email'); } catch { /* ignore */ }
+        return;
+      }
       if (tries < 8) setTimeout(tick, 1500);  // mobile money : léger délai callback → on laisse plus d'essais
     };
-    tick();
+    // Rattache d'abord un éventuel billet payé AVANT inscription (mobile money uniquement), puis vérifie l'accès.
+    const needClaim = t === 'pp' || claimFlag;
+    (async () => { if (needClaim) { try { await claimPendingAccess(); } catch { /* ignore */ } } tick(); })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, user?.id]);
 
   // 📱 Charge la config publique Mobile Money (PawaPay) quand la session est payante (masquée si absente).
   useEffect(() => {
@@ -1686,20 +1709,27 @@ export const SessionPage: React.FC = () => {
     });
   }, [accessInfo]);
 
-  // 🎟️ Achat d'une place → redirection Stripe Checkout (carte) OU PawaPay (mobile money).
+  // 🎟️ Achat d'une place → redirection Stripe Checkout (carte) OU PawaPay (mobile money, connecté OU non).
   const handleBuyTicket = useCallback(async (provider: 'stripe' | 'pawapay' = 'stripe') => {
     if (!sessionId) return;
-    if (provider === 'pawapay' && !ppCountry) { showToast('Choisis ton pays', 'warning'); return; }
+    const anon = provider === 'pawapay' && !user?.id;
+    const email = anon ? ppEmail.trim().toLowerCase() : undefined;
+    if (provider === 'pawapay') {
+      if (!ppCountry) { showToast('Choisis ton pays', 'warning'); return; }
+      if (anon && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) { showToast('Entre un email valide', 'warning'); return; }
+    }
     setTicketBusy(true);
     try {
-      const { url, already, error } = await buyTicket(sessionId, { provider, country: ppCountry });
+      // Paiement AVANT inscription : on mémorise l'email pour préremplir l'inscription au retour.
+      if (anon && email) { try { localStorage.setItem('bt_pp_pending_email', email); localStorage.setItem('bt_pp_claim', '1'); } catch { /* ignore */ } }
+      const { url, already, error } = await buyTicket(sessionId, { provider, country: ppCountry, email });
       if (already) { setHasTicket(true); showToast('Tu as déjà ta place 🎟️', 'success'); return; }
       if (url) { window.location.href = url; return; }
       showToast(error || 'Achat impossible', 'error');
     } finally {
       setTicketBusy(false);
     }
-  }, [sessionId, showToast, ppCountry]);
+  }, [sessionId, showToast, ppCountry, ppEmail, user?.id]);
 
   // 💱 Aperçu du montant converti (≈) pour le pays choisi, à partir des taux publics PawaPay.
   const ppTicketApprox = useMemo(() => {
@@ -3582,8 +3612,39 @@ export const SessionPage: React.FC = () => {
         </div>
       )}
 
+      {/* 📱 Paiement mobile money reçu AVANT inscription → inviter à créer le compte (email prérempli).
+          Priorité sur le paywall : l'accès s'active dès l'inscription via claimPendingAccess(). */}
+      {paidAwaitingSignup && !user?.id && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#F5A524]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}>
+              <Check className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Paiement reçu ✅
+            </h2>
+            <p className="text-white/70 text-sm mb-1">Crée ton compte pour activer ton accès déjà payé.</p>
+            <p className="text-white/40 text-xs mb-6">{ppEmail ? <>Utilise bien cet email : <span className="text-white/70 font-medium">{ppEmail}</span></> : 'Utilise le même email que celui saisi au paiement.'}</p>
+            <button
+              onClick={() => navigate('/login', { state: { from: `/session/${sessionId}?ticket=pp`, mode: 'signup', email: ppEmail } })}
+              className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
+              style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+              data-testid="paid-awaiting-signup"
+            >
+              Créer mon compte et activer
+            </button>
+            <button
+              onClick={() => navigate('/login', { state: { from: `/session/${sessionId}?ticket=pp`, email: ppEmail } })}
+              className="w-full mt-2 py-2.5 rounded-xl text-white/70 hover:text-white text-sm transition-colors border border-white/15"
+            >
+              J'ai déjà un compte — me connecter
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 🎟️ Paywall « place payante » — participant sans billet sur une session payante. */}
-      {accessInfo?.mode === 'paid' && !isHost && !isAdminUser && hasTicket === false && (
+      {accessInfo?.mode === 'paid' && !isHost && !isAdminUser && hasTicket === false && !paidAwaitingSignup && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
             <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
@@ -3622,11 +3683,25 @@ export const SessionPage: React.FC = () => {
                   {!user?.id ? 'Connecte-toi pour acheter' : ticketBusy ? 'Redirection…' : `💳 Carte (${Number(accessInfo.price_chf || 0).toFixed(2)} CHF)`}
                 </button>
               )}
-              {/* 📱 Mobile Money (PawaPay) — affiché UNIQUEMENT si configuré ET utilisateur connecté.
+              {/* 📱 Mobile Money (PawaPay) — visible même NON connecté (paiement avant inscription).
                   On choisit le PAYS (→ devise) ; l'opérateur + le numéro se saisissent sur la page PawaPay. */}
-              {!accessInfo.sold_out && ppConfig?.configured && user?.id && (
+              {!accessInfo.sold_out && ppConfig?.configured && (
                 showMobileMoney ? (
                   <div className="w-full rounded-xl border border-white/15 bg-white/5 p-3 flex flex-col gap-2" data-testid="ticket-mobilemoney">
+                    {!user?.id && (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-left text-xs text-white/60">Ton email</label>
+                        <input
+                          type="email"
+                          value={ppEmail}
+                          onChange={(e) => setPpEmail(e.target.value)}
+                          placeholder="toi@email.com"
+                          className="w-full rounded-lg bg-black/40 border border-white/15 text-white text-sm px-3 py-2"
+                          data-testid="ticket-mobilemoney-email"
+                        />
+                        <p className="text-left text-[11px] text-white/40">On créera ton accès sur cet email — tu finaliseras ton inscription juste après le paiement.</p>
+                      </div>
+                    )}
                     <label className="text-left text-xs text-white/60">Ton pays</label>
                     <select
                       value={ppCountry}
@@ -3644,21 +3719,21 @@ export const SessionPage: React.FC = () => {
                     <p className="text-left text-[11px] text-white/40">Tu choisiras ton opérateur (Orange, MTN, Moov, Wave, M-Pesa…) sur la page sécurisée PawaPay.</p>
                     <button
                       onClick={() => handleBuyTicket('pawapay')}
-                      disabled={ticketBusy || !ppCountry}
-                      className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+                      disabled={ticketBusy || !ppCountry || (!user?.id && !ppEmail.trim())}
+                      className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60"
                       style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
                       data-testid="ticket-mobilemoney-pay"
                     >
-                      📱 {ticketBusy ? 'Redirection…' : 'Payer en Mobile Money'}
+                      <Smartphone className="w-4 h-4" /> {ticketBusy ? 'Redirection…' : 'Payer en Mobile Money'}
                     </button>
                   </div>
                 ) : (
                   <button
                     onClick={() => setShowMobileMoney(true)}
-                    className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 border border-white/15 hover:bg-white/10 transition-colors"
+                    className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 border border-white/15 hover:bg-white/10 transition-colors"
                     data-testid="ticket-mobilemoney-toggle"
                   >
-                    📱 Mobile Money (Orange, MTN, Wave, M-Pesa…)
+                    <Smartphone className="w-4 h-4" /> Mobile Money (Orange, MTN, Wave, M-Pesa…)
                   </button>
                 )
               )}

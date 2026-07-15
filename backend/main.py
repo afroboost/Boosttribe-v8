@@ -3682,17 +3682,58 @@ async def pawapay_public_config():
     return {"configured": configured, "provider": "pawapay", "countries": countries, "fx_rates": rates}
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _valid_email(email: str) -> bool:
+    return bool(email) and bool(_EMAIL_RE.match(email)) and len(email) <= 254
+
+
+async def _optional_user(authorization: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Utilisateur si un token VALIDE est fourni, sinon None (paiement avant inscription)."""
+    if not authorization:
+        return None
+    try:
+        return await get_user_from_token(authorization)
+    except HTTPException:
+        return None
+
+
+async def _pp_store_pending_access(email: str, plan: Optional[str], interval: Optional[str],
+                                   tx_ref: str) -> None:
+    """Accès abonnement PAYÉ EN ATTENTE (acheteur pas encore inscrit) — rattaché à l'email.
+    Idempotent sur tx_ref (le callback n'insère qu'une fois par dépôt)."""
+    days = PAWAPAY_SUB_DAYS.get((interval or "").lower(), 30)
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/pawapay_pending_access",
+            headers=_service_headers({"Prefer": "resolution=ignore-duplicates,return=minimal"}),
+            params={"on_conflict": "tx_ref"},
+            json={"email": (email or "").strip().lower(), "kind": "subscription",
+                  "plan": plan, "interval": interval, "days": days, "tx_ref": tx_ref,
+                  "created_at": datetime.now(timezone.utc).isoformat()})
+
+
 class PawapayTicketBody(BaseModel):
     session_id: str
     country: str                 # code ISO-3 PawaPay (CIV, SEN, GHA…)
     correspondent: Optional[str] = None  # opérateur (info ; PawaPay le redemande sur sa page)
+    email: Optional[str] = None  # requis SEULEMENT si non connecté (paiement avant inscription)
+    name: Optional[str] = None
 
 
 @app.post("/pawapay/tickets/buy")
 async def pawapay_buy_ticket(body: PawapayTicketBody, authorization: Optional[str] = Header(default=None)):
-    """Achat d'une place (billet) en MOBILE MONEY (PawaPay). Mêmes vérifs que /tickets/buy (Stripe)."""
-    user = await get_user_from_token(authorization)
-    uid, email = user.get("id"), user.get("email")
+    """Achat d'une place (billet) en MOBILE MONEY (PawaPay). Mêmes vérifs que /tickets/buy (Stripe).
+    Auth OPTIONNELLE : connecté → rattaché au compte ; sinon email requis → accès payé en attente."""
+    user = await _optional_user(authorization)
+    if user:
+        uid, email = user.get("id"), (user.get("email") or "").strip().lower()
+    else:
+        uid = None
+        email = (body.email or "").strip().lower()
+        if not _valid_email(email):
+            raise HTTPException(status_code=400, detail="Email requis pour payer sans compte")
     if not SESSION_ID_RE.match(body.session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     country = (body.country or "").upper()
@@ -3703,7 +3744,7 @@ async def pawapay_buy_ticket(body: PawapayTicketBody, authorization: Optional[st
     row = await get_session_row(body.session_id)
     if not row or row.get("mode") != "paid":
         raise HTTPException(status_code=400, detail="Cette session n'est pas payante")
-    if await has_valid_ticket(body.session_id, uid):
+    if uid and await has_valid_ticket(body.session_id, uid):
         return {"already": True}
     capacity = row.get("capacity")
     if capacity and await count_paid_tickets(body.session_id) >= int(capacity):
@@ -3732,11 +3773,14 @@ class PawapaySubBody(BaseModel):
     interval: str        # "month" | "year"
     country: str
     correspondent: Optional[str] = None
+    email: Optional[str] = None  # requis SEULEMENT si non connecté (paiement avant inscription)
+    name: Optional[str] = None
 
 
 @app.post("/pawapay/create-subscription")
 async def pawapay_create_subscription(body: PawapaySubBody, authorization: Optional[str] = Header(default=None)):
-    """Abonnement (période) en MOBILE MONEY (PawaPay). Réutilise le prix CHF du plan (site_settings)."""
+    """Abonnement (période) en MOBILE MONEY (PawaPay). Réutilise le prix CHF du plan (site_settings).
+    Auth OPTIONNELLE : connecté → rattaché au compte ; sinon email requis → accès payé en attente."""
     if body.plan not in PLANS:
         raise HTTPException(status_code=400, detail="Plan inconnu")
     if body.interval not in ("month", "year"):
@@ -3746,8 +3790,14 @@ async def pawapay_create_subscription(body: PawapaySubBody, authorization: Optio
     if not info:
         raise HTTPException(status_code=400, detail="Pays mobile money non pris en charge")
     currency = info["currency"]
-    user = await get_user_from_token(authorization)
-    uid = user.get("id")
+    user = await _optional_user(authorization)
+    if user:
+        uid, email = user.get("id"), (user.get("email") or "").strip().lower()
+    else:
+        uid = None
+        email = (body.email or "").strip().lower()
+        if not _valid_email(email):
+            raise HTTPException(status_code=400, detail="Email requis pour payer sans compte")
     settings = await get_site_settings()
     key = ("plan_pro_price_" if body.plan == "pro" else "plan_enterprise_price_") + \
           ("monthly" if body.interval == "month" else "yearly")
@@ -3761,7 +3811,7 @@ async def pawapay_create_subscription(body: PawapaySubBody, authorization: Optio
     cms_interval = "monthly" if body.interval == "month" else "annual"
     deposit_id = str(uuid.uuid4())
     meta = {"kind": "subscription", "plan": body.plan, "interval": cms_interval, "user_id": uid,
-            "price_chf": price, "currency": currency, "country": country}
+            "price_chf": price, "currency": currency, "country": country, "buyer_email": email}
     await _pp_store_deposit(deposit_id, meta)
     link = await pawapay_create_payment_page(
         deposit_id=deposit_id, amount_str=_pp_amount_str(amount, currency), country=country,
@@ -3817,13 +3867,65 @@ async def pawapay_callback(request: Request):
 
         kind = meta.get("kind")
         if kind == "ticket":
+            # Connecté → buyer_user_id renseigné ; anonyme → buyer_user_id NULL + buyer_email (rattaché à /claim).
             await _mobilemoney_create_ticket("pawapay", meta, deposit_id, paid_amount,
                                              paid_currency, meta.get("buyer_email"))
         elif kind == "subscription":
             uid = meta.get("user_id")
             if uid:
                 await _pp_grant_subscription(uid, meta.get("plan"), meta.get("interval"), deposit_id)
+            elif meta.get("buyer_email"):
+                # Acheteur pas encore inscrit → accès payé EN ATTENTE, activé à /pawapay/claim.
+                await _pp_store_pending_access(meta.get("buyer_email"), meta.get("plan"),
+                                               meta.get("interval"), deposit_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("PawaPay callback handling error: %s", exc)
 
     return {"received": True}
+
+
+@app.post("/pawapay/claim")
+async def pawapay_claim(authorization: Optional[str] = Header(default=None)):
+    """Rattache à l'utilisateur connecté les accès mobile money PAYÉS (confirmés par callback) dont
+    l'email == email du compte. Idempotent, ne double-crédite jamais. Renvoie ce qui a été activé."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    email = (user.get("email") or "").strip().lower()
+    attached_sessions: List[str] = []
+    subscription_activated: Optional[str] = None
+    if not email:
+        return {"tickets": attached_sessions, "subscription": subscription_activated}
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        # 1) Billets payés anonymement avec cet email → on les attache au compte (buyer_user_id NULL → uid).
+        r = await client.get(
+            f"{SUPABASE_URL}/rest/v1/tickets", headers=_service_headers(),
+            params={"buyer_user_id": "is.null", "buyer_email": f"eq.{email}",
+                    "provider": "eq.pawapay", "status": "eq.paid", "select": "id,session_id"})
+        rows = r.json() if r.status_code == 200 else []
+        if rows:
+            await client.patch(
+                f"{SUPABASE_URL}/rest/v1/tickets",
+                headers=_service_headers({"Prefer": "return=minimal"}),
+                params={"buyer_user_id": "is.null", "buyer_email": f"eq.{email}",
+                        "provider": "eq.pawapay", "status": "eq.paid"},
+                json={"buyer_user_id": uid})
+            attached_sessions = sorted({r0.get("session_id") for r0 in rows if r0.get("session_id")})
+
+        # 2) Abonnements payés en attente → on crédite N jours UNE seule fois (claimed_at posé atomiquement).
+        p = await client.get(
+            f"{SUPABASE_URL}/rest/v1/pawapay_pending_access", headers=_service_headers(),
+            params={"email": f"eq.{email}", "kind": "eq.subscription", "claimed_at": "is.null",
+                    "select": "id,plan,interval,tx_ref", "order": "created_at.asc"})
+        pend = p.json() if p.status_code == 200 else []
+        for row in pend:
+            claim = await client.patch(
+                f"{SUPABASE_URL}/rest/v1/pawapay_pending_access",
+                headers=_service_headers({"Prefer": "return=representation"}),
+                params={"id": f"eq.{row.get('id')}", "claimed_at": "is.null"},
+                json={"claimed_at": datetime.now(timezone.utc).isoformat(), "claimed_user_id": uid})
+            if claim.status_code in (200, 201) and (claim.json() if claim.content else []):
+                await _pp_grant_subscription(uid, row.get("plan"), row.get("interval"), row.get("tx_ref"))
+                subscription_activated = row.get("plan")
+
+    return {"tickets": attached_sessions, "subscription": subscription_activated}

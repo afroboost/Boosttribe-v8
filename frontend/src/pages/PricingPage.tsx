@@ -5,12 +5,12 @@ import { useAuth } from '@/context/AuthContext';
 import { Footer } from '@/components/layout/Footer';
 import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
-import { getCreditsConfig, buyCredits, getBilletterieConfig, createCheckout, getPawapayConfig, type CreditsConfig, type CreditPack, type PawapayConfig } from '@/lib/paymentApi';
+import { getCreditsConfig, buyCredits, getBilletterieConfig, createCheckout, getPawapayConfig, claimPendingAccess, type CreditsConfig, type CreditPack, type PawapayConfig } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
-  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2, FileText, CreditCard,
+  Check, ArrowLeft, Sparkles, Coins, Gift, Users, Mic2, Clock, Star, Loader2, FileText, CreditCard, Smartphone,
 } from 'lucide-react';
 
 // 🎨 Couleurs Afroboost
@@ -35,6 +35,7 @@ const PricingPage: React.FC = () => {
   const navigate = useNavigate();
   const {
     isAuthenticated,
+    isLoading: authLoading,
     credits,
     isAdmin,
     hasAcceptedTerms,
@@ -62,6 +63,10 @@ const PricingPage: React.FC = () => {
   const [ppConfig, setPpConfig] = useState<PawapayConfig | null>(null);
   const [ppPlan, setPpPlan] = useState<'pro' | 'enterprise' | null>(null);
   const [ppCountry, setPpCountry] = useState<string>('');
+  // 📱 Payer AVANT inscription : email saisi si non connecté + écran « paiement reçu, crée ton compte ».
+  const [ppEmail, setPpEmail] = useState('');
+  const [paidAwaitingSignup, setPaidAwaitingSignup] = useState(false);
+  const ppClaimHandledRef = useRef(false);
 
   // Charge la config publique (packs + offres + réglages) — tout est éditable en admin.
   const loadConfig = useCallback(async () => {
@@ -88,28 +93,54 @@ const PricingPage: React.FC = () => {
     } else if (params.get('canceled') === '1') {
       showToast('Paiement annulé', 'default');
       window.history.replaceState({}, '', '/pricing');
-    } else if (params.get('sub') === 'pp') {
-      // 📱 Retour d'un abonnement Mobile Money (PawaPay) : l'accès s'active via le callback (léger délai).
-      showToast('Paiement reçu — ton accès s\'active dans quelques instants 🎉', 'success');
-      refreshCredits();
-      setTimeout(() => refreshCredits(), 4000);
-      window.history.replaceState({}, '', '/pricing');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 📱 Abonnement (période) en Mobile Money → redirection PawaPay. Renouvellement manuel à l'échéance.
+  // 📱 Retour d'un abonnement Mobile Money (PawaPay) — géré APRÈS résolution de l'auth (évite la course).
+  //    Connecté → rattache l'accès payé (claim) + rafraîchit. Non connecté → écran « crée ton compte ».
+  useEffect(() => {
+    if (authLoading || ppClaimHandledRef.current) return;
+    const params = new URLSearchParams(window.location.search);
+    let claimFlag = false;
+    try { claimFlag = localStorage.getItem('bt_pp_claim') === '1'; } catch { /* ignore */ }
+    if (params.get('sub') !== 'pp' && !claimFlag) return;
+
+    if (!isAuthenticated) {
+      let em = ''; try { em = localStorage.getItem('bt_pp_pending_email') || ''; } catch { /* ignore */ }
+      setPpEmail(em);
+      setPaidAwaitingSignup(true);
+      return;
+    }
+    ppClaimHandledRef.current = true;
+    (async () => {
+      const { data } = await claimPendingAccess();
+      if (data?.subscription) showToast('Ton abonnement mobile money est activé 🎉', 'success');
+      else showToast('Paiement reçu — ton accès s\'active dans quelques instants 🎉', 'success');
+      refreshCredits();
+      setTimeout(() => refreshCredits(), 4000);
+      try { localStorage.removeItem('bt_pp_claim'); localStorage.removeItem('bt_pp_pending_email'); } catch { /* ignore */ }
+      window.history.replaceState({}, '', '/pricing');
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, isAuthenticated]);
+
+  // 📱 Abonnement (période) en Mobile Money → redirection PawaPay (connecté OU non). Renouvellement manuel.
   const startSubscribeMobileMoney = useCallback(async (plan: 'pro' | 'enterprise') => {
     if (!ppCountry) { showToast('Choisis ton pays', 'warning'); return; }
+    const anon = !isAuthenticated;
+    const email = anon ? ppEmail.trim().toLowerCase() : undefined;
+    if (anon && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email || '')) { showToast('Entre un email valide', 'warning'); return; }
     setSubscribingPlan(plan);
     try {
-      const { url, error } = await createCheckout(plan, billing, { provider: 'pawapay', country: ppCountry });
+      if (anon && email) { try { localStorage.setItem('bt_pp_pending_email', email); localStorage.setItem('bt_pp_claim', '1'); } catch { /* ignore */ } }
+      const { url, error } = await createCheckout(plan, billing, { provider: 'pawapay', country: ppCountry, email });
       if (url) window.location.href = url;
       else showToast(error || 'Impossible de démarrer l\'abonnement mobile money', 'error');
     } finally {
       setSubscribingPlan(null);
     }
-  }, [ppCountry, billing, showToast]);
+  }, [ppCountry, billing, showToast, isAuthenticated, ppEmail]);
 
   const handleAcceptTerms = async () => {
     if (termsChecked && !hasAcceptedTerms) {
@@ -406,8 +437,8 @@ const PricingPage: React.FC = () => {
                     {subscribingPlan === 'pro' ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>) : (<>Commencer l'essai gratuit</>)}
                   </Button>
                   {ppConfig?.configured && (
-                    <button onClick={() => setPpPlan('pro')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors" data-testid="sub-mobilemoney-pro">
-                      📱 Payer en Mobile Money
+                    <button onClick={() => setPpPlan('pro')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors inline-flex items-center justify-center gap-2" data-testid="sub-mobilemoney-pro">
+                      <Smartphone className="w-4 h-4" /> Payer en Mobile Money
                     </button>
                   )}
                 </CardContent>
@@ -442,8 +473,8 @@ const PricingPage: React.FC = () => {
                     {subscribingPlan === 'enterprise' ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>) : (<>Commencer l'essai gratuit</>)}
                   </Button>
                   {ppConfig?.configured && (
-                    <button onClick={() => setPpPlan('enterprise')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors" data-testid="sub-mobilemoney-enterprise">
-                      📱 Payer en Mobile Money
+                    <button onClick={() => setPpPlan('enterprise')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors inline-flex items-center justify-center gap-2" data-testid="sub-mobilemoney-enterprise">
+                      <Smartphone className="w-4 h-4" /> Payer en Mobile Money
                     </button>
                   )}
                 </CardContent>
@@ -673,11 +704,25 @@ const PricingPage: React.FC = () => {
         return (
           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4" onClick={() => setPpPlan(null)}>
             <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#14141A] p-5" onClick={(e) => e.stopPropagation()} data-testid="sub-mobilemoney-modal">
-              <h3 className="text-white font-semibold text-lg mb-1">📱 Mobile Money — {ppPlan === 'pro' ? proLabel : entLabel}</h3>
+              <h3 className="text-white font-semibold text-lg mb-1 inline-flex items-center gap-2"><Smartphone className="w-5 h-5 text-[#F5A524]" /> Mobile Money — {ppPlan === 'pro' ? proLabel : entLabel}</h3>
               <p className="text-white/50 text-xs mb-4">
                 Paiement d'{billing === 'month' ? 'un mois' : 'une année'} (Orange, MTN, Moov, Wave, M-Pesa…).
                 À l'échéance, tu repaies pour prolonger (pas de prélèvement automatique en mobile money).
               </p>
+              {!isAuthenticated && (
+                <>
+                  <label className="block text-left text-xs text-white/60 mb-1">Ton email</label>
+                  <input
+                    type="email"
+                    value={ppEmail}
+                    onChange={(e) => setPpEmail(e.target.value)}
+                    placeholder="toi@email.com"
+                    className="w-full rounded-lg bg-black/40 border border-white/15 text-white text-sm px-3 py-2 mb-1"
+                    data-testid="sub-mobilemoney-email"
+                  />
+                  <p className="text-left text-[11px] text-white/40 mb-3">On créera ton accès sur cet email — tu finaliseras ton inscription juste après le paiement.</p>
+                </>
+              )}
               <label className="block text-left text-xs text-white/60 mb-1">Ton pays</label>
               <select
                 value={ppCountry}
@@ -695,18 +740,46 @@ const PricingPage: React.FC = () => {
                 <button onClick={() => setPpPlan(null)} className="flex-1 py-2.5 rounded-lg text-white/70 text-sm border border-white/15 hover:bg-white/10">Annuler</button>
                 <button
                   onClick={() => startSubscribeMobileMoney(ppPlan)}
-                  disabled={subscribingPlan === ppPlan || !ppCountry}
-                  className="flex-1 py-2.5 rounded-lg text-white text-sm font-semibold disabled:opacity-60"
+                  disabled={subscribingPlan === ppPlan || !ppCountry || (!isAuthenticated && !ppEmail.trim())}
+                  className="flex-1 py-2.5 rounded-lg text-white text-sm font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60"
                   style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
                   data-testid="sub-mobilemoney-pay"
                 >
-                  {subscribingPlan === ppPlan ? 'Redirection…' : 'Payer'}
+                  <Smartphone className="w-4 h-4" /> {subscribingPlan === ppPlan ? 'Redirection…' : 'Payer'}
                 </button>
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* 📱 Abonnement mobile money payé AVANT inscription → inviter à créer le compte (email prérempli). */}
+      {paidAwaitingSignup && !isAuthenticated && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-sm rounded-2xl border-2 border-[#F5A524]/50 bg-[#14141A] p-6 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}>
+              <Check className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-xl font-bold text-white mb-2">Paiement reçu ✅</h2>
+            <p className="text-white/70 text-sm mb-1">Crée ton compte pour activer ton abonnement déjà payé.</p>
+            <p className="text-white/40 text-xs mb-6">{ppEmail ? <>Utilise bien cet email : <span className="text-white/70 font-medium">{ppEmail}</span></> : 'Utilise le même email que celui saisi au paiement.'}</p>
+            <button
+              onClick={() => navigate('/login', { state: { from: '/pricing?sub=pp', mode: 'signup', email: ppEmail } })}
+              className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
+              style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+              data-testid="sub-paid-awaiting-signup"
+            >
+              Créer mon compte et activer
+            </button>
+            <button
+              onClick={() => navigate('/login', { state: { from: '/pricing?sub=pp', email: ppEmail } })}
+              className="w-full mt-2 py-2.5 rounded-xl text-white/70 hover:text-white text-sm transition-colors border border-white/15"
+            >
+              J'ai déjà un compte — me connecter
+            </button>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </div>

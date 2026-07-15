@@ -73,15 +73,32 @@ export async function syncPlan(payload: SyncPlanPayload): Promise<{ ok: boolean;
   }
 }
 
+// 📱 Options de paiement mobile money (Flutterwave) — ADDITIF : par défaut on reste sur Stripe.
+export interface MobileMoneyOpts {
+  provider?: 'stripe' | 'flutterwave';
+  currency?: string;   // devise locale (XOF, XAF, GHS, KES, NGN…)
+  country?: string;    // ISO-2 (CI, SN, GH…)
+}
+
 /**
- * Crée une session Stripe Checkout pour l'utilisateur connecté.
- * Renvoie l'URL de redirection Stripe (ou une erreur).
+ * Crée un paiement d'abonnement pour l'utilisateur connecté.
+ * Par défaut Stripe (récurrent). Avec { provider:'flutterwave', currency } → paiement mobile money
+ * d'UNE période (renouvellement manuel). Renvoie l'URL de redirection (ou une erreur).
  */
 export async function createCheckout(
   plan: StripePlan,
   interval: StripeInterval,
+  opts?: MobileMoneyOpts,
 ): Promise<{ url?: string; error?: string }> {
   if (!API_URL) return { error: 'API de paiement non configurée (REACT_APP_API_URL)' };
+  if (opts?.provider === 'flutterwave') {
+    const { data, error } = await adminFetch('/flutterwave/create-subscription', {
+      method: 'POST',
+      body: JSON.stringify({ plan, interval, currency: opts.currency, country: opts.country }),
+    });
+    if (error) return { error };
+    return { url: data?.url };
+  }
   // adminFetch = jeton frais + polling de session (course post-inscription) + réessai auto sur 401.
   const { data, error } = await adminFetch('/stripe/create-checkout', {
     method: 'POST',
@@ -90,6 +107,31 @@ export async function createCheckout(
   if (error) return { error };
   return { url: data?.url };
 }
+
+// 📱 Config PUBLIQUE mobile money (clé publique + pays/devises + taux). configured=false → masquer l'UI.
+export interface FlutterwaveConfig {
+  configured: boolean;
+  public_key: string;
+  countries: { code: string; currency: string }[];
+  fx_rates: Record<string, number>;
+}
+export async function getFlutterwaveConfig(): Promise<{ data?: FlutterwaveConfig; error?: string }> {
+  if (!API_URL) return { error: 'API non configurée' };
+  try {
+    const res = await fetch(`${API_URL}/flutterwave/config`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
+    return { data: data as FlutterwaveConfig };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Backend injoignable' };
+  }
+}
+
+// Libellés de pays (affichage). Liste CENTRALISÉE et extensible (miroir du backend FLW_COUNTRY_CURRENCY).
+export const FLW_COUNTRY_LABELS: Record<string, string> = {
+  CI: "Côte d'Ivoire", SN: 'Sénégal', BJ: 'Bénin', ML: 'Mali', BF: 'Burkina Faso', TG: 'Togo',
+  CM: 'Cameroun', GA: 'Gabon', CG: 'Congo', GH: 'Ghana', KE: 'Kenya', NG: 'Nigeria',
+};
 
 // ===========================================================================
 // 💳 CRÉDITS (nouveau modèle — remplace les abonnements)
@@ -547,16 +589,27 @@ export async function configureSession(payload: {
   }
 }
 
-/** Participant : achète une place → URL Stripe Checkout (CHF). */
-export async function buyTicket(sessionId: string): Promise<{ url?: string; already?: boolean; error?: string }> {
+/**
+ * Participant : achète une place. Par défaut Stripe (CHF). Avec { provider:'flutterwave', currency }
+ * → paiement mobile money (devise locale). Renvoie l'URL de redirection hébergée (ou { already }).
+ */
+export async function buyTicket(
+  sessionId: string,
+  opts?: MobileMoneyOpts,
+): Promise<{ url?: string; already?: boolean; error?: string }> {
   if (!API_URL) return { error: 'API non configurée' };
   const token = await getAccessToken();
   if (!token) return { error: 'Connectez-vous pour acheter votre place' };
+  const flw = opts?.provider === 'flutterwave';
+  const path = flw ? '/flutterwave/tickets/buy' : '/tickets/buy';
+  const payload = flw
+    ? { session_id: sessionId, currency: opts?.currency, country: opts?.country }
+    : { session_id: sessionId };
   try {
-    const res = await fetch(`${API_URL}/tickets/buy`, {
+    const res = await fetch(`${API_URL}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
@@ -1018,6 +1071,38 @@ export async function getStripeKeys(reveal = false): Promise<{ data?: StripeKeys
 
 export async function saveStripeKeys(payload: { public_key?: string; secret_key?: string }): Promise<{ ok: boolean; error?: string }> {
   const { data, error } = await adminFetch('/admin/stripe-keys', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (error) return { ok: false, error };
+  return { ok: !!data?.ok };
+}
+
+// 📱 Admin : clés Flutterwave (publique en clair ; secrète/chiffrement/hash webhook chiffrés) + taux FX.
+export interface FlutterwaveKeysState {
+  public_key: string;
+  secret_configured: boolean;
+  secret_last4: string;
+  secret_source?: string;
+  encryption_configured: boolean;
+  webhook_configured: boolean;
+  fx_rates: Record<string, number>;
+}
+
+export async function getFlutterwaveKeys(): Promise<{ data?: FlutterwaveKeysState; error?: string }> {
+  const { data, error } = await adminFetch('/admin/flutterwave-keys', { method: 'GET' });
+  if (error) return { error };
+  return { data: data as FlutterwaveKeysState };
+}
+
+export async function saveFlutterwaveKeys(payload: {
+  public_key?: string;
+  secret_key?: string;
+  encryption_key?: string;
+  webhook_hash?: string;
+  fx_rates?: Record<string, number>;
+}): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await adminFetch('/admin/flutterwave-keys', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

@@ -5,7 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/components/ui/Toast";
 import { LanguageSelector } from "@/context/I18nContext";
 import { refreshSiteSettings } from "@/hooks/useSiteSettings";
-import { syncPlan, listUsers, AdminUser, getStripeKeys, saveStripeKeys, getAiKeys, saveAiKey } from "@/lib/paymentApi";
+import { syncPlan, listUsers, AdminUser, getStripeKeys, saveStripeKeys, getAiKeys, saveAiKey, getFlutterwaveKeys, saveFlutterwaveKeys, type FlutterwaveKeysState } from "@/lib/paymentApi";
 import {
   offerCredits, listCreditOffers, getCreditAdminConfig, saveCreditPack, deleteCreditPack, savePricingSettings,
   type CreditOfferRow, type CreditPack, type PricingSettings,
@@ -269,6 +269,51 @@ const Dashboard: React.FC = () => {
     if (data?.secret_key) setRevealedSecret(data.secret_key);
     else showToast(error || 'Clé secrète non configurée', 'warning');
   }, [revealedSecret, showToast]);
+
+  // 📱 Flutterwave (mobile money) — clé publique + secrets chiffrés + table de taux CHF→local.
+  const [flwPubKey, setFlwPubKey] = useState('');
+  const [flwSecretInput, setFlwSecretInput] = useState('');
+  const [flwEncInput, setFlwEncInput] = useState('');
+  const [flwHashInput, setFlwHashInput] = useState('');
+  const [flwState, setFlwState] = useState<FlutterwaveKeysState | null>(null);
+  const [flwFxText, setFlwFxText] = useState('');
+  const [flwSaving, setFlwSaving] = useState(false);
+
+  const loadFlutterwaveKeys = useCallback(async () => {
+    const { data } = await getFlutterwaveKeys();
+    if (data) {
+      setFlwState(data);
+      setFlwPubKey(data.public_key || '');
+      setFlwFxText(JSON.stringify(data.fx_rates || {}, null, 2));
+    }
+  }, []);
+
+  const handleSaveFlutterwaveKeys = useCallback(async () => {
+    setFlwSaving(true);
+    const payload: { public_key?: string; secret_key?: string; encryption_key?: string; webhook_hash?: string; fx_rates?: Record<string, number> } = { public_key: flwPubKey.trim() };
+    if (flwSecretInput.trim()) payload.secret_key = flwSecretInput.trim();
+    if (flwEncInput.trim()) payload.encryption_key = flwEncInput.trim();
+    if (flwHashInput.trim()) payload.webhook_hash = flwHashInput.trim();
+    if (flwFxText.trim()) {
+      try {
+        const parsed = JSON.parse(flwFxText);
+        if (parsed && typeof parsed === 'object') payload.fx_rates = parsed;
+      } catch {
+        showToast('Taux FX : JSON invalide', 'error');
+        setFlwSaving(false);
+        return;
+      }
+    }
+    const { ok, error } = await saveFlutterwaveKeys(payload);
+    if (ok) {
+      showToast('Clés Flutterwave enregistrées', 'success');
+      setFlwSecretInput(''); setFlwEncInput(''); setFlwHashInput('');
+      await loadFlutterwaveKeys();
+    } else {
+      showToast(error || 'Échec de l\'enregistrement des clés', 'error');
+    }
+    setFlwSaving(false);
+  }, [flwPubKey, flwSecretInput, flwEncInput, flwHashInput, flwFxText, showToast, loadFlutterwaveKeys]);
 
   // Clé IA (OpenAI) — transcription + résumé. Chiffrée côté serveur, jamais exposée.
   const [aiKeyInput, setAiKeyInput] = useState('');
@@ -613,9 +658,9 @@ const Dashboard: React.FC = () => {
     if (activeTab === 'credits') refreshCreditConfig();
     if (activeTab === 'billetterie') refreshBilletterie();
     if (activeTab === 'users') refreshUsers();
-    if (activeTab === 'stripe') { loadStripeKeys(); loadAiKey(); }
+    if (activeTab === 'stripe') { loadStripeKeys(); loadAiKey(); loadFlutterwaveKeys(); }
     if (activeTab === 'plans') refreshTrialConfig();
-  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys, loadAiKey, refreshGrants, refreshTrialConfig]);
+  }, [activeTab, refreshCreditOffers, refreshCreditConfig, refreshBilletterie, refreshUsers, loadStripeKeys, loadAiKey, loadFlutterwaveKeys, refreshGrants, refreshTrialConfig]);
   const [dbStatus, setDbStatus] = useState<'connected' | 'offline' | 'checking'>('checking');
   // Note: No dbError state - we use "auto-healing" mode
 
@@ -1401,6 +1446,72 @@ const Dashboard: React.FC = () => {
               >
                 <Save size={16} className="mr-1.5" />
                 {keysSaving ? 'Enregistrement…' : 'Enregistrer les clés'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 📱 Flutterwave — Mobile Money (Orange, MTN, Wave, M-Pesa…). En PARALLÈLE de Stripe. */}
+          <Card className="border-white/10 bg-white/5 mb-6">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <KeyRound size={20} className="text-[#F5A524]" />
+                Flutterwave — Mobile Money
+              </CardTitle>
+              <CardDescription className="text-white/50">
+                Paiement mobile money (Afrique) en parallèle de Stripe. La clé publique est utilisée par le site ;
+                la clé secrète, la clé de chiffrement et le hash webhook sont chiffrés côté serveur.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-white/70">Clé publique (FLWPUBK…)</Label>
+                <Input value={flwPubKey} onChange={(e) => setFlwPubKey(e.target.value)} placeholder="FLWPUBK-..." className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-white/70 flex items-center gap-2">
+                  Clé secrète (FLWSECK…)
+                  {flwState?.secret_configured && (
+                    <span className="flex items-center gap-1 text-green-400 text-xs"><ShieldCheck size={13} /> Configurée{flwState.secret_source === 'env' ? ' (env)' : ''}</span>
+                  )}
+                </Label>
+                <Input type="password" value={flwSecretInput} onChange={(e) => setFlwSecretInput(e.target.value)} placeholder={flwState?.secret_configured ? `FLWSECK-••••${flwState.secret_last4}` : 'FLWSECK-...'} className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm" autoComplete="off" />
+              </div>
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-white/70 flex items-center gap-2">
+                    Clé de chiffrement
+                    {flwState?.encryption_configured && <span className="flex items-center gap-1 text-green-400 text-xs"><ShieldCheck size={13} /> OK</span>}
+                  </Label>
+                  <Input type="password" value={flwEncInput} onChange={(e) => setFlwEncInput(e.target.value)} placeholder="FLWSECK_TEST…/clé 3DES" className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm" autoComplete="off" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-white/70 flex items-center gap-2">
+                    Hash webhook (secret hash)
+                    {flwState?.webhook_configured && <span className="flex items-center gap-1 text-green-400 text-xs"><ShieldCheck size={13} /> OK</span>}
+                  </Label>
+                  <Input type="password" value={flwHashInput} onChange={(e) => setFlwHashInput(e.target.value)} placeholder="ton secret hash webhook" className="bg-white/5 border-white/10 text-white placeholder:text-white/30 font-mono text-sm" autoComplete="off" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-white/70">Taux de change CHF → devise locale (JSON)</Label>
+                <textarea
+                  value={flwFxText}
+                  onChange={(e) => setFlwFxText(e.target.value)}
+                  rows={6}
+                  spellCheck={false}
+                  placeholder={'{\n  "XOF": 655,\n  "GHS": 16\n}'}
+                  className="w-full rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-white/30 font-mono text-xs p-3"
+                />
+                <p className="text-white/30 text-[11px]">⚠️ Taux indicatifs par défaut — mets tes taux réels avant d'encaisser. XOF/XAF sans décimales.</p>
+              </div>
+              <Button
+                onClick={handleSaveFlutterwaveKeys}
+                disabled={flwSaving}
+                className="text-white border-none"
+                style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+              >
+                <Save size={16} className="mr-1.5" />
+                {flwSaving ? 'Enregistrement…' : 'Enregistrer Flutterwave'}
               </Button>
             </CardContent>
           </Card>

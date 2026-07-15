@@ -2935,3 +2935,443 @@ async def stripe_webhook(request: Request):
         logger.error("Webhook handling error (%s): %s", etype, exc)
 
     return {"received": True}
+
+
+# =========================================================================== #
+# 📱 FLUTTERWAVE — Mobile Money (Orange Money, MTN MoMo, Wave, Moov, M-Pesa…)
+#    EN PARALLÈLE de Stripe. 100 % ADDITIF : n'altère JAMAIS les flux Stripe
+#    (billets, abonnements, crédits, webhook). Clés chiffrées au repos (Fernet,
+#    comme Stripe) + repli variables d'env. Encaissement en DEVISE LOCALE via
+#    une table de taux CHF→local configurable en admin.
+# =========================================================================== #
+FLW_API_BASE = "https://api.flutterwave.com/v3"
+FLW_SECRET_KEY_ENV = os.environ.get("FLW_SECRET_KEY", "")
+FLW_PUBLIC_KEY_ENV = os.environ.get("FLW_PUBLIC_KEY", "")
+FLW_ENCRYPTION_KEY_ENV = os.environ.get("FLW_ENCRYPTION_KEY", "")
+FLW_WEBHOOK_HASH_ENV = os.environ.get("FLW_WEBHOOK_HASH", "")
+
+# Taux CHF → devise locale par DÉFAUT — ⚠️ À AJUSTER en admin (site_settings.flw_fx_rates JSON)
+#   avant d'encaisser réellement. Valeurs indicatives (ordre de grandeur), PAS des taux fermes.
+FLW_FX_DEFAULTS: Dict[str, float] = {
+    "XOF": 655.0,   # Franc CFA Ouest (CI, SN, BJ, ML, BF, TG…)
+    "XAF": 655.0,   # Franc CFA Centre (CM, GA, CG…)
+    "GHS": 16.0,    # Cedi ghanéen
+    "KES": 145.0,   # Shilling kényan
+    "NGN": 1700.0,  # Naira nigérian
+}
+# Pays (ISO-2) → devise. Liste CENTRALISÉE et extensible (ajoute un pays = une ligne).
+FLW_COUNTRY_CURRENCY: Dict[str, str] = {
+    "CI": "XOF", "SN": "XOF", "BJ": "XOF", "ML": "XOF", "BF": "XOF", "TG": "XOF",
+    "CM": "XAF", "GA": "XAF", "CG": "XAF",
+    "GH": "GHS", "KE": "KES", "NG": "NGN",
+}
+# Devises SANS décimales → montant ARRONDI à l'entier (exigence Flutterwave).
+FLW_ZERO_DECIMAL = {"XOF", "XAF"}
+# Options de paiement mobile money proposées sur la page hébergée Flutterwave.
+FLW_PAYMENT_OPTIONS = ("mobilemoneyfranco,mobilemoneyghana,mpesa,mobilemoneyuganda,"
+                       "mobilemoneyrwanda,mobilemoneyzambia,card")
+# Jours d'accès crédités par période d'abonnement mobile money (paiement unique = 1 période).
+FLW_SUB_DAYS = {"month": 30, "monthly": 30, "year": 365, "annual": 365}
+
+
+async def get_flw_secret_record() -> Dict[str, Optional[str]]:
+    """Ligne CHIFFRÉE des secrets Flutterwave (table flutterwave_secrets, id='default')."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/flutterwave_secrets",
+            headers=_service_headers(),
+            params={"id": "eq.default",
+                    "select": "encrypted_secret_key,encrypted_encryption_key,encrypted_webhook_hash"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return {}
+
+
+async def store_flw_secrets(patch: Dict[str, str]) -> bool:
+    if not patch:
+        return True
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/flutterwave_secrets",
+            headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            params={"on_conflict": "id"},
+            json={"id": "default", **patch, "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+    return resp.status_code in (200, 201, 204)
+
+
+async def get_flw_secret_key() -> str:
+    """Clé secrète Flutterwave effective : DB chiffrée (admin) prioritaire, sinon repli env."""
+    rec = await get_flw_secret_record()
+    dec = decrypt_secret(rec.get("encrypted_secret_key"))
+    return dec or FLW_SECRET_KEY_ENV
+
+
+async def get_flw_webhook_hash() -> str:
+    rec = await get_flw_secret_record()
+    dec = decrypt_secret(rec.get("encrypted_webhook_hash"))
+    return dec or FLW_WEBHOOK_HASH_ENV
+
+
+async def get_flw_fx_rates() -> Dict[str, float]:
+    """Taux CHF→local effectifs : défauts + surcharge admin (site_settings.flw_fx_rates JSON)."""
+    rates = dict(FLW_FX_DEFAULTS)
+    try:
+        override = (await get_site_settings()).get("flw_fx_rates")
+        if isinstance(override, dict):
+            for k, v in override.items():
+                try:
+                    rates[str(k).upper()] = float(v)
+                except (TypeError, ValueError):
+                    continue
+    except Exception:  # noqa: BLE001
+        pass
+    return rates
+
+
+def _round_local(amount: float, currency: str) -> float:
+    return float(round(amount)) if currency in FLW_ZERO_DECIMAL else round(amount, 2)
+
+
+async def convert_chf(amount_chf: float, currency: str) -> float:
+    """Convertit un montant CHF en devise mobile money locale (arrondi selon la devise).
+    Lève 400 si la devise n'a pas de taux configuré (jamais de conversion silencieuse fausse)."""
+    cur = (currency or "").upper()
+    rates = await get_flw_fx_rates()
+    rate = rates.get(cur)
+    if not rate or rate <= 0:
+        raise HTTPException(status_code=400,
+                            detail=f"Devise mobile money non configurée ({cur or '?'}) — ajoute son taux en admin")
+    return _round_local(float(amount_chf) * rate, cur)
+
+
+async def flw_create_payment(tx_ref: str, amount: float, currency: str, redirect_url: str,
+                             customer: Dict[str, Any], meta: Dict[str, Any]) -> str:
+    """Crée un paiement Flutterwave Standard (page hébergée) et renvoie le lien de redirection."""
+    secret = await get_flw_secret_key()
+    if not secret:
+        raise HTTPException(status_code=500, detail="Flutterwave non configuré (clé secrète manquante)")
+    payload = {
+        "tx_ref": tx_ref,
+        "amount": amount,
+        "currency": (currency or "").upper(),
+        "redirect_url": redirect_url,
+        "payment_options": FLW_PAYMENT_OPTIONS,
+        "customer": customer,
+        "meta": meta,
+        "customizations": {"title": "BoostTribe"},
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(f"{FLW_API_BASE}/payments",
+                                 headers={"Authorization": f"Bearer {secret}"}, json=payload)
+    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    if resp.status_code not in (200, 201) or data.get("status") != "success":
+        logger.error("Flutterwave /payments échec HTTP %s: %s", resp.status_code, (resp.text or "")[:300])
+        raise HTTPException(status_code=502, detail="Échec de l'initialisation du paiement mobile money")
+    link = (data.get("data") or {}).get("link")
+    if not link:
+        raise HTTPException(status_code=502, detail="Flutterwave n'a pas renvoyé de lien de paiement")
+    return link
+
+
+async def flw_verify_transaction(transaction_id: Any) -> Dict[str, Any]:
+    """Re-vérifie une transaction côté serveur (ne jamais faire confiance au seul webhook)."""
+    secret = await get_flw_secret_key()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(f"{FLW_API_BASE}/transactions/{transaction_id}/verify",
+                                headers={"Authorization": f"Bearer {secret}"})
+    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    return (data.get("data") or {}) if data.get("status") == "success" else {}
+
+
+async def _flw_claim_txref(tx_ref: str) -> bool:
+    """Idempotence : réserve un tx_ref (table flw_processed). True = 1re fois, False = déjà traité."""
+    if not tx_ref:
+        return False
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/flw_processed",
+            headers=_service_headers({"Prefer": "resolution=ignore-duplicates,return=representation"}),
+            params={"on_conflict": "tx_ref"},
+            json={"tx_ref": tx_ref, "created_at": datetime.now(timezone.utc).isoformat()},
+        )
+    if resp.status_code in (200, 201):
+        try:
+            return bool(resp.json())  # liste non vide = ligne réellement insérée
+        except Exception:  # noqa: BLE001
+            return True
+    return False
+
+
+async def _flw_create_ticket(meta: Dict[str, Any], tx_ref: str, paid_amount: float,
+                             paid_currency: str, buyer_email: Optional[str]) -> None:
+    """Insère un billet 'paid' payé en mobile money (idempotent tx_ref) + crédite le solde coach.
+    Mêmes colonnes que le webhook Stripe + provider/tx_ref/paid_currency/paid_amount."""
+    coach_uid = meta.get("coach_user_id")
+    price = float(meta.get("price_chf") or 0)
+    commission = float(meta.get("commission_chf") or 0)
+    net = round(price - commission, 2)
+    row = {
+        "session_id": meta.get("session_id"),
+        "buyer_user_id": meta.get("buyer_user_id"),
+        "buyer_email": buyer_email,
+        "coach_user_id": coach_uid,
+        "amount_chf": price,
+        "commission_chf": commission,
+        "commission_percent": float(meta.get("commission_percent") or 0),
+        "status": "paid",
+        "provider": "flutterwave",
+        "tx_ref": tx_ref,
+        "paid_currency": (paid_currency or "").upper(),
+        "paid_amount": paid_amount,
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/tickets",
+            headers=_service_headers({"Prefer": "resolution=ignore-duplicates,return=representation"}),
+            params={"on_conflict": "tx_ref"}, json=row)
+    inserted = resp.status_code in (200, 201) and bool(resp.json() if resp.content else [])
+    if inserted and coach_uid and net > 0:
+        await wallet_add(coach_uid, net, "sale", f"sale:flw:{tx_ref}", True)
+    elif resp.status_code not in (200, 201, 204, 409):
+        logger.error("insert billet FLW HTTP %s: %s", resp.status_code, (resp.text or "")[:300])
+
+
+async def _flw_grant_subscription(user_id: str, plan: str, interval: str, tx_ref: str) -> None:
+    """Abonnement mobile money = paiement d'UNE période → crédite N jours d'accès (comme une
+    prolongation manuelle). Le récurrent auto mobile money n'étant pas fiable, on renouvelle
+    période par période (l'utilisateur repaie à l'échéance)."""
+    days = FLW_SUB_DAYS.get((interval or "").lower(), 30)
+    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    if plan == "enterprise":
+        # Coach « Illimité » : accès offert + abo coach actif (miroir de /admin/grant-access).
+        await update_profile(user_id, {"subscription_status": "enterprise",
+                                       "comp_access_plan": "enterprise", "comp_access_until": until,
+                                       "coach_payment_type": "subscription"})
+        try:
+            await upsert_coach_subscription(user_id, {"status": "active", "current_period_end": until,
+                                                      "stripe_subscription_id": f"flutterwave:{tx_ref}"})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("FLW sub: synchro abo coach échec (%s): %s", user_id, exc)
+    else:
+        # Offre « Utilisateur » (pro) : statut pro + crédits mensuels de l'offre (idempotent via tx_ref).
+        await update_profile(user_id, {"subscription_status": "pro"})
+        try:
+            per_month = int((await get_pricing_settings()).get("plan_pro_monthly_credits") or 20)
+            months = 12 if days >= 365 else 1
+            await _add_credits(user_id, per_month * months, "purchase", ref=f"flw-sub:{tx_ref}",
+                               note="Abonnement Utilisateur (mobile money)",
+                               expires_months=await _credit_validity_months())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("FLW sub pro: crédits échec (%s): %s", user_id, exc)
+
+
+class FlutterwaveKeysBody(BaseModel):
+    public_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    encryption_key: Optional[str] = None
+    webhook_hash: Optional[str] = None
+    fx_rates: Optional[Dict[str, float]] = None
+
+
+@app.post("/admin/flutterwave-keys")
+async def set_flutterwave_keys(body: FlutterwaveKeysBody, authorization: Optional[str] = Header(default=None)):
+    """Admin : clé publique (site_settings, en clair) + secrets chiffrés + table de taux FX."""
+    await require_admin(authorization)
+    if body.public_key is not None:
+        await update_site_settings({"flutterwave_public_key": body.public_key.strip()})
+    if body.fx_rates is not None:
+        clean = {}
+        for k, v in body.fx_rates.items():
+            try:
+                clean[str(k).upper()] = float(v)
+            except (TypeError, ValueError):
+                continue
+        await update_site_settings({"flw_fx_rates": clean})
+    enc_patch: Dict[str, str] = {}
+    if body.secret_key:
+        enc_patch["encrypted_secret_key"] = encrypt_secret(body.secret_key.strip())
+    if body.encryption_key:
+        enc_patch["encrypted_encryption_key"] = encrypt_secret(body.encryption_key.strip())
+    if body.webhook_hash:
+        enc_patch["encrypted_webhook_hash"] = encrypt_secret(body.webhook_hash.strip())
+    if enc_patch and not await store_flw_secrets(enc_patch):
+        raise HTTPException(status_code=500, detail="Échec de l'enregistrement des secrets Flutterwave")
+    return {"ok": True}
+
+
+@app.get("/admin/flutterwave-keys")
+async def get_flutterwave_keys(authorization: Optional[str] = Header(default=None)):
+    """Admin : état des clés Flutterwave (jamais les secrets en clair) + taux FX effectifs."""
+    await require_admin(authorization)
+    settings = await get_site_settings()
+    rec = await get_flw_secret_record()
+    sk = decrypt_secret(rec.get("encrypted_secret_key")) or FLW_SECRET_KEY_ENV
+    return {
+        "public_key": (settings or {}).get("flutterwave_public_key", "") or FLW_PUBLIC_KEY_ENV,
+        "secret_configured": bool(sk),
+        "secret_last4": sk[-4:] if sk else "",
+        "secret_source": "db" if decrypt_secret(rec.get("encrypted_secret_key")) else ("env" if FLW_SECRET_KEY_ENV else "none"),
+        "encryption_configured": bool(decrypt_secret(rec.get("encrypted_encryption_key")) or FLW_ENCRYPTION_KEY_ENV),
+        "webhook_configured": bool(await get_flw_webhook_hash()),
+        "fx_rates": await get_flw_fx_rates(),
+    }
+
+
+@app.get("/flutterwave/config")
+async def flutterwave_public_config():
+    """Config PUBLIQUE mobile money : clé publique + pays/devises + taux (pour l'aperçu du montant).
+    Si non configuré → public_key vide → le front masque proprement le mobile money."""
+    settings = await get_site_settings()
+    public_key = (settings or {}).get("flutterwave_public_key", "") or FLW_PUBLIC_KEY_ENV
+    configured = bool(await get_flw_secret_key()) and bool(public_key)
+    rates = await get_flw_fx_rates()
+    countries = [{"code": c, "currency": cur} for c, cur in FLW_COUNTRY_CURRENCY.items() if cur in rates]
+    return {"configured": configured, "public_key": public_key,
+            "countries": countries, "fx_rates": rates}
+
+
+class FlwTicketBody(BaseModel):
+    session_id: str
+    currency: str
+    country: Optional[str] = None
+
+
+@app.post("/flutterwave/tickets/buy")
+async def flw_buy_ticket(body: FlwTicketBody, authorization: Optional[str] = Header(default=None)):
+    """Achat d'une place (billet) en MOBILE MONEY. Mêmes vérifs que /tickets/buy (Stripe)."""
+    user = await get_user_from_token(authorization)
+    uid, email = user.get("id"), user.get("email")
+    name = user.get("user_metadata", {}).get("full_name") if isinstance(user.get("user_metadata"), dict) else None
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    row = await get_session_row(body.session_id)
+    if not row or row.get("mode") != "paid":
+        raise HTTPException(status_code=400, detail="Cette session n'est pas payante")
+    if await has_valid_ticket(body.session_id, uid):
+        return {"already": True}
+    capacity = row.get("capacity")
+    if capacity and await count_paid_tickets(body.session_id) >= int(capacity):
+        raise HTTPException(status_code=409, detail="Complet (toutes les places sont vendues)")
+    coach_uid = row.get("host_id")
+    price = float(row.get("price_chf") or 0)
+    if price <= 0 or not coach_uid:
+        raise HTTPException(status_code=400, detail="Session payante mal configurée")
+    comm = await compute_commission(price, coach_uid)
+    currency = (body.currency or "").upper()
+    amount = await convert_chf(price, currency)
+    tx_ref = f"bt-ticket-{body.session_id}-{uid}-{int(datetime.now(timezone.utc).timestamp())}"
+    link = await flw_create_payment(
+        tx_ref=tx_ref, amount=amount, currency=currency,
+        redirect_url=f"{FRONTEND_URL}/session/{body.session_id}?ticket=flw&tx_ref={tx_ref}",
+        customer={"email": email, "name": name or email},
+        meta={"kind": "ticket", "session_id": body.session_id, "buyer_user_id": uid,
+              "coach_user_id": coach_uid, "price_chf": str(price),
+              "commission_chf": str(comm["commission_chf"]), "commission_percent": str(comm["percent"]),
+              "currency": currency},
+    )
+    return {"url": link}
+
+
+class FlwSubBody(BaseModel):
+    plan: str            # "pro" | "enterprise"
+    interval: str        # "month" | "year"
+    currency: str
+    country: Optional[str] = None
+
+
+@app.post("/flutterwave/create-subscription")
+async def flw_create_subscription(body: FlwSubBody, authorization: Optional[str] = Header(default=None)):
+    """Abonnement (période) en MOBILE MONEY. Réutilise le prix CHF du plan (site_settings)."""
+    if body.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Plan inconnu")
+    if body.interval not in ("month", "year"):
+        raise HTTPException(status_code=400, detail="Intervalle invalide")
+    user = await get_user_from_token(authorization)
+    uid, email = user.get("id"), user.get("email")
+    name = user.get("user_metadata", {}).get("full_name") if isinstance(user.get("user_metadata"), dict) else None
+    settings = await get_site_settings()
+    key = ("plan_pro_price_" if body.plan == "pro" else "plan_enterprise_price_") + \
+          ("monthly" if body.interval == "month" else "yearly")
+    try:
+        price = float(settings.get(key) or 0)
+    except (TypeError, ValueError):
+        price = 0.0
+    if price <= 0:
+        raise HTTPException(status_code=400, detail="Prix du plan non configuré (admin) pour le mobile money")
+    currency = (body.currency or "").upper()
+    amount = await convert_chf(price, currency)
+    cms_interval = "monthly" if body.interval == "month" else "annual"
+    tx_ref = f"bt-sub-{body.plan}-{cms_interval}-{uid}-{int(datetime.now(timezone.utc).timestamp())}"
+    link = await flw_create_payment(
+        tx_ref=tx_ref, amount=amount, currency=currency,
+        redirect_url=f"{FRONTEND_URL}/pricing?sub=flw&tx_ref={tx_ref}",
+        customer={"email": email, "name": name or email},
+        meta={"kind": "subscription", "plan": body.plan, "interval": cms_interval,
+              "user_id": uid, "price_chf": str(price), "currency": currency},
+    )
+    return {"url": link}
+
+
+@app.post("/flutterwave/webhook")
+async def flutterwave_webhook(request: Request):
+    """Webhook Flutterwave : valide verif-hash, RE-VÉRIFIE la transaction côté serveur, puis
+    insère le billet / accorde l'abonnement (idempotent par tx_ref). Répond 200 dans tous les cas
+    traitables pour éviter les replays."""
+    expected_hash = await get_flw_webhook_hash()
+    got_hash = request.headers.get("verif-hash", "")
+    if not expected_hash or got_hash != expected_hash:
+        raise HTTPException(status_code=401, detail="Signature Flutterwave invalide")
+    try:
+        event = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Corps JSON invalide")
+
+    try:
+        data = event.get("data") or {}
+        etype = event.get("event") or ""
+        if etype != "charge.completed" or (data.get("status") or "").lower() != "successful":
+            return {"received": True}  # on ignore les autres événements/états
+
+        tx_ref = data.get("tx_ref") or ""
+        transaction_id = data.get("id")
+        # RE-VÉRIFICATION serveur (source de vérité) — ne jamais faire confiance au seul webhook.
+        verified = await flw_verify_transaction(transaction_id) if transaction_id else {}
+        if (verified.get("status") or "").lower() != "successful" or verified.get("tx_ref") != tx_ref:
+            logger.warning("FLW webhook: vérification échouée tx_ref=%s", tx_ref)
+            return {"received": True}
+
+        meta = verified.get("meta") or data.get("meta") or {}
+        if isinstance(meta, list):  # Flutterwave peut renvoyer meta en liste de {metaname,metavalue}
+            meta = {m.get("metaname"): m.get("metavalue") for m in meta if isinstance(m, dict)}
+        kind = meta.get("kind")
+        paid_currency = (verified.get("currency") or meta.get("currency") or "").upper()
+        paid_amount = float(verified.get("amount") or 0)
+
+        # Contrôle du montant : au moins le montant attendu (converti depuis le CHF).
+        expected_chf = float(meta.get("price_chf") or 0)
+        if expected_chf > 0 and paid_currency:
+            try:
+                expected_local = await convert_chf(expected_chf, paid_currency)
+                if paid_amount + 0.01 < expected_local:
+                    logger.warning("FLW webhook: montant insuffisant tx_ref=%s (%s < %s %s)",
+                                   tx_ref, paid_amount, expected_local, paid_currency)
+                    return {"received": True}
+            except HTTPException:
+                pass  # devise retirée entre-temps : on ne bloque pas un paiement déjà encaissé
+
+        if not await _flw_claim_txref(tx_ref):
+            return {"received": True}  # déjà traité (replay) → idempotent
+
+        if kind == "ticket":
+            cust = verified.get("customer") if isinstance(verified.get("customer"), dict) else {}
+            await _flw_create_ticket(meta, tx_ref, paid_amount, paid_currency, cust.get("email"))
+        elif kind == "subscription":
+            uid = meta.get("user_id")
+            if uid:
+                await _flw_grant_subscription(uid, meta.get("plan"), meta.get("interval"), tx_ref)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("FLW webhook handling error: %s", exc)
+
+    return {"received": True}

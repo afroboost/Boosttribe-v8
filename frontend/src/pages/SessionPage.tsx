@@ -2232,6 +2232,7 @@ export const SessionPage: React.FC = () => {
     //  3) si JE suis l'hôte, aucune AUTRE entrée ne peut être hôte → on retire les faux hôtes ;
     //     sinon (participant), on ne garde qu'UN seul hôte (le premier), pour ne jamais en afficher 2.
     const seenIds = new Set<string>();
+    const seenNickLower = new Set<string>();
     let hostKept = false;
     const others: Participant[] = socket.presentUsers
       .filter(u => u.userId && u.userId !== socket.userId)
@@ -2241,6 +2242,18 @@ export const SessionPage: React.FC = () => {
         if (isHost) return false;      // je suis l'hôte → tout autre « hôte » est un doublon fantôme
         if (hostKept) return false;    // un seul hôte affiché côté participant
         hostKept = true;
+        return true;
+      })
+      // 🛡️ FILET ANTI-FANTÔME (conservateur) : deux entrées à userId DIFFÉRENTS mais MÊME pseudo, toutes
+      //   deux NON-hôtes = fantômes de reconnexion d'un même invité (ancien id éphémère pas encore expiré).
+      //   On ne garde que le premier. ⚠️ JAMAIS sur un hôte (on ne fusionne jamais hôte↔participant).
+      //   Ce n'est qu'un filet : le VRAI correctif est l'id STABLE (localStorage, cf. SocketContext) qui
+      //   fait que la présence remplace l'entrée au lieu d'en créer une nouvelle.
+      .filter(u => {
+        if (u.isHost) return true;
+        const nick = (u.nickname || 'Invité').trim().toLowerCase();
+        if (seenNickLower.has(nick)) return false;
+        seenNickLower.add(nick);
         return true;
       })
       .map(u => ({

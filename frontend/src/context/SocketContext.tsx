@@ -83,13 +83,20 @@ interface SocketContextValue {
 
 const SocketContext = createContext<SocketContextValue | null>(null);
 
-// Generate unique user ID (persisted in sessionStorage)
+// Generate STABLE user ID (persisté en localStorage → survit au rechargement / réouverture PWA / passage
+//   en arrière-plan sur mobile). Avant : sessionStorage, effacé à la fermeture d'onglet → nouvel id à
+//   chaque reconnexion → la présence Supabase (keyée par userId) créait une entrée FANTÔME (id différent,
+//   même pseudo) → le participant s'affichait 2-3×. Repli en mémoire si localStorage indisponible (privé strict).
+let memoryUserId: string | null = null;
 function generateUserId(): string {
-  const stored = sessionStorage.getItem('bt_user_id');
-  if (stored) return stored;
-  
+  try {
+    const stored = localStorage.getItem('bt_user_id');
+    if (stored) return stored;
+  } catch { /* localStorage indisponible → repli mémoire */ }
+  if (memoryUserId) return memoryUserId;
   const newId = `user_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-  sessionStorage.setItem('bt_user_id', newId);
+  memoryUserId = newId;
+  try { localStorage.setItem('bt_user_id', newId); } catch { /* ignore : garde l'id en mémoire pour la session */ }
   return newId;
 }
 

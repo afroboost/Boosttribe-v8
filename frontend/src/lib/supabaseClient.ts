@@ -381,13 +381,15 @@ export function createSessionChannel(
       const stateMap = channel.presenceState<PresenceMeta>();
       const users: PresenceMeta[] = [];
       Object.values(stateMap).forEach((entries) => {
-        entries.forEach((entry) => {
-          users.push({
-            userId: entry.userId,
-            nickname: entry.nickname,
-            isHost: entry.isHost,
-            avatar: entry.avatar,
-          });
+        // 🧹 Ne garder que la DERNIÈRE meta de chaque clé de présence : un même userId peut avoir
+        //   momentanément 2 souscriptions (reconnexion) → sans ça, il apparaissait en double.
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        users.push({
+          userId: entry.userId,
+          nickname: entry.nickname,
+          isHost: entry.isHost,
+          avatar: entry.avatar,
         });
       });
       presence.onSync(users);

@@ -32,7 +32,7 @@ import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
-import { IntervalTimer, type IntervalRun, type IntervalConfig, type IntervalTimerHandle } from '@/components/session/IntervalTimer';
+import { IntervalTimer, type IntervalRun, type IntervalConfig, type IntervalTimerHandle, type IntervalTickInfo } from '@/components/session/IntervalTimer';
 import { IntervalConfigModal } from '@/components/session/IntervalConfigModal';
 import type { RemoteMediaState, SharedMediaPlayerHandle } from '@/components/session/SharedMediaPlayer';
 import { MediaShareControls } from '@/components/session/MediaShareControls';
@@ -54,7 +54,8 @@ import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   type SessionAccessInfo,
 } from '@/lib/paymentApi';
-import { Maximize2, Minimize2, Coins, Ticket } from 'lucide-react';
+import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause } from 'lucide-react';
+import { DraggableWindow } from '@/components/session/DraggableWindow';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -623,6 +624,11 @@ export const SessionPage: React.FC = () => {
   const [intervalRun, setIntervalRun] = useState<IntervalRun | null>(null);
   const [intervalConfigTrackId, setIntervalConfigTrackId] = useState<number | null>(null);
   const intervalTimerRef = useRef<IntervalTimerHandle | null>(null); // ⏱️ débloquer le son du timer au geste musique
+  // ⏱️ Interval PENDANT la visio : décompte lecture seule (rappel plein écran) + modale de config SANS musique.
+  const [intervalTick, setIntervalTick] = useState<IntervalTickInfo | null>(null);
+  const [showVisioTimerConfig, setShowVisioTimerConfig] = useState(false);
+  // 🎥 Chantier B : voir les caméras PAR-DESSUS la vidéo partagée (mobile, hors plein écran).
+  const [showMobileCameras, setShowMobileCameras] = useState(false);
   const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
   const [hostIsPlaying, setHostIsPlaying] = useState(false); // 🔄 Sync Play/Pause
   
@@ -2774,6 +2780,30 @@ export const SessionPage: React.FC = () => {
     persistOwnerPlaylist(tracks, track.id);
   }, [showToast, isHost, socket, tracks, persistOwnerPlaylist]);
 
+  // 🎚️ Chantier D : piste précédente / suivante depuis le mini-contrôle audio (hôte). Réutilise la même
+  //    mécanique que l'enchaînement automatique (setAutoPlayPending + syncPlayback) → aucun 2ᵉ moteur audio.
+  const handleMiniTrackNav = useCallback((delta: number) => {
+    if (!canShare || tracks.length === 0) return;
+    const idx = selectedTrack ? tracks.findIndex((t) => t.id === selectedTrack.id) : -1;
+    const nextIdx = (((idx < 0 ? 0 : idx) + delta) % tracks.length + tracks.length) % tracks.length;
+    const nt = tracks[nextIdx];
+    if (!nt) return;
+    setSelectedTrack(nt);
+    setAutoPlayPending(nt.src);
+    socket.syncPlaylist(tracks, nt.id);
+    socket.syncPlayback(true, 0, nt.id);
+  }, [canShare, tracks, selectedTrack, socket]);
+
+  // ▶️⏸️ Chantier D : lecture / pause du mini-contrôle → agit sur L'UNIQUE élément #bt-music-audio
+  //    (comme l'auto-pause/reprise voix) ; l'événement play/pause déclenche l'émission HOST_COMMAND existante.
+  const handleMiniPlayPause = useCallback(() => {
+    if (!canShare) return;
+    const el = getMusicEl();
+    if (!el) return;
+    if (el.paused) el.play().catch(() => { /* geste requis : sera relancé au prochain tap */ });
+    else el.pause();
+  }, [canShare, getMusicEl]);
+
   // POINT 4b: non-abonné à la limite → notification puis redirection vers le paiement
   const handleUpgradeRequest = useCallback(() => {
     showToast('Passez Premium pour ajouter plusieurs titres', 'warning');
@@ -3273,6 +3303,25 @@ export const SessionPage: React.FC = () => {
     return <WaitingRoomScreen name={nickname} photoUrl={myAvatar} />;
   }
 
+  // ⏱️ Rappel LECTURE SEULE du décompte Interval (aucun bouton, aucun son) → injecté DANS les plein écran
+  //    caméra (LiveVisioPanel) et vidéo partagée (SharedMediaPlayer). Le seul émetteur son reste <IntervalTimer/>.
+  const visioTimerReminderNode = intervalTick ? (
+    <div className="pointer-events-none absolute top-3 left-1/2 -translate-x-1/2 z-[120]">
+      <div
+        className="flex items-center gap-2 px-4 py-2 rounded-2xl shadow-lg backdrop-blur-md"
+        style={{ background: 'rgba(10,10,15,0.72)', border: `2px solid ${intervalTick.color}` }}
+        data-testid="visio-timer-reminder"
+      >
+        <span className="text-xs font-semibold" style={{ color: intervalTick.color }}>
+          {intervalTick.label}{!intervalTick.done && intervalTick.round > 0 ? ` · ${intervalTick.round}/${intervalTick.rounds}` : ''}
+        </span>
+        <span className="text-white font-bold" style={{ fontSize: 20, fontVariantNumeric: 'tabular-nums' }}>
+          {intervalTick.done ? '✓' : intervalTick.mmss}
+        </span>
+      </div>
+    </div>
+  ) : null;
+
   // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
   const liveVisioNode = (
     <LiveVisioPanel
@@ -3300,8 +3349,39 @@ export const SessionPage: React.FC = () => {
       onRequestStage={handleRequestStage}
       spotlightId={visioSpotlightId}
       onSpotlightChange={setVisioSpotlightId}
+      onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}
+      timerNode={visioTimerReminderNode}
     />
   );
+
+  // 🎚️ Chantier D : mini-contrôle audio partagé (hôte / co-hôte) — play/pause + titre + préc./suiv.
+  //    Réutilise l'UNIQUE élément musique (#bt-music-audio) et le HOST_COMMAND existant (aucun 2ᵉ <audio>).
+  const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
+    <div
+      className="flex items-center gap-2 rounded-2xl border border-[#8A2EFF]/25 bg-[rgba(20,20,25,0.95)] px-3 py-2"
+      data-testid="mini-audio-control"
+    >
+      <button onClick={() => handleMiniTrackNav(-1)} className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors" title="Piste précédente" data-testid="mini-audio-prev">
+        <SkipBack className="w-4 h-4" />
+      </button>
+      <button
+        onClick={handleMiniPlayPause}
+        className="p-2 rounded-full text-white flex-shrink-0"
+        style={{ background: 'linear-gradient(135deg,#8A2EFF,#FF2FB3)' }}
+        title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
+        data-testid="mini-audio-playpause"
+      >
+        {audioState?.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+      </button>
+      <button onClick={() => handleMiniTrackNav(1)} className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors" title="Piste suivante" data-testid="mini-audio-next">
+        <SkipForward className="w-4 h-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-white text-xs font-medium">{selectedTrack.title}</p>
+        {selectedTrack.artist && <p className="truncate text-white/40 text-[11px]">{selectedTrack.artist}</p>}
+      </div>
+    </div>
+  ) : null;
 
   // 🎥 Vignettes caméra COMPACTES (hôte + participants) pour la fenêtre flottante de la vue agrandie.
   //    + bouton « agrandir » (spotlight) par tuile — UI uniquement (même état que le panneau visio).
@@ -3975,7 +4055,9 @@ export const SessionPage: React.FC = () => {
             {/* 🎥 Live Visio — desktop : colonne de droite (inchangé) ; mobile : onglet « Live »
                 (monté en permanence, masqué en CSS hors onglet → la connexion LiveKit ne se coupe pas). */}
             {!isDesktop && liveMode && sessionId && (
-              <div className="bt-tab-live lg:hidden">
+              <div className="bt-tab-live lg:hidden space-y-2">
+                {/* 🎚️ Chantier D : contrôle audio partagé compact (hôte) accessible depuis l'onglet Live. */}
+                {miniAudioControlNode}
                 {liveVisioNode}
               </div>
             )}
@@ -4148,6 +4230,7 @@ export const SessionPage: React.FC = () => {
                 onEnlargedChange={setVideoEnlarged}
                 chatNode={chatPanelNode}
                 liveCamerasNode={liveCamerasNode}
+                timerNode={visioTimerReminderNode}
               />
               </div>
             )}
@@ -4790,7 +4873,9 @@ export const SessionPage: React.FC = () => {
         </div>
       )}
 
-      {/* ⏱️ Interval training — overlay du décompte (tous) + modale de config (hôte). Additif, isolé. */}
+      {/* ⏱️ Interval training — overlay du décompte (tous) + modale de config (hôte). Additif, isolé.
+          onTick : rapport LECTURE SEULE du décompte → rappel affiché dans les plein écran caméra/vidéo
+          (UN SEUL émetteur son : ce composant ; les rappels ne font qu'afficher). */}
       <IntervalTimer
         ref={intervalTimerRef}
         run={intervalRun}
@@ -4798,6 +4883,7 @@ export const SessionPage: React.FC = () => {
         onStop={handleStopInterval}
         getMixerContext={getMixerContext}
         getTimerOutput={getTimerOutput}
+        onTick={setIntervalTick}
       />
       {isHost && intervalConfigTrackId != null && (() => {
         const t = tracks.find((tr) => tr.id === intervalConfigTrackId);
@@ -4816,6 +4902,39 @@ export const SessionPage: React.FC = () => {
           />
         );
       })()}
+      {/* ⏱️ Chantier C : lancer l'Interval training PENDANT la visio, SANS musique (aucune piste requise). */}
+      {isHost && showVisioTimerConfig && (
+        <IntervalConfigModal
+          trackTitle="Interval training"
+          sessionId={sessionId || ''}
+          initial={selectedTrack?.interval || intervalRun?.config}
+          onClose={() => setShowVisioTimerConfig(false)}
+          onSave={() => { /* pas de piste à mémoriser pour un timer de visio */ }}
+          onStart={(cfg) => { setShowVisioTimerConfig(false); handleStartInterval(cfg); }}
+          onNotify={showToast}
+        />
+      )}
+
+      {/* 🎥 Chantier B : sur mobile, quand une vidéo est partagée ET que le Live est actif (hors plein écran),
+          un bouton ouvre les caméras dans une fenêtre flottante PAR-DESSUS la vidéo. En plein écran, les caméras
+          sont déjà injectées dans le lecteur (liveCamerasNode) → on ne l'affiche donc pas en double. */}
+      {!isDesktop && liveMode && sessionId && sharedMedia && shareMode !== 'audio' && !videoEnlarged && (
+        <>
+          <button
+            onClick={() => setShowMobileCameras((v) => !v)}
+            className="fixed bottom-24 right-4 z-[95] flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold text-white shadow-lg"
+            style={{ background: 'linear-gradient(135deg,#8A2EFF,#FF2FB3)' }}
+            data-testid="mobile-see-cameras"
+          >
+            <Video className="w-4 h-4" /> {showMobileCameras ? 'Masquer' : 'Voir'} les caméras
+          </button>
+          {showMobileCameras && (
+            <DraggableWindow title="Caméras live" storageKey="bt_visio_over_video_pos" defaultWidth={240} zClass="z-[96]">
+              {liveCamerasNode}
+            </DraggableWindow>
+          )}
+        </>
+      )}
 
       {/* 💬 Lanceur + panneau de CHAT — au niveau page SAUF quand la vidéo est agrandie (alors il est
           rendu À L'INTÉRIEUR du plein écran de la vidéo, cf. SharedMediaPlayer chatNode). */}

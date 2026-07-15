@@ -32,6 +32,8 @@ interface SharedMediaPlayerProps {
   chatNode?: React.ReactNode;
   // 🎥 Vignettes caméra du Live Visio à garder visibles (fenêtre flottante) en vue agrandie.
   liveCamerasNode?: React.ReactNode;
+  // ⏱️ Rappel LECTURE SEULE du décompte Interval training, affiché À L'INTÉRIEUR du plein écran vidéo.
+  timerNode?: React.ReactNode;
 }
 
 // Extrait l'ID YouTube d'une URL
@@ -63,7 +65,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode }, ref) => {
+export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode, timerNode }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // 🔍 Racine du lecteur : c'est ELLE qu'on passe en plein écran (contient vidéo + overlay caméras + bouton Retour).
   const rootRef = useRef<HTMLDivElement>(null);
@@ -748,6 +750,9 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
       {/* 💬 Chat rendu À L'INTÉRIEUR de l'élément plein écran → reste accessible par-dessus la vidéo
           paysage (le plein écran natif n'affiche QUE cet élément ; un chat hors de lui serait invisible). */}
       {enlarged && chatNode}
+
+      {/* ⏱️ Rappel LECTURE SEULE du timer À L'INTÉRIEUR du plein écran (même raison que le chat ci-dessus). */}
+      {enlarged && timerNode}
     </div>
   );
 });

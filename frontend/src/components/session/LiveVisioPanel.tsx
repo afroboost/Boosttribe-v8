@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
+import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
 export interface VisioParticipant {
@@ -34,6 +35,10 @@ interface LiveVisioPanelProps {
   //    repositionné (fenêtre flottante mobile ↔ colonne desktop). Optionnel : repli en interne.
   spotlightId?: string | null;
   onSpotlightChange?: (id: string | null) => void;
+  // ⏱️ Chantier C : bouton hôte pour lancer l'Interval training pendant la visio (ouvre la modale de config côté parent).
+  onStartTimer?: () => void;
+  // ⏱️ Overlay du décompte (lecture seule) à afficher DANS le plein écran caméra — un seul émetteur son (géré au parent).
+  timerNode?: React.ReactNode;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -45,8 +50,13 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   micActive, onToggleMic, hideMicButton = false, onToggleCamera, onLeaveLive,
   canManageStage = true, stageRequestPending = false, onRequestStage,
   spotlightId: spotlightIdProp, onSpotlightChange,
+  onStartTimer, timerNode,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
+  // 🔍 Chantier A : VRAI plein écran d'UNE caméra (Fullscreen API + repli overlay iOS), orientation AUTO (pas de rotation forcée).
+  // Le conteneur de la zone caméras est TOUJOURS monté et visible → requestFullscreen fiable (aucun remontage des flux).
+  const camAreaRef = useRef<HTMLDivElement>(null);
+  const { fullscreen: camFullscreen, enter: enterCamFullscreen, exit: exitCamFullscreen } = useFullscreen(camAreaRef);
   // 🔍 Agrandir (épingler) UNE caméra — action LOCALE (chacun choisit sur SON écran).
   // Contrôlé par le parent si fourni (persiste au remontage) ; sinon état interne (repli).
   const [spotlightInternal, setSpotlightInternal] = useState<string | null>(null);
@@ -73,6 +83,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
     </button>
   );
 
+  // 🔍 « Agrandir » = épingler cette caméra ET passer en VRAI plein écran (chantier A). « Réduire » = sortir du plein écran.
+  const enlarge = (id: string) => { setSpotlightId(id); enterCamFullscreen(); };
+
   // Rendu d'une vignette cliquable (clic = agrandir ; sur la grande vue, clic = réduire).
   const tileFor = (p: VisioParticipant, large = false) => (
     <CameraTile
@@ -84,14 +97,18 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
       avatarUrl={p.avatarUrl}
       large={large}
       className={large ? 'w-full h-full' : ''}
-      onClick={() => setSpotlightId(large ? null : p.id)}
-      topRight={pinButton(large, () => setSpotlightId(large ? null : p.id))}
+      onClick={() => (large ? setSpotlightId(null) : enlarge(p.id))}
+      topRight={pinButton(large, () => (large ? setSpotlightId(null) : enlarge(p.id)))}
     />
   );
 
   // Participant actuellement agrandi (s'il est toujours présent), + les autres en miniatures.
   const spotlightP = spotlightId ? participants.find((p) => p.id === spotlightId) || null : null;
   const otherParticipants = spotlightP ? participants.filter((p) => p.id !== spotlightP.id) : [];
+
+  // Plein écran caméra : la « grande » = celle épinglée, sinon la 1ʳᵉ ; les autres en bande de vignettes.
+  const fsBig = spotlightP || participants[0] || null;
+  const fsOthers = fsBig ? participants.filter((p) => p.id !== fsBig.id) : [];
 
   return (
     <div className="rounded-2xl border border-[#8A2EFF]/25 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="live-visio-panel">
@@ -128,9 +145,76 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         </div>
       </div>
 
-      {/* Grille / bandeau de caméras — ou vue agrandie (spotlight) si une caméra est épinglée */}
-      <div className="p-3">
-        {spotlightP ? (
+      {/* Grille / bandeau de caméras — ou vue agrandie (spotlight) si une caméra est épinglée.
+          Ce conteneur EST la cible du plein écran (chantier A) : en plein écran il devient une surface fixe noire. */}
+      <div
+        ref={camAreaRef}
+        className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'p-3'}
+        data-testid="visio-camera-area"
+      >
+        {camFullscreen ? (
+          /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
+             bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
+          <>
+            <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+              {onStartTimer && canManageStage && (
+                <button
+                  onClick={onStartTimer}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
+                  data-testid="visio-fs-timer"
+                >
+                  <Timer className="w-4 h-4" /> Interval
+                </button>
+              )}
+              <button
+                onClick={exitCamFullscreen}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
+                data-testid="visio-camera-fs-reduce"
+              >
+                <Minimize2 className="w-4 h-4" /> Réduire
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 flex items-center justify-center">
+              {fsBig ? (
+                <CameraTile
+                  name={fsBig.name}
+                  stream={streamFor(fsBig)}
+                  isLocal={fsBig.id === myUserId}
+                  micActive={fsBig.isMicActive}
+                  isHost={fsBig.isHost}
+                  avatarUrl={fsBig.avatarUrl}
+                  large
+                  fit="contain"
+                  className="w-full h-full rounded-none border-0"
+                />
+              ) : (
+                <p className="text-white/50 text-sm">Aucune caméra allumée</p>
+              )}
+            </div>
+            {fsOthers.length > 0 && (
+              <div className="flex gap-2 overflow-x-auto p-2 bg-black/40">
+                {fsOthers.map((p) => (
+                  <button
+                    key={p.id}
+                    className="w-24 flex-shrink-0"
+                    onClick={() => setSpotlightId(p.id)}
+                    data-testid="visio-fs-thumb"
+                  >
+                    <CameraTile
+                      name={p.name}
+                      stream={streamFor(p)}
+                      isLocal={p.id === myUserId}
+                      micActive={p.isMicActive}
+                      isHost={p.isHost}
+                      avatarUrl={p.avatarUrl}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+            {timerNode}
+          </>
+        ) : spotlightP ? (
           /* 🔍 Vue agrandie : une grande caméra + les autres en miniatures (clic sur une miniature = l'agrandir) */
           <div className="space-y-2">
             <div className="relative aspect-video">
@@ -216,6 +300,28 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             data-testid="visio-request-stage"
           >
             <Hand className="w-4 h-4" /> Demander à monter en vidéo
+          </button>
+        )}
+
+        {/* 🔍 Chantier A : passer UNE caméra en vrai plein écran (celle épinglée, sinon la 1ʳᵉ). */}
+        {participants.length > 0 && (
+          <button
+            onClick={() => enlarge(spotlightId || fsBig?.id || myUserId)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[#8A2EFF]/25 hover:text-[#c9a3ff] transition-colors"
+            data-testid="visio-camera-fullscreen"
+          >
+            <Maximize2 className="w-4 h-4" /> Plein écran
+          </button>
+        )}
+
+        {/* ⏱️ Chantier C : l'hôte lance l'Interval training pendant la visio (fonctionne sans musique). */}
+        {onStartTimer && canManageStage && (
+          <button
+            onClick={onStartTimer}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[#8A2EFF]/25 hover:text-[#c9a3ff] transition-colors"
+            data-testid="visio-start-timer"
+          >
+            <Timer className="w-4 h-4" /> Interval training
           </button>
         )}
 

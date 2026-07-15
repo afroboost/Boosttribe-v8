@@ -12,11 +12,12 @@ interface CameraTileProps {
   onClick?: () => void;          // clic sur la vignette (ex. agrandir/épingler)
   className?: string;            // classes additionnelles sur le conteneur
   topRight?: React.ReactNode;    // emplacement bouton coin haut-droit (ex. Agrandir/Réduire)
+  fit?: 'cover' | 'contain';     // 🔍 plein écran caméra : 'contain' = jamais rogner le visage (défaut 'cover')
 }
 
 // Vignette d'une personne : flux vidéo si caméra allumée, sinon initiales (caméra coupée).
 export const CameraTile: React.FC<CameraTileProps> = ({
-  name, stream, isLocal, micActive, isHost, avatarUrl, large, onClick, className = '', topRight,
+  name, stream, isLocal, micActive, isHost, avatarUrl, large, onClick, className = '', topRight, fit = 'cover',
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 

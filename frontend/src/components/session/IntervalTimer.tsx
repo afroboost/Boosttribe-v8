@@ -106,6 +106,19 @@ const PHASE_COLOR: Record<IntervalPhaseKey, string> = {
   prepare: '#F5A524', work: '#FF2FB3', rest: '#8A2EFF', done: '#D91CD2',
 };
 
+// ⏱️ Info de décompte exposée au parent (LECTURE SEULE) → permet d'afficher un rappel du timer
+//    ailleurs (plein écran caméra, plein écran vidéo partagée) SANS second émetteur son.
+export interface IntervalTickInfo {
+  phaseKey: IntervalPhaseKey;
+  label: string;
+  color: string;
+  mmss: string;      // '' quand terminé
+  remaining: number; // secondes restantes (arrondi au supérieur)
+  round: number;     // round courant (0 en préparation)
+  rounds: number;    // nombre total de rounds
+  done: boolean;
+}
+
 interface Props {
   run: IntervalRun | null;
   isHost: boolean;
@@ -114,6 +127,9 @@ interface Props {
   //    et capturés dans l'enregistrement. iOS : non fourni (musique hors Web Audio) → sons via <audio>.
   getMixerContext?: () => AudioContext | null;
   getTimerOutput?: () => AudioNode | null;
+  // 📣 Rapport LECTURE SEULE du décompte à chaque changement d'affichage (null quand aucun run).
+  //    Ce composant reste l'UNIQUE émetteur de son ; le parent ne fait qu'afficher un rappel visuel.
+  onTick?: (info: IntervalTickInfo | null) => void;
 }
 
 export interface IntervalTimerHandle {
@@ -130,9 +146,13 @@ const IS_IOS = typeof navigator !== 'undefined' && (
 const POS_KEY = 'bt_interval_timer_pos';
 
 export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
-  { run, isHost, onStop, getMixerContext, getTimerOutput }, ref,
+  { run, isHost, onStop, getMixerContext, getTimerOutput, onTick }, ref,
 ) => {
   const [phase, setPhase] = useState<PhaseState | null>(null);
+  // 📣 Rapport lecture seule du décompte au parent, sans faire dépendre la boucle de tick de la prop.
+  const onTickRef = useRef(onTick);
+  onTickRef.current = onTick;
+  const lastTickSigRef = useRef<string>('');
 
   // 🔊 Moteur son. PC/Android : réutilise le CONTEXTE DU MIXEUR + une sortie dédiée (getTimerOutput)
   //    → mélangé avec musique/voix ET capturé dans l'enregistrement. iOS / pas de mixeur : contexte
@@ -293,7 +313,7 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
 
   // Boucle de tick : recalcule la phase depuis le timestamp partagé (pas de dérive).
   useEffect(() => {
-    if (!run) { setPhase(null); return; }
+    if (!run) { setPhase(null); lastTickSigRef.current = ''; onTickRef.current?.(null); return; }
     // reset détection sons pour ce run
     soundStateRef.current = { key: 'idle' as IntervalPhaseKey, round: -1, lastCount: null };
     doneFiredRef.current = false;
@@ -303,6 +323,23 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
       const t = (Date.now() - run.startedAt) / 1000;
       const ph = computePhase(run.config, t);
       setPhase(ph);
+
+      // 📣 Rapport LECTURE SEULE au parent (rappel visuel ailleurs) — seulement quand l'affichage change.
+      const tSecs = Math.max(0, Math.ceil(ph.remaining));
+      const sig = `${ph.key}|${ph.round}|${tSecs}|${ph.done}`;
+      if (sig !== lastTickSigRef.current) {
+        lastTickSigRef.current = sig;
+        onTickRef.current?.({
+          phaseKey: ph.key,
+          label: PHASE_LABEL[ph.key],
+          color: PHASE_COLOR[ph.key],
+          mmss: ph.done ? '' : `${Math.floor(tSecs / 60).toString().padStart(2, '0')}:${(tSecs % 60).toString().padStart(2, '0')}`,
+          remaining: tSecs,
+          round: ph.round,
+          rounds: Math.max(0, run.config.rounds),
+          done: ph.done,
+        });
+      }
 
       // transitions de phase → son d'entrée (chaque client, localement)
       if (ph.key !== soundStateRef.current.key || ph.round !== soundStateRef.current.round) {
@@ -324,7 +361,7 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
     };
     tick();
     const id = window.setInterval(tick, 200);
-    return () => window.clearInterval(id);
+    return () => { window.clearInterval(id); lastTickSigRef.current = ''; onTickRef.current?.(null); };
   }, [run, onEnterPhase, onDone, beep, ensureCtx]);
 
   // ✋ #3 : fenêtre DÉPLAÇABLE (souris + tactile via Pointer Events), BORNÉE à l'écran, position MÉMORISÉE.

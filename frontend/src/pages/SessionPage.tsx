@@ -52,8 +52,8 @@ import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessReq
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
-  getFlutterwaveConfig, FLW_COUNTRY_LABELS,
-  type SessionAccessInfo, type FlutterwaveConfig,
+  getPawapayConfig,
+  type SessionAccessInfo, type PawapayConfig,
 } from '@/lib/paymentApi';
 import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause } from 'lucide-react';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
@@ -1363,9 +1363,9 @@ export const SessionPage: React.FC = () => {
   const [accessInfo, setAccessInfo] = useState<SessionAccessInfo | null>(null);
   const [hasTicket, setHasTicket] = useState<boolean | null>(null);   // null = inconnu ; gating après vérif
   const [ticketBusy, setTicketBusy] = useState(false);
-  // 📱 Mobile Money (Flutterwave) — ADDITIF : config publique + pays choisi. Masqué si non configuré.
-  const [flwConfig, setFlwConfig] = useState<FlutterwaveConfig | null>(null);
-  const [flwCountry, setFlwCountry] = useState<string>('');
+  // 📱 Mobile Money (PawaPay) — ADDITIF : config publique + pays choisi. Masqué si non configuré.
+  const [ppConfig, setPpConfig] = useState<PawapayConfig | null>(null);
+  const [ppCountry, setPpCountry] = useState<string>('');
   const [showMobileMoney, setShowMobileMoney] = useState(false);
   // Réglages billetterie pour le configurateur hôte (garde-fous de prix).
   const [billConfig, setBillConfig] = useState<{ price_min_chf: number; price_max_chf: number } | null>(null);
@@ -1656,64 +1656,61 @@ export const SessionPage: React.FC = () => {
     })();
   }, [accessInfo, isHost, isAdminUser, user?.id, sessionId]);
 
-  // 🎟️ Retour de paiement (?ticket=success Stripe OU ?ticket=flw Mobile Money) → re-vérifie le billet
-  //    (le webhook peut avoir un léger délai). Même re-poll pour les deux moyens de paiement.
+  // 🎟️ Retour de paiement (?ticket=success Stripe OU ?ticket=pp Mobile Money PawaPay) → re-vérifie le
+  //    billet (le callback peut avoir un léger délai). Même re-poll pour les deux moyens de paiement.
   useEffect(() => {
     if (!sessionId) return;
     const params = new URLSearchParams(window.location.search);
     const t = params.get('ticket');
-    if (t !== 'success' && t !== 'flw') return;
+    if (t !== 'success' && t !== 'pp') return;
     showToast('Paiement reçu — accès en cours d\'activation…', 'success');
     let tries = 0;
     const tick = async () => {
       tries += 1;
       const { has_ticket } = await checkTicket(sessionId);
       if (has_ticket) { setHasTicket(true); refreshAccess(); return; }
-      if (tries < 8) setTimeout(tick, 1500);  // mobile money : léger délai webhook → on laisse plus d'essais
+      if (tries < 8) setTimeout(tick, 1500);  // mobile money : léger délai callback → on laisse plus d'essais
     };
     tick();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // 📱 Charge la config publique Mobile Money quand la session est payante (masquée si non configurée).
+  // 📱 Charge la config publique Mobile Money (PawaPay) quand la session est payante (masquée si absente).
   useEffect(() => {
     if (!accessInfo || accessInfo.mode !== 'paid') return;
-    getFlutterwaveConfig().then(({ data }) => {
+    getPawapayConfig().then(({ data }) => {
       if (data?.configured) {
-        setFlwConfig(data);
-        setFlwCountry((prev) => prev || data.countries[0]?.code || '');
+        setPpConfig(data);
+        setPpCountry((prev) => prev || data.countries[0]?.code || '');
       }
     });
   }, [accessInfo]);
 
-  // 🎟️ Achat d'une place → redirection Stripe Checkout (carte) OU Flutterwave (mobile money).
-  const handleBuyTicket = useCallback(async (provider: 'stripe' | 'flutterwave' = 'stripe') => {
+  // 🎟️ Achat d'une place → redirection Stripe Checkout (carte) OU PawaPay (mobile money).
+  const handleBuyTicket = useCallback(async (provider: 'stripe' | 'pawapay' = 'stripe') => {
     if (!sessionId) return;
-    const currency = provider === 'flutterwave'
-      ? flwConfig?.countries.find((c) => c.code === flwCountry)?.currency
-      : undefined;
-    if (provider === 'flutterwave' && !currency) { showToast('Choisis ton pays', 'warning'); return; }
+    if (provider === 'pawapay' && !ppCountry) { showToast('Choisis ton pays', 'warning'); return; }
     setTicketBusy(true);
     try {
-      const { url, already, error } = await buyTicket(sessionId, { provider, currency, country: flwCountry });
+      const { url, already, error } = await buyTicket(sessionId, { provider, country: ppCountry });
       if (already) { setHasTicket(true); showToast('Tu as déjà ta place 🎟️', 'success'); return; }
       if (url) { window.location.href = url; return; }
       showToast(error || 'Achat impossible', 'error');
     } finally {
       setTicketBusy(false);
     }
-  }, [sessionId, showToast, flwConfig, flwCountry]);
+  }, [sessionId, showToast, ppCountry]);
 
-  // 💱 Aperçu du montant converti (≈) pour le pays choisi, à partir des taux publics.
-  const flwTicketApprox = useMemo(() => {
-    if (!flwConfig || !accessInfo?.price_chf) return null;
-    const cur = flwConfig.countries.find((c) => c.code === flwCountry)?.currency;
-    const rate = cur ? flwConfig.fx_rates[cur] : undefined;
+  // 💱 Aperçu du montant converti (≈) pour le pays choisi, à partir des taux publics PawaPay.
+  const ppTicketApprox = useMemo(() => {
+    if (!ppConfig || !accessInfo?.price_chf) return null;
+    const cur = ppConfig.countries.find((c) => c.code === ppCountry)?.currency;
+    const rate = cur ? ppConfig.fx_rates[cur] : undefined;
     if (!cur || !rate) return null;
     const zeroDec = cur === 'XOF' || cur === 'XAF';
     const val = Number(accessInfo.price_chf) * rate;
     return `≈ ${zeroDec ? Math.round(val).toLocaleString('fr-FR') : val.toFixed(2)} ${cur}`;
-  }, [flwConfig, flwCountry, accessInfo]);
+  }, [ppConfig, ppCountry, accessInfo]);
 
   // 🎟️ Hôte : configurateur du mode d'accès (charge garde-fous + pré-remplit depuis l'état actuel).
   useEffect(() => {
@@ -3625,27 +3622,29 @@ export const SessionPage: React.FC = () => {
                   {!user?.id ? 'Connecte-toi pour acheter' : ticketBusy ? 'Redirection…' : `💳 Carte (${Number(accessInfo.price_chf || 0).toFixed(2)} CHF)`}
                 </button>
               )}
-              {/* 📱 Mobile Money (Flutterwave) — affiché UNIQUEMENT si configuré ET utilisateur connecté. */}
-              {!accessInfo.sold_out && flwConfig?.configured && user?.id && (
+              {/* 📱 Mobile Money (PawaPay) — affiché UNIQUEMENT si configuré ET utilisateur connecté.
+                  On choisit le PAYS (→ devise) ; l'opérateur + le numéro se saisissent sur la page PawaPay. */}
+              {!accessInfo.sold_out && ppConfig?.configured && user?.id && (
                 showMobileMoney ? (
                   <div className="w-full rounded-xl border border-white/15 bg-white/5 p-3 flex flex-col gap-2" data-testid="ticket-mobilemoney">
                     <label className="text-left text-xs text-white/60">Ton pays</label>
                     <select
-                      value={flwCountry}
-                      onChange={(e) => setFlwCountry(e.target.value)}
+                      value={ppCountry}
+                      onChange={(e) => setPpCountry(e.target.value)}
                       className="w-full rounded-lg bg-black/40 border border-white/15 text-white text-sm px-3 py-2"
                       data-testid="ticket-mobilemoney-country"
                     >
-                      {flwConfig.countries.map((c) => (
-                        <option key={c.code} value={c.code}>{FLW_COUNTRY_LABELS[c.code] || c.code} ({c.currency})</option>
+                      {ppConfig.countries.map((c) => (
+                        <option key={c.code} value={c.code}>{c.label} ({c.currency})</option>
                       ))}
                     </select>
-                    {flwTicketApprox && (
-                      <p className="text-left text-xs text-white/50">Montant : <span className="text-white/80 font-medium">{flwTicketApprox}</span> <span className="text-white/40">(≈, converti depuis le CHF)</span></p>
+                    {ppTicketApprox && (
+                      <p className="text-left text-xs text-white/50">Montant : <span className="text-white/80 font-medium">{ppTicketApprox}</span> <span className="text-white/40">(≈, converti depuis le CHF)</span></p>
                     )}
+                    <p className="text-left text-[11px] text-white/40">Tu choisiras ton opérateur (Orange, MTN, Moov, Wave, M-Pesa…) sur la page sécurisée PawaPay.</p>
                     <button
-                      onClick={() => handleBuyTicket('flutterwave')}
-                      disabled={ticketBusy || !flwCountry}
+                      onClick={() => handleBuyTicket('pawapay')}
+                      disabled={ticketBusy || !ppCountry}
                       className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
                       style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
                       data-testid="ticket-mobilemoney-pay"

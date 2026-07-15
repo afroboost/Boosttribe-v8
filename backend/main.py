@@ -13,6 +13,7 @@ Endpoints :
 
 import os
 import re
+import uuid
 from urllib.parse import urlparse
 import asyncio
 import logging
@@ -3373,5 +3374,456 @@ async def flutterwave_webhook(request: Request):
                 await _flw_grant_subscription(uid, meta.get("plan"), meta.get("interval"), tx_ref)
     except Exception as exc:  # noqa: BLE001
         logger.error("FLW webhook handling error: %s", exc)
+
+    return {"received": True}
+
+
+# =========================================================================== #
+# 📱 PAWAPAY — Mobile Money (Orange, MTN, Moov, Wave/Free, M-Pesa, Airtel…).
+#    Fournisseur ACTIF du bouton « Mobile Money » (PawaPay onboarde les entités
+#    européennes/suisses ; Flutterwave ci-dessus reste dormant). 100 % ADDITIF :
+#    aucun flux Stripe touché. Clés chiffrées (Fernet) + repli env. Encaissement
+#    en DEVISE LOCALE via la Payment Page HÉBERGÉE (l'utilisateur choisit son
+#    opérateur + numéro sur la page PawaPay). Statut final via callback +
+#    RE-VÉRIFICATION serveur (GET /deposits/{id}). Idempotent par depositId.
+# =========================================================================== #
+PAWAPAY_API_TOKEN_ENV = os.environ.get("PAWAPAY_API_TOKEN", "")
+# Base URL par ENV → bascule sandbox/prod SANS changer le code (seuls base URL + token changent).
+PAWAPAY_BASE_URL_ENV = os.environ.get("PAWAPAY_BASE_URL", "https://api.sandbox.pawapay.io").rstrip("/")
+PAWAPAY_WIDGET_PATH = "/v1/widget/sessions"   # Payment Page hébergée → renvoie { redirectUrl }
+PAWAPAY_STATEMENT = "BoostTribe"              # 4–22 caractères (contrainte PawaPay)
+
+# Pays (code ISO-3 PawaPay) → devise + opérateurs proposés. Liste CENTRALISÉE et extensible.
+#   La Payment Page utilise le PAYS (la devise en découle) ; l'opérateur se choisit sur PawaPay.
+PAWAPAY_COUNTRIES: Dict[str, Dict[str, Any]] = {
+    "BEN": {"currency": "XOF", "label": "Bénin", "correspondents": ["MTN_MOMO_BEN", "MOOV_BEN"]},
+    "BFA": {"currency": "XOF", "label": "Burkina Faso", "correspondents": ["MOOV_BFA", "ORANGE_BFA"]},
+    "CIV": {"currency": "XOF", "label": "Côte d'Ivoire", "correspondents": ["MTN_MOMO_CIV", "ORANGE_CIV"]},
+    "SEN": {"currency": "XOF", "label": "Sénégal", "correspondents": ["FREE_SEN", "ORANGE_SEN"]},
+    "CMR": {"currency": "XAF", "label": "Cameroun", "correspondents": ["MTN_MOMO_CMR", "ORANGE_CMR"]},
+    "GAB": {"currency": "XAF", "label": "Gabon", "correspondents": ["AIRTEL_GAB"]},
+    "COG": {"currency": "XAF", "label": "Congo", "correspondents": ["AIRTEL_COG", "MTN_MOMO_COG"]},
+    "GHA": {"currency": "GHS", "label": "Ghana", "correspondents": ["MTN_MOMO_GHA", "AIRTELTIGO_GHA", "VODAFONE_GHA"]},
+    "KEN": {"currency": "KES", "label": "Kenya", "correspondents": ["MPESA_KEN"]},
+    "NGA": {"currency": "NGN", "label": "Nigeria", "correspondents": ["MTN_MOMO_NGA", "AIRTEL_NGA"]},
+}
+PAWAPAY_ZERO_DECIMAL = {"XOF", "XAF"}  # devises SANS décimales (montant entier)
+PAWAPAY_FX_DEFAULTS: Dict[str, float] = {"XOF": 655.0, "XAF": 655.0, "GHS": 16.0, "KES": 145.0, "NGN": 1700.0}
+PAWAPAY_SUB_DAYS = {"month": 30, "monthly": 30, "year": 365, "annual": 365}
+# IPs sources PawaPay (info / durcissement optionnel). La sécurité réelle = RE-VÉRIFICATION GET /deposits.
+PAWAPAY_CALLBACK_IPS = {"3.64.89.224", "18.192.208.15", "18.195.113.136", "3.72.212.107",
+                        "54.73.125.42", "54.155.38.214", "54.73.130.113"}
+
+
+async def get_pawapay_secret_record() -> Optional[str]:
+    """Token PawaPay CHIFFRÉ (table pawapay_secrets, id='default', colonne encrypted_api_token)."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/pawapay_secrets",
+            headers=_service_headers(),
+            params={"id": "eq.default", "select": "encrypted_api_token"},
+        )
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0].get("encrypted_api_token")
+    return None
+
+
+async def store_pawapay_secret(encrypted: str) -> bool:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/pawapay_secrets",
+            headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            params={"on_conflict": "id"},
+            json={"id": "default", "encrypted_api_token": encrypted,
+                  "updated_at": datetime.now(timezone.utc).isoformat()},
+        )
+    return resp.status_code in (200, 201, 204)
+
+
+async def get_pawapay_token() -> str:
+    """Token PawaPay effectif : DB chiffrée (admin) prioritaire, sinon repli env."""
+    dec = decrypt_secret(await get_pawapay_secret_record())
+    return dec or PAWAPAY_API_TOKEN_ENV
+
+
+async def get_pawapay_base_url() -> str:
+    """Base URL PawaPay : réglage admin (site_settings.pawapay_base_url) sinon env sinon sandbox."""
+    base = (await get_site_settings()).get("pawapay_base_url") or PAWAPAY_BASE_URL_ENV
+    return (base or "https://api.sandbox.pawapay.io").rstrip("/")
+
+
+async def get_pawapay_fx_rates() -> Dict[str, float]:
+    """Taux CHF→local effectifs : défauts + surcharge admin (site_settings.pawapay_fx_rates)."""
+    rates = dict(PAWAPAY_FX_DEFAULTS)
+    try:
+        override = (await get_site_settings()).get("pawapay_fx_rates")
+        if isinstance(override, dict):
+            for k, v in override.items():
+                try:
+                    rates[str(k).upper()] = float(v)
+                except (TypeError, ValueError):
+                    continue
+    except Exception:  # noqa: BLE001
+        pass
+    return rates
+
+
+def _pp_amount_str(amount_local: float, currency: str) -> str:
+    """Formate le montant selon les décimales autorisées (XOF/XAF entier, sinon 2 décimales)."""
+    if currency in PAWAPAY_ZERO_DECIMAL:
+        return str(int(round(amount_local)))
+    return f"{round(amount_local, 2):.2f}"
+
+
+async def pawapay_convert(amount_chf: float, currency: str) -> float:
+    """CHF → devise mobile money locale (arrondi selon la devise). 400 si devise non configurée."""
+    cur = (currency or "").upper()
+    rate = (await get_pawapay_fx_rates()).get(cur)
+    if not rate or rate <= 0:
+        raise HTTPException(status_code=400,
+                            detail=f"Devise mobile money non configurée ({cur or '?'}) — ajoute son taux en admin")
+    val = float(amount_chf) * rate
+    return float(int(round(val))) if cur in PAWAPAY_ZERO_DECIMAL else round(val, 2)
+
+
+async def pawapay_create_payment_page(deposit_id: str, amount_str: str, country: str,
+                                      return_url: str, reason: str) -> str:
+    """Crée une Payment Page PawaPay (page hébergée) et renvoie l'URL de redirection."""
+    token = await get_pawapay_token()
+    if not token:
+        raise HTTPException(status_code=500, detail="PawaPay non configuré (token manquant)")
+    base = await get_pawapay_base_url()
+    payload = {
+        "depositId": deposit_id,
+        "returnUrl": return_url,
+        "amount": amount_str,
+        "country": country,
+        "reason": reason[:60] if reason else "BoostTribe",
+        "statementDescription": PAWAPAY_STATEMENT,
+        "language": "FR",
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(f"{base}{PAWAPAY_WIDGET_PATH}",
+                                 headers={"Authorization": f"Bearer {token}",
+                                          "Content-Type": "application/json"}, json=payload)
+    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    link = (data or {}).get("redirectUrl")
+    if resp.status_code not in (200, 201) or not link:
+        logger.error("PawaPay payment page échec HTTP %s: %s", resp.status_code, (resp.text or "")[:300])
+        raise HTTPException(status_code=502, detail="Échec de l'initialisation du paiement mobile money")
+    return link
+
+
+async def pawapay_check_deposit(deposit_id: str) -> Dict[str, Any]:
+    """RE-VÉRIFIE une transaction côté serveur (GET /deposits/{id}). v1 renvoie une LISTE → on prend [0]."""
+    token = await get_pawapay_token()
+    base = await get_pawapay_base_url()
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(f"{base}/deposits/{deposit_id}",
+                                headers={"Authorization": f"Bearer {token}"})
+    if resp.status_code != 200:
+        return {}
+    data = resp.json()
+    if isinstance(data, list):
+        return data[0] if data else {}
+    if isinstance(data, dict):
+        # v2 : { "status": "FOUND", "data": {...} } — on déballe si présent.
+        return data.get("data") if isinstance(data.get("data"), dict) else data
+    return {}
+
+
+async def _pp_store_deposit(deposit_id: str, meta: Dict[str, Any]) -> None:
+    """Mémorise le depositId → métadonnées (le callback PawaPay ne renvoie que l'id + statut)."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.post(
+            f"{SUPABASE_URL}/rest/v1/pawapay_deposits",
+            headers=_service_headers({"Prefer": "resolution=merge-duplicates,return=minimal"}),
+            params={"on_conflict": "deposit_id"},
+            json={"deposit_id": deposit_id, "meta": meta,
+                  "created_at": datetime.now(timezone.utc).isoformat()},
+        )
+
+
+async def _pp_get_deposit(deposit_id: str) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(
+            f"{SUPABASE_URL}/rest/v1/pawapay_deposits", headers=_service_headers(),
+            params={"deposit_id": f"eq.{deposit_id}", "select": "deposit_id,meta,processed_at", "limit": "1"})
+    if resp.status_code == 200 and resp.json():
+        return resp.json()[0]
+    return None
+
+
+async def _pp_claim_deposit(deposit_id: str) -> bool:
+    """Idempotence : pose processed_at UNE seule fois. True = 1er traitement, False = déjà traité."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.patch(
+            f"{SUPABASE_URL}/rest/v1/pawapay_deposits",
+            headers=_service_headers({"Prefer": "return=representation"}),
+            params={"deposit_id": f"eq.{deposit_id}", "processed_at": "is.null"},
+            json={"processed_at": datetime.now(timezone.utc).isoformat()})
+    return resp.status_code in (200, 201) and bool(resp.json() if resp.content else [])
+
+
+async def _mobilemoney_create_ticket(provider: str, meta: Dict[str, Any], ref: str,
+                                     paid_amount: float, paid_currency: str,
+                                     buyer_email: Optional[str]) -> None:
+    """Insère un billet 'paid' payé en mobile money (idempotent tx_ref) + crédite le solde coach.
+    Mêmes colonnes que le webhook Stripe + provider/tx_ref/paid_currency/paid_amount."""
+    coach_uid = meta.get("coach_user_id")
+    price = float(meta.get("price_chf") or 0)
+    commission = float(meta.get("commission_chf") or 0)
+    net = round(price - commission, 2)
+    row = {
+        "session_id": meta.get("session_id"),
+        "buyer_user_id": meta.get("buyer_user_id"),
+        "buyer_email": buyer_email,
+        "coach_user_id": coach_uid,
+        "amount_chf": price,
+        "commission_chf": commission,
+        "commission_percent": float(meta.get("commission_percent") or 0),
+        "status": "paid",
+        "provider": provider,
+        "tx_ref": ref,
+        "paid_currency": (paid_currency or "").upper(),
+        "paid_amount": paid_amount,
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/rest/v1/tickets",
+            headers=_service_headers({"Prefer": "resolution=ignore-duplicates,return=representation"}),
+            params={"on_conflict": "tx_ref"}, json=row)
+    inserted = resp.status_code in (200, 201) and bool(resp.json() if resp.content else [])
+    if inserted and coach_uid and net > 0:
+        await wallet_add(coach_uid, net, "sale", f"sale:{provider}:{ref}", True)
+    elif resp.status_code not in (200, 201, 204, 409):
+        logger.error("insert billet %s HTTP %s: %s", provider, resp.status_code, (resp.text or "")[:300])
+
+
+async def _pp_grant_subscription(user_id: str, plan: str, interval: str, ref: str) -> None:
+    """Abonnement mobile money = paiement d'UNE période → crédite N jours (comme prolongation manuelle)."""
+    days = PAWAPAY_SUB_DAYS.get((interval or "").lower(), 30)
+    until = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    if plan == "enterprise":
+        await update_profile(user_id, {"subscription_status": "enterprise",
+                                       "comp_access_plan": "enterprise", "comp_access_until": until,
+                                       "coach_payment_type": "subscription"})
+        try:
+            await upsert_coach_subscription(user_id, {"status": "active", "current_period_end": until,
+                                                      "stripe_subscription_id": f"pawapay:{ref}"})
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PawaPay sub: synchro abo coach échec (%s): %s", user_id, exc)
+    else:
+        await update_profile(user_id, {"subscription_status": "pro"})
+        try:
+            per_month = int((await get_pricing_settings()).get("plan_pro_monthly_credits") or 20)
+            months = 12 if days >= 365 else 1
+            await _add_credits(user_id, per_month * months, "purchase", ref=f"pawapay-sub:{ref}",
+                               note="Abonnement Utilisateur (mobile money)",
+                               expires_months=await _credit_validity_months())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PawaPay sub pro: crédits échec (%s): %s", user_id, exc)
+
+
+class PawapayKeysBody(BaseModel):
+    api_token: Optional[str] = None
+    base_url: Optional[str] = None
+    fx_rates: Optional[Dict[str, float]] = None
+
+
+@app.post("/admin/pawapay-keys")
+async def set_pawapay_keys(body: PawapayKeysBody, authorization: Optional[str] = Header(default=None)):
+    """Admin : token PawaPay (chiffré) + base URL (sandbox/prod, site_settings) + taux FX."""
+    await require_admin(authorization)
+    if body.base_url is not None:
+        await update_site_settings({"pawapay_base_url": body.base_url.strip().rstrip("/")})
+    if body.fx_rates is not None:
+        clean = {}
+        for k, v in body.fx_rates.items():
+            try:
+                clean[str(k).upper()] = float(v)
+            except (TypeError, ValueError):
+                continue
+        await update_site_settings({"pawapay_fx_rates": clean})
+    if body.api_token:
+        if not await store_pawapay_secret(encrypt_secret(body.api_token.strip())):
+            raise HTTPException(status_code=500, detail="Échec de l'enregistrement du token PawaPay")
+    return {"ok": True}
+
+
+@app.get("/admin/pawapay-keys")
+async def get_pawapay_keys(authorization: Optional[str] = Header(default=None)):
+    """Admin : état PawaPay (jamais le token en clair) + base URL + taux FX effectifs."""
+    await require_admin(authorization)
+    dec = decrypt_secret(await get_pawapay_secret_record())
+    token = dec or PAWAPAY_API_TOKEN_ENV
+    base = await get_pawapay_base_url()
+    return {
+        "token_configured": bool(token),
+        "token_last4": token[-4:] if token else "",
+        "token_source": "db" if dec else ("env" if PAWAPAY_API_TOKEN_ENV else "none"),
+        "base_url": base,
+        "is_sandbox": "sandbox" in base,
+        "fx_rates": await get_pawapay_fx_rates(),
+    }
+
+
+@app.get("/pawapay/config")
+async def pawapay_public_config():
+    """Config PUBLIQUE mobile money : pays/devises/opérateurs + taux (aperçu du montant).
+    configured=false (token absent) → le front masque proprement le mobile money."""
+    configured = bool(await get_pawapay_token())
+    rates = await get_pawapay_fx_rates()
+    countries = [
+        {"code": code, "currency": info["currency"], "label": info["label"],
+         "correspondents": info["correspondents"]}
+        for code, info in PAWAPAY_COUNTRIES.items() if info["currency"] in rates
+    ]
+    return {"configured": configured, "provider": "pawapay", "countries": countries, "fx_rates": rates}
+
+
+class PawapayTicketBody(BaseModel):
+    session_id: str
+    country: str                 # code ISO-3 PawaPay (CIV, SEN, GHA…)
+    correspondent: Optional[str] = None  # opérateur (info ; PawaPay le redemande sur sa page)
+
+
+@app.post("/pawapay/tickets/buy")
+async def pawapay_buy_ticket(body: PawapayTicketBody, authorization: Optional[str] = Header(default=None)):
+    """Achat d'une place (billet) en MOBILE MONEY (PawaPay). Mêmes vérifs que /tickets/buy (Stripe)."""
+    user = await get_user_from_token(authorization)
+    uid, email = user.get("id"), user.get("email")
+    if not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    country = (body.country or "").upper()
+    info = PAWAPAY_COUNTRIES.get(country)
+    if not info:
+        raise HTTPException(status_code=400, detail="Pays mobile money non pris en charge")
+    currency = info["currency"]
+    row = await get_session_row(body.session_id)
+    if not row or row.get("mode") != "paid":
+        raise HTTPException(status_code=400, detail="Cette session n'est pas payante")
+    if await has_valid_ticket(body.session_id, uid):
+        return {"already": True}
+    capacity = row.get("capacity")
+    if capacity and await count_paid_tickets(body.session_id) >= int(capacity):
+        raise HTTPException(status_code=409, detail="Complet (toutes les places sont vendues)")
+    coach_uid = row.get("host_id")
+    price = float(row.get("price_chf") or 0)
+    if price <= 0 or not coach_uid:
+        raise HTTPException(status_code=400, detail="Session payante mal configurée")
+    comm = await compute_commission(price, coach_uid)
+    amount = await pawapay_convert(price, currency)
+    deposit_id = str(uuid.uuid4())
+    meta = {"kind": "ticket", "session_id": body.session_id, "buyer_user_id": uid,
+            "coach_user_id": coach_uid, "price_chf": price,
+            "commission_chf": comm["commission_chf"], "commission_percent": comm["percent"],
+            "currency": currency, "country": country, "buyer_email": email}
+    await _pp_store_deposit(deposit_id, meta)
+    link = await pawapay_create_payment_page(
+        deposit_id=deposit_id, amount_str=_pp_amount_str(amount, currency), country=country,
+        return_url=f"{FRONTEND_URL}/session/{body.session_id}?ticket=pp&ref={deposit_id}",
+        reason=f"Place live BoostTribe")
+    return {"url": link}
+
+
+class PawapaySubBody(BaseModel):
+    plan: str            # "pro" | "enterprise"
+    interval: str        # "month" | "year"
+    country: str
+    correspondent: Optional[str] = None
+
+
+@app.post("/pawapay/create-subscription")
+async def pawapay_create_subscription(body: PawapaySubBody, authorization: Optional[str] = Header(default=None)):
+    """Abonnement (période) en MOBILE MONEY (PawaPay). Réutilise le prix CHF du plan (site_settings)."""
+    if body.plan not in PLANS:
+        raise HTTPException(status_code=400, detail="Plan inconnu")
+    if body.interval not in ("month", "year"):
+        raise HTTPException(status_code=400, detail="Intervalle invalide")
+    country = (body.country or "").upper()
+    info = PAWAPAY_COUNTRIES.get(country)
+    if not info:
+        raise HTTPException(status_code=400, detail="Pays mobile money non pris en charge")
+    currency = info["currency"]
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    settings = await get_site_settings()
+    key = ("plan_pro_price_" if body.plan == "pro" else "plan_enterprise_price_") + \
+          ("monthly" if body.interval == "month" else "yearly")
+    try:
+        price = float(settings.get(key) or 0)
+    except (TypeError, ValueError):
+        price = 0.0
+    if price <= 0:
+        raise HTTPException(status_code=400, detail="Prix du plan non configuré (admin) pour le mobile money")
+    amount = await pawapay_convert(price, currency)
+    cms_interval = "monthly" if body.interval == "month" else "annual"
+    deposit_id = str(uuid.uuid4())
+    meta = {"kind": "subscription", "plan": body.plan, "interval": cms_interval, "user_id": uid,
+            "price_chf": price, "currency": currency, "country": country}
+    await _pp_store_deposit(deposit_id, meta)
+    link = await pawapay_create_payment_page(
+        deposit_id=deposit_id, amount_str=_pp_amount_str(amount, currency), country=country,
+        return_url=f"{FRONTEND_URL}/pricing?sub=pp&ref={deposit_id}",
+        reason="Abonnement BoostTribe")
+    return {"url": link}
+
+
+@app.post("/pawapay/callback")
+async def pawapay_callback(request: Request):
+    """Callback PawaPay (statut final d'un dépôt). On NE fait JAMAIS confiance au seul callback :
+    on retrouve le dépôt mémorisé, on RE-VÉRIFIE via GET /deposits/{id}, on contrôle le montant,
+    puis on traite UNE seule fois (idempotent par depositId). Répond 200 pour éviter les replays."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return {"received": True}
+    deposit_id = body.get("depositId") or body.get("deposit_id")
+    if not deposit_id:
+        return {"received": True}
+
+    try:
+        stored = await _pp_get_deposit(deposit_id)
+        if not stored:
+            logger.warning("PawaPay callback: depositId inconnu %s", deposit_id)
+            return {"received": True}
+        meta = stored.get("meta") or {}
+
+        # RE-VÉRIFICATION serveur (source de vérité) — jamais le seul callback.
+        dep = await pawapay_check_deposit(deposit_id)
+        status = str(dep.get("status") or body.get("status") or "").upper()
+        if status != "COMPLETED":
+            if status in ("FAILED", "REJECTED", "CANCELLED"):
+                logger.info("PawaPay dépôt %s non abouti: %s", deposit_id, status)
+            return {"received": True}
+
+        # Contrôle du montant : au moins le montant attendu (converti depuis le CHF).
+        paid_currency = (dep.get("currency") or meta.get("currency") or "").upper()
+        paid_amount = float(dep.get("depositedAmount") or dep.get("requestedAmount") or dep.get("amount") or 0)
+        expected_chf = float(meta.get("price_chf") or 0)
+        if expected_chf > 0 and paid_currency:
+            try:
+                expected_local = await pawapay_convert(expected_chf, paid_currency)
+                if paid_amount + 0.01 < expected_local:
+                    logger.warning("PawaPay: montant insuffisant %s (%s < %s %s)",
+                                   deposit_id, paid_amount, expected_local, paid_currency)
+                    return {"received": True}
+            except HTTPException:
+                pass
+
+        if not await _pp_claim_deposit(deposit_id):
+            return {"received": True}  # déjà traité (replay) → idempotent
+
+        kind = meta.get("kind")
+        if kind == "ticket":
+            await _mobilemoney_create_ticket("pawapay", meta, deposit_id, paid_amount,
+                                             paid_currency, meta.get("buyer_email"))
+        elif kind == "subscription":
+            uid = meta.get("user_id")
+            if uid:
+                await _pp_grant_subscription(uid, meta.get("plan"), meta.get("interval"), deposit_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("PawaPay callback handling error: %s", exc)
 
     return {"received": True}

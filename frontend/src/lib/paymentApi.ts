@@ -73,16 +73,17 @@ export async function syncPlan(payload: SyncPlanPayload): Promise<{ ok: boolean;
   }
 }
 
-// 📱 Options de paiement mobile money (Flutterwave) — ADDITIF : par défaut on reste sur Stripe.
+// 📱 Options de paiement mobile money — ADDITIF : par défaut Stripe. Fournisseur ACTIF = PawaPay.
 export interface MobileMoneyOpts {
-  provider?: 'stripe' | 'flutterwave';
-  currency?: string;   // devise locale (XOF, XAF, GHS, KES, NGN…)
-  country?: string;    // ISO-2 (CI, SN, GH…)
+  provider?: 'stripe' | 'pawapay' | 'flutterwave';
+  currency?: string;       // devise locale (XOF, XAF, GHS, KES, NGN…) — Flutterwave (dormant)
+  country?: string;        // PawaPay : code ISO-3 (CIV, SEN, GHA…) ; Flutterwave : ISO-2
+  correspondent?: string;  // PawaPay : opérateur (info ; choisi sur la page PawaPay)
 }
 
 /**
  * Crée un paiement d'abonnement pour l'utilisateur connecté.
- * Par défaut Stripe (récurrent). Avec { provider:'flutterwave', currency } → paiement mobile money
+ * Par défaut Stripe (récurrent). Avec { provider:'pawapay', country } → paiement mobile money
  * d'UNE période (renouvellement manuel). Renvoie l'URL de redirection (ou une erreur).
  */
 export async function createCheckout(
@@ -91,6 +92,14 @@ export async function createCheckout(
   opts?: MobileMoneyOpts,
 ): Promise<{ url?: string; error?: string }> {
   if (!API_URL) return { error: 'API de paiement non configurée (REACT_APP_API_URL)' };
+  if (opts?.provider === 'pawapay') {
+    const { data, error } = await adminFetch('/pawapay/create-subscription', {
+      method: 'POST',
+      body: JSON.stringify({ plan, interval, country: opts.country, correspondent: opts.correspondent }),
+    });
+    if (error) return { error };
+    return { url: data?.url };
+  }
   if (opts?.provider === 'flutterwave') {
     const { data, error } = await adminFetch('/flutterwave/create-subscription', {
       method: 'POST',
@@ -108,30 +117,30 @@ export async function createCheckout(
   return { url: data?.url };
 }
 
-// 📱 Config PUBLIQUE mobile money (clé publique + pays/devises + taux). configured=false → masquer l'UI.
-export interface FlutterwaveConfig {
+// 📱 Config PUBLIQUE mobile money (PawaPay) : pays/devises/opérateurs + taux. configured=false → masquer l'UI.
+export interface PawapayCountry {
+  code: string;            // ISO-3 (CIV, SEN, GHA…)
+  currency: string;        // XOF, XAF, GHS, KES, NGN…
+  label: string;
+  correspondents: string[]; // opérateurs (info)
+}
+export interface PawapayConfig {
   configured: boolean;
-  public_key: string;
-  countries: { code: string; currency: string }[];
+  provider: string;
+  countries: PawapayCountry[];
   fx_rates: Record<string, number>;
 }
-export async function getFlutterwaveConfig(): Promise<{ data?: FlutterwaveConfig; error?: string }> {
+export async function getPawapayConfig(): Promise<{ data?: PawapayConfig; error?: string }> {
   if (!API_URL) return { error: 'API non configurée' };
   try {
-    const res = await fetch(`${API_URL}/flutterwave/config`);
+    const res = await fetch(`${API_URL}/pawapay/config`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { error: data?.detail || `Erreur ${res.status}` };
-    return { data: data as FlutterwaveConfig };
+    return { data: data as PawapayConfig };
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
 }
-
-// Libellés de pays (affichage). Liste CENTRALISÉE et extensible (miroir du backend FLW_COUNTRY_CURRENCY).
-export const FLW_COUNTRY_LABELS: Record<string, string> = {
-  CI: "Côte d'Ivoire", SN: 'Sénégal', BJ: 'Bénin', ML: 'Mali', BF: 'Burkina Faso', TG: 'Togo',
-  CM: 'Cameroun', GA: 'Gabon', CG: 'Congo', GH: 'Ghana', KE: 'Kenya', NG: 'Nigeria',
-};
 
 // ===========================================================================
 // 💳 CRÉDITS (nouveau modèle — remplace les abonnements)
@@ -600,11 +609,15 @@ export async function buyTicket(
   if (!API_URL) return { error: 'API non configurée' };
   const token = await getAccessToken();
   if (!token) return { error: 'Connectez-vous pour acheter votre place' };
-  const flw = opts?.provider === 'flutterwave';
-  const path = flw ? '/flutterwave/tickets/buy' : '/tickets/buy';
-  const payload = flw
-    ? { session_id: sessionId, currency: opts?.currency, country: opts?.country }
-    : { session_id: sessionId };
+  let path = '/tickets/buy';
+  let payload: Record<string, unknown> = { session_id: sessionId };
+  if (opts?.provider === 'pawapay') {
+    path = '/pawapay/tickets/buy';
+    payload = { session_id: sessionId, country: opts.country, correspondent: opts.correspondent };
+  } else if (opts?.provider === 'flutterwave') {
+    path = '/flutterwave/tickets/buy';
+    payload = { session_id: sessionId, currency: opts.currency, country: opts.country };
+  }
   try {
     const res = await fetch(`${API_URL}${path}`, {
       method: 'POST',
@@ -1078,31 +1091,28 @@ export async function saveStripeKeys(payload: { public_key?: string; secret_key?
   return { ok: !!data?.ok };
 }
 
-// 📱 Admin : clés Flutterwave (publique en clair ; secrète/chiffrement/hash webhook chiffrés) + taux FX.
-export interface FlutterwaveKeysState {
-  public_key: string;
-  secret_configured: boolean;
-  secret_last4: string;
-  secret_source?: string;
-  encryption_configured: boolean;
-  webhook_configured: boolean;
+// 📱 Admin : clés PawaPay (token chiffré + base URL sandbox/prod + taux FX CHF→local).
+export interface PawapayKeysState {
+  token_configured: boolean;
+  token_last4: string;
+  token_source?: string;
+  base_url: string;
+  is_sandbox: boolean;
   fx_rates: Record<string, number>;
 }
 
-export async function getFlutterwaveKeys(): Promise<{ data?: FlutterwaveKeysState; error?: string }> {
-  const { data, error } = await adminFetch('/admin/flutterwave-keys', { method: 'GET' });
+export async function getPawapayKeys(): Promise<{ data?: PawapayKeysState; error?: string }> {
+  const { data, error } = await adminFetch('/admin/pawapay-keys', { method: 'GET' });
   if (error) return { error };
-  return { data: data as FlutterwaveKeysState };
+  return { data: data as PawapayKeysState };
 }
 
-export async function saveFlutterwaveKeys(payload: {
-  public_key?: string;
-  secret_key?: string;
-  encryption_key?: string;
-  webhook_hash?: string;
+export async function savePawapayKeys(payload: {
+  api_token?: string;
+  base_url?: string;
   fx_rates?: Record<string, number>;
 }): Promise<{ ok: boolean; error?: string }> {
-  const { data, error } = await adminFetch('/admin/flutterwave-keys', {
+  const { data, error } = await adminFetch('/admin/pawapay-keys', {
     method: 'POST',
     body: JSON.stringify(payload),
   });

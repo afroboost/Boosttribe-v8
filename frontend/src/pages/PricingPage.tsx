@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Footer } from '@/components/layout/Footer';
 import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
-import { getCreditsConfig, buyCredits, getBilletterieConfig, createCheckout, getFlutterwaveConfig, FLW_COUNTRY_LABELS, type CreditsConfig, type CreditPack, type FlutterwaveConfig } from '@/lib/paymentApi';
+import { getCreditsConfig, buyCredits, getBilletterieConfig, createCheckout, getPawapayConfig, type CreditsConfig, type CreditPack, type PawapayConfig } from '@/lib/paymentApi';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -58,10 +58,10 @@ const PricingPage: React.FC = () => {
   const [billing, setBilling] = useState<'month' | 'year'>('month');
   const [subscribingPlan, setSubscribingPlan] = useState<'pro' | 'enterprise' | null>(null);
   const [pendingPlan, setPendingPlan] = useState<'pro' | 'enterprise' | null>(null);
-  // 📱 Mobile Money (Flutterwave) — ADDITIF : config + plan dont la modale est ouverte + pays choisi.
-  const [flwConfig, setFlwConfig] = useState<FlutterwaveConfig | null>(null);
-  const [flwPlan, setFlwPlan] = useState<'pro' | 'enterprise' | null>(null);
-  const [flwCountry, setFlwCountry] = useState<string>('');
+  // 📱 Mobile Money (PawaPay) — ADDITIF : config + plan dont la modale est ouverte + pays choisi.
+  const [ppConfig, setPpConfig] = useState<PawapayConfig | null>(null);
+  const [ppPlan, setPpPlan] = useState<'pro' | 'enterprise' | null>(null);
+  const [ppCountry, setPpCountry] = useState<string>('');
 
   // Charge la config publique (packs + offres + réglages) — tout est éditable en admin.
   const loadConfig = useCallback(async () => {
@@ -70,8 +70,8 @@ const PricingPage: React.FC = () => {
     if (data) setConfig(data);
     const bill = await getBilletterieConfig();
     if (bill.data?.coach_sub_price_chf) setCoachSubPrice(bill.data.coach_sub_price_chf);
-    const flw = await getFlutterwaveConfig();
-    if (flw.data?.configured) { setFlwConfig(flw.data); setFlwCountry((p) => p || flw.data!.countries[0]?.code || ''); }
+    const pp = await getPawapayConfig();
+    if (pp.data?.configured) { setPpConfig(pp.data); setPpCountry((p) => p || pp.data!.countries[0]?.code || ''); }
     setLoading(false);
   }, []);
 
@@ -88,8 +88,8 @@ const PricingPage: React.FC = () => {
     } else if (params.get('canceled') === '1') {
       showToast('Paiement annulé', 'default');
       window.history.replaceState({}, '', '/pricing');
-    } else if (params.get('sub') === 'flw') {
-      // 📱 Retour d'un abonnement Mobile Money : l'accès s'active via le webhook (léger délai).
+    } else if (params.get('sub') === 'pp') {
+      // 📱 Retour d'un abonnement Mobile Money (PawaPay) : l'accès s'active via le callback (léger délai).
       showToast('Paiement reçu — ton accès s\'active dans quelques instants 🎉', 'success');
       refreshCredits();
       setTimeout(() => refreshCredits(), 4000);
@@ -98,19 +98,18 @@ const PricingPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 📱 Abonnement (période) en Mobile Money → redirection Flutterwave. Renouvellement manuel à l'échéance.
+  // 📱 Abonnement (période) en Mobile Money → redirection PawaPay. Renouvellement manuel à l'échéance.
   const startSubscribeMobileMoney = useCallback(async (plan: 'pro' | 'enterprise') => {
-    const currency = flwConfig?.countries.find((c) => c.code === flwCountry)?.currency;
-    if (!currency) { showToast('Choisis ton pays', 'warning'); return; }
+    if (!ppCountry) { showToast('Choisis ton pays', 'warning'); return; }
     setSubscribingPlan(plan);
     try {
-      const { url, error } = await createCheckout(plan, billing, { provider: 'flutterwave', currency, country: flwCountry });
+      const { url, error } = await createCheckout(plan, billing, { provider: 'pawapay', country: ppCountry });
       if (url) window.location.href = url;
       else showToast(error || 'Impossible de démarrer l\'abonnement mobile money', 'error');
     } finally {
       setSubscribingPlan(null);
     }
-  }, [flwConfig, flwCountry, billing, showToast]);
+  }, [ppCountry, billing, showToast]);
 
   const handleAcceptTerms = async () => {
     if (termsChecked && !hasAcceptedTerms) {
@@ -406,8 +405,8 @@ const PricingPage: React.FC = () => {
                   <Button onClick={() => handleSubscribe('pro')} disabled={subscribingPlan === 'pro'} className="w-full text-white border-0" style={{ background: AFRO.gradient }}>
                     {subscribingPlan === 'pro' ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>) : (<>Commencer l'essai gratuit</>)}
                   </Button>
-                  {flwConfig?.configured && (
-                    <button onClick={() => setFlwPlan('pro')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors" data-testid="sub-mobilemoney-pro">
+                  {ppConfig?.configured && (
+                    <button onClick={() => setPpPlan('pro')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors" data-testid="sub-mobilemoney-pro">
                       📱 Payer en Mobile Money
                     </button>
                   )}
@@ -442,8 +441,8 @@ const PricingPage: React.FC = () => {
                   <Button onClick={() => handleSubscribe('enterprise')} disabled={subscribingPlan === 'enterprise'} className="w-full text-white border-0" style={{ background: AFRO.gradient }}>
                     {subscribingPlan === 'enterprise' ? (<><Loader2 size={16} className="mr-2 animate-spin" /> Redirection…</>) : (<>Commencer l'essai gratuit</>)}
                   </Button>
-                  {flwConfig?.configured && (
-                    <button onClick={() => setFlwPlan('enterprise')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors" data-testid="sub-mobilemoney-enterprise">
+                  {ppConfig?.configured && (
+                    <button onClick={() => setPpPlan('enterprise')} className="mt-2 w-full py-2 rounded-md text-white/80 text-sm border border-white/15 hover:bg-white/10 transition-colors" data-testid="sub-mobilemoney-enterprise">
                       📱 Payer en Mobile Money
                     </button>
                   )}
@@ -663,44 +662,45 @@ const PricingPage: React.FC = () => {
         </div>
       )}
 
-      {/* 📱 Modale Mobile Money : choix du pays → paiement d'UNE période via Flutterwave. */}
-      {flwPlan && flwConfig?.configured && (() => {
-        const cur = flwConfig.countries.find((c) => c.code === flwCountry)?.currency;
-        const rate = cur ? flwConfig.fx_rates[cur] : undefined;
-        const basePrice = flwPlan === 'pro' ? proPrice : entPrice;
+      {/* 📱 Modale Mobile Money : choix du pays → paiement d'UNE période via PawaPay. */}
+      {ppPlan && ppConfig?.configured && (() => {
+        const cur = ppConfig.countries.find((c) => c.code === ppCountry)?.currency;
+        const rate = cur ? ppConfig.fx_rates[cur] : undefined;
+        const basePrice = ppPlan === 'pro' ? proPrice : entPrice;
         const approx = cur && rate
           ? `≈ ${cur === 'XOF' || cur === 'XAF' ? Math.round(basePrice * rate).toLocaleString('fr-FR') : (basePrice * rate).toFixed(2)} ${cur}`
           : null;
         return (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4" onClick={() => setFlwPlan(null)}>
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4" onClick={() => setPpPlan(null)}>
             <div className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#14141A] p-5" onClick={(e) => e.stopPropagation()} data-testid="sub-mobilemoney-modal">
-              <h3 className="text-white font-semibold text-lg mb-1">📱 Mobile Money — {flwPlan === 'pro' ? proLabel : entLabel}</h3>
+              <h3 className="text-white font-semibold text-lg mb-1">📱 Mobile Money — {ppPlan === 'pro' ? proLabel : entLabel}</h3>
               <p className="text-white/50 text-xs mb-4">
-                Paiement d'{billing === 'month' ? 'un mois' : 'une année'} (Orange Money, MTN, Wave, M-Pesa…).
+                Paiement d'{billing === 'month' ? 'un mois' : 'une année'} (Orange, MTN, Moov, Wave, M-Pesa…).
                 À l'échéance, tu repaies pour prolonger (pas de prélèvement automatique en mobile money).
               </p>
               <label className="block text-left text-xs text-white/60 mb-1">Ton pays</label>
               <select
-                value={flwCountry}
-                onChange={(e) => setFlwCountry(e.target.value)}
+                value={ppCountry}
+                onChange={(e) => setPpCountry(e.target.value)}
                 className="w-full rounded-lg bg-black/40 border border-white/15 text-white text-sm px-3 py-2 mb-3"
                 data-testid="sub-mobilemoney-country"
               >
-                {flwConfig.countries.map((c) => (
-                  <option key={c.code} value={c.code}>{FLW_COUNTRY_LABELS[c.code] || c.code} ({c.currency})</option>
+                {ppConfig.countries.map((c) => (
+                  <option key={c.code} value={c.code}>{c.label} ({c.currency})</option>
                 ))}
               </select>
-              {approx && <p className="text-left text-xs text-white/50 mb-3">Montant : <span className="text-white/80 font-medium">{approx}</span> <span className="text-white/40">(≈, converti depuis le CHF)</span></p>}
+              {approx && <p className="text-left text-xs text-white/50 mb-2">Montant : <span className="text-white/80 font-medium">{approx}</span> <span className="text-white/40">(≈, converti depuis le CHF)</span></p>}
+              <p className="text-left text-[11px] text-white/40 mb-3">Tu choisiras ton opérateur sur la page sécurisée PawaPay.</p>
               <div className="flex gap-2">
-                <button onClick={() => setFlwPlan(null)} className="flex-1 py-2.5 rounded-lg text-white/70 text-sm border border-white/15 hover:bg-white/10">Annuler</button>
+                <button onClick={() => setPpPlan(null)} className="flex-1 py-2.5 rounded-lg text-white/70 text-sm border border-white/15 hover:bg-white/10">Annuler</button>
                 <button
-                  onClick={() => startSubscribeMobileMoney(flwPlan)}
-                  disabled={subscribingPlan === flwPlan || !flwCountry}
+                  onClick={() => startSubscribeMobileMoney(ppPlan)}
+                  disabled={subscribingPlan === ppPlan || !ppCountry}
                   className="flex-1 py-2.5 rounded-lg text-white text-sm font-semibold disabled:opacity-60"
                   style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
                   data-testid="sub-mobilemoney-pay"
                 >
-                  {subscribingPlan === flwPlan ? 'Redirection…' : 'Payer'}
+                  {subscribingPlan === ppPlan ? 'Redirection…' : 'Payer'}
                 </button>
               </div>
             </div>

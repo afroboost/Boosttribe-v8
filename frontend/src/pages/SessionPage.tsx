@@ -781,12 +781,17 @@ export const SessionPage: React.FC = () => {
     tick();
   }, [getMixerContext]);
 
-  // Un micro s'ACTIVE → auto-pause la musique (si elle jouait) et mémorise l'intention pour l'auto-resume.
-  const addMicHold = useCallback((key: string) => {
-    const wasEmpty = micHoldRef.current.size === 0;
-    micHoldRef.current.add(key);
-    if (!wasEmpty) return; // déjà en pause pour un autre micro actif
-    // 🎵 Musique
+  // ⏱️ ANTI-FLUTTER : garantit un écart minimal (~600ms) entre deux transitions RÉELLES pause↔play de la
+  //   musique. En mode Voix (VAD) sur haut-parleurs, l'écho HP pouvait enchaîner hold→resume→hold →
+  //   PAUSE→PLAY→PAUSE rapprochés (à-coups chez le participant). Les transitions trop proches sont
+  //   COALESCÉES vers l'état final. La 1re transition d'une salve reste immédiate (réactivité).
+  const MIN_HOLD_GAP_MS = 600;
+  const musicHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const musicHoldAppliedPausedRef = useRef(false); // dernier état RÉELLEMENT appliqué (true = musique en pause)
+  const musicHoldLastAtRef = useRef(0);
+
+  // Applique RÉELLEMENT la pause (musique + média partagé) et mémorise si ça jouait (pour l'auto-resume).
+  const applyMusicPause = useCallback(() => {
     const audioEl = getMusicEl();
     if (audioEl) {
       musicWasPlayingRef.current = !audioEl.paused && !audioEl.ended && !!audioEl.src;
@@ -799,12 +804,9 @@ export const SessionPage: React.FC = () => {
     catch { sharedMediaWasPlayingRef.current = false; }
   }, [getMusicEl]);
 
-  // Un micro se DÉSACTIVE (libération déjà faite par l'appelant). Quand PLUS AUCUN micro n'est actif :
-  //   resume() du contexte mixeur (suspendu par le changement de périphérique) + play() de l'élément
-  //   (→ HOST_COMMAND PLAY synchronisé) UNIQUEMENT si la musique jouait avant l'auto-pause. JAMAIS load().
-  const removeMicHold = useCallback((key: string) => {
-    micHoldRef.current.delete(key);
-    if (micHoldRef.current.size > 0) return; // un autre micro tient encore la pause
+  // Applique RÉELLEMENT la reprise — resume() du contexte mixeur + play() de l'élément UNIQUEMENT si la
+  //   musique jouait avant l'auto-pause. JAMAIS load() (reprise à la position courante).
+  const applyMusicResume = useCallback(() => {
     const shouldResume = musicWasPlayingRef.current;
     musicWasPlayingRef.current = false;
     // 🎬 Média partagé : reprise UNE fois (le heartbeat cale la position) UNIQUEMENT s'il jouait avant.
@@ -823,6 +825,34 @@ export const SessionPage: React.FC = () => {
     };
     tick();
   }, [getMusicEl, getMixerContext]);
+
+  // Programme l'état voulu (pause si un micro tient encore, sinon reprise) en respectant l'écart minimal.
+  const scheduleMusicHold = useCallback((shouldPause: boolean) => {
+    if (musicHoldTimerRef.current) { clearTimeout(musicHoldTimerRef.current); musicHoldTimerRef.current = null; }
+    if (shouldPause === musicHoldAppliedPausedRef.current) return; // déjà dans l'état voulu → rien à faire
+    const apply = () => {
+      musicHoldTimerRef.current = null;
+      if (shouldPause === musicHoldAppliedPausedRef.current) return; // l'état voulu a pu re-changer entre-temps
+      musicHoldAppliedPausedRef.current = shouldPause;
+      musicHoldLastAtRef.current = Date.now();
+      if (shouldPause) applyMusicPause(); else applyMusicResume();
+    };
+    const elapsed = Date.now() - musicHoldLastAtRef.current;
+    if (elapsed >= MIN_HOLD_GAP_MS) apply();                                        // 1re transition : immédiate
+    else musicHoldTimerRef.current = setTimeout(apply, MIN_HOLD_GAP_MS - elapsed);  // sinon : coalescing
+  }, [applyMusicPause, applyMusicResume]);
+
+  // Un micro s'ACTIVE → on VEUT la musique en pause (appliqué via le coalescing anti-flutter).
+  const addMicHold = useCallback((key: string) => {
+    micHoldRef.current.add(key);
+    scheduleMusicHold(micHoldRef.current.size > 0);
+  }, [scheduleMusicHold]);
+
+  // Un micro se DÉSACTIVE → si PLUS AUCUN micro n'est actif, on VEUT la reprise (via le coalescing).
+  const removeMicHold = useCallback((key: string) => {
+    micHoldRef.current.delete(key);
+    scheduleMusicHold(micHoldRef.current.size > 0);
+  }, [scheduleMusicHold]);
 
   // 🎯 POINT D'APPLICATION UNIQUE de l'état de lecture de l'HÔTE (source unique de vérité). TOUS les
   //   transports de synchro (HOST_COMMAND supabase, socket) passent par ici → plus de va-et-vient.

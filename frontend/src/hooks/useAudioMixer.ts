@@ -81,6 +81,20 @@ const initialState: MixerState = {
   isInitialized: false,
 };
 
+// 🎚️ Transition de gain LISSÉE (anti-clic) : rampe courte au lieu d'une marche instantanée
+//   (setValueAtTime) → plus de saut de volume « d'un coup » sur le canal MUSIQUE. NE PAS utiliser pour
+//   les limiteurs/compresseurs (leur attack/release doit rester en setValueAtTime).
+function rampGain(g: GainNode, target: number, ctx: BaseAudioContext | null | undefined, seconds = 0.12): void {
+  const now = ctx?.currentTime ?? 0;
+  try {
+    g.gain.cancelScheduledValues(now);
+    g.gain.setValueAtTime(g.gain.value, now);       // ancre sur la valeur COURANTE (même en pleine rampe)
+    g.gain.linearRampToValueAtTime(target, now + seconds);
+  } catch {
+    try { g.gain.value = target; } catch { /* ignore */ }
+  }
+}
+
 /**
  * Hook pour gérer le mixage audio avec des canaux indépendants
  * La musique et le micro ne s'affectent PAS mutuellement
@@ -448,7 +462,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     // element.volume (côté SessionPage) → pas de double atténuation, et headroom > 100% réel.
     if (musicGainRef.current) {
       // La compensation de ducking (micDuckCompRef) s'ajoute par-dessus, de façon transparente.
-      musicGainRef.current.gain.setValueAtTime(Math.max(1, clamped) * micDuckCompRef.current, audioContextRef.current?.currentTime || 0);
+      // 🎚️ Rampe ~120ms → changement de volume en douceur, plus de saut audible.
+      rampGain(musicGainRef.current, Math.max(1, clamped) * micDuckCompRef.current, audioContextRef.current);
     }
   }, []);
 
@@ -463,7 +478,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     micDuckCompRef.current = active ? MIC_DUCK_COMPENSATION : 1;
     if (musicGainRef.current) {
       const base = Math.max(1, state.musicVolume);
-      musicGainRef.current.gain.setValueAtTime(base * micDuckCompRef.current, audioContextRef.current?.currentTime || 0);
+      rampGain(musicGainRef.current, base * micDuckCompRef.current, audioContextRef.current); // 🎚️ rampe ~120ms
     }
   }, [isIOS, state.musicVolume]);
 
@@ -621,7 +636,9 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     vadEndCbRef.current = onSpeechEnd;
     if (vadTimerRef.current != null) return; // déjà en cours (callbacks rafraîchis ci-dessus)
 
-    const OFFSET = opts?.thresholdOffsetDb ?? 8; // dB au-dessus du plancher de bruit
+    const OFFSET = opts?.thresholdOffsetDb ?? 10; // dB au-dessus du plancher de bruit (relevé de 8→10 :
+    //   sur haut-parleurs, la musique/écho HP redéclenchait la parole → flutter pause/play. L'onset exige
+    //   déjà ONSET_MS=120ms (~2-3 frames) : la vraie voix reste détectée, le bleed HP beaucoup moins.
     const ONSET_MS = 120, HANG_MS = 900, CALIB_MS = 500;
     const buf = new Float32Array(analyser.fftSize);
     let speaking = false;

@@ -78,6 +78,8 @@ export const HomeCarousel: React.FC = () => {
                   className="w-full h-full object-cover"
                   loading={i === 0 ? 'eager' : 'lazy'}
                   draggable={false}
+                  // 🎞️ Noir & blanc forcé (cohérence Apple N&B — pas de mélange de couleurs).
+                  style={{ filter: 'grayscale(100%) contrast(1.05)' }}
                 />
                 {/* 📝 Légende visible — overlay bas, dégradé sombre pour la lisibilité (rien si vide). */}
                 {caption && (
@@ -103,7 +105,8 @@ export const HomeCarousel: React.FC = () => {
                 className="h-2 rounded-full transition-all"
                 style={{
                   width: i === index ? 22 : 8,
-                  background: i === index ? 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' : 'rgba(255,255,255,0.5)',
+                  // N&B strict : point actif blanc plein, inactifs blancs translucides (plus de dégradé rose).
+                  background: i === index ? '#FFFFFF' : 'rgba(255,255,255,0.45)',
                 }}
               />
             ))}

@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Radio, Video, FileText, ArrowRight, ChevronDown } from "lucide-react";
+import { Radio, Video, FileText, ArrowRight, RotateCcw } from "lucide-react";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Input } from "@/components/ui/input";
 import { useTheme } from "@/context/ThemeContext";
@@ -117,7 +117,7 @@ export const HeroSection: React.FC = () => {
   return (
     <section
       ref={revealRef}
-      className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden px-6 pt-28 pb-24"
+      className="relative min-h-screen w-full flex flex-col justify-end overflow-hidden px-6 sm:px-10 pt-28 pb-14 md:pb-20"
       style={{ background: "#000000", fontFamily: fonts.body }}
     >
       {/* ===== Média de fond plein écran ===== */}
@@ -132,13 +132,16 @@ export const HeroSection: React.FC = () => {
             preload="metadata"
             poster={heroPoster || undefined}
             key={heroVideo}
+            // 🎞️ Noir & blanc forcé : même une vidéo colorée s'affiche en N&B (règle 2 couleurs).
+            style={{ filter: "grayscale(100%) contrast(1.06) brightness(0.92)" }}
           >
             <source src={heroVideo} />
           </video>
         ) : bgImage ? (
           <div
             className="kenburns-media absolute inset-0 w-full h-full bg-center bg-cover"
-            style={{ backgroundImage: `url("${bgImage}")` }}
+            // 🎞️ Noir & blanc forcé sur l'image de fond (même si le client met une photo colorée).
+            style={{ backgroundImage: `url("${bgImage}")`, filter: "grayscale(100%) contrast(1.06) brightness(0.92)" }}
           />
         ) : (
           // Aucun média fourni → fond sombre sobre (on ne charge rien de lourd)
@@ -148,24 +151,63 @@ export const HeroSection: React.FC = () => {
         <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 42%, rgba(0,0,0,0.78) 100%)" }} />
       </div>
 
-      {/* ===== Contenu superposé, centré ===== */}
-      <div className="relative z-10 w-full max-w-4xl mx-auto text-center">
-        <p className="eyebrow reveal mb-6" style={{ color: colors.primary }}>
-          {t('hero.badge')}
-        </p>
+      {/* ===== Contenu superposé — mise en page Apple : texte bas-gauche, actions bas-droite ===== */}
+      <div className="relative z-10 w-full max-w-7xl mx-auto flex flex-col gap-10 md:flex-row md:items-end md:justify-between">
 
-        <h1 className="font-display display-hero reveal reveal-delay-1 mb-7 text-white" style={{ textShadow: "0 2px 30px rgba(0,0,0,0.4)" }}>
-          La même musique.
-          <br />
-          <span className="text-white/70">Au même instant.</span>
-        </h1>
+        {/* ---- GAUCHE : titre éditorial, aligné à gauche ---- */}
+        <div className="text-left max-w-2xl">
+          <p className="eyebrow reveal mb-5" style={{ color: colors.primary }}>
+            {t('hero.badge')}
+          </p>
 
-        <p className="reveal reveal-delay-2 mx-auto max-w-xl text-lg sm:text-xl leading-relaxed mb-12 text-white/75">
-          {t('hero.subtitle')}
-        </p>
+          <h1 className="font-display display-hero reveal reveal-delay-1 mb-5 text-white" style={{ textShadow: "0 2px 30px rgba(0,0,0,0.4)" }}>
+            La même musique.
+            <br />
+            <span className="text-white/60">Au même instant.</span>
+          </h1>
 
-        {/* Console « rejoindre / créer » — fonctionnel, verre sur média sombre */}
-        <div className="reveal reveal-delay-3 mx-auto max-w-md text-left">
+          <p className="reveal reveal-delay-2 max-w-xl text-lg sm:text-xl leading-relaxed text-white/75">
+            {t('hero.subtitle')}
+          </p>
+
+          {/* Bénéfices honnêtes — ligne discrète sous le titre */}
+          <div className="reveal reveal-delay-3 mt-8 flex flex-col sm:flex-row sm:flex-wrap items-start sm:items-center gap-x-7 gap-y-2.5 text-sm text-white/55">
+            {HERO_BENEFITS.map(({ icon: Icon, label }, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <Icon size={15} className="flex-shrink-0 text-white/80" />
+                <span style={{ fontFamily: fonts.body }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ---- DROITE : module d'action compact (coin « prix / Buy » d'Apple) ---- */}
+        <div className="reveal reveal-delay-2 w-full md:w-[360px] md:flex-shrink-0 text-left">
+          {/* Item 3 : Reprendre la dernière session — ICÔNE seule, révèle le libellé au survol/focus */}
+          {lastCode && (
+            <div className="flex justify-start md:justify-end mb-3">
+              <button
+                onClick={handleResumeSession}
+                disabled={isJoining}
+                aria-label="Reprendre la session"
+                title="Reprendre la session"
+                className="group flex items-center gap-2 h-10 rounded-full px-2.5 transition-all duration-300 disabled:opacity-60 hover:bg-white/[0.16]"
+                style={{
+                  background: 'rgba(255,255,255,0.10)',
+                  border: '1px solid rgba(255,255,255,0.22)',
+                  color: '#FFFFFF',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                }}
+              >
+                <RotateCcw size={16} className="flex-shrink-0" />
+                <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 group-hover:max-w-[240px] group-hover:opacity-100 group-focus:max-w-[240px] group-focus:opacity-100 transition-all duration-300 text-sm">
+                  Reprendre la session <span className="font-mono">{lastCode}</span>
+                </span>
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleJoinSession} className="space-y-3">
             <div className="relative">
               <Input
@@ -206,25 +248,6 @@ export const HeroSection: React.FC = () => {
             </PrimaryButton>
           </form>
 
-          {/* Item 3 : Reprendre la dernière session mémorisée */}
-          {lastCode && (
-            <button
-              onClick={handleResumeSession}
-              disabled={isJoining}
-              className="w-full h-12 mt-3 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:bg-white/[0.14] disabled:opacity-60"
-              style={{
-                background: 'rgba(255,255,255,0.08)',
-                border: '1px solid rgba(255,255,255,0.20)',
-                color: '#FFFFFF',
-              }}
-            >
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              <span className="truncate">Reprendre la session <span className="font-mono">{lastCode}</span></span>
-            </button>
-          )}
-
           {/* Séparateur */}
           <div className="relative my-5">
             <div className="absolute inset-0 flex items-center">
@@ -252,24 +275,6 @@ export const HeroSection: React.FC = () => {
             <ArrowRight size={16} className="transition-transform duration-200 group-hover:translate-x-0.5" />
           </button>
         </div>
-
-        {/* Bénéfices honnêtes — ligne discrète */}
-        <div className="reveal mt-16 flex flex-col sm:flex-row items-center justify-center gap-x-8 gap-y-3 text-sm text-white/55">
-          {HERO_BENEFITS.map(({ icon: Icon, label }, index) => (
-            <div key={index} className="flex items-center gap-2">
-              <Icon size={15} className="flex-shrink-0 text-white/80" />
-              <span style={{ fontFamily: fonts.body }}>{label}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Indicateur de défilement (chevron discret, façon Apple) */}
-      <div className="absolute bottom-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 text-white/60">
-        <span className="text-[11px] uppercase tracking-[0.2em]" style={{ fontFamily: fonts.body }}>
-          {theme.scrollIndicator}
-        </span>
-        <ChevronDown size={20} className="animate-[bt-float_1.8s_ease-in-out_infinite]" />
       </div>
     </section>
   );

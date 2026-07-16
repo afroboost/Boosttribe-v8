@@ -351,7 +351,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
                   setError('');
                 }}
                 placeholder={isHost ? 'Coach' : 'Entrez votre pseudo'}
-                className="h-12 text-lg text-center bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[#8A2EFF]"
+                className="h-12 text-lg text-center bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[#7A5CFF]"
                 autoFocus
                 maxLength={20}
               />
@@ -366,7 +366,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
               className="w-full h-12 text-white border-none font-medium flex items-center justify-center gap-2"
               style={{
                 background: theme.colors.gradient.primary,
-                boxShadow: '0 4px 24px rgba(138, 46, 255, 0.35)',
+                boxShadow: '0 4px 24px rgba(122, 92, 255, 0.35)',
               }}
             >
               {isHost ? <Music className="w-4 h-4" /> : <Headphones className="w-4 h-4" />}
@@ -479,7 +479,7 @@ const CreateSessionView: React.FC<CreateSessionViewProps> = ({ onCreateSession, 
           className="w-full h-12 text-white border-none font-medium flex items-center justify-center gap-2"
           style={{
             background: theme.colors.gradient.primary,
-            boxShadow: '0 4px 24px rgba(138, 46, 255, 0.35)',
+            boxShadow: '0 4px 24px rgba(122, 92, 255, 0.35)',
           }}
         >
           <Music className="w-4 h-4" />
@@ -3418,7 +3418,7 @@ export const SessionPage: React.FC = () => {
   //    Réutilise l'UNIQUE élément musique (#bt-music-audio) et le HOST_COMMAND existant (aucun 2ᵉ <audio>).
   const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
     <div
-      className="flex items-center gap-2 rounded-2xl border border-[#8A2EFF]/25 bg-[rgba(20,20,25,0.95)] px-3 py-2"
+      className="flex items-center gap-2 rounded-2xl border border-[#7A5CFF]/25 bg-[rgba(20,20,25,0.95)] px-3 py-2"
       data-testid="mini-audio-control"
     >
       <button onClick={() => handleMiniTrackNav(-1)} className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors" title="Piste précédente" data-testid="mini-audio-prev">
@@ -3427,7 +3427,7 @@ export const SessionPage: React.FC = () => {
       <button
         onClick={handleMiniPlayPause}
         className="p-2 rounded-full text-white flex-shrink-0"
-        style={{ background: 'linear-gradient(135deg,#8A2EFF,#FF2FB3)' }}
+        style={{ background: 'linear-gradient(135deg,#7A5CFF,#E24A9E)' }}
         title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
         data-testid="mini-audio-playpause"
       >
@@ -3870,7 +3870,7 @@ export const SessionPage: React.FC = () => {
               className="w-full h-14 rounded-xl text-white font-bold text-lg flex items-center justify-center gap-3 transition-transform hover:scale-105 active:scale-95"
               style={{
                 background: theme.colors.gradient.primary,
-                boxShadow: '0 4px 24px rgba(138, 46, 255, 0.4)',
+                boxShadow: '0 4px 24px rgba(122, 92, 255, 0.4)',
               }}
               data-testid="activate-sound-btn"
             >
@@ -4117,7 +4117,7 @@ export const SessionPage: React.FC = () => {
               <div className="hidden lg:flex items-center gap-1.5 p-1 rounded-xl border border-white/10 bg-white/5 w-fit">
                 <button
                   onClick={() => setLiveMode(false)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[#8A2EFF] text-white' : 'text-white/60 hover:text-white'}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[#7A5CFF] text-white' : 'text-white/60 hover:text-white'}`}
                   data-testid="mode-listen"
                 >
                   <Headphones className="w-4 h-4" /> {t('session.mode.listen')}
@@ -4134,7 +4134,7 @@ export const SessionPage: React.FC = () => {
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     isFree ? 'text-white/40 cursor-not-allowed' : liveMode ? 'text-white' : 'text-white/60 hover:text-white'
                   }`}
-                  style={liveMode && !isFree ? { background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' } : undefined}
+                  style={liveMode && !isFree ? { background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' } : undefined}
                   title={isFree ? 'Live Visio : procurez-vous des crédits' : undefined}
                   data-testid="mode-live"
                 >
@@ -4159,7 +4159,7 @@ export const SessionPage: React.FC = () => {
                 onClick={handleTogglePrivacy}
                 className={`bt-tab-access flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium w-fit transition-colors ${
                   isPrivate
-                    ? 'bg-[#8A2EFF]/15 border-[#8A2EFF]/40 text-[#c9a3ff]'
+                    ? 'bg-[#7A5CFF]/15 border-[#7A5CFF]/40 text-[#c9a3ff]'
                     : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
                 }`}
                 title="Session privée : chaque participant doit être admis manuellement"
@@ -4167,7 +4167,7 @@ export const SessionPage: React.FC = () => {
               >
                 {isPrivate ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
                 {isPrivate ? 'Session privée (salle d\'attente)' : 'Session publique (entrée directe)'}
-                <span className={`ml-1 inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors ${isPrivate ? 'bg-[#8A2EFF]' : 'bg-white/20'}`}>
+                <span className={`ml-1 inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors ${isPrivate ? 'bg-[#7A5CFF]' : 'bg-white/20'}`}>
                   <span className={`h-3 w-3 rounded-full bg-white transition-transform ${isPrivate ? 'translate-x-3' : ''}`} />
                 </span>
               </button>
@@ -4217,7 +4217,7 @@ export const SessionPage: React.FC = () => {
                     Acheter des crédits
                   </button>
                 ) : (
-                  <button onClick={() => sessionId && setLiveMode(true)} className="px-4 py-2 rounded-lg text-white text-sm font-medium inline-flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+                  <button onClick={() => sessionId && setLiveMode(true)} className="px-4 py-2 rounded-lg text-white text-sm font-medium inline-flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
                     <Video className="w-4 h-4" /> Démarrer la Live Visio
                   </button>
                 )}
@@ -4307,7 +4307,7 @@ export const SessionPage: React.FC = () => {
                   onClick={handleToggleSelfMonitor}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
                     selfMonitorOn
-                      ? 'bg-[#8A2EFF]/25 text-[#C9A7FF] border border-[#8A2EFF]/50 hover:bg-[#8A2EFF]/35'
+                      ? 'bg-[#7A5CFF]/25 text-[#C9A7FF] border border-[#7A5CFF]/50 hover:bg-[#7A5CFF]/35'
                       : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
                   }`}
                   title={selfMonitorOn ? 'Couper le monitoring de ma voix' : 'M\'entendre (écouter ma propre voix — attention au larsen)'}
@@ -4421,7 +4421,7 @@ export const SessionPage: React.FC = () => {
                     data-testid="panel-code-toggle"
                   >
                     <CardTitle className="text-white text-lg flex items-center gap-2">
-                      <KeyRound className="w-5 h-5 text-[#8A2EFF]" />
+                      <KeyRound className="w-5 h-5 text-[#7A5CFF]" />
                       Code de la session
                     </CardTitle>
                     <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.code ? 'rotate-180' : ''}`} />
@@ -4430,7 +4430,7 @@ export const SessionPage: React.FC = () => {
                 {panelOpen.code && (
                 <CardContent className="p-4 pt-0 space-y-4">
                   {/* 🔢 BUG 5: CODE de session bien visible + explication pour rejoindre */}
-                  <div className="rounded-xl border border-[#8A2EFF]/30 bg-[#8A2EFF]/10 p-4 text-center">
+                  <div className="rounded-xl border border-[#7A5CFF]/30 bg-[#7A5CFF]/10 p-4 text-center">
                     <p className="text-white/50 text-xs mb-2 uppercase tracking-wider">
                       Code de la session
                     </p>
@@ -4506,10 +4506,10 @@ export const SessionPage: React.FC = () => {
                   {sessionUrl && (
                     <div className="flex flex-col items-center gap-2 pt-1">
                       <div className="flex items-center gap-1.5 text-white/50 text-xs">
-                        <QrCode className="w-4 h-4 text-[#8A2EFF]" />
+                        <QrCode className="w-4 h-4 text-[#7A5CFF]" />
                         Scannez pour rejoindre
                       </div>
-                      <div className="rounded-xl bg-white p-3 shadow-lg shadow-[#8A2EFF]/10">
+                      <div className="rounded-xl bg-white p-3 shadow-lg shadow-[#7A5CFF]/10">
                         <QRCodeCanvas
                           value={sessionUrl}
                           size={160}
@@ -4653,7 +4653,7 @@ export const SessionPage: React.FC = () => {
                     {coachMicInvite && !isTalking && (
                       <button
                         onClick={() => { setCoachMicInvite(false); handleToggleTalk(); }}
-                        className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-[#8A2EFF]/20 text-[#c9a3ff] border border-[#8A2EFF]/40 hover:bg-[#8A2EFF]/30 transition-colors animate-pulse"
+                        className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-[#7A5CFF]/20 text-[#c9a3ff] border border-[#7A5CFF]/40 hover:bg-[#7A5CFF]/30 transition-colors animate-pulse"
                         data-testid="coach-mic-invite"
                       >
                         <Mic className="w-4 h-4 flex-shrink-0" />
@@ -4798,11 +4798,11 @@ export const SessionPage: React.FC = () => {
                         className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
                           syncState?.isLive ? 'animate-ping' : ''
                         }`}
-                        style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
+                        style={{ background: syncState?.isLive ? '#7A5CFF' : '#666' }}
                       />
                       <span
                         className="relative inline-flex rounded-full h-3 w-3"
-                        style={{ background: syncState?.isLive ? '#8A2EFF' : '#666' }}
+                        style={{ background: syncState?.isLive ? '#7A5CFF' : '#666' }}
                       />
                     </span>
                     {t('session.status')}
@@ -4920,7 +4920,7 @@ export const SessionPage: React.FC = () => {
               <CardContent className="pt-0 space-y-2">
                 {/* 🎙️ POINT 3 : bandeau "conversation privée" + retour à tous (hôte) */}
                 {isHost && privateTargets.size > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#8A2EFF]/15 border border-[#8A2EFF]/30">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#7A5CFF]/15 border border-[#7A5CFF]/30">
                     <span className="flex items-center gap-1.5 text-[#c9a3ff] text-xs min-w-0">
                       <Mic className="w-3.5 h-3.5 flex-shrink-0" />
                       <span className="truncate">Conversation privée — {privateTargets.size} participant{privateTargets.size > 1 ? 's' : ''}</span>
@@ -5007,7 +5007,7 @@ export const SessionPage: React.FC = () => {
       {isHost && promoAccessReqs.length > 0 && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[145] w-[min(92vw,420px)] space-y-2" data-testid="access-requests">
           {promoAccessReqs.map((r) => (
-            <div key={r.id} className="flex items-center gap-2 rounded-2xl border border-[#8A2EFF]/40 bg-[#15151b] shadow-2xl px-3 py-2.5">
+            <div key={r.id} className="flex items-center gap-2 rounded-2xl border border-[#7A5CFF]/40 bg-[#15151b] shadow-2xl px-3 py-2.5">
               <span className="flex-1 min-w-0 text-sm text-white truncate">
                 <span className="text-white/50">Demande d'accès : </span><span className="font-medium">{r.requester_name}</span>
               </span>
@@ -5068,7 +5068,7 @@ export const SessionPage: React.FC = () => {
           <button
             onClick={() => setShowMobileCameras((v) => !v)}
             className="fixed bottom-24 right-4 z-[95] flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold text-white shadow-lg"
-            style={{ background: 'linear-gradient(135deg,#8A2EFF,#FF2FB3)' }}
+            style={{ background: 'linear-gradient(135deg,#7A5CFF,#E24A9E)' }}
             data-testid="mobile-see-cameras"
           >
             <Video className="w-4 h-4" /> {showMobileCameras ? 'Masquer' : 'Voir'} les caméras

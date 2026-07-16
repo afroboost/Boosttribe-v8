@@ -205,19 +205,19 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           <div 
             className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium"
             style={{
-              background: 'rgba(138, 46, 255, 0.2)',
-              border: '1px solid rgba(138, 46, 255, 0.4)',
-              color: '#8A2EFF',
+              background: 'rgba(122, 92, 255, 0.2)',
+              border: '1px solid rgba(122, 92, 255, 0.4)',
+              color: '#7A5CFF',
             }}
           >
             <span className="relative flex h-2 w-2">
               <span 
                 className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                style={{ background: '#8A2EFF' }}
+                style={{ background: '#7A5CFF' }}
               />
               <span 
                 className="relative inline-flex rounded-full h-2 w-2"
-                style={{ background: '#8A2EFF' }}
+                style={{ background: '#7A5CFF' }}
               />
             </span>
             {isHost ? 'LIVE' : 'SYNC'}
@@ -235,7 +235,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             style={{
               background: coverArt 
                 ? `url(${coverArt}) center/cover`
-                : 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)',
+                : 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)',
             }}
           >
             {!coverArt && (
@@ -288,7 +288,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               className="absolute inset-y-0 left-0 rounded-full transition-all duration-100"
               style={{ 
                 width: `${progressPercent}%`,
-                background: 'linear-gradient(90deg, #8A2EFF 0%, #FF2FB3 100%)',
+                background: 'linear-gradient(90deg, #7A5CFF 0%, #E24A9E 100%)',
               }}
             />
             {/* Thumb - UNIQUEMENT pour l'hôte */}
@@ -342,7 +342,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 onChange={handleVolumeChange}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer flex-shrink-0"
                 style={{
-                  background: `linear-gradient(to right, #8A2EFF ${audioState.volume * 100}%, rgba(255,255,255,0.2) ${audioState.volume * 100}%)`,
+                  background: `linear-gradient(to right, #7A5CFF ${audioState.volume * 100}%, rgba(255,255,255,0.2) ${audioState.volume * 100}%)`,
                 }}
               />
             </div>
@@ -354,7 +354,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 className={`p-2 transition-colors ${
                   repeatMode === 'none' 
                     ? 'text-white/40 hover:text-white/60' 
-                    : 'text-[#8A2EFF] hover:text-[#FF2FB3]'
+                    : 'text-[#7A5CFF] hover:text-[#E24A9E]'
                 }`}
                 title={
                   repeatMode === 'none' ? 'Répétition désactivée' :
@@ -383,9 +383,9 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             `}
             style={{
               background: isHost && !disabled 
-                ? 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' 
+                ? 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' 
                 : 'linear-gradient(135deg, #666 0%, #888 100%)',
-              boxShadow: isHost && !disabled ? '0 4px 24px rgba(138, 46, 255, 0.4)' : 'none',
+              boxShadow: isHost && !disabled ? '0 4px 24px rgba(122, 92, 255, 0.4)' : 'none',
             }}
             data-testid="play-pause-btn"
           >
@@ -451,7 +451,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               className="w-1 rounded-full transition-all duration-150"
               style={{
                 height: `${height}px`,
-                background: `linear-gradient(to top, #8A2EFF, #FF2FB3)`,
+                background: `linear-gradient(to top, #7A5CFF, #E24A9E)`,
                 opacity: audioState.isPlaying ? 0.8 : 0.3,
               }}
             />

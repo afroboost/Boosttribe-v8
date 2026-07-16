@@ -183,11 +183,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div 
           className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-20 blur-3xl"
-          style={{ background: "radial-gradient(circle, #8A2EFF 0%, transparent 70%)" }}
+          style={{ background: "radial-gradient(circle, #7A5CFF 0%, transparent 70%)" }}
         />
         <div 
           className="absolute -bottom-1/4 -right-1/4 w-1/2 h-1/2 rounded-full opacity-15 blur-3xl"
-          style={{ background: "radial-gradient(circle, #FF2FB3 0%, transparent 70%)" }}
+          style={{ background: "radial-gradient(circle, #E24A9E 0%, transparent 70%)" }}
         />
       </div>
 
@@ -197,7 +197,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
           <div className="flex justify-center mb-4">
             <div 
               className="w-16 h-16 rounded-xl flex items-center justify-center"
-              style={{ background: "linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)" }}
+              style={{ background: "linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)" }}
             >
               <svg 
                 viewBox="0 0 24 24" 
@@ -233,7 +233,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
                 value={password}
                 onChange={handlePasswordChange}
                 placeholder="Entrez le mot de passe"
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[#8A2EFF] h-12"
+                className="bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[#7A5CFF] h-12"
                 autoFocus
                 autoComplete="current-password"
                 disabled={isLoading}
@@ -255,10 +255,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
               className="w-full h-12 text-white border-none font-medium text-base"
               style={{ 
                 background: password.length > 0 
-                  ? "linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)"
+                  ? "linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)"
                   : "rgba(255,255,255,0.1)",
                 boxShadow: password.length > 0 
-                  ? "0 4px 24px rgba(138, 46, 255, 0.35)"
+                  ? "0 4px 24px rgba(122, 92, 255, 0.35)"
                   : "none",
               }}
             >

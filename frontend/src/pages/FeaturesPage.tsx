@@ -269,7 +269,7 @@ const FeaturesPage: React.FC = () => {
       <section 
         className="py-20 px-4 sm:px-6 lg:px-8"
         style={{
-          background: "linear-gradient(180deg, transparent 0%, rgba(138, 46, 255, 0.1) 50%, transparent 100%)",
+          background: "linear-gradient(180deg, transparent 0%, rgba(122, 92, 255, 0.1) 50%, transparent 100%)",
         }}
       >
         <div className="max-w-3xl mx-auto text-center">

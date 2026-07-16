@@ -664,7 +664,7 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
             <ArrowLeft className="w-4 h-4" /> Retour
           </button>
           <span className="flex items-center gap-2 text-white/70 text-sm min-w-0">
-            <span className="text-[#8A2EFF]">{icon}</span>
+            <span className="text-[#7A5CFF]">{icon}</span>
             <span className="truncate hidden sm:block">{media.title || 'Contenu partagé'}</span>
           </span>
           {/* spacer pour garder le titre centré (un seul bouton plein écran : pas de doublon) */}
@@ -673,7 +673,7 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
       ) : (
         <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
           <div className="flex items-center gap-2 text-white/80 text-sm min-w-0">
-            <span className="text-[#8A2EFF]">{icon}</span>
+            <span className="text-[#7A5CFF]">{icon}</span>
             <span className="truncate">{media.title || 'Contenu partagé'}</span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">

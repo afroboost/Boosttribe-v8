@@ -41,12 +41,12 @@ export const StageRequestsPanel: React.FC<StageRequestsPanelProps> = ({
   };
 
   return (
-    <div className="rounded-2xl border border-[#8A2EFF]/40 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="stage-requests-panel">
+    <div className="rounded-2xl border border-[#7A5CFF]/40 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="stage-requests-panel">
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/10">
         <h3 className="flex items-center gap-2 text-white text-sm font-semibold min-w-0">
           <span className="relative flex-shrink-0">
-            <Hand className="w-4 h-4 text-[#8A2EFF]" />
-            <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#8A2EFF] text-white text-[10px] font-bold flex items-center justify-center">
+            <Hand className="w-4 h-4 text-[#7A5CFF]" />
+            <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#7A5CFF] text-white text-[10px] font-bold flex items-center justify-center">
               {requests.length}
             </span>
           </span>
@@ -67,7 +67,7 @@ export const StageRequestsPanel: React.FC<StageRequestsPanelProps> = ({
                 onClick={() => handleAccept(r.userId)}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ${
                   pickFor === r.userId
-                    ? 'bg-[#8A2EFF]/30 text-[#c9a3ff]'
+                    ? 'bg-[#7A5CFF]/30 text-[#c9a3ff]'
                     : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
                 }`}
                 title={full ? 'Scène pleine — choisir qui retirer' : 'Accepter'}

@@ -117,8 +117,8 @@ const DEFAULT_SETTINGS: SiteSettings = {
   site_badge: 'La communauté des créateurs',
   favicon_url: '',
   home_carousel: [],
-  color_primary: '#8A2EFF',
-  color_secondary: '#FF2FB3',
+  color_primary: '#7A5CFF',
+  color_secondary: '#E24A9E',
   color_background: '#000000',
   btn_login: 'Connexion',
   btn_start: 'Commencer',
@@ -1312,14 +1312,14 @@ const Dashboard: React.FC = () => {
                   label="Couleur Primaire"
                   value={settings.color_primary}
                   onChange={(v) => handleUpdate('color_primary', v)}
-                  placeholder="#8A2EFF"
+                  placeholder="#7A5CFF"
                   isColor
                 />
                 <EditableField
                   label="Couleur Secondaire"
                   value={settings.color_secondary}
                   onChange={(v) => handleUpdate('color_secondary', v)}
-                  placeholder="#FF2FB3"
+                  placeholder="#E24A9E"
                   isColor
                 />
                 <EditableField
@@ -1382,7 +1382,7 @@ const Dashboard: React.FC = () => {
           <Card className="border-white/10 bg-white/5 mb-6">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
-                <KeyRound size={20} className="text-[#8A2EFF]" />
+                <KeyRound size={20} className="text-[#7A5CFF]" />
                 Clés API Stripe
               </CardTitle>
               <CardDescription className="text-white/50">
@@ -1439,7 +1439,7 @@ const Dashboard: React.FC = () => {
                 onClick={handleSaveStripeKeys}
                 disabled={keysSaving || keysLoading}
                 className="text-white border-none"
-                style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+                style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
               >
                 <Save size={16} className="mr-1.5" />
                 {keysSaving ? 'Enregistrement…' : 'Enregistrer les clés'}
@@ -1536,7 +1536,7 @@ const Dashboard: React.FC = () => {
                 onClick={handleSaveAiKey}
                 disabled={aiKeySaving || !aiKeyInput.trim()}
                 className="text-white border-none"
-                style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+                style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
               >
                 <Save size={16} className="mr-1.5" />
                 {aiKeySaving ? 'Enregistrement…' : 'Enregistrer la clé IA'}
@@ -2535,7 +2535,7 @@ const Dashboard: React.FC = () => {
                   <Users size={20} className="text-purple-400" />
                   Utilisateurs ({filteredUsers.length})
                 </CardTitle>
-                <Button size="sm" onClick={handleExportCsv} className="text-white border-none" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+                <Button size="sm" onClick={handleExportCsv} className="text-white border-none" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
                   <Download size={14} className="mr-1" /> Télécharger la liste
                 </Button>
               </div>

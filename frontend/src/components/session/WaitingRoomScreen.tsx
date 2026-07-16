@@ -16,14 +16,14 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({ name, phot
     <div className="min-h-screen flex items-center justify-center p-6" style={{ background: '#0a0a0f' }}>
       {/* halos décoratifs */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-20 blur-3xl" style={{ background: 'radial-gradient(circle, #8A2EFF 0%, transparent 70%)' }} />
-        <div className="absolute -bottom-1/4 -right-1/4 w-1/2 h-1/2 rounded-full opacity-15 blur-3xl" style={{ background: 'radial-gradient(circle, #FF2FB3 0%, transparent 70%)' }} />
+        <div className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-20 blur-3xl" style={{ background: 'radial-gradient(circle, #7A5CFF 0%, transparent 70%)' }} />
+        <div className="absolute -bottom-1/4 -right-1/4 w-1/2 h-1/2 rounded-full opacity-15 blur-3xl" style={{ background: 'radial-gradient(circle, #E24A9E 0%, transparent 70%)' }} />
       </div>
 
       <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/10 bg-[rgba(20,20,25,0.9)] backdrop-blur-xl p-8 text-center">
         {/* Avatar */}
-        <div className="w-20 h-20 mx-auto mb-5 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-[#8A2EFF]/40"
-          style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+        <div className="w-20 h-20 mx-auto mb-5 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-[#7A5CFF]/40"
+          style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
           {photoUrl ? (
             <img src={photoUrl} alt={name} className="w-full h-full object-cover" />
           ) : (
@@ -43,7 +43,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({ name, phot
         ) : (
           <>
             <div className="flex items-center justify-center gap-2 mb-3">
-              <span className="flex items-center gap-1.5 text-[#c9a3ff] text-xs px-2.5 py-1 rounded-full bg-[#8A2EFF]/15 border border-[#8A2EFF]/30">
+              <span className="flex items-center gap-1.5 text-[#c9a3ff] text-xs px-2.5 py-1 rounded-full bg-[#7A5CFF]/15 border border-[#7A5CFF]/30">
                 <ShieldCheck className="w-3.5 h-3.5" /> Session privée
               </span>
             </div>
@@ -54,7 +54,7 @@ export const WaitingRoomScreen: React.FC<WaitingRoomScreenProps> = ({ name, phot
             <p className="text-white/40 text-xs mt-2 mb-6">
               {checking ? 'Un instant…' : "Votre demande a été envoyée. Vous entrerez automatiquement dès que l'hôte vous admet."}
             </p>
-            <div className="flex items-center justify-center gap-2 text-[#8A2EFF]">
+            <div className="flex items-center justify-center gap-2 text-[#7A5CFF]">
               <Loader2 className="w-6 h-6 animate-spin" />
             </div>
             <p className="text-white/50 text-sm mt-4 truncate">Bonjour <span className="text-white font-medium">{name}</span> 👋</p>

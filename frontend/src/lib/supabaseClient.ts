@@ -23,9 +23,9 @@ export const AUDIO_BUCKET = storageBucket;
 
 // Log RLS configuration instructions to console
 export function logBucketConfigInstructions() {
-  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #8A2EFF; font-weight: bold');
-  console.log('%c   SUPABASE STORAGE - Configuration RLS requise', 'color: #FF2FB3; font-weight: bold; font-size: 14px');
-  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #8A2EFF; font-weight: bold');
+  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #7A5CFF; font-weight: bold');
+  console.log('%c   SUPABASE STORAGE - Configuration RLS requise', 'color: #E24A9E; font-weight: bold; font-size: 14px');
+  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #7A5CFF; font-weight: bold');
   console.log('');
   console.log('%c📋 Copiez ces commandes SQL dans Supabase > SQL Editor:', 'color: #22c55e; font-weight: bold');
   console.log('');
@@ -41,9 +41,9 @@ ON storage.objects FOR SELECT
 TO anon
 USING (bucket_id = 'audio-tracks');`);
   console.log('');
-  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #8A2EFF; font-weight: bold');
+  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #7A5CFF; font-weight: bold');
   console.log('%c🔗 Dashboard: https://supabase.com/dashboard/project/tfghpbgbtpgrjlhomlvz/sql', 'color: #3b82f6');
-  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #8A2EFF; font-weight: bold');
+  console.log('%c═══════════════════════════════════════════════════════════════════', 'color: #7A5CFF; font-weight: bold');
 }
 
 // ============================================

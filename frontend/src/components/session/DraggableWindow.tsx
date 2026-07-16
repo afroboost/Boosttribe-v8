@@ -78,7 +78,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   return (
     <div
       ref={winRef}
-      className={`fixed ${zClass} rounded-2xl border border-[#8A2EFF]/40 bg-[rgba(15,15,20,0.97)] shadow-2xl shadow-[#8A2EFF]/20 backdrop-blur-sm overflow-hidden`}
+      className={`fixed ${zClass} rounded-2xl border border-[#7A5CFF]/40 bg-[rgba(15,15,20,0.97)] shadow-2xl shadow-[#7A5CFF]/20 backdrop-blur-sm overflow-hidden`}
       style={{ left: pos.x, top: pos.y, width: defaultWidth, maxWidth: 'calc(100vw - 16px)' }}
       data-testid="draggable-window"
     >
@@ -89,7 +89,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         className="flex items-center justify-between gap-2 px-3 py-2.5 cursor-grab active:cursor-grabbing touch-none select-none border-b border-white/10"
-        style={{ background: 'linear-gradient(135deg, rgba(138,46,255,0.30) 0%, rgba(255,47,179,0.22) 100%)' }}
+        style={{ background: 'linear-gradient(135deg, rgba(122, 92, 255,0.30) 0%, rgba(226, 74, 158,0.22) 100%)' }}
         data-testid="drag-handle"
         title="Glissez pour déplacer"
       >

@@ -20,12 +20,12 @@ const Slider = React.forwardRef<
     >
       <SliderPrimitive.Range 
         data-slot="slider-range"
-        className="absolute h-full bg-gradient-to-r from-[#8A2EFF] to-[#FF2FB3]" 
+        className="absolute h-full bg-gradient-to-r from-[#7A5CFF] to-[#E24A9E]" 
       />
     </SliderPrimitive.Track>
     <SliderPrimitive.Thumb 
       data-slot="slider-thumb"
-      className="block h-3.5 w-3.5 rounded-full border border-white/20 bg-white shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#8A2EFF] disabled:pointer-events-none disabled:opacity-50" 
+      className="block h-3.5 w-3.5 rounded-full border border-white/20 bg-white shadow transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#7A5CFF] disabled:pointer-events-none disabled:opacity-50" 
     />
   </SliderPrimitive.Root>
 ))

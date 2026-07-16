@@ -167,7 +167,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
             className={`text-[10px] px-2 py-1 rounded-full border transition-colors ${
               mode === 'manual'
                 ? 'border-amber-500/50 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20'
-                : 'border-[#8A2EFF]/50 text-[#c9a3ff] bg-[#8A2EFF]/10 hover:bg-[#8A2EFF]/20'
+                : 'border-[#7A5CFF]/50 text-[#c9a3ff] bg-[#7A5CFF]/10 hover:bg-[#7A5CFF]/20'
             }`}
           >
             {mode === 'manual' ? '🎚️ Manuel' : '🎙️ Voix'}
@@ -258,7 +258,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
               className={`
                 w-full text-left p-2 rounded text-xs transition-colors
                 ${device.deviceId === state.deviceId
-                  ? 'bg-[#8A2EFF]/20 text-white'
+                  ? 'bg-[#7A5CFF]/20 text-white'
                   : 'text-white/70 hover:bg-white/10'
                 }
               `}

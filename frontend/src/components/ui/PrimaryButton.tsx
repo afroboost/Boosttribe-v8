@@ -52,7 +52,7 @@ const PrimaryButton = React.forwardRef<HTMLButtonElement, PrimaryButtonProps>(
           if (isGradient) {
             e.currentTarget.style.transform = "translateY(-2px)";
             e.currentTarget.style.boxShadow =
-              `0 8px 32px ${colors.gradient.glow}, 0 0 60px rgba(255, 47, 179, 0.25)`;
+              `0 8px 32px ${colors.gradient.glow}, 0 0 60px rgba(226, 74, 158, 0.25)`;
           } else {
             e.currentTarget.style.transform = "translateY(-2px)";
           }

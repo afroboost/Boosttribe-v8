@@ -178,8 +178,8 @@ export const HeroSection: React.FC = () => {
         <div 
           className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8 opacity-0"
           style={{
-            background: `rgba(138, 46, 255, 0.15)`,
-            border: `1px solid rgba(138, 46, 255, 0.3)`,
+            background: `rgba(122, 92, 255, 0.15)`,
+            border: `1px solid rgba(122, 92, 255, 0.3)`,
             animation: "bt-fade-in 0.6s ease-out 0.2s forwards",
           }}
         >
@@ -316,8 +316,8 @@ export const HeroSection: React.FC = () => {
               disabled={isJoining}
               className="w-full h-12 mt-3 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
               style={{
-                background: 'rgba(138, 46, 255, 0.15)',
-                border: '1px solid rgba(138, 46, 255, 0.4)',
+                background: 'rgba(122, 92, 255, 0.15)',
+                border: '1px solid rgba(122, 92, 255, 0.4)',
                 color: '#FFFFFF',
               }}
             >

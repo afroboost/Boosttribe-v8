@@ -454,3 +454,6 @@ frontend/node_modules/.cache/default-development/0.pack
 # Environment files
 *.env
 *.env.*
+
+# Skills installés via `npx skills add` (outil dev, hors app)
+.agents/

@@ -99,11 +99,11 @@ const PHASE_LABEL: Record<IntervalPhaseKey, string> = {
   prepare: 'Préparation', work: 'Effort', rest: 'Repos', done: 'Terminé',
 };
 // 🎨 Couleurs de la marque BoostTribe (violet → magenta).
-const AFRO_GRADIENT = 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)';
+const AFRO_GRADIENT = 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)';
 // Phases aux couleurs du site, tout en restant distinguables : effort = magenta, repos = violet,
 // préparation = ambre (« prépare-toi »), terminé = magenta profond.
 const PHASE_COLOR: Record<IntervalPhaseKey, string> = {
-  prepare: '#F5A524', work: '#FF2FB3', rest: '#8A2EFF', done: '#D91CD2',
+  prepare: '#F5A524', work: '#E24A9E', rest: '#7A5CFF', done: '#D91CD2',
 };
 
 // ⏱️ Info de décompte exposée au parent (LECTURE SEULE) → permet d'afficher un rappel du timer
@@ -427,7 +427,7 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
         onPointerUp={onDragEnd}
         onPointerCancel={onDragEnd}
         className="pointer-events-auto select-none rounded-3xl px-8 py-6 text-center shadow-2xl backdrop-blur-md"
-        style={{ position: 'fixed', left: pos.x, top: pos.y, touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab', background: 'rgba(10,10,15,0.72)', border: `2px solid ${color}`, minWidth: 260, boxShadow: `0 0 44px ${color}55, 0 10px 44px rgba(138,46,255,0.30)` }}
+        style={{ position: 'fixed', left: pos.x, top: pos.y, touchAction: 'none', cursor: dragging ? 'grabbing' : 'grab', background: 'rgba(10,10,15,0.72)', border: `2px solid ${color}`, minWidth: 260, boxShadow: `0 0 44px ${color}55, 0 10px 44px rgba(122, 92, 255,0.30)` }}
         data-testid="interval-timer-overlay"
       >
         <div className="text-sm font-semibold tracking-wide mb-1" style={{ color }}>

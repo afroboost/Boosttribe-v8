@@ -244,7 +244,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
             size="sm"
             onClick={() => onUpgradeRequest?.()}
             className="w-full text-white border-none"
-            style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+            style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
             data-testid="upgrade-cta-btn"
           >
             <Crown size={14} className="mr-2" />
@@ -272,7 +272,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
             w-full p-4 rounded-lg border-2 border-dashed transition-all
             flex flex-col items-center justify-center gap-2
             ${canUpload 
-              ? 'border-white/20 hover:border-[#8A2EFF]/50 hover:bg-white/5 cursor-pointer' 
+              ? 'border-white/20 hover:border-[#7A5CFF]/50 hover:bg-white/5 cursor-pointer' 
               : 'border-white/10 opacity-50 cursor-not-allowed'
             }
           `}
@@ -319,7 +319,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
               className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
               style={{ background: isDemoMode 
                 ? 'linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)' 
-                : 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' 
+                : 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' 
               }}
             >
               <Music size={18} strokeWidth={1.5} className="text-white" />
@@ -356,7 +356,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
               style={{
                 background: isDemoMode 
                   ? 'linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)' 
-                  : 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)',
+                  : 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)',
               }}
             >
               {isDemoMode ? (
@@ -388,14 +388,14 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
       {/* Uploading */}
       {status === 'uploading' && (
         <div className={`p-4 rounded-lg bg-white/5 border space-y-3 ${
-          progress === 100 ? 'border-green-500/30' : isDemoMode ? 'border-yellow-500/30' : 'border-[#8A2EFF]/30'
+          progress === 100 ? 'border-green-500/30' : isDemoMode ? 'border-yellow-500/30' : 'border-[#7A5CFF]/30'
         }`}>
           <div className="flex items-center gap-3">
             {progress === 100 ? (
               <CheckCircle size={20} strokeWidth={1.5} className="text-green-400" />
             ) : (
               <Loader2 size={20} strokeWidth={1.5} className={`animate-spin ${
-                isDemoMode ? 'text-yellow-400' : 'text-[#8A2EFF]'
+                isDemoMode ? 'text-yellow-400' : 'text-[#7A5CFF]'
               }`} />
             )}
             <div className="flex-1">
@@ -410,7 +410,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
               <p className="text-white/50 text-xs">{selectedFile?.name}</p>
             </div>
             <span className={`text-sm font-mono ${
-              progress === 100 ? 'text-green-400' : isDemoMode ? 'text-yellow-400' : 'text-[#8A2EFF]'
+              progress === 100 ? 'text-green-400' : isDemoMode ? 'text-yellow-400' : 'text-[#7A5CFF]'
             }`}>
               {progress}%
             </span>
@@ -426,7 +426,7 @@ export const TrackUploader: React.FC<TrackUploaderProps> = ({
                   ? 'linear-gradient(90deg, #22c55e 0%, #10b981 100%)'
                   : isDemoMode 
                     ? 'linear-gradient(90deg, #F59E0B 0%, #EF4444 100%)'
-                    : 'linear-gradient(90deg, #8A2EFF 0%, #FF2FB3 100%)',
+                    : 'linear-gradient(90deg, #7A5CFF 0%, #E24A9E 100%)',
               }}
             />
           </div>

@@ -5,18 +5,18 @@
   "badge": "La communauté des créateurs de musique",
   "colors": {
     "background": "#000000",
-    "primary": "#8A2EFF",
-    "secondary": "#FF2FB3",
-    "surface": "rgba(20, 20, 25, 0.85)",
-    "surfaceSolid": "#14141A",
+    "primary": "#7A5CFF",
+    "secondary": "#E24A9E",
+    "surface": "rgba(18, 18, 24, 0.72)",
+    "surfaceSolid": "#131318",
     "text": {
-      "primary": "#FFFFFF",
-      "secondary": "rgba(255, 255, 255, 0.7)",
-      "muted": "rgba(255, 255, 255, 0.5)"
+      "primary": "#F5F5F7",
+      "secondary": "rgba(255, 255, 255, 0.66)",
+      "muted": "rgba(255, 255, 255, 0.42)"
     },
     "gradient": {
-      "primary": "linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)",
-      "glow": "rgba(138, 46, 255, 0.5)"
+      "primary": "linear-gradient(125deg, #7A5CFF 0%, #A24BD6 50%, #E24A9E 100%)",
+      "glow": "rgba(122, 92, 255, 0.18)"
     }
   },
   "fonts": {

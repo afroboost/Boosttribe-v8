@@ -12,10 +12,11 @@ module.exports = {
                         /* Beattribe specific colors */
                         bt: {
                                 background: '#000000',
-                                primary: '#8A2EFF',
-                                secondary: '#FF2FB3',
-                                surface: 'rgba(20, 20, 25, 0.85)',
-                                'surface-solid': '#14141A',
+                                primary: '#7A5CFF',
+                                secondary: '#E24A9E',
+                                surface: 'rgba(18, 18, 24, 0.72)',
+                                'surface-solid': '#131318',
+                                'surface-2': '#1B1B22',
                         },
                         /* Standard shadcn tokens mapped to Beattribe */
                         background: 'hsl(var(--background))',
@@ -71,16 +72,17 @@ module.exports = {
                 },
                 /* Beattribe Box Shadow */
                 boxShadow: {
-                        'bt-sm': '0 2px 8px rgba(0, 0, 0, 0.4)',
-                        'bt-md': '0 4px 16px rgba(0, 0, 0, 0.5)',
-                        'bt-lg': '0 8px 32px rgba(0, 0, 0, 0.6)',
-                        'bt-glow': '0 4px 24px rgba(138, 46, 255, 0.25)',
-                        'bt-glow-lg': '0 8px 32px rgba(138, 46, 255, 0.4), 0 0 60px rgba(255, 47, 179, 0.2)',
+                        'bt-sm': '0 1px 2px rgba(0, 0, 0, 0.4)',
+                        'bt-md': '0 4px 16px rgba(0, 0, 0, 0.45)',
+                        'bt-lg': '0 16px 48px rgba(0, 0, 0, 0.55)',
+                        /* "glow" désormais = halo accent TRÈS discret (plus de néon) */
+                        'bt-glow': '0 6px 24px rgba(122, 92, 255, 0.12)',
+                        'bt-glow-lg': '0 12px 48px rgba(122, 92, 255, 0.16)',
                 },
-                /* Beattribe Background Gradients */
+                /* Beattribe Background Gradients (réservé au moment fort : logo/hero) */
                 backgroundImage: {
-                        'bt-gradient': 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)',
-                        'bt-gradient-radial': 'radial-gradient(circle, #8A2EFF 0%, transparent 70%)',
+                        'bt-gradient': 'linear-gradient(125deg, #7A5CFF 0%, #A24BD6 50%, #E24A9E 100%)',
+                        'bt-gradient-radial': 'radial-gradient(circle, rgba(122, 92, 255, 0.5) 0%, transparent 70%)',
                 },
                 /* Beattribe Keyframes */
                 keyframes: {

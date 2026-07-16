@@ -18,11 +18,11 @@ interface AccessRequestsPanelProps {
 export const AccessRequestsPanel: React.FC<AccessRequestsPanelProps> = ({ requests, onAdmit, onRefuse }) => {
   if (requests.length === 0) return null;
   return (
-    <div className="rounded-2xl border border-[#FF2FB3]/30 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="access-requests-panel">
+    <div className="rounded-2xl border border-[#E24A9E]/30 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="access-requests-panel">
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10">
         <span className="relative">
-          <BellRing className="w-4 h-4 text-[#FF2FB3]" />
-          <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#FF2FB3] text-white text-[10px] font-bold flex items-center justify-center">
+          <BellRing className="w-4 h-4 text-[#E24A9E]" />
+          <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-[#E24A9E] text-white text-[10px] font-bold flex items-center justify-center">
             {requests.length}
           </span>
         </span>

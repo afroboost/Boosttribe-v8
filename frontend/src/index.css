@@ -55,35 +55,35 @@ body > *[style*="fixed"][style*="bottom"] {
     :root {
         /* Beattribe Design System - --bt- prefix */
         --bt-background: 0 0% 0%;
-        --bt-primary: 266 100% 59%;
-        --bt-secondary: 324 100% 59%;
-        --bt-surface: 240 11% 9%;
-        --bt-surface-alpha: rgba(20, 20, 25, 0.85);
-        
-        /* Text colors */
-        --bt-text-primary: 0 0% 100%;
-        --bt-text-secondary: 0 0% 70%;
-        --bt-text-muted: 0 0% 50%;
-        
-        /* Gradient colors (raw hex) */
-        --bt-gradient-start: #8A2EFF;
-        --bt-gradient-end: #FF2FB3;
-        --bt-gradient-primary: linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%);
-        
-        /* Glow effects */
-        --bt-glow-primary: 0 0 60px rgba(138, 46, 255, 0.4);
-        --bt-glow-secondary: 0 0 60px rgba(255, 47, 179, 0.3);
-        --bt-glow-combined: 0 0 80px rgba(138, 46, 255, 0.5), 0 0 120px rgba(255, 47, 179, 0.3);
-        
-        /* Shadows */
-        --bt-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
-        --bt-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
-        --bt-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
-        --bt-shadow-glow: 0 4px 24px rgba(138, 46, 255, 0.25);
-        
-        /* Border */
-        --bt-border: 0 0% 20%;
-        --bt-border-hover: 0 0% 30%;
+        --bt-primary: 252 100% 68%;
+        --bt-secondary: 327 72% 59%;
+        --bt-surface: 240 11% 8%;
+        --bt-surface-alpha: rgba(18, 18, 24, 0.72);
+
+        /* Text colors — échelle de gris neutres (plus de blanc pur partout) */
+        --bt-text-primary: 0 0% 96%;
+        --bt-text-secondary: 0 0% 68%;
+        --bt-text-muted: 0 0% 46%;
+
+        /* Gradient — réservé au moment fort (logo/hero) */
+        --bt-gradient-start: #7A5CFF;
+        --bt-gradient-end: #E24A9E;
+        --bt-gradient-primary: linear-gradient(125deg, #7A5CFF 0%, #A24BD6 50%, #E24A9E 100%);
+
+        /* "Glow" assagi — halos accent discrets (plus de néon) */
+        --bt-glow-primary: 0 8px 28px rgba(122, 92, 255, 0.14);
+        --bt-glow-secondary: 0 8px 28px rgba(226, 74, 158, 0.12);
+        --bt-glow-combined: 0 10px 40px rgba(122, 92, 255, 0.16);
+
+        /* Shadows — douces et discrètes */
+        --bt-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --bt-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+        --bt-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+        --bt-shadow-glow: 0 6px 24px rgba(122, 92, 255, 0.12);
+
+        /* Border — hairline 1px, faible opacité */
+        --bt-border: 0 0% 100% / 0.08;
+        --bt-border-hover: 0 0% 100% / 0.16;
         
         /* Typography */
         --bt-font-heading: 'Space Grotesk', sans-serif;
@@ -107,29 +107,29 @@ body > *[style*="fixed"][style*="bottom"] {
         
         /* Transitions */
         --bt-transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-        --bt-transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-        --bt-transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
-        
+        --bt-transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+        --bt-transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
         /* Standard shadcn variables mapped to Beattribe */
         --background: 0 0% 0%;
-        --foreground: 0 0% 100%;
-        --card: 240 11% 6%;
-        --card-foreground: 0 0% 100%;
-        --popover: 240 11% 6%;
-        --popover-foreground: 0 0% 100%;
-        --primary: 266 100% 59%;
+        --foreground: 0 0% 96%;
+        --card: 240 11% 8%;
+        --card-foreground: 0 0% 96%;
+        --popover: 240 11% 9%;
+        --popover-foreground: 0 0% 96%;
+        --primary: 252 100% 68%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 324 100% 59%;
+        --secondary: 327 72% 59%;
         --secondary-foreground: 0 0% 100%;
-        --muted: 240 11% 15%;
-        --muted-foreground: 0 0% 60%;
-        --accent: 266 100% 59%;
+        --muted: 240 8% 14%;
+        --muted-foreground: 240 5% 64%;
+        --accent: 252 100% 68%;
         --accent-foreground: 0 0% 100%;
-        --destructive: 0 84.2% 60.2%;
+        --destructive: 0 72% 51%;
         --destructive-foreground: 0 0% 100%;
-        --border: 0 0% 15%;
-        --input: 0 0% 15%;
-        --ring: 266 100% 59%;
+        --border: 0 0% 100% / 0.08;
+        --input: 0 0% 100% / 0.10;
+        --ring: 252 100% 68%;
         --radius: 0.75rem;
     }
 }
@@ -145,11 +145,31 @@ body {
     line-height: 1.6;
 }
 
-/* Headings use Space Grotesk */
+/* Headings use Space Grotesk — hiérarchie resserrée, tracking négatif sur les gros titres */
 h1, h2, h3, h4, h5, h6 {
     font-family: var(--bt-font-heading);
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+h4, h5, h6 {
+    letter-spacing: -0.01em;
+}
+
+/* Corps : tracking très léger pour un rendu plus « posé » */
+body {
+    letter-spacing: -0.006em;
+    text-rendering: optimizeLegibility;
+}
+
+/* Motion sobre : respecter la préférence système (accessibilité + qualité) */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
 }
 
 /* Code font */
@@ -198,7 +218,7 @@ code {
 
 /* Selection color */
 ::selection {
-    background: rgba(138, 46, 255, 0.3);
+    background: rgba(122, 92, 255, 0.3);
     color: white;
 }
 

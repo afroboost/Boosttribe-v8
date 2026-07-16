@@ -27,7 +27,7 @@ const MixerSlider: React.FC<MixerSliderProps> = ({
   icon,
   value,
   onChange,
-  color = '#8A2EFF',
+  color = '#7A5CFF',
   disabled = false,
   compact = false,
   maxValue = 1,
@@ -149,7 +149,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
         <div className="flex items-center gap-2">
           <div 
             className="w-5 h-5 sm:w-6 sm:h-6 rounded-md flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}
+            style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
           >
             <Headphones size={12} className="text-white sm:w-3.5 sm:h-3.5" />
           </div>
@@ -189,7 +189,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
             icon={isVideoShared ? <Video size={14} className="sm:w-4 sm:h-4" /> : <Volume2 size={14} className="sm:w-4 sm:h-4" />}
             value={musicVolume}
             onChange={onMusicVolumeChange}
-            color="#8A2EFF"
+            color="#7A5CFF"
             compact={true}
             maxValue={2.5}
           />
@@ -279,7 +279,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                 icon={<Volume2 size={14} className="sm:w-4 sm:h-4" />}
                 value={hostVoiceVolume}
                 onChange={onHostVoiceVolumeChange}
-                color="#8A2EFF"
+                color="#7A5CFF"
                 compact={true}
                 maxValue={2.5}
               />
@@ -297,7 +297,7 @@ export const AudioMixerPanel: React.FC<AudioMixerPanelProps> = ({
                         : <MicOff size={14} className="sm:w-4 sm:h-4 text-white/30" />}
                       value={s.volume}
                       onChange={(v) => onRemoteMicVolumeChange(s.userId, v)}
-                      color={s.micActive ? '#FF2FB3' : '#666'}
+                      color={s.micActive ? '#E24A9E' : '#666'}
                       compact={true}
                       maxValue={2.5}
                     />

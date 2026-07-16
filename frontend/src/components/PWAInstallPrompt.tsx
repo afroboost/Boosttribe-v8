@@ -110,7 +110,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
     <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setShowIOSHelp(false)}>
       <div className="bg-[#15151b] border border-purple-500/30 rounded-2xl p-5 max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #8A2EFF 0%, #FF2FB3 100%)' }}>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
             <Smartphone size={20} className="text-white" />
           </div>
           <h3 className="text-white font-semibold">Installer sur iPhone / iPad</h3>

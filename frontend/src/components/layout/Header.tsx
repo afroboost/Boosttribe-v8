@@ -60,9 +60,10 @@ export const Header: React.FC = () => {
       <div 
         className="mx-auto px-4 sm:px-6 lg:px-8"
         style={{
-          background: "rgba(0, 0, 0, 0.5)",
+          background: "rgba(0, 0, 0, 0.55)",
           backdropFilter: "blur(20px)",
           WebkitBackdropFilter: "blur(20px)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
         }}
       >
         <div className="flex items-center justify-between h-16 sm:h-20">
@@ -134,7 +135,7 @@ export const Header: React.FC = () => {
             <Link
               to="/wallet"
               className="text-sm font-medium transition-colors duration-200 hover:opacity-90"
-              style={{ fontFamily: fonts.body, color: '#FF2DAA' }}
+              style={{ fontFamily: fonts.body, color: colors.secondary }}
             >
               {isAuthenticated ? 'Espace Coach' : 'Devenir Coach'}
             </Link>
@@ -159,7 +160,7 @@ export const Header: React.FC = () => {
                     {profile?.full_name || profile?.email?.split('@')[0]}
                   </span>
                   {isAdmin && (
-                    <span className="px-2 py-0.5 text-xs bg-purple-500/20 text-purple-400 rounded-full">
+                    <span className="px-2 py-0.5 text-xs bg-[#7A5CFF]/15 text-[#A78BFF] rounded-full border border-[#7A5CFF]/25">
                       👑 Admin
                     </span>
                   )}
@@ -169,7 +170,7 @@ export const Header: React.FC = () => {
                 {isAdmin && (
                   <button
                     onClick={handleAdminClick}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 transition-colors text-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[#A78BFF] hover:text-white hover:bg-[#7A5CFF]/10 transition-colors text-sm"
                     title="Gestion du Site"
                   >
                     <Settings size={16} />

@@ -1,5 +1,7 @@
 /* Beattribe Font Imports (doit précéder toute autre règle — exigence CSS @import) */
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+/* Fraunces — display éditorial premium (titres XXL, style magazine/Apple) */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400..500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -160,6 +162,75 @@ h4, h5, h6 {
 body {
     letter-spacing: -0.006em;
     text-rendering: optimizeLegibility;
+}
+
+/* ============================================
+   SYSTÈME ÉDITORIAL PREMIUM (typo XXL + reveal)
+   ============================================ */
+
+/* Display éditorial (serif optique) — titres hero & chapitres */
+.font-display {
+    font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
+    font-optical-sizing: auto;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 1.02;
+}
+.font-display-italic {
+    font-family: 'Fraunces', Georgia, serif;
+    font-optical-sizing: auto;
+    font-style: italic;
+    font-weight: 400;
+}
+
+/* Eyebrow / sur-titre (petit, capitales, tracké) */
+.eyebrow {
+    font-family: var(--bt-font-body);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: hsl(var(--bt-text-secondary));
+}
+
+/* Échelle de titres (clamp fluide, tracking négatif serré) */
+.display-hero {
+    font-size: clamp(3rem, 11vw, 8.5rem);
+    line-height: 0.98;
+    letter-spacing: -0.035em;
+}
+.display-chapter {
+    font-size: clamp(2.25rem, 6vw, 4.5rem);
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+}
+
+/* Révélation au scroll — FAIL-SAFE : le contenu est VISIBLE par défaut ;
+   `data-revealed` (posé par IntersectionObserver, attribut → survit aux re-renders
+   React contrairement à une classe) déclenche une animation one-shot. Si le JS
+   échoue, rien n'est jamais masqué. */
+.reveal[data-revealed] {
+    animation: bt-reveal-in 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.reveal-delay-1[data-revealed] { animation-delay: 90ms; }
+.reveal-delay-2[data-revealed] { animation-delay: 180ms; }
+.reveal-delay-3[data-revealed] { animation-delay: 270ms; }
+
+/* Filet de sécurité : posé par timer (les timers tournent même quand l'horloge
+   d'animation est throttlée/gelée) → le contenu est TOUJOURS visible in fine. */
+.reveal[data-done] {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+}
+
+@keyframes bt-reveal-in {
+    from { opacity: 0; transform: translateY(28px); }
+    to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reveal[data-revealed] { animation: none; }
 }
 
 /* Motion sobre : respecter la préférence système (accessibilité + qualité) */

@@ -1,13 +1,13 @@
-import React, { useMemo, useState, useCallback } from "react";
+import React, { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Radio, Video, FileText } from "lucide-react";
+import { Radio, Video, FileText, ArrowRight } from "lucide-react";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Input } from "@/components/ui/input";
 import { useTheme } from "@/context/ThemeContext";
 import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/components/ui/Toast";
 import { sessionExists } from "@/lib/supabaseClient";
-import HomeCarousel from "@/components/sections/HomeCarousel";
+import { useReveal } from "@/hooks/useReveal";
 
 // ✅ Bénéfices honnêtes (remplacent des stats peu crédibles).
 const HERO_BENEFITS = [
@@ -16,23 +16,13 @@ const HERO_BENEFITS = [
   { icon: FileText, label: "Transcription IA des sessions" },
 ];
 
-// Interface for particle configuration
-interface Particle {
-  id: number;
-  color: string;
-  opacity: number;
-  left: string;
-  top: string;
-  duration: number;
-  delay: number;
-}
-
 export const HeroSection: React.FC = () => {
   const navigate = useNavigate();
   const { theme } = useTheme();
   const { t } = useI18n();
   const { showToast } = useToast();
-  const { name, slogan, description, badge, colors, fonts, buttons, scrollIndicator } = theme;
+  const { colors, fonts, buttons } = theme;
+  const revealRef = useReveal<HTMLElement>();
 
   // Session code input state
   const [sessionCode, setSessionCode] = useState<string>("");
@@ -61,19 +51,6 @@ export const HeroSection: React.FC = () => {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Generate particles with memoization to prevent re-renders
-  const particles = useMemo<Particle[]>(() => {
-    return Array.from({ length: 10 }, (_, i) => ({
-      id: i,
-      color: i % 2 === 0 ? colors.primary : colors.secondary,
-      opacity: Math.random() * 0.3 + 0.12,
-      left: `${Math.random() * 100}%`,
-      top: `${Math.random() * 100}%`,
-      duration: 3 + Math.random() * 4,
-      delay: Math.random() * 2,
-    }));
-  }, [colors.primary, colors.secondary]);
 
   // Vérifie en base que la session existe AVANT d'y entrer. Si elle n'existe plus
   // (supprimée par l'hôte / code invalide) : notifier, oublier le code mémorisé, rester sur l'accueil.
@@ -129,168 +106,61 @@ export const HeroSection: React.FC = () => {
   }, []);
 
   return (
-    <section 
-      className="relative min-h-screen flex items-center justify-center overflow-hidden"
-      style={{ 
-        background: colors.background,
-        fontFamily: fonts.body,
-      }}
+    <section
+      ref={revealRef}
+      className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden px-6 pt-28 pb-24"
+      style={{ background: colors.background, fontFamily: fonts.body }}
     >
-      {/* Background Glow Effects */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {/* Primary violet glow - top left (discret) */}
+      {/* Profondeur discrète : un seul halo accent, très diffus (monochrome sinon) */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         <div
-          className="absolute -top-1/4 -left-1/4 w-1/2 h-1/2 rounded-full opacity-[0.12] blur-3xl"
-          style={{
-            background: `radial-gradient(circle, ${colors.primary} 0%, transparent 70%)`,
-          }}
-        />
-        {/* Secondary rose glow - bottom right (discret) */}
-        <div
-          className="absolute -bottom-1/4 -right-1/4 w-1/2 h-1/2 rounded-full opacity-[0.10] blur-3xl"
-          style={{
-            background: `radial-gradient(circle, ${colors.secondary} 0%, transparent 70%)`,
-          }}
+          className="absolute left-1/2 -top-[15%] -translate-x-1/2 w-[85vw] h-[55vh] rounded-full opacity-[0.13] blur-[130px]"
+          style={{ background: `radial-gradient(circle, ${colors.primary} 0%, transparent 70%)` }}
         />
       </div>
 
-      {/* Animated particles/rhythm dots */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {particles.map((particle) => (
-          <div
-            key={particle.id}
-            className="absolute w-1 h-1 rounded-full"
-            style={{
-              background: particle.color,
-              opacity: particle.opacity,
-              left: particle.left,
-              top: particle.top,
-              animation: `bt-float ${particle.duration}s ease-in-out infinite`,
-              animationDelay: `${particle.delay}s`,
-            }}
-          />
-        ))}
-      </div>
-
-      {/* Main Content */}
-      <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        {/* Badge - Dynamic from theme or translation */}
-        <div 
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-full mb-8 opacity-0"
-          style={{
-            background: `rgba(122, 92, 255, 0.15)`,
-            border: `1px solid rgba(122, 92, 255, 0.3)`,
-            animation: "bt-fade-in 0.6s ease-out 0.2s forwards",
-          }}
-        >
-          <span 
-            className="w-2 h-2 rounded-full"
-            style={{ background: colors.primary }}
-          />
-          <span 
-            className="text-sm text-white/80"
-            style={{ fontFamily: fonts.body }}
-          >
-            {t('hero.badge')}
-          </span>
-        </div>
-
-        {/* Main Title with Gradient and Glow - Dynamic from theme */}
-        <div className="relative mb-6">
-          {/* Glow layer behind title */}
-          <h1 
-            className="absolute inset-0 text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight blur-2xl opacity-50 select-none"
-            style={{
-              fontFamily: fonts.heading,
-              backgroundImage: colors.gradient.primary,
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-            }}
-            aria-hidden="true"
-          >
-            {name}
-          </h1>
-          {/* Main visible title */}
-          <h1 
-            className="relative text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight opacity-0"
-            style={{
-              fontFamily: fonts.heading,
-              backgroundImage: colors.gradient.primary,
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-              animation: "bt-fade-in 0.8s ease-out 0.4s forwards",
-            }}
-          >
-            {name}
-          </h1>
-        </div>
-
-        {/* Slogan - Dynamic from translation */}
-        <p 
-          className="text-xl sm:text-2xl md:text-3xl font-medium mb-4 opacity-0"
-          style={{
-            fontFamily: fonts.heading,
-            color: colors.text.secondary,
-            animation: "bt-fade-in 0.8s ease-out 0.6s forwards",
-          }}
-        >
-          {t('hero.title')}
+      <div className="relative z-10 w-full max-w-4xl mx-auto text-center">
+        {/* Eyebrow */}
+        <p className="eyebrow reveal mb-7" style={{ color: colors.primary }}>
+          {t('hero.badge')}
         </p>
 
-        {/* 🪶 Accueil allégé : titre fort + slogan court (paragraphes descriptifs retirés). */}
+        {/* Titre éditorial XXL (serif optique) — le statement, pas le dégradé */}
+        <h1 className="font-display display-hero reveal reveal-delay-1 text-white mb-8">
+          La même musique,
+          <br />
+          <span className="font-display-italic text-white/90">au même instant.</span>
+        </h1>
 
-        {/* 🖼️ Carrousel d'images — DANS le hero, sous le sous-titre et au-dessus du bloc code session.
-            Géré depuis l'admin « Identité ». Sans cadre/bordure, fond noir homogène. */}
-        <div
-          className="opacity-0"
-          style={{ animation: "bt-fade-in 0.8s ease-out 0.7s forwards" }}
-        >
-          <HomeCarousel />
-        </div>
+        {/* Sous-titre calme */}
+        <p className="reveal reveal-delay-2 mx-auto max-w-xl text-lg sm:text-xl leading-relaxed text-white/55 mb-12">
+          {t('hero.subtitle')}
+        </p>
 
-        {/* Session Join Form */}
-        <div 
-          className="max-w-md mx-auto mb-8 opacity-0"
-          style={{
-            animation: "bt-fade-in 0.8s ease-out 1s forwards",
-          }}
-        >
-          <form onSubmit={handleJoinSession} className="space-y-4">
-            {/* Session Code Input */}
+        {/* Console « rejoindre / créer » — fonctionnel, restylé (matériau translucide) */}
+        <div className="reveal reveal-delay-3 mx-auto max-w-md">
+          <form onSubmit={handleJoinSession} className="space-y-3">
             <div className="relative">
               <Input
                 type="text"
                 value={sessionCode}
                 onChange={handleCodeChange}
                 placeholder="Code de la session (ex: MKTQUYEY-5LFJ94)"
-                className="w-full h-14 px-5 text-center text-lg font-mono tracking-wider rounded-xl border-2 transition-all duration-200"
+                className="w-full h-14 px-5 text-center text-base font-mono tracking-wider rounded-2xl transition-all duration-200"
                 style={{
-                  background: colors.surface,
-                  borderColor: sessionCode ? colors.primary : 'rgba(255,255,255,0.1)',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: `1px solid ${sessionCode ? colors.primary : 'rgba(255,255,255,0.12)'}`,
                   color: '#FFFFFF',
                 }}
                 maxLength={20}
                 disabled={isJoining}
               />
-              {/* Decorative music note icon */}
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none">
-                <svg 
-                  className="w-5 h-5 text-white/30"
-                  fill="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                </svg>
-              </div>
             </div>
 
-            {/* Join Button */}
-            <PrimaryButton 
+            <PrimaryButton
               type="submit"
               size="lg"
-              className="w-full h-14 text-lg"
+              className="w-full h-14"
               disabled={isJoining}
             >
               {isJoining ? (
@@ -302,22 +172,20 @@ export const HeroSection: React.FC = () => {
                   Connexion...
                 </span>
               ) : (
-                <>
-                  🎧 {buttons.joinTribe}
-                </>
+                buttons.joinTribe
               )}
             </PrimaryButton>
           </form>
 
-          {/* Item 3 : Reprendre la dernière session (participant revenant après avoir quitté) */}
+          {/* Item 3 : Reprendre la dernière session mémorisée */}
           {lastCode && (
             <button
               onClick={handleResumeSession}
               disabled={isJoining}
-              className="w-full h-12 mt-3 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
+              className="w-full h-12 mt-3 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:bg-white/[0.06] disabled:opacity-60"
               style={{
-                background: 'rgba(122, 92, 255, 0.15)',
-                border: '1px solid rgba(122, 92, 255, 0.4)',
+                background: 'rgba(122, 92, 255, 0.10)',
+                border: '1px solid rgba(122, 92, 255, 0.28)',
                 color: '#FFFFFF',
               }}
             >
@@ -328,94 +196,52 @@ export const HeroSection: React.FC = () => {
             </button>
           )}
 
-          {/* Divider */}
-          <div className="relative my-6">
+          {/* Séparateur */}
+          <div className="relative my-5">
             <div className="absolute inset-0 flex items-center">
               <span className="w-full border-t border-white/10" />
             </div>
             <div className="relative flex justify-center text-xs">
-              <span 
-                className="px-3"
-                style={{ 
-                  background: colors.background,
-                  color: colors.text.muted,
-                }}
-              >
+              <span className="px-3 uppercase tracking-widest" style={{ background: colors.background, color: colors.text.muted }}>
                 ou
               </span>
             </div>
           </div>
 
-          {/* Create Session Button */}
+          {/* Créer une session */}
           <button
             onClick={handleCreateSession}
-            className="w-full h-12 rounded-xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.98]"
+            className="group w-full h-12 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 text-white/80 hover:text-white"
             style={{
               background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.2)',
-              color: colors.text.secondary,
+              border: '1px solid rgba(255,255,255,0.14)',
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = colors.primary;
-              e.currentTarget.style.color = '#FFFFFF';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)';
-              e.currentTarget.style.color = colors.text.secondary;
-            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.14)'; }}
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
             {t('hero.cta.create')}
+            <ArrowRight size={16} className="transition-transform duration-200 group-hover:translate-x-0.5" />
           </button>
         </div>
 
-        {/* Bénéfices honnêtes (remplacent les anciennes stats) */}
-        <div
-          className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mt-14 pt-8 border-t border-white/10 max-w-2xl mx-auto opacity-0"
-          style={{ animation: "bt-fade-in 0.8s ease-out 1.2s forwards" }}
-        >
+        {/* Bénéfices honnêtes — ligne discrète */}
+        <div className="reveal mt-16 flex flex-col sm:flex-row items-center justify-center gap-x-8 gap-y-3 text-sm text-white/45">
           {HERO_BENEFITS.map(({ icon: Icon, label }, index) => (
-            <div
-              key={index}
-              className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-white/10 bg-white/[0.03] w-full sm:w-auto"
-            >
-              <Icon size={16} style={{ color: colors.secondary }} className="flex-shrink-0" />
-              <span className="text-sm" style={{ fontFamily: fonts.body, color: colors.text.secondary }}>
-                {label}
-              </span>
+            <div key={index} className="flex items-center gap-2">
+              <Icon size={15} className="flex-shrink-0" style={{ color: colors.primary }} />
+              <span style={{ fontFamily: fonts.body }}>{label}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Scroll indicator - Dynamic from theme */}
-      <div 
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 opacity-0"
-        style={{
-          animation: "bt-fade-in 0.8s ease-out 1.6s forwards",
-        }}
-      >
-        <span 
-          className="text-xs uppercase tracking-widest"
-          style={{
-            fontFamily: fonts.body,
-            color: "rgba(255, 255, 255, 0.4)",
-          }}
-        >
-          {scrollIndicator}
+      {/* Indicateur de défilement */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+        <span className="text-[11px] uppercase tracking-[0.2em] text-white/35" style={{ fontFamily: fonts.body }}>
+          {theme.scrollIndicator}
         </span>
-        <div 
-          className="w-6 h-10 rounded-full border border-white/20 flex justify-center pt-2"
-        >
-          <div 
-            className="w-1 h-2 rounded-full"
-            style={{
-              background: `linear-gradient(180deg, ${colors.primary}, ${colors.secondary})`,
-              animation: "bt-float 1.5s ease-in-out infinite",
-            }}
-          />
+        <div className="w-5 h-8 rounded-full border border-white/20 flex justify-center pt-1.5">
+          <div className="w-0.5 h-1.5 rounded-full bg-white/50 animate-[bt-float_1.6s_ease-in-out_infinite]" />
         </div>
       </div>
     </section>

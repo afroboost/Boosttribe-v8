@@ -10,6 +10,9 @@ interface SiteSettings {
   site_description: string;
   site_badge: string;
   favicon_url: string;
+  hero_video_url: string;
+  hero_poster_url: string;
+  home_carousel: { url: string; alt?: string }[];
   color_primary: string;
   color_secondary: string;
   color_background: string;
@@ -41,6 +44,9 @@ const DEFAULT_SETTINGS: SiteSettings = {
   site_description: 'Rejoignez la communauté des beatmakers et producteurs.',
   site_badge: 'La communauté des créateurs',
   favicon_url: '',
+  hero_video_url: '',
+  hero_poster_url: '',
+  home_carousel: [],
   color_primary: '#7A5CFF',
   color_secondary: '#E24A9E',
   color_background: '#000000',
@@ -87,6 +93,11 @@ function safeSettings(data: Record<string, unknown> | null): SiteSettings {
       site_description: String(data.site_description ?? DEFAULT_SETTINGS.site_description),
       site_badge: String(data.site_badge ?? DEFAULT_SETTINGS.site_badge),
       favicon_url: String(data.favicon_url ?? ''),
+      hero_video_url: String(data.hero_video_url ?? ''),
+      hero_poster_url: String(data.hero_poster_url ?? ''),
+      home_carousel: Array.isArray(data.home_carousel)
+        ? (data.home_carousel as { url: string; alt?: string }[]).filter((i) => i && typeof i.url === 'string' && i.url.trim())
+        : [],
       color_primary: String(data.color_primary ?? DEFAULT_SETTINGS.color_primary),
       color_secondary: String(data.color_secondary ?? DEFAULT_SETTINGS.color_secondary),
       color_background: String(data.color_background ?? DEFAULT_SETTINGS.color_background),

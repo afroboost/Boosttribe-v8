@@ -48,6 +48,7 @@ import {
   Check,
   X,
   Image,
+  Video,
   DollarSign,
   Globe,
   Gift,
@@ -82,6 +83,8 @@ interface SiteSettings {
   site_badge: string;
   favicon_url: string;
   home_carousel: { url: string; alt?: string }[]; // 🖼️ carrousel d'accueil (max 3)
+  hero_video_url: string; // 🎬 vidéo de fond du hero plein écran (mp4/webm)
+  hero_poster_url: string; // 🖼️ image poster/secours de la vidéo hero
   color_primary: string;
   color_secondary: string;
   color_background: string;
@@ -117,6 +120,8 @@ const DEFAULT_SETTINGS: SiteSettings = {
   site_badge: 'La communauté des créateurs',
   favicon_url: '',
   home_carousel: [],
+  hero_video_url: '',
+  hero_poster_url: '',
   color_primary: '#7A5CFF',
   color_secondary: '#E24A9E',
   color_background: '#000000',
@@ -866,6 +871,8 @@ const Dashboard: React.FC = () => {
         site_badge: settings.site_badge,
         favicon_url: settings.favicon_url || '',
         home_carousel: settings.home_carousel || [],
+        hero_video_url: settings.hero_video_url || '',
+        hero_poster_url: settings.hero_poster_url || '',
         color_primary: settings.color_primary,
         color_secondary: settings.color_secondary,
         color_background: settings.color_background,
@@ -1290,6 +1297,40 @@ const Dashboard: React.FC = () => {
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleCarouselUpload(settings.home_carousel?.length || 0, f); e.currentTarget.value = ''; }} />
                   </label>
                 )}
+              </div>
+
+              <Separator className="my-4 bg-white/10" />
+
+              {/* 🎬 Hero plein écran (vidéo) — URL vidéo + image poster/secours (façon Apple) */}
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-white/80 flex items-center gap-2"><Video size={14} /> Hero plein écran (vidéo)</Label>
+                  <p className="text-white/30 text-[11px] mt-0.5">
+                    URL d'une vidéo (mp4/webm) affichée en plein écran sur l'accueil (autoplay, muet, en boucle).
+                    <strong className="text-white/50"> Vide</strong> → la 1ʳᵉ image du carrousel sert de fond (zoom lent).
+                  </p>
+                </div>
+                <div>
+                  <Label className="text-white/60 text-xs">URL de la vidéo (mp4/webm)</Label>
+                  <Input
+                    value={settings.hero_video_url || ''}
+                    onChange={(e) => setSettings(prev => ({ ...prev, hero_video_url: e.target.value }))}
+                    placeholder="https://…/hero.mp4"
+                    className="h-9 text-sm bg-black/30 border-white/15 text-white"
+                    data-testid="hero-video-url"
+                  />
+                </div>
+                <div>
+                  <Label className="text-white/60 text-xs">Image poster / secours (optionnelle)</Label>
+                  <Input
+                    value={settings.hero_poster_url || ''}
+                    onChange={(e) => setSettings(prev => ({ ...prev, hero_poster_url: e.target.value }))}
+                    placeholder="https://…/hero-poster.jpg"
+                    className="h-9 text-sm bg-black/30 border-white/15 text-white"
+                    data-testid="hero-poster-url"
+                  />
+                  <p className="text-white/30 text-[11px] mt-0.5">Affichée pendant le chargement de la vidéo et en cas d'échec.</p>
+                </div>
               </div>
             </CardContent>
           </Card>

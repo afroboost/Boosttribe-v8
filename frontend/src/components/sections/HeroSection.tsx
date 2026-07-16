@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Radio, Video, FileText, ArrowRight } from "lucide-react";
+import { Radio, Video, FileText, ArrowRight, ChevronDown } from "lucide-react";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Input } from "@/components/ui/input";
 import { useTheme } from "@/context/ThemeContext";
@@ -8,6 +8,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useToast } from "@/components/ui/Toast";
 import { sessionExists } from "@/lib/supabaseClient";
 import { useReveal } from "@/hooks/useReveal";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 
 // ✅ Bénéfices honnêtes (remplacent des stats peu crédibles).
 const HERO_BENEFITS = [
@@ -23,6 +24,14 @@ export const HeroSection: React.FC = () => {
   const { showToast } = useToast();
   const { colors, fonts, buttons } = theme;
   const revealRef = useReveal<HTMLElement>();
+
+  // 🎬 Média de fond du hero (configurable en admin — Gestion du site).
+  const { settings } = useSiteSettings();
+  const heroVideo = settings.hero_video_url?.trim() || "";
+  const heroPoster = settings.hero_poster_url?.trim() || "";
+  const firstCarouselImage = settings.home_carousel?.find((i) => i?.url?.trim())?.url?.trim() || "";
+  // Fallback (ordre) : vidéo → 1ʳᵉ image du carrousel (Ken Burns) → poster → fond sombre.
+  const bgImage = firstCarouselImage || heroPoster;
 
   // Session code input state
   const [sessionCode, setSessionCode] = useState<string>("");
@@ -108,28 +117,54 @@ export const HeroSection: React.FC = () => {
   return (
     <section
       ref={revealRef}
-      className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden px-6 pt-28 pb-24"
-      style={{ background: "#FFFFFF", fontFamily: fonts.body }}
+      className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden px-6 pt-28 pb-24"
+      style={{ background: "#000000", fontFamily: fonts.body }}
     >
+      {/* ===== Média de fond plein écran ===== */}
+      <div aria-hidden="true" className="absolute inset-0 overflow-hidden">
+        {heroVideo ? (
+          <video
+            className="absolute inset-0 w-full h-full object-cover"
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            poster={heroPoster || undefined}
+            key={heroVideo}
+          >
+            <source src={heroVideo} />
+          </video>
+        ) : bgImage ? (
+          <div
+            className="kenburns-media absolute inset-0 w-full h-full bg-center bg-cover"
+            style={{ backgroundImage: `url("${bgImage}")` }}
+          />
+        ) : (
+          // Aucun média fourni → fond sombre sobre (on ne charge rien de lourd)
+          <div className="absolute inset-0" style={{ background: "radial-gradient(120% 90% at 50% 0%, #1a1a1f 0%, #000000 70%)" }} />
+        )}
+        {/* Voile sombre pour la lisibilité (haut + bas) */}
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.25) 42%, rgba(0,0,0,0.78) 100%)" }} />
+      </div>
+
+      {/* ===== Contenu superposé, centré ===== */}
       <div className="relative z-10 w-full max-w-4xl mx-auto text-center">
-        {/* Eyebrow — seul endroit coloré (accent) */}
         <p className="eyebrow reveal mb-6" style={{ color: colors.primary }}>
           {t('hero.badge')}
         </p>
 
-        {/* Titre géant, SANS-SERIF gras, noir */}
-        <h1 className="font-display display-hero reveal reveal-delay-1 mb-7" style={{ color: "#1D1D1F" }}>
+        <h1 className="font-display display-hero reveal reveal-delay-1 mb-7 text-white" style={{ textShadow: "0 2px 30px rgba(0,0,0,0.4)" }}>
           La même musique.
           <br />
-          <span style={{ color: "#86868B" }}>Au même instant.</span>
+          <span className="text-white/70">Au même instant.</span>
         </h1>
 
-        {/* Sous-titre gris */}
-        <p className="reveal reveal-delay-2 mx-auto max-w-xl text-lg sm:text-xl leading-relaxed mb-12" style={{ color: "#6E6E73" }}>
+        <p className="reveal reveal-delay-2 mx-auto max-w-xl text-lg sm:text-xl leading-relaxed mb-12 text-white/75">
           {t('hero.subtitle')}
         </p>
 
-        {/* Console « rejoindre / créer » — fonctionnel, thème clair */}
+        {/* Console « rejoindre / créer » — fonctionnel, verre sur média sombre */}
         <div className="reveal reveal-delay-3 mx-auto max-w-md text-left">
           <form onSubmit={handleJoinSession} className="space-y-3">
             <div className="relative">
@@ -138,11 +173,13 @@ export const HeroSection: React.FC = () => {
                 value={sessionCode}
                 onChange={handleCodeChange}
                 placeholder="Code de la session (ex: MKTQUYEY-5LFJ94)"
-                className="w-full h-14 px-5 text-center text-base font-mono tracking-wider rounded-2xl transition-all duration-200"
+                className="w-full h-14 px-5 text-center text-base font-mono tracking-wider rounded-2xl transition-all duration-200 placeholder:text-white/40"
                 style={{
-                  background: '#F5F5F7',
-                  border: `1px solid ${sessionCode ? colors.primary : '#D2D2D7'}`,
-                  color: '#1D1D1F',
+                  background: 'rgba(255,255,255,0.10)',
+                  backdropFilter: 'blur(12px)',
+                  WebkitBackdropFilter: 'blur(12px)',
+                  border: `1px solid ${sessionCode ? colors.primary : 'rgba(255,255,255,0.22)'}`,
+                  color: '#FFFFFF',
                 }}
                 maxLength={20}
                 disabled={isJoining}
@@ -174,11 +211,11 @@ export const HeroSection: React.FC = () => {
             <button
               onClick={handleResumeSession}
               disabled={isJoining}
-              className="w-full h-12 mt-3 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-60"
+              className="w-full h-12 mt-3 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 hover:bg-white/[0.14] disabled:opacity-60"
               style={{
-                background: '#F5F5F7',
-                border: '1px solid #D2D2D7',
-                color: '#1D1D1F',
+                background: 'rgba(255,255,255,0.08)',
+                border: '1px solid rgba(255,255,255,0.20)',
+                color: '#FFFFFF',
               }}
             >
               <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -191,10 +228,10 @@ export const HeroSection: React.FC = () => {
           {/* Séparateur */}
           <div className="relative my-5">
             <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" style={{ borderColor: '#E5E5EA' }} />
+              <span className="w-full border-t" style={{ borderColor: 'rgba(255,255,255,0.18)' }} />
             </div>
             <div className="relative flex justify-center text-xs">
-              <span className="px-3 uppercase tracking-widest" style={{ background: '#FFFFFF', color: '#86868B' }}>
+              <span className="px-3 uppercase tracking-widest text-white/60" style={{ background: 'transparent' }}>
                 ou
               </span>
             </div>
@@ -203,39 +240,36 @@ export const HeroSection: React.FC = () => {
           {/* Créer une session */}
           <button
             onClick={handleCreateSession}
-            className="group w-full h-12 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2"
+            className="group w-full h-12 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 text-white"
             style={{
               background: 'transparent',
-              border: '1px solid #1D1D1F',
-              color: '#1D1D1F',
+              border: '1px solid rgba(255,255,255,0.35)',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#1D1D1F'; e.currentTarget.style.color = '#FFFFFF'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#1D1D1F'; }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.color = '#000000'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#FFFFFF'; }}
           >
             {t('hero.cta.create')}
             <ArrowRight size={16} className="transition-transform duration-200 group-hover:translate-x-0.5" />
           </button>
         </div>
 
-        {/* Bénéfices honnêtes — ligne discrète, gris */}
-        <div className="reveal mt-16 flex flex-col sm:flex-row items-center justify-center gap-x-8 gap-y-3 text-sm" style={{ color: '#86868B' }}>
+        {/* Bénéfices honnêtes — ligne discrète */}
+        <div className="reveal mt-16 flex flex-col sm:flex-row items-center justify-center gap-x-8 gap-y-3 text-sm text-white/55">
           {HERO_BENEFITS.map(({ icon: Icon, label }, index) => (
             <div key={index} className="flex items-center gap-2">
-              <Icon size={15} className="flex-shrink-0" style={{ color: '#1D1D1F' }} />
+              <Icon size={15} className="flex-shrink-0 text-white/80" />
               <span style={{ fontFamily: fonts.body }}>{label}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Indicateur de défilement (sombre sur fond clair) */}
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
-        <span className="text-[11px] uppercase tracking-[0.2em]" style={{ fontFamily: fonts.body, color: '#86868B' }}>
+      {/* Indicateur de défilement (chevron discret, façon Apple) */}
+      <div className="absolute bottom-7 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 text-white/60">
+        <span className="text-[11px] uppercase tracking-[0.2em]" style={{ fontFamily: fonts.body }}>
           {theme.scrollIndicator}
         </span>
-        <div className="w-5 h-8 rounded-full border flex justify-center pt-1.5" style={{ borderColor: '#C7C7CC' }}>
-          <div className="w-0.5 h-1.5 rounded-full animate-[bt-float_1.6s_ease-in-out_infinite]" style={{ background: '#86868B' }} />
-        </div>
+        <ChevronDown size={20} className="animate-[bt-float_1.8s_ease-in-out_infinite]" />
       </div>
     </section>
   );

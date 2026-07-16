@@ -233,6 +233,19 @@ body {
     .reveal[data-revealed] { animation: none; }
 }
 
+/* Ken Burns — zoom lent de l'image de fond du hero (ambiance par défaut sans vidéo) */
+@keyframes bt-kenburns {
+    from { transform: scale(1.04) translate3d(0, 0, 0); }
+    to   { transform: scale(1.16) translate3d(-1.5%, -1.2%, 0); }
+}
+.kenburns-media {
+    animation: bt-kenburns 26s ease-in-out infinite alternate;
+    will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+    .kenburns-media { animation: none; transform: scale(1.04); }
+}
+
 /* Motion sobre : respecter la préférence système (accessibilité + qualité) */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {

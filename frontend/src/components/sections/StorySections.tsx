@@ -96,7 +96,7 @@ export const StorySections: React.FC = () => {
   const revealRef = useReveal<HTMLDivElement>();
 
   // La hero est BLANCHE → on démarre en NOIR, puis on alterne.
-  const tones: Tone[] = ["dark", "light", "dark", "light"];
+  const tones: Tone[] = ["light", "dark", "light", "dark"];
 
   return (
     <div ref={revealRef}>

@@ -3561,8 +3561,8 @@ export const SessionPage: React.FC = () => {
       {/* 💳 Paywall « crédits insuffisants » — remplace la redirection brutale. Clair + CTA d'achat. */}
       {creditsBlocked && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#9A3FC0]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
               <Coins className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -3587,7 +3587,7 @@ export const SessionPage: React.FC = () => {
                 <button
                   onClick={() => navigate('/login', { state: { from: window.location.pathname } })}
                   className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
-                  style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
                   data-testid="credits-paywall-login"
                 >
                   <Lock className="w-5 h-5" /> Se connecter
@@ -3596,7 +3596,7 @@ export const SessionPage: React.FC = () => {
               <button
                 onClick={() => navigate('/pricing')}
                 className={`w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] ${!user?.id && creditsBlocked !== 'record' ? 'bg-white/10' : ''}`}
-                style={!user?.id && creditsBlocked !== 'record' ? {} : { background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                style={!user?.id && creditsBlocked !== 'record' ? {} : { background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
                 data-testid="credits-paywall-buy"
               >
                 <Coins className="w-5 h-5" /> Acheter des crédits
@@ -3646,8 +3646,8 @@ export const SessionPage: React.FC = () => {
       {/* 🎟️ Paywall « place payante » — participant sans billet sur une session payante. */}
       {accessInfo?.mode === 'paid' && !isHost && !isAdminUser && hasTicket === false && !paidAwaitingSignup && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#9A3FC0]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
               <Ticket className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -3676,7 +3676,7 @@ export const SessionPage: React.FC = () => {
                   onClick={() => handleBuyTicket('stripe')}
                   disabled={ticketBusy || !user?.id}
                   className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] disabled:opacity-60"
-                  style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
                   data-testid="ticket-paywall-buy"
                 >
                   <Ticket className="w-5 h-5" />
@@ -3759,9 +3759,9 @@ export const SessionPage: React.FC = () => {
       {/* 🎟️ Hôte : configurateur du mode d'accès (ouverte / payante / privée). */}
       {showSessionSettings && isHost && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#D91CD2]/40 bg-[#15151b] p-6 shadow-2xl">
+          <div className="w-full max-w-md rounded-2xl border-2 border-[#9A3FC0]/40 bg-[#15151b] p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-              <Ticket size={20} style={{ color: '#FF2DAA' }} /> Mode d'accès de la session
+              <Ticket size={20} style={{ color: '#E24A9E' }} /> Mode d'accès de la session
             </h2>
             <p className="text-white/50 text-sm mb-4">Choisis comment les participants accèdent à ce live.</p>
             <div className="space-y-2 mb-4">
@@ -3778,7 +3778,7 @@ export const SessionPage: React.FC = () => {
                   key={opt.v}
                   onClick={() => setModeDraft((d) => ({ ...d, mode: opt.v }))}
                   className={`w-full text-left p-3 rounded-xl border transition-colors ${
-                    modeDraft.mode === opt.v ? 'border-[#D91CD2] bg-[#D91CD2]/10' : 'border-white/15 hover:bg-white/5'
+                    modeDraft.mode === opt.v ? 'border-[#9A3FC0] bg-[#9A3FC0]/10' : 'border-white/15 hover:bg-white/5'
                   }`}
                 >
                   <span className="text-white font-medium text-sm">{opt.label}</span>
@@ -3815,7 +3815,7 @@ export const SessionPage: React.FC = () => {
             {/* 📣 Page promo / affiche partageable */}
             <button
               onClick={() => { setShowSessionSettings(false); setShowPromoEditor(true); }}
-              className="w-full mb-3 py-2.5 rounded-xl text-white text-sm font-medium border border-[#D91CD2]/40 bg-[#D91CD2]/10 hover:bg-[#D91CD2]/20 flex items-center justify-center gap-2"
+              className="w-full mb-3 py-2.5 rounded-xl text-white text-sm font-medium border border-[#9A3FC0]/40 bg-[#9A3FC0]/10 hover:bg-[#9A3FC0]/20 flex items-center justify-center gap-2"
               data-testid="open-promo-editor"
             >
               📣 Configurer la page promo (affiche + lien partageable)
@@ -3825,7 +3825,7 @@ export const SessionPage: React.FC = () => {
                 onClick={handleSaveMode}
                 disabled={savingMode}
                 className="flex-1 py-2.5 rounded-xl text-white font-semibold disabled:opacity-60"
-                style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
               >
                 {savingMode ? 'Enregistrement…' : 'Enregistrer'}
               </button>
@@ -3898,7 +3898,7 @@ export const SessionPage: React.FC = () => {
             <button
               onClick={() => setRecConsentAck(true)}
               className="w-full h-12 rounded-xl text-white font-bold flex items-center justify-center gap-2 transition-transform hover:scale-105 active:scale-95"
-              style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+              style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
               data-testid="recording-consent-accept"
             >
               <Check className="w-5 h-5" /> J'ai compris, continuer
@@ -4052,7 +4052,7 @@ export const SessionPage: React.FC = () => {
                 <Button
                   variant="outline" size="sm"
                   onClick={() => { setShowSessionSettings(true); setSessionMenuOpen(false); }}
-                  className="border-[#D91CD2]/40 text-white/80 hover:bg-[#D91CD2]/15 inline-flex items-center justify-center gap-1 w-full md:w-auto"
+                  className="border-[#9A3FC0]/40 text-white/80 hover:bg-[#9A3FC0]/15 inline-flex items-center justify-center gap-1 w-full md:w-auto"
                   data-testid="session-access-mode"
                 >
                   <Ticket className="w-4 h-4" />
@@ -4099,7 +4099,7 @@ export const SessionPage: React.FC = () => {
                 className="flex-1 whitespace-nowrap px-3 py-2.5 text-sm font-medium border-b-2 transition-colors"
                 style={{
                   color: isActive ? '#FFFFFF' : '#A9A9A9',
-                  borderColor: isActive ? '#D91CD2' : 'transparent',
+                  borderColor: isActive ? '#9A3FC0' : 'transparent',
                   textShadow: isActive ? '0 0 8px rgba(217,28,210,0.6)' : 'none',
                 }}
                 data-testid={`mobile-tab-${tab.id}`}
@@ -4147,7 +4147,7 @@ export const SessionPage: React.FC = () => {
             {isFree && sessionId && (
               <div className="bt-tab-diffusion flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
                 <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio : nécessite des crédits</span>
-                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
                   Acheter des crédits
                 </button>
               </div>
@@ -4213,7 +4213,7 @@ export const SessionPage: React.FC = () => {
                   {isFree ? 'La Live Visio nécessite des crédits.' : 'Active la Live Visio pour afficher les caméras.'}
                 </p>
                 {isFree ? (
-                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}>
+                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
                     Acheter des crédits
                   </button>
                 ) : (
@@ -4286,7 +4286,7 @@ export const SessionPage: React.FC = () => {
                     onClick={handleStartPremiumRec}
                     disabled={recProcessing}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-transform hover:scale-105 active:scale-95"
-                    style={{ background: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' }}
+                    style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
                     title={`Enregistrer la session (toutes les voix) + transcription IA${isAdminUser ? '' : ` — ${recCost} crédit${recCost > 1 ? 's' : ''}`}`}
                     data-testid="premium-record-start"
                   >
@@ -4321,10 +4321,10 @@ export const SessionPage: React.FC = () => {
 
             {/* 🔴 Enregistrement premium : état/résultat — panneau discret (hôte) */}
             {isHost && (recProcessing || (recResult && (recResult.summary || recResult.transcript))) && (
-              <div className="bt-tab-diffusion rounded-xl border border-[#D91CD2]/30 bg-white/5 p-3 space-y-2">
+              <div className="bt-tab-diffusion rounded-xl border border-[#9A3FC0]/30 bg-white/5 p-3 space-y-2">
                 {recProcessing && (
                   <p className="text-white/70 text-xs flex items-center gap-2">
-                    <span className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-[#FF2DAA] animate-spin" />
+                    <span className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-[#E24A9E] animate-spin" />
                     Transcription IA en cours…
                   </p>
                 )}
@@ -4332,7 +4332,7 @@ export const SessionPage: React.FC = () => {
                   <div className="space-y-2 max-h-72 overflow-y-auto">
                     {recResult.summary && (
                       <div>
-                        <p className="text-[#FF2DAA] text-xs font-semibold mb-1">Résumé / notes</p>
+                        <p className="text-[#E24A9E] text-xs font-semibold mb-1">Résumé / notes</p>
                         <p className="text-white/80 text-xs whitespace-pre-wrap">{recResult.summary}</p>
                       </div>
                     )}

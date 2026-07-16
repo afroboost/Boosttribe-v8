@@ -17,8 +17,8 @@ import {
 } from "lucide-react";
 
 // 🎨 Palette Afroboost (cohérente, premium) — magenta / rose, accents sobres.
-const MAGENTA = "#D91CD2";
-const PINK = "#FF2DAA";
+const MAGENTA = "#9A3FC0";
+const PINK = "#E24A9E";
 
 // Feature data — reflète TOUTES les nouveautés de BoostTribe.
 const FEATURES = [
@@ -99,7 +99,7 @@ const FeatureCard: React.FC<FeatureCardProps> = ({ feature, index }) => {
   
   return (
     <div 
-      className="group relative p-6 sm:p-8 rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm transition-all duration-300 hover:border-white/20 hover:bg-white/10 hover:scale-[1.02] hover:shadow-2xl"
+      className="group relative p-6 sm:p-8 rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-sm transition-all duration-200 hover:border-white/20 hover:bg-white/[0.06] hover:-translate-y-0.5"
       style={{
         animationDelay: `${index * 0.1}s`,
         animation: "fadeInUp 0.6s ease-out forwards",
@@ -120,10 +120,9 @@ const FeatureCard: React.FC<FeatureCardProps> = ({ feature, index }) => {
           boxShadow: `0 0 20px ${feature.color}20`,
         }}
       >
-        <Icon 
-          size={28} 
+        <Icon
+          size={28}
           style={{ color: feature.color }}
-          className="transition-transform duration-300 group-hover:rotate-6"
         />
       </div>
       
@@ -167,8 +166,9 @@ const FeaturesPage: React.FC = () => {
       <header 
         className="fixed top-0 left-0 right-0 z-50"
         style={{
-          background: "rgba(0, 0, 0, 0.8)",
+          background: "rgba(0, 0, 0, 0.55)",
           backdropFilter: "blur(20px)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
         }}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

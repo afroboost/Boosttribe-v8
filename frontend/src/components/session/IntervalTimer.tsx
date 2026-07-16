@@ -103,7 +103,7 @@ const AFRO_GRADIENT = 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)';
 // Phases aux couleurs du site, tout en restant distinguables : effort = magenta, repos = violet,
 // préparation = ambre (« prépare-toi »), terminé = magenta profond.
 const PHASE_COLOR: Record<IntervalPhaseKey, string> = {
-  prepare: '#F5A524', work: '#E24A9E', rest: '#7A5CFF', done: '#D91CD2',
+  prepare: '#F5A524', work: '#E24A9E', rest: '#7A5CFF', done: '#9A3FC0',
 };
 
 // ⏱️ Info de décompte exposée au parent (LECTURE SEULE) → permet d'afficher un rappel du timer

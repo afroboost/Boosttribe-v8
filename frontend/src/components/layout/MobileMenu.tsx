@@ -71,7 +71,7 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
               <Tag size={18} /> Tarifs
             </Link>
             {/* 💎 Point d'entrée VISIBLE vers l'espace coach / abonnement */}
-            <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/10" style={{ color: '#FF2DAA' }}>
+            <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/10" style={{ color: '#E24A9E' }}>
               <Crown size={18} /> {isAuthenticated ? 'Espace Coach' : 'Devenir Coach'}
             </Link>
             {isAuthenticated && (

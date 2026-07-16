@@ -13,7 +13,7 @@ const Cropper = RawCropper as unknown as React.ComponentType<{
   onCropComplete: (a: unknown, p: { x: number; y: number; width: number; height: number }) => void;
 }>;
 
-const AFRO = { gradient: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)', pink: '#FF2DAA' };
+const AFRO = { gradient: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)', pink: '#E24A9E' };
 type Fmt = '9:16' | '16:9';
 interface Area { x: number; y: number; width: number; height: number }
 
@@ -171,7 +171,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
 
   return (
     <div className="fixed inset-0 z-[150] flex items-center justify-center p-3 bg-black/90 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-2xl border-2 border-[#D91CD2]/40 bg-[#15151b] p-5 shadow-2xl"
+      <div className="w-full max-w-4xl max-h-[92vh] overflow-y-auto rounded-2xl border-2 border-[#9A3FC0]/40 bg-[#15151b] p-5 shadow-2xl"
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>📣 Page promo de la session</h2>
@@ -190,7 +190,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                 <div className="mt-1.5 grid grid-cols-2 gap-2">
                   {(['9:16', '16:9'] as Fmt[]).map((f) => (
                     <button key={f} onClick={() => setFormat(f)}
-                      className={`p-2.5 rounded-xl border text-sm font-medium ${format === f ? 'border-[#D91CD2] bg-[#D91CD2]/10 text-white' : 'border-white/15 text-white/60'}`}>
+                      className={`p-2.5 rounded-xl border text-sm font-medium ${format === f ? 'border-[#9A3FC0] bg-[#9A3FC0]/10 text-white' : 'border-white/15 text-white/60'}`}>
                       {f === '9:16' ? 'Portrait 9:16' : 'Paysage 16:9'}
                     </button>
                   ))}
@@ -221,8 +221,8 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setIsPaid(false)} className={`p-2.5 rounded-xl border text-sm font-medium ${!isPaid ? 'border-[#D91CD2] bg-[#D91CD2]/10 text-white' : 'border-white/15 text-white/60'}`}>Gratuite</button>
-                <button onClick={() => setIsPaid(true)} className={`p-2.5 rounded-xl border text-sm font-medium ${isPaid ? 'border-[#D91CD2] bg-[#D91CD2]/10 text-white' : 'border-white/15 text-white/60'}`}>Payante</button>
+                <button onClick={() => setIsPaid(false)} className={`p-2.5 rounded-xl border text-sm font-medium ${!isPaid ? 'border-[#9A3FC0] bg-[#9A3FC0]/10 text-white' : 'border-white/15 text-white/60'}`}>Gratuite</button>
+                <button onClick={() => setIsPaid(true)} className={`p-2.5 rounded-xl border text-sm font-medium ${isPaid ? 'border-[#9A3FC0] bg-[#9A3FC0]/10 text-white' : 'border-white/15 text-white/60'}`}>Payante</button>
               </div>
               {isPaid && (
                 <div className="space-y-2">
@@ -237,7 +237,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                       className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" />
                   </div>
                   <label className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
-                    <input type="checkbox" checked={allowAccessRequests} onChange={(e) => setAllowAccessRequests(e.target.checked)} className="accent-[#D91CD2]" />
+                    <input type="checkbox" checked={allowAccessRequests} onChange={(e) => setAllowAccessRequests(e.target.checked)} className="accent-[#9A3FC0]" />
                     Autoriser les demandes d'accès gratuit (« Demander l'accès »)
                   </label>
                 </div>
@@ -248,7 +248,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                   className="w-full mt-1 px-3 py-2 rounded-lg bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" />
               </div>
               <label className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
-                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-[#D91CD2]" />
+                <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-[#9A3FC0]" />
                 Page publiée (visible via le lien)
               </label>
               <div>
@@ -311,7 +311,7 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
           </div>
           <div className="p-4 bg-black/90 flex items-center gap-3 flex-wrap justify-center">
             <span className="text-white/60 text-xs flex items-center gap-1">{format === '9:16' ? <ImageIcon size={14} /> : <Video size={14} />} {format}</span>
-            <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="w-40 accent-[#D91CD2]" />
+            <input type="range" min={1} max={3} step={0.01} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="w-40 accent-[#9A3FC0]" />
             <button onClick={() => setCropSrc(null)} className="px-4 py-2 rounded-xl text-white/70 border border-white/20 text-sm">Annuler</button>
             <button onClick={confirmCrop} className="px-5 py-2 rounded-xl text-white font-semibold text-sm" style={{ background: AFRO.gradient }}>Valider le cadrage</button>
           </div>

@@ -15,11 +15,11 @@ import {
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
-  magenta: '#D91CD2',
-  pink: '#FF2DAA',
+  magenta: '#9A3FC0',
+  pink: '#E24A9E',
   dark: '#0A0A0F',
   white: '#FFFFFF',
-  gradient: 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)',
+  gradient: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)',
 };
 
 // Libellés des services configurables (pricing_settings.services_shown)

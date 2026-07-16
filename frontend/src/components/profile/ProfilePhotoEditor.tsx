@@ -64,7 +64,7 @@ export const ProfilePhotoEditor: React.FC<ProfilePhotoEditorProps> = ({ variant 
         onClick={() => setOpen(true)}
         title="Modifier la photo"
         aria-label="Modifier la photo de profil"
-        className={`group relative w-8 h-8 rounded-full bg-white/10 flex items-center justify-center overflow-hidden ring-1 ring-white/15 hover:ring-[#FF2DAA] transition ${className}`}
+        className={`group relative w-8 h-8 rounded-full bg-white/10 flex items-center justify-center overflow-hidden ring-1 ring-white/15 hover:ring-[#E24A9E] transition ${className}`}
         data-testid="profile-photo-avatar-edit"
       >
         {profile?.avatar_url ? (

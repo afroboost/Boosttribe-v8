@@ -176,7 +176,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
           {/* Icon */}
           <div 
             className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)' }}
+            style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
           >
             <Smartphone size={24} className="text-white" />
           </div>

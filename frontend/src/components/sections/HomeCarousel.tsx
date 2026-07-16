@@ -103,7 +103,7 @@ export const HomeCarousel: React.FC = () => {
                 className="h-2 rounded-full transition-all"
                 style={{
                   width: i === index ? 22 : 8,
-                  background: i === index ? 'linear-gradient(135deg, #D91CD2 0%, #FF2DAA 100%)' : 'rgba(255,255,255,0.5)',
+                  background: i === index ? 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' : 'rgba(255,255,255,0.5)',
                 }}
               />
             ))}

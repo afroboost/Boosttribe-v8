@@ -47,8 +47,8 @@ const OPTIONS: ModeOption[] = [
 ];
 
 // Afroboost palette
-const MAGENTA = '#D91CD2';
-const PINK = '#FF2DAA';
+const MAGENTA = '#9A3FC0';
+const PINK = '#E24A9E';
 
 export function AccessModeSelector({ value, onChange, className }: AccessModeSelectorProps) {
   return (

@@ -60,10 +60,10 @@ export const Header: React.FC = () => {
       <div 
         className="mx-auto px-4 sm:px-6 lg:px-8"
         style={{
-          background: "rgba(0, 0, 0, 0.55)",
-          backdropFilter: "blur(20px)",
-          WebkitBackdropFilter: "blur(20px)",
-          borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+          background: "rgba(22, 22, 23, 0.8)",
+          backdropFilter: "saturate(180%) blur(20px)",
+          WebkitBackdropFilter: "saturate(180%) blur(20px)",
+          borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
         }}
       >
         <div className="flex items-center justify-between h-16 sm:h-20">
@@ -71,30 +71,24 @@ export const Header: React.FC = () => {
           <div className="flex items-center">
             <Link to="/" className="flex items-center gap-2 group">
               {/* Logo Icon */}
-              <div 
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center"
+              <div
+                className="w-8 h-8 sm:w-9 sm:h-9 rounded-[10px] flex items-center justify-center"
                 style={{
-                  background: colors.gradient.primary,
+                  background: colors.primary,
                 }}
               >
-                <svg 
-                  viewBox="0 0 24 24" 
-                  className="w-5 h-5 sm:w-6 sm:h-6 text-white"
+                <svg
+                  viewBox="0 0 24 24"
+                  className="w-5 h-5 text-white"
                   fill="currentColor"
                 >
                   <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
                 </svg>
               </div>
-              {/* Logo Text - Dynamic from theme */}
-              <span 
-                className="text-xl sm:text-2xl font-bold tracking-tight"
-                style={{
-                  fontFamily: fonts.heading,
-                  backgroundImage: colors.gradient.primary,
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                }}
+              {/* Logo Text — monochrome (2 couleurs max) */}
+              <span
+                className="text-lg sm:text-xl font-semibold tracking-tight text-white"
+                style={{ fontFamily: fonts.heading }}
               >
                 {name}
               </span>
@@ -135,7 +129,7 @@ export const Header: React.FC = () => {
             <Link
               to="/wallet"
               className="text-sm font-medium transition-colors duration-200 hover:opacity-90"
-              style={{ fontFamily: fonts.body, color: colors.secondary }}
+              style={{ fontFamily: fonts.body, color: colors.primary }}
             >
               {isAuthenticated ? 'Espace Coach' : 'Devenir Coach'}
             </Link>

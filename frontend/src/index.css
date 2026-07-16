@@ -1,7 +1,6 @@
 /* Beattribe Font Imports (doit précéder toute autre règle — exigence CSS @import) */
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
-/* Fraunces — display éditorial premium (titres XXL, style magazine/Apple) */
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400..500&display=swap');
+/* Inter chargé en graisses lourdes (700/800/900) — rendu type SF Pro Display pour les gros titres */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -168,41 +167,42 @@ body {
    SYSTÈME ÉDITORIAL PREMIUM (typo XXL + reveal)
    ============================================ */
 
-/* Display éditorial (serif optique) — titres hero & chapitres */
+/* Display Apple — SANS-SERIF grasse (SF Pro Display → Inter en repli), PAS de serif */
 .font-display {
-    font-family: 'Fraunces', Georgia, 'Times New Roman', serif;
-    font-optical-sizing: auto;
-    font-weight: 500;
-    letter-spacing: -0.02em;
-    line-height: 1.02;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", 'Inter', system-ui, sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
 }
+/* (ancienne classe « italic » conservée pour compat — désormais une nuance grise, sans italique) */
 .font-display-italic {
-    font-family: 'Fraunces', Georgia, serif;
-    font-optical-sizing: auto;
-    font-style: italic;
-    font-weight: 400;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", 'Inter', system-ui, sans-serif;
+    font-weight: 700;
+    font-style: normal;
+    letter-spacing: -0.03em;
 }
 
 /* Eyebrow / sur-titre (petit, capitales, tracké) */
 .eyebrow {
     font-family: var(--bt-font-body);
     text-transform: uppercase;
-    letter-spacing: 0.18em;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: hsl(var(--bt-text-secondary));
+    letter-spacing: 0.16em;
+    font-size: 0.72rem;
+    font-weight: 700;
 }
 
-/* Échelle de titres (clamp fluide, tracking négatif serré) */
+/* Échelle de titres (clamp fluide, très gras, tracking négatif serré — façon Apple) */
 .display-hero {
-    font-size: clamp(3rem, 11vw, 8.5rem);
-    line-height: 0.98;
+    font-size: clamp(2.75rem, 9vw, 6.5rem);
+    line-height: 1.03;
     letter-spacing: -0.035em;
+    font-weight: 800;
 }
 .display-chapter {
-    font-size: clamp(2.25rem, 6vw, 4.5rem);
-    line-height: 1.02;
-    letter-spacing: -0.025em;
+    font-size: clamp(2.25rem, 6vw, 4.25rem);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    font-weight: 800;
 }
 
 /* Révélation au scroll — FAIL-SAFE : le contenu est VISIBLE par défaut ;

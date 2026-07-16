@@ -211,43 +211,20 @@ const FeaturesPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-16 px-4 sm:px-6 lg:px-8">
+      {/* Hero Section — éditorial */}
+      <section className="pt-40 pb-20 px-6">
         <div className="max-w-4xl mx-auto text-center">
-          <div 
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/20 bg-white/5 mb-6"
-            style={{ animation: "fadeInUp 0.6s ease-out" }}
-          >
-            <span className="text-white/60 text-sm">✨ Fonctionnalités</span>
-          </div>
-          
-          <h1 
-            className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white mb-6"
-            style={{ 
-              fontFamily: fonts.heading,
-              animation: "fadeInUp 0.6s ease-out 0.1s forwards",
-              opacity: 0,
-            }}
-          >
-            Tout ce dont vous avez besoin pour{" "}
-            <span 
-              style={{
-                backgroundImage: colors.gradient.primary,
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              synchroniser vos sessions
-            </span>
+          <p className="eyebrow mb-6" style={{ color: colors.primary }}>Fonctionnalités</p>
+
+          <h1 className="font-display display-hero text-white mb-8">
+            Tout, pour un live
+            <br />
+            <span className="font-display-italic text-white/90">parfaitement synchronisé.</span>
           </h1>
-          
-          <p 
-            className="text-lg sm:text-xl text-white/60 max-w-2xl mx-auto"
-            style={{ 
-              fontFamily: fonts.body,
-              animation: "fadeInUp 0.6s ease-out 0.2s forwards",
-              opacity: 0,
-            }}
+
+          <p
+            className="text-lg sm:text-xl text-white/55 max-w-2xl mx-auto leading-relaxed"
+            style={{ fontFamily: fonts.body }}
           >
             Lives synchronisés, Live Visio, chat en direct et transcription IA — une plateforme complète pour animer et partager vos sessions.
           </p>
@@ -273,11 +250,8 @@ const FeaturesPage: React.FC = () => {
         }}
       >
         <div className="max-w-3xl mx-auto text-center">
-          <h2 
-            className="text-3xl sm:text-4xl font-bold text-white mb-6"
-            style={{ fontFamily: fonts.heading }}
-          >
-            Prêt à créer votre première session ?
+          <h2 className="font-display display-chapter text-white mb-6">
+            Prêt à créer votre<br />première session ?
           </h2>
           <p className="text-white/60 mb-8 text-lg">
             Votre 1er cours est offert. Créez une session en quelques secondes — aucune installation requise.

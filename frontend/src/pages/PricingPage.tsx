@@ -353,11 +353,12 @@ const PricingPage: React.FC = () => {
           <MobileMenu dropdownTopClass="top-0" />
         </div>
 
-        <div className="text-center">
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-4" style={{ fontFamily: theme.fonts.heading }}>
-            Achète des crédits
+        <div className="text-center pt-10">
+          <p className="eyebrow mb-5" style={{ color: theme.colors.primary }}>Tarifs</p>
+          <h1 className="font-display display-hero text-white mb-6">
+            Payez ce que<br /><span className="font-display-italic text-white/90">vous utilisez.</span>
           </h1>
-          <p className="text-white/60 text-lg max-w-2xl mx-auto mb-6">
+          <p className="text-white/55 text-lg max-w-2xl mx-auto mb-8 leading-relaxed">
             <span className="font-semibold text-white">1 crédit = 1 accès à un live.</span>{' '}
             Pas d'abonnement : tu paies uniquement ce que tu utilises, et tes crédits restent valables {validityMonths} mois.
           </p>

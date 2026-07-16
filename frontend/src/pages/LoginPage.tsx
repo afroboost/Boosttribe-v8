@@ -218,7 +218,7 @@ const LoginPage: React.FC = () => {
             </div>
           </Link>
 
-          <CardTitle className="text-2xl text-white" style={{ fontFamily: theme.fonts.heading }}>
+          <CardTitle className="font-display text-4xl text-white" style={{ letterSpacing: '-0.02em' }}>
             {mode === 'login' && 'Connexion'}
             {mode === 'signup' && 'Créer un compte'}
             {mode === 'forgot' && 'Mot de passe oublié'}

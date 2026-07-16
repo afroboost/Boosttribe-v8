@@ -186,7 +186,7 @@ const FeaturesPage: React.FC = () => {
                 className="text-xl sm:text-2xl font-bold"
                 style={{
                   fontFamily: fonts.heading,
-                  background: colors.gradient.primary,
+                  backgroundImage: colors.gradient.primary,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                 }}
@@ -232,7 +232,7 @@ const FeaturesPage: React.FC = () => {
             Tout ce dont vous avez besoin pour{" "}
             <span 
               style={{
-                background: colors.gradient.primary,
+                backgroundImage: colors.gradient.primary,
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
               }}

@@ -980,7 +980,7 @@ const Dashboard: React.FC = () => {
                   className="text-lg sm:text-xl font-bold truncate"
                   style={{
                     fontFamily: theme.fonts.heading,
-                    background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
+                    backgroundImage: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
                     WebkitBackgroundClip: "text",
                     WebkitTextFillColor: "transparent",
                   }}
@@ -1119,7 +1119,7 @@ const Dashboard: React.FC = () => {
                   <h2
                     className="text-xl sm:text-2xl font-bold truncate"
                     style={{
-                      background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
+                      backgroundImage: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)`,
                       WebkitBackgroundClip: "text",
                       WebkitTextFillColor: "transparent",
                     }}

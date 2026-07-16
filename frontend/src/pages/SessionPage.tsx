@@ -3949,7 +3949,7 @@ export const SessionPage: React.FC = () => {
                   className="text-xl font-bold hidden sm:block"
                   style={{
                     fontFamily: "'Space Grotesk', sans-serif",
-                    background: theme.colors.gradient.primary,
+                    backgroundImage: theme.colors.gradient.primary,
                     WebkitBackgroundClip: 'text',
                     WebkitTextFillColor: 'transparent',
                   }}

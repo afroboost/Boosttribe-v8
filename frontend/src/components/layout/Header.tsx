@@ -90,7 +90,7 @@ export const Header: React.FC = () => {
                 className="text-xl sm:text-2xl font-bold tracking-tight"
                 style={{
                   fontFamily: fonts.heading,
-                  background: colors.gradient.primary,
+                  backgroundImage: colors.gradient.primary,
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
                   backgroundClip: "text",

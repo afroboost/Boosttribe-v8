@@ -202,7 +202,7 @@ export const HeroSection: React.FC = () => {
             className="absolute inset-0 text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight blur-2xl opacity-50 select-none"
             style={{
               fontFamily: fonts.heading,
-              background: colors.gradient.primary,
+              backgroundImage: colors.gradient.primary,
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               backgroundClip: "text",
@@ -216,7 +216,7 @@ export const HeroSection: React.FC = () => {
             className="relative text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight opacity-0"
             style={{
               fontFamily: fonts.heading,
-              background: colors.gradient.primary,
+              backgroundImage: colors.gradient.primary,
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
               backgroundClip: "text",

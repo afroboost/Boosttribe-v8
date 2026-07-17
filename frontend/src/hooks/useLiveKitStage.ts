@@ -59,7 +59,7 @@ export interface LiveKitStageReturn {
   videoDevices: MediaDeviceInfo[];
   videoDeviceId: string | null;
   setCameraDevice: (deviceId: string) => Promise<void>;
-  refreshVideoDevices: () => Promise<void>;
+  refreshVideoDevices: (probe?: boolean) => Promise<void>;
   flipCamera: () => Promise<void>;
   // 🎤 LEVER LA MAIN — actions hôte/co-hôte (accorder/retirer le droit de publier côté SFU)
   promote: (targetUserId: string) => Promise<PromoteResult>;
@@ -126,11 +126,21 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     setRemoteScreen((prev) => (prev && prev.userId === uid ? null : prev));
   }, []);
 
-  // ─── Énumère les caméras (labels dispo seulement APRÈS une 1ʳᵉ autorisation) ───
-  const refreshVideoDevices = useCallback(async (): Promise<void> => {
+  // ─── Énumère les caméras. `probe=true` (clic utilisateur) : si les libellés manquent
+  //     (permission pas encore accordée), sonde brièvement la caméra pour obtenir les labels
+  //     ET faire apparaître une webcam externe fraîchement branchée. `probe=false` = silencieux
+  //     (montage / devicechange) : n'ouvre JAMAIS la caméra tout seul. ───
+  const refreshVideoDevices = useCallback(async (probe = false): Promise<void> => {
     try {
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      setVideoDevices(devs.filter((d) => d.kind === 'videoinput'));
+      let devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+      if (probe && !cameraOnRef.current && (devs.length === 0 || devs.every((d) => !d.label))) {
+        try {
+          const p = await navigator.mediaDevices.getUserMedia({ video: true });
+          p.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
+          devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+        } catch { /* permission refusée → on garde ce qu'on a */ }
+      }
+      setVideoDevices(devs);
     } catch { /* ignore */ }
   }, []);
 

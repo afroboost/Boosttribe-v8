@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import supabase, { isSupabaseConfigured } from '@/lib/supabaseClient';
 import { useTheme } from '@/context/ThemeContext';
+import { resolveImageSource } from '@/utils/mediaUrl';
 
 // Site settings interface
 interface SiteSettings {
@@ -302,7 +303,8 @@ export function useSiteSettings() {
   // Apply favicon when settings change — vide = favicon PAR DÉFAUT (jamais sans favicon)
   useEffect(() => {
     const DEFAULT_FAVICON = '/icon-192x192.png'; // icône note de musique violette (public/)
-    const url = settings.favicon_url?.trim() || DEFAULT_FAVICON;
+    // Liens tolérants (Drive/Dropbox/…) résolus en hotlink fiable.
+    const url = resolveImageSource(settings.favicon_url) || DEFAULT_FAVICON;
     let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
     if (!link) {
       link = document.createElement('link');

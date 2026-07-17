@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/Toast";
 import { sessionExists } from "@/lib/supabaseClient";
 import { useReveal } from "@/hooks/useReveal";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
+import { resolveVideoSource, resolveImageSource } from "@/utils/mediaUrl";
 
 // ✅ Bénéfices honnêtes (remplacent des stats peu crédibles).
 const HERO_BENEFITS = [
@@ -26,12 +27,14 @@ export const HeroSection: React.FC = () => {
   const revealRef = useReveal<HTMLElement>();
 
   // 🎬 Média de fond du hero (configurable en admin — Gestion du site).
+  //    Liens tolérants : YouTube/Vimeo/Drive (embed) ou fichier direct, images Drive/Dropbox résolues.
   const { settings } = useSiteSettings();
-  const heroVideo = settings.hero_video_url?.trim() || "";
-  const heroPoster = settings.hero_poster_url?.trim() || "";
-  const firstCarouselImage = settings.home_carousel?.find((i) => i?.url?.trim())?.url?.trim() || "";
-  // Fallback (ordre) : vidéo → 1ʳᵉ image du carrousel (Ken Burns) → poster → fond sombre.
-  const bgImage = firstCarouselImage || heroPoster;
+  const heroVid = resolveVideoSource(settings.hero_video_url);
+  const heroPoster = resolveImageSource(settings.hero_poster_url);
+  const firstCarouselImage = resolveImageSource(settings.home_carousel?.find((i) => i?.url?.trim())?.url);
+  // Ordre du fond (hors vidéo) : POSTER d'abord (ce que l'admin remplit et veut voir) → 1ʳᵉ image
+  // du carrousel (Ken Burns) → fond sombre. La vidéo, si présente, reste prioritaire sur tout.
+  const bgImage = heroPoster || firstCarouselImage;
 
   // Session code input state
   const [sessionCode, setSessionCode] = useState<string>("");
@@ -122,7 +125,7 @@ export const HeroSection: React.FC = () => {
     >
       {/* ===== Média de fond plein écran ===== */}
       <div aria-hidden="true" className="absolute inset-0 overflow-hidden">
-        {heroVideo ? (
+        {heroVid.kind === 'file' ? (
           <video
             className="absolute inset-0 w-full h-full object-cover"
             autoPlay
@@ -131,16 +134,43 @@ export const HeroSection: React.FC = () => {
             playsInline
             preload="metadata"
             poster={heroPoster || undefined}
-            key={heroVideo}
+            key={heroVid.src}
             // 🎞️ Noir & blanc forcé : même une vidéo colorée s'affiche en N&B (règle 2 couleurs).
             style={{ filter: "grayscale(100%) contrast(1.06) brightness(0.92)" }}
           >
-            <source src={heroVideo} />
+            <source src={heroVid.src} />
           </video>
+        ) : heroVid.embed ? (
+          // ▶️ YouTube / Vimeo / Google Drive : iframe plein cadre, muette, autoplay/boucle, SANS
+          //    contrôles. pointer-events:none → les boutons Rejoindre/Créer restent cliquables au-dessus.
+          <iframe
+            key={heroVid.src}
+            src={heroVid.src}
+            title="Vidéo de fond"
+            allow="autoplay; fullscreen; picture-in-picture"
+            frameBorder={0}
+            sandbox="allow-scripts allow-same-origin allow-presentation"
+            aria-hidden="true"
+            tabIndex={-1}
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: "100vw",
+              height: "56.25vw",       // 16:9 : couvre la largeur
+              minHeight: "100vh",
+              minWidth: "177.78vh",     // 16:9 : couvre la hauteur → plein cadre sans bandes noires
+              border: 0,
+              pointerEvents: "none",
+              filter: "grayscale(100%) contrast(1.06) brightness(0.92)",
+            }}
+          />
         ) : bgImage ? (
           <div
             className="kenburns-media absolute inset-0 w-full h-full bg-center bg-cover"
             // 🎞️ Noir & blanc forcé sur l'image de fond (même si le client met une photo colorée).
+            key={bgImage}
             style={{ backgroundImage: `url("${bgImage}")`, filter: "grayscale(100%) contrast(1.06) brightness(0.92)" }}
           />
         ) : (

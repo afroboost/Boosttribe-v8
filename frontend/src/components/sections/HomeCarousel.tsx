@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import supabase, { isSupabaseConfigured } from '@/lib/supabaseClient';
+import { resolveImageSource } from '@/utils/mediaUrl';
 
 interface CarouselImage { url: string; alt?: string }
 
@@ -73,7 +74,7 @@ export const HomeCarousel: React.FC = () => {
             return (
               <div key={i} className="relative w-full h-full flex-shrink-0">
                 <img
-                  src={img.url}
+                  src={resolveImageSource(img.url)}
                   alt={caption || `Image d'accueil ${i + 1}`}
                   className="w-full h-full object-cover"
                   loading={i === 0 ? 'eager' : 'lazy'}

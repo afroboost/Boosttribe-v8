@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { resolveImageSource, describeVideoSource, isImgbbPageLink } from "@/utils/mediaUrl";
 import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "@/context/ThemeContext";
 import { useAuth } from "@/context/AuthContext";
@@ -683,7 +684,7 @@ const Dashboard: React.FC = () => {
 
   // Update favicon in document head — preview immédiat ; vide = favicon par défaut
   useEffect(() => {
-    const url = settings.favicon_url?.trim() || '/icon-192x192.png';
+    const url = resolveImageSource(settings.favicon_url) || '/icon-192x192.png';
     let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
     if (!link) {
       link = document.createElement('link');
@@ -1115,7 +1116,7 @@ const Dashboard: React.FC = () => {
                   style={{ background: `linear-gradient(135deg, ${settings.color_primary} 0%, ${settings.color_secondary} 100%)` }}
                 >
                   {settings.favicon_url ? (
-                    <img src={settings.favicon_url} alt="Favicon" className="w-8 h-8" onError={(e) => e.currentTarget.style.display = 'none'} />
+                    <img src={resolveImageSource(settings.favicon_url)} alt="Favicon" className="w-8 h-8" onError={(e) => e.currentTarget.style.display = 'none'} />
                   ) : (
                     <svg viewBox="0 0 24 24" className="w-8 h-8 text-white" fill="currentColor">
                       <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
@@ -1241,8 +1242,8 @@ const Dashboard: React.FC = () => {
               {settings.favicon_url && (
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10">
                   <span className="text-white/50 text-sm">Aperçu :</span>
-                  <img 
-                    src={settings.favicon_url} 
+                  <img
+                    src={resolveImageSource(settings.favicon_url)}
                     alt="Favicon preview" 
                     className="w-8 h-8"
                     onError={(e) => {
@@ -1266,7 +1267,7 @@ const Dashboard: React.FC = () => {
                 {(settings.home_carousel || []).map((img, i) => (
                   <div key={i} className="flex items-center gap-3 p-2.5 rounded-lg bg-white/5 border border-white/10">
                     <div className="w-16 h-10 rounded overflow-hidden bg-black/40 flex-shrink-0">
-                      {img.url ? <img src={img.url} alt="" className="w-full h-full object-cover" /> : null}
+                      {img.url ? <img src={resolveImageSource(img.url)} alt="" className="w-full h-full object-cover" /> : null}
                     </div>
                     <div className="flex-1 min-w-0">
                       <Input
@@ -1311,25 +1312,49 @@ const Dashboard: React.FC = () => {
                   </p>
                 </div>
                 <div>
-                  <Label className="text-white/60 text-xs">URL de la vidéo (mp4/webm)</Label>
+                  <Label className="text-white/60 text-xs">URL de la vidéo</Label>
                   <Input
                     value={settings.hero_video_url || ''}
                     onChange={(e) => setSettings(prev => ({ ...prev, hero_video_url: e.target.value }))}
-                    placeholder="https://…/hero.mp4"
+                    placeholder="https://…/hero.mp4  ·  youtu.be/…  ·  vimeo.com/…"
                     className="h-9 text-sm bg-black/30 border-white/15 text-white"
                     data-testid="hero-video-url"
                   />
+                  <p className="text-white/30 text-[11px] mt-0.5">
+                    Accepte un lien direct .mp4/.webm, ou un lien YouTube, Vimeo ou Google Drive.
+                  </p>
+                  {describeVideoSource(settings.hero_video_url) && (
+                    <p className="text-[var(--bt-accent)] text-[11px] mt-0.5 font-medium">✓ {describeVideoSource(settings.hero_video_url)}</p>
+                  )}
                 </div>
                 <div>
                   <Label className="text-white/60 text-xs">Image poster / secours (optionnelle)</Label>
-                  <Input
-                    value={settings.hero_poster_url || ''}
-                    onChange={(e) => setSettings(prev => ({ ...prev, hero_poster_url: e.target.value }))}
-                    placeholder="https://…/hero-poster.jpg"
-                    className="h-9 text-sm bg-black/30 border-white/15 text-white"
-                    data-testid="hero-poster-url"
-                  />
-                  <p className="text-white/30 text-[11px] mt-0.5">Affichée pendant le chargement de la vidéo et en cas d'échec.</p>
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1">
+                      <Input
+                        value={settings.hero_poster_url || ''}
+                        onChange={(e) => setSettings(prev => ({ ...prev, hero_poster_url: e.target.value }))}
+                        placeholder="https://…/hero-poster.jpg  ·  Drive  ·  i.ibb.co/…"
+                        className="h-9 text-sm bg-black/30 border-white/15 text-white"
+                        data-testid="hero-poster-url"
+                      />
+                      <p className="text-white/30 text-[11px] mt-0.5">
+                        Accepte un lien direct (.png/.jpg/.webp) ou un lien Google Drive / Dropbox. Pour ImgBB, colle le lien direct qui commence par <code className="text-white/50">i.ibb.co</code>.
+                      </p>
+                      <p className="text-white/40 text-[11px] mt-0.5">Si aucune vidéo n'est renseignée, cette image sert de fond au hero.</p>
+                      {isImgbbPageLink(settings.hero_poster_url) && (
+                        <p className="text-amber-400/80 text-[11px] mt-0.5">⚠️ Lien ImgBB « page » : ouvre l'image et copie le lien direct <code>i.ibb.co/…</code>.</p>
+                      )}
+                    </div>
+                    {resolveImageSource(settings.hero_poster_url) && (
+                      <img
+                        src={resolveImageSource(settings.hero_poster_url)}
+                        alt="Aperçu poster"
+                        className="w-16 h-16 rounded-lg object-cover border border-white/15 flex-shrink-0 bg-black/40"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             </CardContent>

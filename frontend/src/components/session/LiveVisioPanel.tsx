@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw, Check } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -44,7 +44,7 @@ interface LiveVisioPanelProps {
   videoDeviceId?: string | null;
   onSelectCamera?: (deviceId: string) => void;
   onFlipCamera?: () => void;
-  onRefreshDevices?: () => void;
+  onRefreshDevices?: (probe?: boolean) => void;
   // 🖥️ Partage d'écran — réutilise la logique existante (getDisplayMedia + LiveKit ScreenShare).
   onToggleScreenShare?: () => void;
   screenSharing?: boolean;
@@ -65,6 +65,17 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onToggleScreenShare, screenSharing = false, screenSupported = false,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
+  // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
+  const [camMenuOpen, setCamMenuOpen] = useState(false);
+  // À l'ouverture du panneau : énumération silencieuse (sans demander la permission) + suivi du
+  // branchement/débranchement à chaud. La sonde (permission) n'a lieu qu'au clic explicite « Caméra ».
+  React.useEffect(() => {
+    onRefreshDevices?.(false);
+    const onChange = () => onRefreshDevices?.(false);
+    try { navigator.mediaDevices.addEventListener('devicechange', onChange); } catch { /* ignore */ }
+    return () => { try { navigator.mediaDevices.removeEventListener('devicechange', onChange); } catch { /* ignore */ } };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 🔍 Chantier A : VRAI plein écran d'UNE caméra (Fullscreen API + repli overlay iOS), orientation AUTO (pas de rotation forcée).
   // Le conteneur de la zone caméras est TOUJOURS monté et visible → requestFullscreen fiable (aucun remontage des flux).
   const camAreaRef = useRef<HTMLDivElement>(null);
@@ -315,39 +326,31 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </button>
         )}
 
-        {/* 🎥 Choisir une caméra (externe) — hôte/co-hôte, quand plusieurs caméras existent.
-            Desktop : menu déroulant (labels) ; mobile : bascule rapide avant/arrière. Sans reconnexion. */}
-        {canManageStage && onSelectCamera && videoDevices.length > 1 && (
-          <div className="flex items-center gap-2">
-            <label className="relative hidden sm:flex items-center">
-              <SwitchCamera className="w-4 h-4 text-white/60 absolute left-2 pointer-events-none" />
-              <select
-                value={videoDeviceId ?? ''}
-                onChange={(e) => onSelectCamera(e.target.value)}
-                onMouseDown={() => onRefreshDevices?.()}
-                className="max-w-[170px] pl-8 pr-2 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/80 border border-white/15 focus:outline-none focus:border-[rgb(var(--bt-accent-rgb)/0.5)] cursor-pointer"
-                title="Choisir la caméra (externe)"
-                data-testid="visio-camera-select"
-              >
-                {videoDeviceId == null && <option value="" className="bg-[#15151b] text-white">Caméra par défaut</option>}
-                {videoDevices.map((d, i) => (
-                  <option key={d.deviceId} value={d.deviceId} className="bg-[#15151b] text-white">
-                    {d.label || `Caméra ${i + 1}`}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {onFlipCamera && (
-              <button
-                onClick={onFlipCamera}
-                className="sm:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-white/20 transition-colors"
-                title="Changer de caméra"
-                data-testid="visio-camera-flip"
-              >
-                <SwitchCamera className="w-4 h-4" />
-              </button>
-            )}
-          </div>
+        {/* 🎥 Choisir une caméra (externe) — hôte/co-hôte. Bouton TOUJOURS visible ; le clic demande
+            la permission puis liste les caméras (webcam externe incluse). Bascule sans reconnexion. */}
+        {canManageStage && onSelectCamera && (
+          <button
+            onClick={() => { onRefreshDevices?.(true); setCamMenuOpen((o) => !o); }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              camMenuOpen ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
+            }`}
+            title="Choisir la caméra (externe)"
+            data-testid="visio-camera-menu"
+          >
+            <SwitchCamera className="w-4 h-4" /> Caméra
+          </button>
+        )}
+
+        {/* Bascule rapide avant/arrière (mobile) quand ≥ 2 caméras. */}
+        {canManageStage && onFlipCamera && videoDevices.length > 1 && (
+          <button
+            onClick={onFlipCamera}
+            className="sm:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-white/20 transition-colors"
+            title="Changer de caméra (avant/arrière)"
+            data-testid="visio-camera-flip"
+          >
+            <SwitchCamera className="w-4 h-4" />
+          </button>
         )}
 
         {/* 🖥️ Partager l'écran — hôte/co-hôte, desktop (getDisplayMedia supporté). Réutilise l'existant. */}
@@ -397,6 +400,44 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           <LogOut className="w-4 h-4" /> Quitter le live
         </button>
       </div>
+
+      {/* 🎥 Menu caméra (en flux, pas en overlay → jamais rogné par overflow-hidden du panneau). */}
+      {camMenuOpen && canManageStage && onSelectCamera && (
+        <div className="border-t border-white/10 bg-black/30 px-3 py-2.5" data-testid="visio-camera-list">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-white/60 text-xs font-medium">Choisir la caméra</span>
+            <button
+              onClick={() => onRefreshDevices?.(true)}
+              className="flex items-center gap-1 text-xs text-white/60 hover:text-white transition-colors"
+              data-testid="visio-camera-refresh"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Rafraîchir
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {videoDevices.length === 0 ? (
+              <span className="text-white/40 text-xs">Aucune caméra détectée — branche ta webcam puis « Rafraîchir ».</span>
+            ) : (
+              videoDevices.map((d, i) => {
+                const selected = d.deviceId === videoDeviceId;
+                return (
+                  <button
+                    key={d.deviceId}
+                    onClick={() => { onSelectCamera(d.deviceId); setCamMenuOpen(false); }}
+                    className={`flex items-center gap-1.5 max-w-[220px] px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      selected ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] border border-[rgb(var(--bt-accent-rgb)/0.4)]' : 'bg-white/10 text-white/70 border border-white/10 hover:bg-white/20'
+                    }`}
+                    data-testid="visio-camera-option"
+                  >
+                    {selected && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
+                    <span className="truncate">{d.label || `Caméra ${i + 1}`}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

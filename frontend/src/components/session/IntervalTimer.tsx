@@ -162,7 +162,6 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
   const ownCtxRef = useRef<AudioContext | null>(null);
   const usingMixerRef = useRef(false);
   const voiceElRef = useRef<HTMLAudioElement | null>(null);
-  const voiceSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
   const beepElRef = useRef<HTMLAudioElement | null>(null); // 🍏 iOS : bips via asset WAV data-URI
   const soundStateRef = useRef<{ key: IntervalPhaseKey; round: number; lastCount: number | null }>({ key: 'done', round: -1, lastCount: null });
   const doneFiredRef = useRef(false);
@@ -242,20 +241,28 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
     } catch { /* no-op */ }
   }, [ensureCtx, outputNode, playBeepAsset]);
 
+  // ✅ FIABILITÉ (BUG 2/4) : la voix/le fichier du timer se joue AUX HAUT-PARLEURS via l'élément dédié
+  //    (réinitialisé à chaque déclenchement). On NE route PLUS via createMediaElementSource : appelable
+  //    UNE seule fois par élément, et SILENCIEUX si le média est cross-origin sans CORS (Supabase) →
+  //    c'était la cause du « une fois sur deux » et du « muet dès qu'il y a la musique / la visio ».
+  //    Un <audio> sort aux HP indépendamment du mixeur → audible par-dessus la musique ET en Live Visio.
   const playUrl = useCallback((url?: string) => {
     if (!url) return;
     try {
       const a = ensureVoiceEl();
-      const ctx = ensureCtx(); // met à jour usingMixerRef (mixeur dispo ?) avant de décider du routage
-      // PC/Android : router l'élément <audio> via le mixeur (mélange + enregistrement), une seule fois.
-      if (!IS_IOS && usingMixerRef.current && getTimerOutput && ctx && !voiceSrcRef.current) {
-        try { voiceSrcRef.current = ctx.createMediaElementSource(a); voiceSrcRef.current.connect(outputNode(ctx)); } catch { /* déjà routé */ }
-      }
+      try { a.pause(); } catch { /* ignore */ }
       a.src = url;
       a.currentTime = 0;
-      a.play().catch(() => {});
+      try { a.load(); } catch { /* ignore */ }
+      const p = a.play();
+      if (p && typeof p.then === 'function') {
+        p.catch(() => {
+          // Ultime repli : élément FRAIS (certains navigateurs refusent une réutilisation trop rapide).
+          try { const b = new Audio(url); b.setAttribute('playsinline', 'true'); b.play().catch(() => { /* geste requis */ }); } catch { /* ignore */ }
+        });
+      }
     } catch { /* no-op */ }
-  }, [ensureVoiceEl, ensureCtx, getTimerOutput, outputNode]);
+  }, [ensureVoiceEl]);
 
   const onEnterPhase = useCallback((cfg: IntervalConfig, ph: PhaseState) => {
     if (cfg.soundMode === 'voice') {

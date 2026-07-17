@@ -57,6 +57,15 @@ export const IntervalConfigModal: React.FC<Props> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const previewRef = useRef<HTMLAudioElement | null>(null);
+  // ⏱️ BUG 2.1 : aperçu du minuteur pendant l'enregistrement d'une annonce (l'hôte cale sa voix).
+  const [recPreview, setRecPreview] = useState<{ key: string; remaining: number } | null>(null);
+  const recTimerRef = useRef<number | null>(null);
+  const phaseDuration = (key: string): number =>
+    key === 'prepare' ? prepare : key === 'work' ? work : key === 'rest' ? rest : 5;
+  const clearRecPreview = () => {
+    if (recTimerRef.current) { window.clearInterval(recTimerRef.current); recTimerRef.current = null; }
+    setRecPreview(null);
+  };
 
   const config: IntervalConfig = useMemo(() => ({
     prepare: Math.max(0, prepare), work: Math.max(0, work), rest: Math.max(0, rest),
@@ -73,6 +82,7 @@ export const IntervalConfigModal: React.FC<Props> = ({
     // cleanup : couper un enregistrement en cours si la modale se ferme
     try { recRef.current?.stop(); } catch { /* no-op */ }
     streamRef.current?.getTracks().forEach((t) => t.stop());
+    if (recTimerRef.current) { window.clearInterval(recTimerRef.current); recTimerRef.current = null; }
   }, []);
 
   const pickMime = (): string => {
@@ -94,6 +104,7 @@ export const IntervalConfigModal: React.FC<Props> = ({
       recRef.current = mr;
       mr.ondataavailable = (e) => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
       mr.onstop = async () => {
+        clearRecPreview();
         const type = mr.mimeType || mime || 'audio/webm';
         const blob = new Blob(chunksRef.current, { type });
         streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -118,15 +129,29 @@ export const IntervalConfigModal: React.FC<Props> = ({
       };
       mr.start();
       setRecording(key);
+      // ⏱️ Démarre l'aperçu du minuteur pour cette phase (compte à rebours de sa durée).
+      const dur = Math.max(1, phaseDuration(key));
+      setRecPreview({ key, remaining: dur });
+      if (recTimerRef.current) window.clearInterval(recTimerRef.current);
+      recTimerRef.current = window.setInterval(() => {
+        setRecPreview((p) => {
+          if (!p) return null;
+          const r = p.remaining - 1;
+          if (r <= 0) { if (recTimerRef.current) { window.clearInterval(recTimerRef.current); recTimerRef.current = null; } return { ...p, remaining: 0 }; }
+          return { ...p, remaining: r };
+        });
+      }, 1000);
     } catch {
       setRecording(null);
-      onNotify?.('Micro indisponible pour l\'enregistrement', 'error');
+      clearRecPreview();
+      onNotify?.('Micro indisponible pour l\'enregistrement (autorise le micro).', 'error');
     }
   };
 
   const stopRec = () => {
     try { recRef.current?.stop(); } catch { /* no-op */ }
     setRecording(null);
+    clearRecPreview();
   };
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -134,6 +159,7 @@ export const IntervalConfigModal: React.FC<Props> = ({
     e.target.value = '';
     if (!file) return;
     if (!file.type.startsWith('audio/')) { onNotify?.('Fichier audio requis', 'error'); return; }
+    setSoundMode('file'); // 🐛 BUG 4 : garantir que la config est bien en mode « Fichier »
     setUploading('file');
     const { url } = await uploadIntervalSound(file, sessionId, 'file');
     setUploading(null);
@@ -269,9 +295,20 @@ export const IntervalConfigModal: React.FC<Props> = ({
                     <div key={key} className="flex items-center gap-2">
                       <span className="text-white/70 text-sm w-28 flex-shrink-0">{label}</span>
                       {isRec ? (
-                        <button type="button" onClick={stopRec} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs bg-red-500/80 hover:bg-red-500">
-                          <Square size={13} /> Stop
-                        </button>
+                        <>
+                          <button type="button" onClick={stopRec} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white text-xs bg-red-500/80 hover:bg-red-500">
+                            <Square size={13} /> Stop
+                          </button>
+                          {/* ⏱️ Aperçu du minuteur de la phase → cale ta voix sur le temps (visuel, aucun son). */}
+                          {recPreview?.key === key && (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-mono font-bold tabular-nums"
+                              style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--bt-accent-2)' }}
+                              data-testid="rec-timer-preview"
+                            >
+                              <Timer size={12} /> 0:{String(recPreview.remaining).padStart(2, '0')}
+                            </span>
+                          )}
+                        </>
                       ) : (
                         <button type="button" onClick={() => startRec(key)} disabled={!!recording || !!uploading}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/85 text-xs bg-white/10 hover:bg-white/20 disabled:opacity-50">

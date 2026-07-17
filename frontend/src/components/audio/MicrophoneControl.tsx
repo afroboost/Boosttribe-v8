@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { Mic, MicOff, Volume2, AlertCircle, Lock, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VuMeterSegmented } from './VuMeter';
@@ -15,11 +15,18 @@ interface MicrophoneControlProps {
   onToggleMode?: () => void;
 }
 
+// 🎤 Poignée impérative : permet à un contrôle externe (ex. barre plein écran du Live Visio) de
+//    (dé)activer le micro hôte via le MÊME chemin que le bouton principal, sans dupliquer la logique.
+export interface MicrophoneControlHandle {
+  toggle: () => void;
+  isCapturing: () => boolean;
+}
+
 /**
  * Microphone control component
  * Calls getUserMedia DIRECTLY on button click (user gesture required)
  */
-export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
+export const MicrophoneControl = forwardRef<MicrophoneControlHandle, MicrophoneControlProps>(({
   isHost = false,
   onMicActive,
   onAudioLevel,
@@ -27,7 +34,7 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
   className = '',
   mode = 'voice',
   onToggleMode,
-}) => {
+}, ref) => {
   const [showDevices, setShowDevices] = useState(false);
 
   // Handle audio level (no ducking - independent mixer channels)
@@ -83,6 +90,12 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
       stopCapture();        // ÉTEINDRE : libère le micro → l'OS quitte le mode comm, musique rétablie
     }
   }, [state.isCapturing, startCapture, stopCapture]);
+
+  // Poignée impérative pour un contrôle externe (barre plein écran Live Visio).
+  useImperativeHandle(ref, () => ({
+    toggle: () => { handleToggleCapture(); },
+    isCapturing: () => state.isCapturing,
+  }), [handleToggleCapture, state.isCapturing]);
 
   // 🎙️ Discrimination simple-clic / double-clic (hôte, si onToggleMode fourni) :
   //   - micro ÉTEINT : simple clic = allumer IMMÉDIATEMENT (garde le geste utilisateur pour getUserMedia) ;
@@ -270,6 +283,8 @@ export const MicrophoneControl: React.FC<MicrophoneControlProps> = ({
       )}
     </div>
   );
-};
+});
+
+MicrophoneControl.displayName = 'MicrophoneControl';
 
 export default MicrophoneControl;

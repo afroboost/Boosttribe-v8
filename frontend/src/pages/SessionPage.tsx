@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, Plus } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, Plus, ListMusic, SlidersHorizontal } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
 import { ParticipantControls, Participant } from '@/components/audio/ParticipantControls';
-import { MicrophoneControl } from '@/components/audio/MicrophoneControl';
+import { MicrophoneControl, type MicrophoneControlHandle } from '@/components/audio/MicrophoneControl';
 import { TrackUploader } from '@/components/audio/TrackUploader';
 import { AudioMixerPanel } from '@/components/audio/AudioMixerPanel';
 import { Button } from '@/components/ui/button';
@@ -1219,9 +1219,16 @@ export const SessionPage: React.FC = () => {
   //    la coupure). À la place, on RÉVEILLE le contexte mixeur : ouvrir/fermer le micro peut le SUSPENDRE →
   //    la musique (routée via Web Audio par createMediaElementSource) devenait muette/faible et il fallait
   //    RECHARGER la page. resume() idempotent → volume restauré sans rechargement, sans toucher au gain.
+  //    🐛 BUG 1 (régression) : déclenché aussi sur CHANGEMENT DE PÉRIPHÉRIQUE micro (hostMicStream change
+  //    sans que hostMicActive bascule) → on RÉVEILLE le contexte ET on RÉ-AFFIRME le volume musique (gain
+  //    mixeur ≥1 + volume de l'élément) pour qu'un transert/suspend ne laisse JAMAIS la musique baissée.
+  //    Le micro vit toujours dans son AudioContext dédié (micCtx) → jamais mélangé à la musique.
   useEffect(() => {
     try { const ctx = getMixerContext(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ }); } catch { /* ignore */ }
-  }, [hostMicActive, getMixerContext]);
+    try { setMusicVolume(mixerState.musicVolume); } catch { /* ignore */ }        // ré-affirme le gain (≥1, jamais < 1)
+    try { const el = getMusicEl(); if (el) el.volume = Math.min(1, mixerState.musicVolume); } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostMicActive, hostMicStream]);
 
   // 🎤 POINT 5: PARTICIPANT — "Prendre la parole" (micro montant vers l'hôte)
   const [isTalking, setIsTalking] = useState(false);
@@ -1359,10 +1366,13 @@ export const SessionPage: React.FC = () => {
     const t = setInterval(() => broadcastScreenState(true), 4000);
     return () => clearInterval(t);
   }, [screenSharing, sessionId, broadcastScreenState]);
+  // 🎤 Poignée du micro HÔTE (MicrophoneControl) → permet de (dé)activer le micro depuis la barre plein
+  //    écran du Live Visio (BUG 5), via le MÊME chemin que le bouton principal.
+  const hostMicCtrlRef = useRef<MicrophoneControlHandle | null>(null);
   const handleLiveMicToggle = useCallback(() => {
-    if (isHost) { showToast('Gérez votre micro avec le bouton Micro en haut de la session', 'default'); return; }
+    if (isHost) { hostMicCtrlRef.current?.toggle(); return; } // 🐛 BUG 5 : le micro hôte s'active/coupe même en plein écran
     handleToggleTalk();
-  }, [isHost, handleToggleTalk, showToast]);
+  }, [isHost, handleToggleTalk]);
 
   // 🎤 SCÈNE (Live Visio) — système de prise de parole : un spectateur demande à monter en vidéo,
   // l'hôte/co-hôte valide. Réutilise le maillage caméra (useVideoMesh) + le Realtime (playback:<id>).
@@ -3418,7 +3428,7 @@ export const SessionPage: React.FC = () => {
       spotlightId={visioSpotlightId}
       onSpotlightChange={setVisioSpotlightId}
       onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}
-      timerNode={visioTimerReminderNode}
+      timerNode={undefined /* BUG 3 : fenêtre interactive du minuteur visible en plein écran (portal) → pas de pilule rappel ici (évite le double timer) */}
       videoDevices={videoMesh.videoDevices}
       videoDeviceId={videoMesh.videoDeviceId}
       onSelectCamera={videoMesh.setCameraDevice}
@@ -4103,22 +4113,23 @@ export const SessionPage: React.FC = () => {
         `}</style>
         <nav className="lg:hidden flex items-stretch gap-1 mb-6 overflow-x-auto -mx-1 px-1" data-testid="mobile-session-tabs">
           {([
-            { id: 'player', label: '🎧 Lecteur & Playlist' },
-            { id: 'controls', label: '🎚️ Mixeur & Participants' },
+            { id: 'player', label: 'Lecteur & Playlist', Icon: ListMusic },
+            { id: 'controls', label: 'Mixeur & Participants', Icon: SlidersHorizontal },
           ] as const).map((tab) => {
             const isActive = mobileTab === tab.id;
+            const TabIcon = tab.Icon;
             return (
               <button
                 key={tab.id}
                 onClick={() => setMobileTab(tab.id)}
-                className="flex-1 whitespace-nowrap px-3 py-2.5 text-sm font-medium border-b-2 transition-colors"
+                className="flex-1 whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors"
                 style={{
                   color: isActive ? '#FFFFFF' : '#A9A9A9',
                   borderColor: isActive ? 'var(--bt-accent)' : 'transparent',
-                  textShadow: isActive ? '0 0 8px rgba(217,28,210,0.6)' : 'none',
                 }}
                 data-testid={`mobile-tab-${tab.id}`}
               >
+                <TabIcon size={16} aria-hidden="true" style={isActive ? { color: 'var(--bt-accent)' } : undefined} />
                 {tab.label}
               </button>
             );
@@ -4274,6 +4285,7 @@ export const SessionPage: React.FC = () => {
               <div className="flex items-center gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10">
                 {/* 🎤 Micro hôte (toggle local d'activation — ne touche PAS LiveKit) */}
                 <MicrophoneControl
+                  ref={hostMicCtrlRef}
                   isHost={true}
                   onMicActive={setHostMicActive}
                   onStreamReady={setHostMicStream}

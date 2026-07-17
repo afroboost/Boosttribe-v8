@@ -195,60 +195,84 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
              bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
           <>
-            <div className="absolute top-3 right-3 z-20 flex flex-wrap items-center justify-end gap-2 max-w-[calc(100%-1.5rem)]">
-              {/* 🎤 Micro — atteignable SANS quitter le plein écran (réutilise micActive/onToggleMic). */}
-              {!hideMicButton && (
-                <button
-                  onClick={onToggleMic}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                    micActive ? 'bg-green-500/30 text-green-300 hover:bg-green-500/40' : 'bg-black/50 text-white/90 hover:bg-black/70'
-                  }`}
-                  title={micActive ? 'Couper le micro' : 'Activer le micro'}
-                  data-testid="visio-fs-mic"
-                >
-                  {micActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-                  <span className="hidden sm:inline">Micro</span>
-                </button>
-              )}
-              {/* 🎥 Caméra — hôte/co-hôte : allumer/couper ; spectateur à l'écran : quitter la scène. */}
+            {/* 🎛️ BUG 5 : barre de contrôles VERTICALE ancrée à DROITE (façon TikTok/Reels), PC + mobile.
+                Boutons ronds ; le micro est TOUJOURS accessible en plein écran (hôte inclus). */}
+            <div
+              className="absolute z-20 flex flex-col items-center gap-3 top-1/2 -translate-y-1/2"
+              style={{ right: 'max(0.75rem, env(safe-area-inset-right))' }}
+              data-testid="visio-fs-controls"
+            >
+              {/* 🎤 Micro — même handler que hors plein écran (host: toggle micro hôte via ref ; participant: prendre la parole). */}
+              <button
+                onClick={onToggleMic}
+                className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors ${
+                  micActive ? 'bg-green-500/40 text-green-100 hover:bg-green-500/50' : 'bg-black/50 text-white/90 hover:bg-black/70'
+                }`}
+                title={micActive ? 'Couper le micro' : 'Activer le micro'}
+                aria-label={micActive ? 'Couper le micro' : 'Activer le micro'}
+                data-testid="visio-fs-mic"
+              >
+                {micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+              </button>
+
+              {/* 🎥 Caméra / scène — hôte : on/off ; spectateur à l'écran : descendre ; spectateur : monter (demander). */}
               {canManageStage ? (
                 <button
                   onClick={onToggleCamera}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                    cameraOn ? 'bg-[rgb(var(--bt-accent-rgb)/0.3)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.4)]' : 'bg-black/50 text-white/90 hover:bg-black/70'
+                  className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors ${
+                    cameraOn ? 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)]' : 'bg-black/50 text-white/90 hover:bg-black/70'
                   }`}
                   title={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
+                  aria-label={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
                   data-testid="visio-fs-camera"
                 >
-                  {cameraOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-                  <span className="hidden sm:inline">Caméra</span>
+                  {cameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
                 </button>
               ) : cameraOn ? (
                 <button
                   onClick={onToggleCamera}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.3)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.4)] transition-colors"
-                  title="Quitter la scène"
+                  className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)] transition-colors"
+                  title="Descendre de la scène"
+                  aria-label="Descendre de la scène"
                   data-testid="visio-fs-camera"
                 >
-                  <VideoOff className="w-4 h-4" />
-                  <span className="hidden sm:inline">Quitter la scène</span>
+                  <VideoOff className="w-5 h-5" />
+                </button>
+              ) : onRequestStage ? (
+                <button
+                  onClick={onRequestStage}
+                  disabled={stageRequestPending}
+                  className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-black/50 text-white/90 hover:bg-black/70 disabled:opacity-60 transition-colors"
+                  title={stageRequestPending ? 'Demande envoyée…' : 'Monter en vidéo'}
+                  aria-label={stageRequestPending ? 'Demande envoyée' : 'Monter en vidéo'}
+                  data-testid="visio-fs-stage"
+                >
+                  <Hand className="w-5 h-5" />
                 </button>
               ) : null}
+
+              {/* ⏱️ Interval training (hôte) */}
               {onStartTimer && canManageStage && (
                 <button
                   onClick={onStartTimer}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
+                  className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
+                  title="Interval training"
+                  aria-label="Interval training"
                   data-testid="visio-fs-timer"
                 >
-                  <Timer className="w-4 h-4" /> Interval
+                  <Timer className="w-5 h-5" />
                 </button>
               )}
+
+              {/* 🔽 Réduire (sortir du plein écran) */}
               <button
                 onClick={exitCamFullscreen}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
+                className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
+                title="Réduire"
+                aria-label="Quitter le plein écran"
                 data-testid="visio-camera-fs-reduce"
               >
-                <Minimize2 className="w-4 h-4" /> Réduire
+                <Minimize2 className="w-5 h-5" />
               </button>
             </div>
             <div className="flex-1 min-h-0 flex items-center justify-center">

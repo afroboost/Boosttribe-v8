@@ -179,7 +179,45 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
              bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
           <>
-            <div className="absolute top-3 right-3 z-20 flex items-center gap-2">
+            <div className="absolute top-3 right-3 z-20 flex flex-wrap items-center justify-end gap-2 max-w-[calc(100%-1.5rem)]">
+              {/* 🎤 Micro — atteignable SANS quitter le plein écran (réutilise micActive/onToggleMic). */}
+              {!hideMicButton && (
+                <button
+                  onClick={onToggleMic}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    micActive ? 'bg-green-500/30 text-green-300 hover:bg-green-500/40' : 'bg-black/50 text-white/90 hover:bg-black/70'
+                  }`}
+                  title={micActive ? 'Couper le micro' : 'Activer le micro'}
+                  data-testid="visio-fs-mic"
+                >
+                  {micActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+                  <span className="hidden sm:inline">Micro</span>
+                </button>
+              )}
+              {/* 🎥 Caméra — hôte/co-hôte : allumer/couper ; spectateur à l'écran : quitter la scène. */}
+              {canManageStage ? (
+                <button
+                  onClick={onToggleCamera}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    cameraOn ? 'bg-[rgb(var(--bt-accent-rgb)/0.3)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.4)]' : 'bg-black/50 text-white/90 hover:bg-black/70'
+                  }`}
+                  title={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
+                  data-testid="visio-fs-camera"
+                >
+                  {cameraOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+                  <span className="hidden sm:inline">Caméra</span>
+                </button>
+              ) : cameraOn ? (
+                <button
+                  onClick={onToggleCamera}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.3)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.4)] transition-colors"
+                  title="Quitter la scène"
+                  data-testid="visio-fs-camera"
+                >
+                  <VideoOff className="w-4 h-4" />
+                  <span className="hidden sm:inline">Quitter la scène</span>
+                </button>
+              ) : null}
               {onStartTimer && canManageStage && (
                 <button
                   onClick={onStartTimer}

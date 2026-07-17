@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Timer, Mic, Square, Upload, Play, Check, Loader2, Users, User } from 'lucide-react';
 import { uploadIntervalSound } from '@/lib/supabaseClient';
+import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
 import {
   DEFAULT_INTERVAL, intervalTotalSeconds, suggestRounds,
   type IntervalConfig, type IntervalSoundMode, type IntervalVisibility,
@@ -97,10 +99,22 @@ export const IntervalConfigModal: React.FC<Props> = ({
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         setUploading(key);
-        const { url, error } = await uploadIntervalSound(blob, sessionId, `voice_${key}`);
+        const { url } = await uploadIntervalSound(blob, sessionId, `voice_${key}`);
         setUploading(null);
-        if (url) { setVoiceUrls((v) => ({ ...(v || {}), [key]: url })); onNotify?.('Annonce enregistrée', 'success'); }
-        else onNotify?.(error || 'Upload impossible', 'error');
+        if (url) {
+          setVoiceUrls((v) => ({ ...(v || {}), [key]: url }));
+          onNotify?.('Annonce enregistrée', 'success');
+        } else {
+          // 🔁 Fallback : upload échoué → on garde un URL LOCAL (blob). L'hôte étant le seul émetteur
+          //    du son du timer, la voix du décompte fonctionne au moins de son côté (pas de perte).
+          try {
+            const local = URL.createObjectURL(blob);
+            setVoiceUrls((v) => ({ ...(v || {}), [key]: local }));
+            onNotify?.('Annonce enregistrée (local)', 'warning');
+          } catch {
+            onNotify?.('Enregistrement impossible', 'error');
+          }
+        }
       };
       mr.start();
       setRecording(key);
@@ -121,10 +135,14 @@ export const IntervalConfigModal: React.FC<Props> = ({
     if (!file) return;
     if (!file.type.startsWith('audio/')) { onNotify?.('Fichier audio requis', 'error'); return; }
     setUploading('file');
-    const { url, error } = await uploadIntervalSound(file, sessionId, 'file');
+    const { url } = await uploadIntervalSound(file, sessionId, 'file');
     setUploading(null);
     if (url) { setSoundUrl(url); onNotify?.('Son importé', 'success'); }
-    else onNotify?.(error || 'Upload impossible', 'error');
+    else {
+      // 🔁 Fallback local si l'upload échoue (le son marche au moins côté hôte).
+      try { setSoundUrl(URL.createObjectURL(file)); onNotify?.('Son importé (local)', 'warning'); }
+      catch { onNotify?.('Import impossible', 'error'); }
+    }
   };
 
   const preview = (url?: string) => {
@@ -148,7 +166,12 @@ export const IntervalConfigModal: React.FC<Props> = ({
     </div>
   );
 
-  return (
+  // 🖥️ Portée DANS l'élément plein écran s'il y en a un → la modale s'affiche PAR-DESSUS la scène
+  //     caméras en plein écran (sinon document.body, comportement inchangé).
+  const portalTarget = useFullscreenPortalTarget();
+  if (!portalTarget) return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={onClose}>
       <div
         className="bg-[#14141a] border border-white/10 rounded-2xl max-w-lg w-full max-h-[88vh] overflow-hidden flex flex-col"
@@ -306,7 +329,8 @@ export const IntervalConfigModal: React.FC<Props> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    portalTarget,
   );
 };
 

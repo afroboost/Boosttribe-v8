@@ -628,6 +628,14 @@ export const SessionPage: React.FC = () => {
   // ⏱️ Interval PENDANT la visio : décompte lecture seule (rappel plein écran) + modale de config SANS musique.
   const [intervalTick, setIntervalTick] = useState<IntervalTickInfo | null>(null);
   const [showVisioTimerConfig, setShowVisioTimerConfig] = useState(false);
+  // ⏱️ Dernière config du timer de visio (sans piste) — mémorisée pour la retrouver à la réouverture.
+  const [visioTimerConfig, setVisioTimerConfig] = useState<IntervalConfig | undefined>(() => {
+    try { const raw = localStorage.getItem('bt_visio_timer_cfg'); return raw ? (JSON.parse(raw) as IntervalConfig) : undefined; } catch { return undefined; }
+  });
+  const persistVisioTimerConfig = useCallback((cfg: IntervalConfig) => {
+    setVisioTimerConfig(cfg);
+    try { localStorage.setItem('bt_visio_timer_cfg', JSON.stringify(cfg)); } catch { /* ignore */ }
+  }, []);
   // 🎥 Chantier B : voir les caméras PAR-DESSUS la vidéo partagée (mobile, hors plein écran).
   const [showMobileCameras, setShowMobileCameras] = useState(false);
   const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
@@ -5103,10 +5111,10 @@ export const SessionPage: React.FC = () => {
         <IntervalConfigModal
           trackTitle="Interval training"
           sessionId={sessionId || ''}
-          initial={selectedTrack?.interval || intervalRun?.config}
+          initial={visioTimerConfig || selectedTrack?.interval || intervalRun?.config}
           onClose={() => setShowVisioTimerConfig(false)}
-          onSave={() => { /* pas de piste à mémoriser pour un timer de visio */ }}
-          onStart={(cfg) => { setShowVisioTimerConfig(false); handleStartInterval(cfg); }}
+          onSave={(cfg) => persistVisioTimerConfig(cfg)}
+          onStart={(cfg) => { persistVisioTimerConfig(cfg); setShowVisioTimerConfig(false); handleStartInterval(cfg); }}
           onNotify={showToast}
         />
       )}

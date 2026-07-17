@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Pause } from 'lucide-react';
+import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
 
 // ===========================================================================
 // ⏱️ Interval training (HIIT) — composant 100% ADDITIF.
@@ -410,7 +412,11 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
     setPos((p) => { try { localStorage.setItem(POS_KEY, JSON.stringify(p)); } catch { /* ignore */ } return p; });
   }, []);
 
-  if (!run || !phase) return null;
+  // 🖥️ Rendu DANS l'élément plein écran s'il y en a un (sinon document.body) → le minuteur reste
+  //     visible et déplaçable par-dessus la scène caméras en plein écran. Fixed positioning inchangé.
+  const portalTarget = useFullscreenPortalTarget();
+
+  if (!run || !phase || !portalTarget) return null;
 
   const color = PHASE_COLOR[phase.key];
   const secs = Math.max(0, Math.ceil(phase.remaining));
@@ -418,7 +424,7 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
   const ss = (secs % 60).toString().padStart(2, '0');
   const rounds = Math.max(0, run.config.rounds);
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[130] pointer-events-none">
       <div
         ref={cardRef}
@@ -458,7 +464,8 @@ export const IntervalTimer = React.forwardRef<IntervalTimerHandle, Props>((
           </button>
         )}
       </div>
-    </div>
+    </div>,
+    portalTarget,
   );
 });
 

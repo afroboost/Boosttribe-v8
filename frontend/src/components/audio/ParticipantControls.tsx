@@ -112,7 +112,7 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
               <span className="text-[var(--bt-accent)] text-xs flex items-center gap-1"><Share2 size={10} /> Co-animateur</span>
             )}
             {isPrivateTarget && (
-              <span className="text-pink-400 text-xs flex items-center gap-1"><Mic size={10} /> Privé</span>
+              <span className="text-[var(--bt-accent-2)] text-xs flex items-center gap-1"><Mic size={10} /> Privé</span>
             )}
           </div>
         </div>
@@ -148,7 +148,7 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
               onClick={() => onTogglePrivate(participant.id)}
               className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 isPrivateTarget
-                  ? 'bg-pink-500/20 text-pink-400 hover:bg-pink-500/30'
+                  ? 'bg-[rgb(var(--bt-accent-2-rgb)/0.2)] text-[var(--bt-accent-2)] hover:bg-[rgb(var(--bt-accent-2-rgb)/0.3)]'
                   : 'bg-white/10 text-white/70 hover:bg-white/20'
               }`}
               title={isPrivateTarget ? 'Retirer de la conversation privée' : 'Parler en privé à ce participant'}

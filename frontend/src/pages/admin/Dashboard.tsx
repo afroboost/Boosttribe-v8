@@ -1535,7 +1535,7 @@ const Dashboard: React.FC = () => {
                 onClick={handleSavePawapayKeys}
                 disabled={ppSaving}
                 className="text-white border-none"
-                style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               >
                 <Save size={16} className="mr-1.5" />
                 {ppSaving ? 'Enregistrement…' : 'Enregistrer PawaPay'}

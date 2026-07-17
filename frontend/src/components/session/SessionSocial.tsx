@@ -189,7 +189,7 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
         <button
           onClick={isAuthenticated ? toggleLike : goLogin}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-full transition-colors ${
-            liked ? 'bg-pink-500/20 text-pink-400' : 'bg-white/10 text-white/70 hover:bg-white/20'
+            liked ? 'bg-[rgb(var(--bt-accent-2-rgb)/0.2)] text-[var(--bt-accent-2)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
           }`}
           data-testid="like-btn"
           title={isAuthenticated ? '' : 'Connecte-toi pour aimer'}

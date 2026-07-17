@@ -3616,8 +3616,8 @@ export const SessionPage: React.FC = () => {
           Priorité sur le paywall : l'accès s'active dès l'inscription via claimPendingAccess(). */}
       {paidAwaitingSignup && !user?.id && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#F5A524]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}>
+          <div className="w-full max-w-md rounded-2xl border-2 border-[rgb(var(--bt-accent-rgb)/0.5)] bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               <Check className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -3628,7 +3628,7 @@ export const SessionPage: React.FC = () => {
             <button
               onClick={() => navigate('/login', { state: { from: `/session/${sessionId}?ticket=pp`, mode: 'signup', email: ppEmail } })}
               className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
-              style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               data-testid="paid-awaiting-signup"
             >
               Créer mon compte et activer
@@ -3721,7 +3721,7 @@ export const SessionPage: React.FC = () => {
                       onClick={() => handleBuyTicket('pawapay')}
                       disabled={ticketBusy || !ppCountry || (!user?.id && !ppEmail.trim())}
                       className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60"
-                      style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+                      style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                       data-testid="ticket-mobilemoney-pay"
                     >
                       <Smartphone className="w-4 h-4" /> {ticketBusy ? 'Redirection…' : 'Payer en Mobile Money'}
@@ -4306,7 +4306,7 @@ export const SessionPage: React.FC = () => {
                   onClick={handleToggleSelfMonitor}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
                     selfMonitorOn
-                      ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[#C9A7FF] border border-[rgb(var(--bt-accent-rgb)/0.5)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
+                      ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] border border-[rgb(var(--bt-accent-rgb)/0.5)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
                       : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
                   }`}
                   title={selfMonitorOn ? 'Couper le monitoring de ma voix' : 'M\'entendre (écouter ma propre voix — attention au larsen)'}
@@ -4553,7 +4553,7 @@ export const SessionPage: React.FC = () => {
               <>
                 {/* Free Trial Timer Indicator */}
                 {isFreeTrial && !trialLimitReached && (
-                  <div className="bg-gradient-to-r from-[rgb(var(--bt-accent-rgb)/0.2)] to-pink-500/20 border border-[rgb(var(--bt-accent-rgb)/0.3)] rounded-lg p-3 mb-4">
+                  <div className="bg-gradient-to-r from-[rgb(var(--bt-accent-rgb)/0.2)] to-[rgb(var(--bt-accent-2-rgb)/0.2)] border border-[rgb(var(--bt-accent-rgb)/0.3)] rounded-lg p-3 mb-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="flex items-center gap-1 text-[var(--bt-accent)] text-sm font-medium"><Clock className="w-3.5 h-3.5" /> Essai Gratuit</span>
@@ -4570,7 +4570,7 @@ export const SessionPage: React.FC = () => {
                     </div>
                     <div className="mt-2 bg-white/10 rounded-full h-1.5 overflow-hidden">
                       <div 
-                        className="bg-gradient-to-r from-[var(--bt-accent)] to-pink-500 h-full transition-all duration-1000"
+                        className="bg-gradient-to-r from-[var(--bt-accent)] to-[var(--bt-accent-2)] h-full transition-all duration-1000"
                         style={{ width: `${((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / FREE_TRIAL_LIMIT_SECONDS) * 100}%` }}
                       />
                     </div>

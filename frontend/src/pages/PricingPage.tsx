@@ -743,7 +743,7 @@ const PricingPage: React.FC = () => {
                   onClick={() => startSubscribeMobileMoney(ppPlan)}
                   disabled={subscribingPlan === ppPlan || !ppCountry || (!isAuthenticated && !ppEmail.trim())}
                   className="flex-1 py-2.5 rounded-lg text-white text-sm font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-60"
-                  style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                   data-testid="sub-mobilemoney-pay"
                 >
                   <Smartphone className="w-4 h-4" /> {subscribingPlan === ppPlan ? 'Redirection…' : 'Payer'}
@@ -757,8 +757,8 @@ const PricingPage: React.FC = () => {
       {/* 📱 Abonnement mobile money payé AVANT inscription → inviter à créer le compte (email prérempli). */}
       {paidAwaitingSignup && !isAuthenticated && (
         <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-sm rounded-2xl border-2 border-[#F5A524]/50 bg-[#14141A] p-6 text-center shadow-2xl">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}>
+          <div className="w-full max-w-sm rounded-2xl border-2 border-[rgb(var(--bt-accent-rgb)/0.5)] bg-[#14141A] p-6 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               <Check className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-xl font-bold text-white mb-2">Paiement reçu ✅</h2>
@@ -767,7 +767,7 @@ const PricingPage: React.FC = () => {
             <button
               onClick={() => navigate('/login', { state: { from: '/pricing?sub=pp', mode: 'signup', email: ppEmail } })}
               className="w-full py-3 rounded-xl text-white font-semibold inline-flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
-              style={{ background: 'linear-gradient(135deg, #F5A524 0%, #FF7A00 100%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               data-testid="sub-paid-awaiting-signup"
             >
               Créer mon compte et activer

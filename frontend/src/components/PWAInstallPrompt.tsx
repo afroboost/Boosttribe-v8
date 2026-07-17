@@ -155,7 +155,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       <>
         <button
           onClick={handleInstall}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[var(--bt-accent)] to-pink-600 text-white font-medium hover:opacity-90 transition-opacity ${className}`}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[var(--bt-accent)] to-[var(--bt-accent-2)] text-white font-medium hover:opacity-90 transition-opacity ${className}`}
           data-testid="pwa-install-btn"
         >
           <Smartphone size={18} />

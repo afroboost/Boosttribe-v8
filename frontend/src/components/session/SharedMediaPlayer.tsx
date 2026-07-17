@@ -34,6 +34,8 @@ interface SharedMediaPlayerProps {
   liveCamerasNode?: React.ReactNode;
   // ⏱️ Rappel LECTURE SEULE du décompte Interval training, affiché À L'INTÉRIEUR du plein écran vidéo.
   timerNode?: React.ReactNode;
+  // 🎛️ Barre de contrôles Visio (Micro/Caméra/Scène/Interval/Chat) — rendue À L'INTÉRIEUR du plein écran vidéo.
+  controlsNode?: React.ReactNode;
 }
 
 // Extrait l'ID YouTube d'une URL
@@ -65,7 +67,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode, timerNode }, ref) => {
+export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode, timerNode, controlsNode }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // 🔍 Racine du lecteur : c'est ELLE qu'on passe en plein écran (contient vidéo + overlay caméras + bouton Retour).
   const rootRef = useRef<HTMLDivElement>(null);
@@ -753,6 +755,9 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
 
       {/* ⏱️ Rappel LECTURE SEULE du timer À L'INTÉRIEUR du plein écran (même raison que le chat ci-dessus). */}
       {enlarged && timerNode}
+
+      {/* 🎛️ Barre de contrôles Visio (Micro/Caméra/Scène/Interval/Chat) — À L'INTÉRIEUR du plein écran vidéo. */}
+      {enlarged && controlsNode}
     </div>
   );
 });

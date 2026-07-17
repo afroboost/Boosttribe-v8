@@ -62,8 +62,12 @@ const MIC_MAX_GAIN = 2.5;   // micro hôte amplifiable jusqu'à 250% (indépenda
 //    micro est actif). Facteur multiplicatif appliqué SUR la musique quand le micro hôte est actif.
 //    ⚠️ BUG 4 : sur le web (Chrome/Firefox desktop), ouvrir un micro NE ducke PAS l'audio Web Audio de la
 //    même page → aucun -20% à compenser ; il ne restait qu'un boost +25% audible à l'activation (et -20% à
-//    la coupure) = « le volume monte quand j'active le micro ». Neutralisé à 1.0 (aucun saut de volume).
-const MIC_DUCK_COMPENSATION = 1.0;
+//    la coupure) = « le volume monte quand j'active le micro ». Sur DESKTOP/iOS = 1.0 (aucun saut).
+//    🐛 BUG 1 : sur MOBILE non-iOS (Android), l'OS ducke RÉELLEMENT les autres sons en mode « communication »
+//    dès qu'un micro est ouvert → on applique un léger +20% (1.2) UNIQUEMENT là, pour compenser.
+const MIC_DUCK_COMPENSATION = 1.2;
+// Mobile non-iOS (Android surtout) : ducking OS résiduel réel → compensation active. iOS/desktop : jamais.
+const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 const MASTER_MAKEUP_GAIN = 1.0; // 🔊 sortie maître à l'UNITÉ : 100% = plein volume réel (plus d'atténuation)
 const SELF_MONITOR_GAIN = 0.6;  // 🔊 3b : niveau d'auto-écoute (« M'entendre ») modéré → anti-saturation/larsen
 // 🔔 #2 : makeup des sons du TIMER (bips/voix/fichier). Le curseur « Timer / Bips » (0..1) est multiplié par
@@ -475,7 +479,8 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    */
   const setMicDuckCompensation = useCallback((active: boolean) => {
     if (isIOS) return; // musique iOS hors Web Audio → ne rien changer
-    micDuckCompRef.current = active ? MIC_DUCK_COMPENSATION : 1;
+    // Compensation UNIQUEMENT sur Android (ducking OS réel) ; desktop → 1.0 (aucun saut de volume).
+    micDuckCompRef.current = (active && IS_ANDROID) ? MIC_DUCK_COMPENSATION : 1;
     if (musicGainRef.current) {
       const base = Math.max(1, state.musicVolume);
       rampGain(musicGainRef.current, base * micDuckCompRef.current, audioContextRef.current); // 🎚️ rampe ~120ms

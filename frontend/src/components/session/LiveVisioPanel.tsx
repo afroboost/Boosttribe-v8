@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
+import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
@@ -49,6 +50,9 @@ interface LiveVisioPanelProps {
   onToggleScreenShare?: () => void;
   screenSharing?: boolean;
   screenSupported?: boolean;
+  // 💬 Chat accessible depuis le plein écran (BUG 3) : ouvre le panneau + badge non-lus.
+  onOpenChat?: () => void;
+  chatUnread?: number;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -74,6 +78,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onStartTimer, timerNode,
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
+  onOpenChat, chatUnread,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
@@ -195,86 +200,21 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
              bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
           <>
-            {/* 🎛️ BUG 5 : barre de contrôles VERTICALE ancrée à DROITE (façon TikTok/Reels), PC + mobile.
-                Boutons ronds ; le micro est TOUJOURS accessible en plein écran (hôte inclus). */}
-            <div
-              className="absolute z-20 flex flex-col items-center gap-3 top-1/2 -translate-y-1/2"
-              style={{ right: 'max(0.75rem, env(safe-area-inset-right))' }}
-              data-testid="visio-fs-controls"
-            >
-              {/* 🎤 Micro — même handler que hors plein écran (host: toggle micro hôte via ref ; participant: prendre la parole). */}
-              <button
-                onClick={onToggleMic}
-                className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors ${
-                  micActive ? 'bg-green-500/40 text-green-100 hover:bg-green-500/50' : 'bg-black/50 text-white/90 hover:bg-black/70'
-                }`}
-                title={micActive ? 'Couper le micro' : 'Activer le micro'}
-                aria-label={micActive ? 'Couper le micro' : 'Activer le micro'}
-                data-testid="visio-fs-mic"
-              >
-                {micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-              </button>
-
-              {/* 🎥 Caméra / scène — hôte : on/off ; spectateur à l'écran : descendre ; spectateur : monter (demander). */}
-              {canManageStage ? (
-                <button
-                  onClick={onToggleCamera}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors ${
-                    cameraOn ? 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)]' : 'bg-black/50 text-white/90 hover:bg-black/70'
-                  }`}
-                  title={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-                  aria-label={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-                  data-testid="visio-fs-camera"
-                >
-                  {cameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-                </button>
-              ) : cameraOn ? (
-                <button
-                  onClick={onToggleCamera}
-                  className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)] transition-colors"
-                  title="Descendre de la scène"
-                  aria-label="Descendre de la scène"
-                  data-testid="visio-fs-camera"
-                >
-                  <VideoOff className="w-5 h-5" />
-                </button>
-              ) : onRequestStage ? (
-                <button
-                  onClick={onRequestStage}
-                  disabled={stageRequestPending}
-                  className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-black/50 text-white/90 hover:bg-black/70 disabled:opacity-60 transition-colors"
-                  title={stageRequestPending ? 'Demande envoyée…' : 'Monter en vidéo'}
-                  aria-label={stageRequestPending ? 'Demande envoyée' : 'Monter en vidéo'}
-                  data-testid="visio-fs-stage"
-                >
-                  <Hand className="w-5 h-5" />
-                </button>
-              ) : null}
-
-              {/* ⏱️ Interval training (hôte) */}
-              {onStartTimer && canManageStage && (
-                <button
-                  onClick={onStartTimer}
-                  className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
-                  title="Interval training"
-                  aria-label="Interval training"
-                  data-testid="visio-fs-timer"
-                >
-                  <Timer className="w-5 h-5" />
-                </button>
-              )}
-
-              {/* 🔽 Réduire (sortir du plein écran) */}
-              <button
-                onClick={exitCamFullscreen}
-                className="w-12 h-12 rounded-full flex items-center justify-center shadow-lg bg-black/50 text-white/90 hover:bg-black/70 transition-colors"
-                title="Réduire"
-                aria-label="Quitter le plein écran"
-                data-testid="visio-camera-fs-reduce"
-              >
-                <Minimize2 className="w-5 h-5" />
-              </button>
-            </div>
+            {/* 🎛️ Barre de contrôles verticale à droite (composant réutilisable, partagée avec le plein
+                écran de la vidéo partagée). Micro toujours accessible en plein écran (hôte inclus). */}
+            <VisioControlBar
+              micActive={micActive}
+              onToggleMic={onToggleMic}
+              cameraOn={cameraOn}
+              canManageStage={canManageStage}
+              onToggleCamera={onToggleCamera}
+              onRequestStage={onRequestStage}
+              stageRequestPending={stageRequestPending}
+              onStartTimer={onStartTimer && canManageStage ? onStartTimer : undefined}
+              onOpenChat={onOpenChat}
+              chatUnread={chatUnread}
+              onReduce={exitCamFullscreen}
+            />
             <div className="flex-1 min-h-0 flex items-center justify-center">
               {fsBig ? (
                 <CameraTile
@@ -287,6 +227,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                   large
                   fit="contain"
                   className="w-full h-full rounded-none border-0"
+                  hideMicBadge={fsBig.id === myUserId}
                 />
               ) : (
                 <p className="text-white/50 text-sm">Aucune caméra allumée</p>

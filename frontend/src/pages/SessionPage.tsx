@@ -39,6 +39,9 @@ import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
+import { VisioControlBar } from '@/components/session/VisioControlBar';
+import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
+import { createPortal } from 'react-dom';
 import { StageRequestsPanel } from '@/components/session/StageRequestsPanel';
 import type { StageRequest } from '@/components/session/StageRequestsPanel';
 import { ChatPanel } from '@/components/session/ChatPanel';
@@ -746,6 +749,7 @@ export const SessionPage: React.FC = () => {
     setSelfMonitor,
     getContext: getMixerContext,
     getTimerOutput,
+    setMicDuckCompensation,
     startVoiceActivity,
     stopVoiceActivity,
   } = useAudioMixer({
@@ -1225,6 +1229,9 @@ export const SessionPage: React.FC = () => {
   //    Le micro vit toujours dans son AudioContext dédié (micCtx) → jamais mélangé à la musique.
   useEffect(() => {
     try { const ctx = getMixerContext(); if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ }); } catch { /* ignore */ }
+    // 🐛 BUG 1 : compensation d'un ducking OS RÉSIDUEL sur MOBILE non-iOS (Android) UNIQUEMENT (>1 quand le
+    //    micro est actif) ; sur desktop/iOS = 1.0 → aucun « saut » de volume. Puis on ré-affirme le gain.
+    try { setMicDuckCompensation(hostMicActive); } catch { /* ignore */ }
     try { setMusicVolume(mixerState.musicVolume); } catch { /* ignore */ }        // ré-affirme le gain (≥1, jamais < 1)
     try { const el = getMusicEl(); if (el) el.volume = Math.min(1, mixerState.musicVolume); } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1885,6 +1892,9 @@ export const SessionPage: React.FC = () => {
   // 🔍 Vidéo partagée en vue agrandie (plein écran) → le chat est rendu À L'INTÉRIEUR du plein écran
   //    (sinon invisible en plein écran natif). Piloté par SharedMediaPlayer.onEnlargedChange.
   const [videoEnlarged, setVideoEnlarged] = useState(false);
+  // 🐛 BUG 3 : cible de portail = élément plein écran courant (ou body). Permet d'afficher le chat
+  //    PAR-DESSUS le plein écran Live Visio (comme le minuteur), sinon invisible (API Fullscreen).
+  const fsChatPortalTarget = useFullscreenPortalTarget();
   // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
   const [chatOpen, setChatOpen] = useState(false);
   const [chatTab, setChatTab] = useState<'assistant' | 'group' | 'private'>('assistant');
@@ -3437,6 +3447,25 @@ export const SessionPage: React.FC = () => {
       onToggleScreenShare={handleToggleScreenShare}
       screenSharing={screenSharing}
       screenSupported={screenSupported}
+      onOpenChat={sessionId && !isGuestRestricted ? () => setChatOpen(true) : undefined}
+      chatUnread={chatUnreadTotal}
+    />
+  );
+
+  // 🐛 BUG 4 : MÊME barre de contrôles Visio, injectée dans le plein écran de la VIDÉO partagée
+  //    (Micro/Caméra/Scène/Interval/Chat). Réutilise exactement les handlers/états ci-dessus.
+  const sharedVideoControlsNode = (
+    <VisioControlBar
+      micActive={isHost ? hostMicActive : isTalking}
+      onToggleMic={handleLiveMicToggle}
+      cameraOn={videoMesh.cameraOn}
+      canManageStage={canShare}
+      onToggleCamera={handleToggleCamera}
+      onRequestStage={handleRequestStage}
+      stageRequestPending={stageRequestPending}
+      onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}
+      onOpenChat={sessionId && !isGuestRestricted ? () => setChatOpen(true) : undefined}
+      chatUnread={chatUnreadTotal}
     />
   );
 
@@ -4403,6 +4432,7 @@ export const SessionPage: React.FC = () => {
                 chatNode={chatPanelNode}
                 liveCamerasNode={liveCamerasNode}
                 timerNode={visioTimerReminderNode}
+                controlsNode={liveMode ? sharedVideoControlsNode : undefined}
               />
               </div>
             )}
@@ -5154,7 +5184,9 @@ export const SessionPage: React.FC = () => {
 
       {/* 💬 Lanceur + panneau de CHAT — au niveau page SAUF quand la vidéo est agrandie (alors il est
           rendu À L'INTÉRIEUR du plein écran de la vidéo, cf. SharedMediaPlayer chatNode). */}
-      {!videoEnlarged && chatPanelNode}
+      {/* 🐛 BUG 3 : chat porté dans l'élément plein écran (visio) s'il y en a un → visible/utilisable
+          par-dessus le plein écran ; sinon dans body (comportement inchangé). Rendu inside video plein écran = SharedMediaPlayer. */}
+      {!videoEnlarged && fsChatPortalTarget && createPortal(chatPanelNode, fsChatPortalTarget)}
     </div>
   );
 };

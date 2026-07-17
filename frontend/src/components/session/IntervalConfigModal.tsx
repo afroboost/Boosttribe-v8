@@ -96,7 +96,11 @@ export const IntervalConfigModal: React.FC<Props> = ({
   const startRec = async (key: string) => {
     if (recording || uploading) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // 🐛 BUG 1 : constraints désactivées (echoCancellation/noiseSuppression/autoGainControl) → n'ouvre
+      //    PAS le micro en mode « communication » → ne ducke PAS la musique pendant l'enregistrement.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
       streamRef.current = stream;
       chunksRef.current = [];
       const mime = pickMime();

@@ -13,11 +13,12 @@ interface CameraTileProps {
   className?: string;            // classes additionnelles sur le conteneur
   topRight?: React.ReactNode;    // emplacement bouton coin haut-droit (ex. Agrandir/Réduire)
   fit?: 'cover' | 'contain';     // 🔍 plein écran caméra : 'contain' = jamais rogner le visage (défaut 'cover')
+  hideMicBadge?: boolean;        // 🐛 BUG 2 : masque le badge micro (redondant avec le bouton toggle en plein écran)
 }
 
 // Vignette d'une personne : flux vidéo si caméra allumée, sinon initiales (caméra coupée).
 export const CameraTile: React.FC<CameraTileProps> = ({
-  name, stream, isLocal, micActive, isHost, avatarUrl, large, onClick, className = '', topRight, fit = 'cover',
+  name, stream, isLocal, micActive, isHost, avatarUrl, large, onClick, className = '', topRight, fit = 'cover', hideMicBadge = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -72,9 +73,11 @@ export const CameraTile: React.FC<CameraTileProps> = ({
           {isHost && <Crown size={11} className="text-yellow-400 flex-shrink-0" fill="currentColor" />}
           <span className="truncate">{name}{isLocal ? ' (vous)' : ''}</span>
         </span>
-        <span className={`flex-shrink-0 p-1 rounded-full ${micActive ? 'text-green-400' : 'text-red-400'}`} title={micActive ? 'Micro actif' : 'Micro coupé'}>
-          {micActive ? <Mic size={12} /> : <MicOff size={12} />}
-        </span>
+        {!hideMicBadge && (
+          <span className={`flex-shrink-0 p-1 rounded-full ${micActive ? 'text-green-400' : 'text-red-400'}`} title={micActive ? 'Micro actif' : 'Micro coupé'}>
+            {micActive ? <Mic size={12} /> : <MicOff size={12} />}
+          </span>
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { resolveImageSource, describeVideoSource, isImgbbPageLink } from "@/utils/mediaUrl";
 import { Link, useNavigate } from "react-router-dom";
 import { useTheme } from "@/context/ThemeContext";
@@ -806,10 +806,53 @@ const Dashboard: React.FC = () => {
   }, [hasAdminAccess, isAdminByEmail]);
 
   // Update field
+  // 💾 AUTO-ENREGISTREMENT des champs MÉDIA (hero vidéo/poster, favicon, carrousel) — sans cliquer
+  //    « Enregistrer ». Écrit UNIQUEMENT les colonnes média (update .eq('id',1)) pour ne pas écraser
+  //    d'autres réglages en cours d'édition. Retour visuel par champ + horodatage du dernier save.
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const [mediaSaving, setMediaSaving] = useState<Record<string, 'saving' | 'saved' | 'error'>>({});
+  const [lastSavedAt, setLastSavedAt] = useState<string>('');
+  const persistMediaFields = useCallback(async (partial: Record<string, unknown>, fieldKey: string) => {
+    if (!supabase) return;
+    setMediaSaving((s) => ({ ...s, [fieldKey]: 'saving' }));
+    try {
+      const { error } = await supabase.from('site_settings').update(partial).eq('id', 1);
+      if (error) throw error;
+      setMediaSaving((s) => ({ ...s, [fieldKey]: 'saved' }));
+      setLastSavedAt(new Date().toLocaleTimeString('fr-FR'));
+      window.setTimeout(() => setMediaSaving((s) => {
+        if (s[fieldKey] !== 'saved') return s;
+        const c = { ...s }; delete c[fieldKey]; return c;
+      }), 2500);
+    } catch {
+      setMediaSaving((s) => ({ ...s, [fieldKey]: 'error' }));
+    }
+  }, []);
+  const mediaTimers = useRef<Record<string, number>>({});
+  const scheduleMediaSave = useCallback((fieldKey: string, partial: Record<string, unknown>) => {
+    if (mediaTimers.current[fieldKey]) window.clearTimeout(mediaTimers.current[fieldKey]);
+    mediaTimers.current[fieldKey] = window.setTimeout(() => { persistMediaFields(partial, fieldKey); }, 800);
+  }, [persistMediaFields]);
+  const flushMediaSave = useCallback((fieldKey: string, partial: Record<string, unknown>) => {
+    if (mediaTimers.current[fieldKey]) { window.clearTimeout(mediaTimers.current[fieldKey]); delete mediaTimers.current[fieldKey]; }
+    persistMediaFields(partial, fieldKey);
+  }, [persistMediaFields]);
+  // Petit indicateur d'état par champ média (fonction de rendu → pas de remontage de composant).
+  const renderMediaStatus = (field: string): React.ReactNode => {
+    const st = mediaSaving[field];
+    if (!st) return null;
+    if (st === 'saving') return <span className="text-white/40 text-[11px]">Enregistrement…</span>;
+    if (st === 'saved') return <span className="text-[var(--bt-accent)] text-[11px] font-medium">✓ Enregistré</span>;
+    return <span className="text-red-400 text-[11px]">Erreur — réessaie</span>;
+  };
+
   const handleUpdate = useCallback((key: keyof SiteSettings, value: string) => {
     setSettings(prev => ({ ...prev, [key]: value }));
     setHasChanges(true);
-  }, []);
+    // Le favicon est un champ média → auto-enregistré (debounce).
+    if (key === 'favicon_url') scheduleMediaSave('favicon_url', { favicon_url: value });
+  }, [scheduleMediaSave]);
 
   // 🖼️ Carrousel d'accueil (max 3 images) — upload/remplacement, texte alt, ordre.
   const [carouselUploading, setCarouselUploading] = useState<number | null>(null);
@@ -822,36 +865,35 @@ const Dashboard: React.FC = () => {
     const { url, error } = await uploadHomeImage(file);
     setCarouselUploading(null);
     if (error || !url) { showToast(error || 'Upload échoué', 'error'); return; }
-    setSettings(prev => {
-      const arr = [...(prev.home_carousel || [])];
-      arr[slot] = { url, alt: arr[slot]?.alt || '' };
-      return { ...prev, home_carousel: arr.filter(Boolean) };
-    });
+    const arr = [...(settingsRef.current.home_carousel || [])];
+    arr[slot] = { url, alt: arr[slot]?.alt || '' };
+    const next = arr.filter(Boolean);
+    setSettings(prev => ({ ...prev, home_carousel: next }));
     setHasChanges(true);
-    showToast('Image téléversée — pensez à Enregistrer', 'success');
-  }, [showToast]);
+    flushMediaSave('home_carousel', { home_carousel: next }); // auto-enregistré (upload = action explicite)
+  }, [showToast, flushMediaSave]);
   const updateCarouselAlt = useCallback((slot: number, alt: string) => {
-    setSettings(prev => {
-      const arr = [...(prev.home_carousel || [])];
-      if (arr[slot]) arr[slot] = { ...arr[slot], alt };
-      return { ...prev, home_carousel: arr };
-    });
+    const arr = [...(settingsRef.current.home_carousel || [])];
+    if (arr[slot]) arr[slot] = { ...arr[slot], alt };
+    setSettings(prev => ({ ...prev, home_carousel: arr }));
     setHasChanges(true);
-  }, []);
+    scheduleMediaSave('home_carousel', { home_carousel: arr }); // debounce pendant la frappe du texte alt
+  }, [scheduleMediaSave]);
   const moveCarousel = useCallback((slot: number, dir: -1 | 1) => {
-    setSettings(prev => {
-      const arr = [...(prev.home_carousel || [])];
-      const t = slot + dir;
-      if (t < 0 || t >= arr.length) return prev;
-      [arr[slot], arr[t]] = [arr[t], arr[slot]];
-      return { ...prev, home_carousel: arr };
-    });
+    const arr = [...(settingsRef.current.home_carousel || [])];
+    const t = slot + dir;
+    if (t < 0 || t >= arr.length) return;
+    [arr[slot], arr[t]] = [arr[t], arr[slot]];
+    setSettings(prev => ({ ...prev, home_carousel: arr }));
     setHasChanges(true);
-  }, []);
+    flushMediaSave('home_carousel', { home_carousel: arr });
+  }, [flushMediaSave]);
   const removeCarousel = useCallback((slot: number) => {
-    setSettings(prev => ({ ...prev, home_carousel: (prev.home_carousel || []).filter((_, i) => i !== slot) }));
+    const next = (settingsRef.current.home_carousel || []).filter((_, i) => i !== slot);
+    setSettings(prev => ({ ...prev, home_carousel: next }));
     setHasChanges(true);
-  }, []);
+    flushMediaSave('home_carousel', { home_carousel: next });
+  }, [flushMediaSave]);
 
   // Save settings - SDK SUPABASE UNIQUEMENT (SANS FETCH)
   const handleSave = useCallback(async () => {
@@ -1228,7 +1270,10 @@ const Dashboard: React.FC = () => {
                   onChange={(v) => handleUpdate('favicon_url', v)}
                   placeholder="https://… .png / .svg / .ico (vide = favicon par défaut)"
                 />
-                <p className="text-white/30 text-[11px]">Collez l'URL d'une image (png/svg/ico). Laissez vide pour utiliser le favicon par défaut du site.</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-white/30 text-[11px]">Collez l'URL d'une image (png/svg/ico). Enregistré automatiquement.</p>
+                  {renderMediaStatus('favicon_url')}
+                </div>
               </div>
               <Separator className="my-4 bg-white/10" />
               <EditableField
@@ -1260,8 +1305,11 @@ const Dashboard: React.FC = () => {
               {/* 🖼️ Images d'accueil (carrousel) — upload / remplacer / ordonner (max 3) */}
               <div className="space-y-3">
                 <div>
-                  <Label className="text-white/80 flex items-center gap-2"><Image size={14} /> Images d'accueil (carrousel)</Label>
-                  <p className="text-white/30 text-[11px] mt-0.5">Jusqu'à 3 images défilant sur la page d'accueil. JPEG/PNG/WebP/GIF. Sans image → la section est masquée.</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-white/80 flex items-center gap-2"><Image size={14} /> Images d'accueil (carrousel)</Label>
+                    {renderMediaStatus('home_carousel')}
+                  </div>
+                  <p className="text-white/30 text-[11px] mt-0.5">Jusqu'à 3 images défilant sur la page d'accueil. JPEG/PNG/WebP/GIF. Enregistré automatiquement.</p>
                 </div>
 
                 {(settings.home_carousel || []).map((img, i) => (
@@ -1312,28 +1360,36 @@ const Dashboard: React.FC = () => {
                   </p>
                 </div>
                 <div>
-                  <Label className="text-white/60 text-xs">URL de la vidéo</Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-white/60 text-xs">URL de la vidéo</Label>
+                    {renderMediaStatus('hero_video_url')}
+                  </div>
                   <Input
                     value={settings.hero_video_url || ''}
-                    onChange={(e) => setSettings(prev => ({ ...prev, hero_video_url: e.target.value }))}
+                    onChange={(e) => { const v = e.target.value; setSettings(prev => ({ ...prev, hero_video_url: v })); scheduleMediaSave('hero_video_url', { hero_video_url: v }); }}
+                    onBlur={(e) => flushMediaSave('hero_video_url', { hero_video_url: e.target.value })}
                     placeholder="https://…/hero.mp4  ·  youtu.be/…  ·  vimeo.com/…"
                     className="h-9 text-sm bg-black/30 border-white/15 text-white"
                     data-testid="hero-video-url"
                   />
                   <p className="text-white/30 text-[11px] mt-0.5">
-                    Accepte un lien direct .mp4/.webm, ou un lien YouTube, Vimeo ou Google Drive.
+                    Accepte un lien direct .mp4/.webm, ou un lien YouTube, Vimeo ou Google Drive. Enregistré automatiquement.
                   </p>
                   {describeVideoSource(settings.hero_video_url) && (
                     <p className="text-[var(--bt-accent)] text-[11px] mt-0.5 font-medium">✓ {describeVideoSource(settings.hero_video_url)}</p>
                   )}
                 </div>
                 <div>
-                  <Label className="text-white/60 text-xs">Image poster / secours (optionnelle)</Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-white/60 text-xs">Image poster / secours (optionnelle)</Label>
+                    {renderMediaStatus('hero_poster_url')}
+                  </div>
                   <div className="flex items-start gap-3">
                     <div className="flex-1">
                       <Input
                         value={settings.hero_poster_url || ''}
-                        onChange={(e) => setSettings(prev => ({ ...prev, hero_poster_url: e.target.value }))}
+                        onChange={(e) => { const v = e.target.value; setSettings(prev => ({ ...prev, hero_poster_url: v })); scheduleMediaSave('hero_poster_url', { hero_poster_url: v }); }}
+                        onBlur={(e) => flushMediaSave('hero_poster_url', { hero_poster_url: e.target.value })}
                         placeholder="https://…/hero-poster.jpg  ·  Drive  ·  i.ibb.co/…"
                         className="h-9 text-sm bg-black/30 border-white/15 text-white"
                         data-testid="hero-poster-url"
@@ -2657,8 +2713,10 @@ const Dashboard: React.FC = () => {
         {/* Footer */}
         <div className="mt-8 pt-6 border-t border-white/10 text-center">
           <p className="text-white/40 text-sm">
-            {dbStatus === 'connected' 
-              ? '✅ Données synchronisées avec Supabase (table: site_settings)'
+            {dbStatus === 'connected'
+              ? (lastSavedAt
+                  ? `✅ Dernier enregistrement : ${lastSavedAt}`
+                  : '✅ Connecté à Supabase — les champs média sont enregistrés automatiquement (les autres réglages via « Enregistrer »).')
               : '⚠️ Mode hors ligne - Configurez Supabase pour la persistance'
             }
           </p>

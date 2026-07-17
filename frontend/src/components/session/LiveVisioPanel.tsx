@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw, Check } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -53,6 +53,17 @@ interface LiveVisioPanelProps {
 
 type Layout = 'grid' | 'spotlight';
 
+// 📷 Caméra INTÉGRÉE avant/arrière du téléphone (déjà couverte par le bouton flip) → à masquer du
+//    menu sur mobile pour ne garder que les VRAIES caméras externes (GoPro, reflex, USB, carte de capture).
+function isBuiltInFacingCamera(label: string): boolean {
+  return /facing\s*(front|back)|front camera|back camera|caméra\s*(avant|arrière)|\buser\b|\benvironment\b/i.test(label || '');
+}
+// Nom lisible : retire le suffixe « , facing front/back » ; repli si le label est vide/bruité.
+function cleanCameraLabel(label: string, index: number): string {
+  const s = (label || '').replace(/,?\s*facing\s*(front|back)\b/i, '').trim();
+  return s || `Caméra externe ${index + 1}`;
+}
+
 // 🎥 Panneau "Live / Visio" — grille de caméras (façon Zoom) + barre de contrôle.
 // Additif : ne touche PAS la vidéo partagée (qui reste affichée/synchronisée à sa place).
 export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
@@ -76,6 +87,11 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
     return () => { try { navigator.mediaDevices.removeEventListener('devicechange', onChange); } catch { /* ignore */ } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // 📷 Classement des caméras : si des caméras « facing » (avant/arrière intégrées) existent → on est
+  //    sur mobile ; le menu ne liste alors QUE les caméras externes (le flip couvre l'intégré). Sur PC
+  //    (aucune « facing ») → on liste toutes les caméras par leur vrai label.
+  const hasFacingCam = videoDevices.some((d) => isBuiltInFacingCamera(d.label));
+  const menuDevices = hasFacingCam ? videoDevices.filter((d) => !isBuiltInFacingCamera(d.label)) : videoDevices;
   // 🔍 Chantier A : VRAI plein écran d'UNE caméra (Fullscreen API + repli overlay iOS), orientation AUTO (pas de rotation forcée).
   // Le conteneur de la zone caméras est TOUJOURS monté et visible → requestFullscreen fiable (aucun remontage des flux).
   const camAreaRef = useRef<HTMLDivElement>(null);
@@ -372,10 +388,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
               camMenuOpen ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
             }`}
-            title="Choisir la caméra (externe)"
+            title="Choisir une caméra externe (USB / carte de capture)"
             data-testid="visio-camera-menu"
           >
-            <SwitchCamera className="w-4 h-4" /> Caméra
+            <SwitchCamera className="w-4 h-4" /> Caméra externe
           </button>
         )}
 
@@ -443,7 +459,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
       {camMenuOpen && canManageStage && onSelectCamera && (
         <div className="border-t border-white/10 bg-black/30 px-3 py-2.5" data-testid="visio-camera-list">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-white/60 text-xs font-medium">Choisir la caméra</span>
+            <span className="text-white/60 text-xs font-medium">{hasFacingCam ? 'Caméra externe' : 'Choisir la caméra'}</span>
             <button
               onClick={() => onRefreshDevices?.(true)}
               className="flex items-center gap-1 text-xs text-white/60 hover:text-white transition-colors"
@@ -452,28 +468,28 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               <RefreshCw className="w-3.5 h-3.5" /> Rafraîchir
             </button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {videoDevices.length === 0 ? (
-              <span className="text-white/40 text-xs">Aucune caméra détectée — branche ta webcam puis « Rafraîchir ».</span>
-            ) : (
-              videoDevices.map((d, i) => {
-                const selected = d.deviceId === videoDeviceId;
-                return (
-                  <button
-                    key={d.deviceId}
-                    onClick={() => { onSelectCamera(d.deviceId); setCamMenuOpen(false); }}
-                    className={`flex items-center gap-1.5 max-w-[220px] px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      selected ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] border border-[rgb(var(--bt-accent-rgb)/0.4)]' : 'bg-white/10 text-white/70 border border-white/10 hover:bg-white/20'
-                    }`}
-                    data-testid="visio-camera-option"
-                  >
-                    {selected && <Check className="w-3.5 h-3.5 flex-shrink-0" />}
-                    <span className="truncate">{d.label || `Caméra ${i + 1}`}</span>
-                  </button>
-                );
-              })
-            )}
-          </div>
+          {menuDevices.length === 0 ? (
+            <span className="text-white/40 text-xs">
+              {hasFacingCam
+                ? 'Branche une caméra externe (USB / carte de capture) puis « Rafraîchir ». Utilise l\'icône ⟲ pour l\'avant/arrière du téléphone.'
+                : 'Aucune caméra détectée — branche ta webcam puis « Rafraîchir ».'}
+            </span>
+          ) : (
+            /* Menu compact (select stylé) — beaucoup moins encombrant que la grille de boutons. */
+            <select
+              value={menuDevices.some((d) => d.deviceId === videoDeviceId) ? (videoDeviceId || '') : ''}
+              onChange={(e) => { if (e.target.value) { onSelectCamera(e.target.value); setCamMenuOpen(false); } }}
+              className="w-full px-3 py-2 rounded-lg text-sm bg-white/10 text-white/85 border border-white/15 focus:outline-none focus:border-[rgb(var(--bt-accent-rgb)/0.5)] cursor-pointer"
+              data-testid="visio-camera-select"
+            >
+              <option value="" className="bg-[#15151b] text-white">{hasFacingCam ? 'Choisir une caméra externe…' : 'Choisir une caméra…'}</option>
+              {menuDevices.map((d, i) => (
+                <option key={d.deviceId} value={d.deviceId} className="bg-[#15151b] text-white" data-testid="visio-camera-option">
+                  {cleanCameraLabel(d.label, i)}{d.deviceId === videoDeviceId ? ' ✓' : ''}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
       )}
     </div>

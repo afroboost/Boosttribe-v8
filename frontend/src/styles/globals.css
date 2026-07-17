@@ -17,10 +17,10 @@
   --bt-text-muted: 0 0% 100% / 0.42;
 
   /* Gradient — réservé au moment fort (logo/hero) */
-  --bt-gradient-start: #7A5CFF;
-  --bt-gradient-end: #E24A9E;
-  --bt-gradient-primary: linear-gradient(125deg, #7A5CFF 0%, #A24BD6 50%, #E24A9E 100%);
-  --bt-gradient-text: linear-gradient(125deg, #7A5CFF 0%, #A24BD6 50%, #E24A9E 100%);
+  --bt-gradient-start: var(--bt-accent);
+  --bt-gradient-end: var(--bt-accent-2);
+  --bt-gradient-primary: linear-gradient(125deg, var(--bt-accent) 0%, var(--bt-accent) 50%, var(--bt-accent-2) 100%);
+  --bt-gradient-text: linear-gradient(125deg, var(--bt-accent) 0%, var(--bt-accent) 50%, var(--bt-accent-2) 100%);
 
   /* "Glow" assagi — halos discrets (plus de néon) */
   --bt-glow-primary: 0 8px 28px rgba(122, 92, 255, 0.14);
@@ -232,7 +232,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .volume-slider-mini [data-slot="slider-range"] {
-  background: linear-gradient(90deg, #7A5CFF 0%, #E24A9E 100%);
+  background: linear-gradient(90deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%);
 }
 
 .volume-slider-mini [data-slot="slider-thumb"] {
@@ -249,7 +249,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .mic-gain-slider [data-slot="slider-range"] {
-  background: linear-gradient(90deg, #7A5CFF 0%, #E24A9E 100%);
+  background: linear-gradient(90deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%);
 }
 
 .mic-gain-slider [data-slot="slider-thumb"] {

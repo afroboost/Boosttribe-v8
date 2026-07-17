@@ -293,7 +293,7 @@ const LoginPage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => { setMode('forgot'); setError(null); setSuccess(null); }}
-                  className="text-sm text-[#A78BFF] hover:text-white"
+                  className="text-sm text-[var(--bt-accent)] hover:text-white"
                 >
                   Mot de passe oublié ?
                 </button>
@@ -314,7 +314,7 @@ const LoginPage: React.FC = () => {
           {mode === 'signup' && (
             <form onSubmit={handleSignup} className="space-y-4">
               {subscribeIntent ? (
-                <div className="flex items-center gap-3 rounded-xl border border-[#E24A9E]/40 bg-[#9A3FC0]/10 p-3">
+                <div className="flex items-center gap-3 rounded-xl border border-[rgb(var(--bt-accent-2-rgb)/0.4)] bg-[rgb(var(--bt-accent-rgb)/0.1)] p-3">
                   <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
                        style={{ background: theme.colors.gradient.primary }}>
                     <Gift size={18} />
@@ -327,7 +327,7 @@ const LoginPage: React.FC = () => {
                   </div>
                 </div>
               ) : freeCredits > 0 ? (
-                <div className="flex items-center gap-3 rounded-xl border border-[#E24A9E]/40 bg-[#9A3FC0]/10 p-3">
+                <div className="flex items-center gap-3 rounded-xl border border-[rgb(var(--bt-accent-2-rgb)/0.4)] bg-[rgb(var(--bt-accent-rgb)/0.1)] p-3">
                   <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
                        style={{ background: theme.colors.gradient.primary }}>
                     <Gift size={18} />
@@ -402,11 +402,11 @@ const LoginPage: React.FC = () => {
                   id="terms"
                   checked={acceptedTerms}
                   onChange={(e) => setAcceptedTerms(e.target.checked)}
-                  className="mt-1 w-4 h-4 rounded border-white/30 bg-transparent text-[#7A5CFF]"
+                  className="mt-1 w-4 h-4 rounded border-white/30 bg-transparent text-[var(--bt-accent)]"
                 />
                 <label htmlFor="terms" className="text-sm text-white/60">
                   J'accepte les{' '}
-                  <Link to="/pricing" className="text-[#A78BFF] hover:text-white underline">
+                  <Link to="/pricing" className="text-[var(--bt-accent)] hover:text-white underline">
                     Conditions Générales d'Utilisation
                   </Link>
                 </label>
@@ -511,7 +511,7 @@ const LoginPage: React.FC = () => {
                   Pas encore de compte ?{' '}
                   <button
                     onClick={() => { setMode('signup'); setError(null); setSuccess(null); }}
-                    className="text-[#A78BFF] hover:text-white"
+                    className="text-[var(--bt-accent)] hover:text-white"
                   >
                     Créer un compte
                   </button>
@@ -521,7 +521,7 @@ const LoginPage: React.FC = () => {
                   Déjà un compte ?{' '}
                   <button
                     onClick={() => { setMode('login'); setError(null); setSuccess(null); }}
-                    className="text-[#A78BFF] hover:text-white"
+                    className="text-[var(--bt-accent)] hover:text-white"
                   >
                     Se connecter
                   </button>

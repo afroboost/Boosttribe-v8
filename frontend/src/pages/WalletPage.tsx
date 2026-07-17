@@ -21,11 +21,11 @@ import { PromoEditor } from '@/components/session/PromoEditor';
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
-  magenta: '#9A3FC0',
-  pink: '#E24A9E',
+  magenta: 'var(--bt-accent)',
+  pink: 'var(--bt-accent-2)',
   dark: '#0A0A0F',
   white: '#FFFFFF',
-  gradient: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)',
+  gradient: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -198,7 +198,7 @@ const WalletPage: React.FC = () => {
               <Card className="border-white/10 mb-6" style={{ background: plan.unlimited ? 'linear-gradient(135deg, rgba(217,28,210,0.18), rgba(255,45,170,0.12))' : 'rgba(255,255,255,0.05)' }}>
                 <CardHeader>
                   <CardTitle className="text-white flex items-center gap-2">
-                    <Crown size={20} style={{ color: '#E24A9E' }} />
+                    <Crown size={20} style={{ color: 'var(--bt-accent-2)' }} />
                     {plan.payment_type === 'subscription' ? 'Abonnement Coach Illimité' : 'Modèle commission'}
                     {plan.unlimited && (
                       <span className="ml-2 inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-500/20 text-green-400">
@@ -406,7 +406,7 @@ const WalletPage: React.FC = () => {
                         )}
                         {r.summary && (
                           <div>
-                            <p className="text-[#E24A9E] text-xs font-semibold mb-1 flex items-center gap-1"><FileText size={13} /> Résumé / notes</p>
+                            <p className="text-[var(--bt-accent-2)] text-xs font-semibold mb-1 flex items-center gap-1"><FileText size={13} /> Résumé / notes</p>
                             <p className="text-white/80 text-sm whitespace-pre-wrap">{r.summary}</p>
                           </div>
                         )}

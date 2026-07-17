@@ -207,17 +207,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             style={{
               background: 'rgba(122, 92, 255, 0.2)',
               border: '1px solid rgba(122, 92, 255, 0.4)',
-              color: '#7A5CFF',
+              color: 'var(--bt-accent)',
             }}
           >
             <span className="relative flex h-2 w-2">
               <span 
                 className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                style={{ background: '#7A5CFF' }}
+                style={{ background: 'var(--bt-accent)' }}
               />
               <span 
                 className="relative inline-flex rounded-full h-2 w-2"
-                style={{ background: '#7A5CFF' }}
+                style={{ background: 'var(--bt-accent)' }}
               />
             </span>
             {isHost ? 'LIVE' : 'SYNC'}
@@ -235,7 +235,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             style={{
               background: coverArt 
                 ? `url(${coverArt}) center/cover`
-                : 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)',
+                : 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)',
             }}
           >
             {!coverArt && (
@@ -288,7 +288,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               className="absolute inset-y-0 left-0 rounded-full transition-all duration-100"
               style={{ 
                 width: `${progressPercent}%`,
-                background: 'linear-gradient(90deg, #7A5CFF 0%, #E24A9E 100%)',
+                background: 'linear-gradient(90deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)',
               }}
             />
             {/* Thumb - UNIQUEMENT pour l'hôte */}
@@ -342,7 +342,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 onChange={handleVolumeChange}
                 className="w-20 h-1 rounded-full appearance-none cursor-pointer flex-shrink-0"
                 style={{
-                  background: `linear-gradient(to right, #7A5CFF ${audioState.volume * 100}%, rgba(255,255,255,0.2) ${audioState.volume * 100}%)`,
+                  background: `linear-gradient(to right, var(--bt-accent) ${audioState.volume * 100}%, rgba(255,255,255,0.2) ${audioState.volume * 100}%)`,
                 }}
               />
             </div>
@@ -354,7 +354,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                 className={`p-2 transition-colors ${
                   repeatMode === 'none' 
                     ? 'text-white/40 hover:text-white/60' 
-                    : 'text-[#7A5CFF] hover:text-[#E24A9E]'
+                    : 'text-[var(--bt-accent)] hover:text-[var(--bt-accent-2)]'
                 }`}
                 title={
                   repeatMode === 'none' ? 'Répétition désactivée' :
@@ -383,7 +383,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             `}
             style={{
               background: isHost && !disabled 
-                ? 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' 
+                ? 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' 
                 : 'linear-gradient(135deg, #666 0%, #888 100%)',
               boxShadow: isHost && !disabled ? '0 4px 24px rgba(122, 92, 255, 0.4)' : 'none',
             }}
@@ -423,7 +423,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               </button>
             ) : (
               <div className="flex items-center gap-2 text-xs text-white/40 bg-white/5 px-3 py-2 rounded-full" data-testid="sync-status">
-                <span className="w-2 h-2 rounded-full bg-purple-500 animate-pulse"></span>
+                <span className="w-2 h-2 rounded-full bg-[var(--bt-accent)] animate-pulse"></span>
                 <span>Synchronisé</span>
               </div>
             )}
@@ -451,7 +451,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               className="w-1 rounded-full transition-all duration-150"
               style={{
                 height: `${height}px`,
-                background: `linear-gradient(to top, #7A5CFF, #E24A9E)`,
+                background: `linear-gradient(to top, var(--bt-accent), var(--bt-accent-2))`,
                 opacity: audioState.isPlaying ? 0.8 : 0.3,
               }}
             />

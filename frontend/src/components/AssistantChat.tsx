@@ -190,7 +190,7 @@ export const AssistantChat: React.FC<AssistantChatProps> = ({ hasAccess, gradien
           <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div
               className={`max-w-[80%] px-4 py-2 rounded-2xl text-sm ${
-                msg.role === 'user' ? 'bg-purple-500 text-white rounded-br-sm' : 'bg-white/10 text-white/90 rounded-bl-sm'
+                msg.role === 'user' ? 'bg-[var(--bt-accent)] text-white rounded-br-sm' : 'bg-white/10 text-white/90 rounded-bl-sm'
               }`}
             >
               {msg.content}
@@ -220,7 +220,7 @@ export const AssistantChat: React.FC<AssistantChatProps> = ({ hasAccess, gradien
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             placeholder="Tapez votre message..."
-            className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-full text-white text-sm placeholder:text-white/40 focus:outline-none focus:border-purple-500"
+            className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-full text-white text-sm placeholder:text-white/40 focus:outline-none focus:border-[var(--bt-accent)]"
             data-testid="chatbot-input"
           />
           <button

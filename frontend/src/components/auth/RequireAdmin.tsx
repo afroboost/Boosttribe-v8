@@ -31,7 +31,7 @@ export const RequireAdmin: React.FC<RequireAdminProps> = ({ children }) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-black">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-10 h-10 border-2 border-[var(--bt-accent)] border-t-transparent rounded-full animate-spin" />
           <span className="text-white/50">Vérification des accès admin...</span>
         </div>
       </div>

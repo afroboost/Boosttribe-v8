@@ -154,7 +154,7 @@ export const Header: React.FC = () => {
                     {profile?.full_name || profile?.email?.split('@')[0]}
                   </span>
                   {isAdmin && (
-                    <span className="px-2 py-0.5 text-xs bg-[#7A5CFF]/15 text-[#A78BFF] rounded-full border border-[#7A5CFF]/25">
+                    <span className="px-2 py-0.5 text-xs bg-[rgb(var(--bt-accent-rgb)/0.15)] text-[var(--bt-accent)] rounded-full border border-[rgb(var(--bt-accent-rgb)/0.25)]">
                       👑 Admin
                     </span>
                   )}
@@ -164,7 +164,7 @@ export const Header: React.FC = () => {
                 {isAdmin && (
                   <button
                     onClick={handleAdminClick}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[#A78BFF] hover:text-white hover:bg-[#7A5CFF]/10 transition-colors text-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[var(--bt-accent)] hover:text-white hover:bg-[rgb(var(--bt-accent-rgb)/0.1)] transition-colors text-sm"
                     title="Gestion du Site"
                   >
                     <Settings size={16} />

@@ -108,15 +108,15 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
   // Consigne d'installation iOS (Partager → Sur l'écran d'accueil)
   const iosHelp = showIOSHelp ? (
     <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center p-4 bg-black/70 backdrop-blur-sm" onClick={() => setShowIOSHelp(false)}>
-      <div className="bg-[#15151b] border border-purple-500/30 rounded-2xl p-5 max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[#15151b] border border-[rgb(var(--bt-accent-rgb)/0.3)] rounded-2xl p-5 max-w-sm w-full shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
             <Smartphone size={20} className="text-white" />
           </div>
           <h3 className="text-white font-semibold">Installer sur iPhone / iPad</h3>
         </div>
         <ol className="text-white/70 text-sm space-y-2 list-decimal list-inside">
-          <li className="flex items-center gap-2"><span>Appuyez sur</span><Share size={16} className="text-purple-400" /><span>(Partager) dans Safari</span></li>
+          <li className="flex items-center gap-2"><span>Appuyez sur</span><Share size={16} className="text-[var(--bt-accent)]" /><span>(Partager) dans Safari</span></li>
           <li>Choisissez « Sur l'écran d'accueil »</li>
           <li>Confirmez avec « Ajouter »</li>
         </ol>
@@ -138,7 +138,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       <>
         <button
           onClick={handleInstall}
-          className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded-full bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 transition-colors ${className}`}
+          className={`flex items-center gap-2 px-3 py-1.5 text-xs rounded-full bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.3)] transition-colors ${className}`}
           data-testid="pwa-install-btn"
         >
           <Download size={14} />
@@ -155,7 +155,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       <>
         <button
           onClick={handleInstall}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 text-white font-medium hover:opacity-90 transition-opacity ${className}`}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-[var(--bt-accent)] to-pink-600 text-white font-medium hover:opacity-90 transition-opacity ${className}`}
           data-testid="pwa-install-btn"
         >
           <Smartphone size={18} />
@@ -171,12 +171,12 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
     <>
     {iosHelp}
     <div className={`fixed bottom-4 left-4 right-4 mx-auto max-w-md z-50 ${className}`}>
-      <div className="bg-[#1a1a2e] border border-purple-500/30 rounded-xl p-4 shadow-2xl shadow-purple-500/10">
+      <div className="bg-[#1a1a2e] border border-[rgb(var(--bt-accent-rgb)/0.3)] rounded-xl p-4 shadow-2xl shadow-purple-500/10">
         <div className="flex items-start gap-3">
           {/* Icon */}
           <div 
             className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
           >
             <Smartphone size={24} className="text-white" />
           </div>
@@ -194,7 +194,7 @@ export const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
             <div className="flex items-center gap-2 mt-3">
               <button
                 onClick={handleInstall}
-                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 transition-colors"
+                className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[var(--bt-accent)] text-white text-xs font-medium hover:bg-[var(--bt-accent)] transition-colors"
               >
                 <Download size={14} />
                 Installer

@@ -63,7 +63,7 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
       className={`
         relative flex flex-col gap-2 p-2.5 rounded-lg transition-all
         ${participant.isCurrentUser
-          ? 'bg-[#7A5CFF]/10 border border-[#7A5CFF]/30'
+          ? 'bg-[rgb(var(--bt-accent-rgb)/0.1)] border border-[rgb(var(--bt-accent-rgb)/0.3)]'
           : 'bg-[var(--bt-surface-alpha)] border border-white/10'
         }
       `}
@@ -102,14 +102,14 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
         <div className="flex-1 min-w-0">
           <span className={`text-sm truncate block ${isMuted ? 'text-white/40' : 'text-white'}`}>
             {participant.name}
-            {participant.isCurrentUser && <span className="text-[#7A5CFF] ml-1">(Vous)</span>}
+            {participant.isCurrentUser && <span className="text-[var(--bt-accent)] ml-1">(Vous)</span>}
           </span>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             {participant.isHost && !participant.isCurrentUser && (
               <span className="text-yellow-400 text-xs">Hôte</span>
             )}
             {participant.isCoHost && !participant.isHost && (
-              <span className="text-[#7A5CFF] text-xs flex items-center gap-1"><Share2 size={10} /> Co-animateur</span>
+              <span className="text-[var(--bt-accent)] text-xs flex items-center gap-1"><Share2 size={10} /> Co-animateur</span>
             )}
             {isPrivateTarget && (
               <span className="text-pink-400 text-xs flex items-center gap-1"><Mic size={10} /> Privé</span>
@@ -132,7 +132,7 @@ const ParticipantItem: React.FC<ParticipantItemProps> = ({
               onClick={() => onToggleCoHost(participant.id, !participant.isCoHost)}
               className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                 participant.isCoHost
-                  ? 'bg-[#7A5CFF]/20 text-[#7A5CFF] hover:bg-[#7A5CFF]/30'
+                  ? 'bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.3)]'
                   : 'bg-white/10 text-white/70 hover:bg-white/20'
               }`}
               title={participant.isCoHost ? 'Retirer l\'autorisation de partager' : 'Autoriser ce participant à partager'}

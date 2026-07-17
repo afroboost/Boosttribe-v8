@@ -124,7 +124,7 @@ export const AvatarUploadCrop: React.FC<AvatarUploadCropProps> = ({
 
   return (
     <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm">
-      <div className="relative z-10 w-full max-w-md rounded-2xl border-2 border-[#7A5CFF]/40 bg-[#15151b] p-5 shadow-2xl">
+      <div className="relative z-10 w-full max-w-md rounded-2xl border-2 border-[rgb(var(--bt-accent-rgb)/0.4)] bg-[#15151b] p-5 shadow-2xl">
         <div className="text-center mb-4">
           <h2 className="text-xl font-bold text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>{title}</h2>
           <p className="text-white/50 text-sm">{subtitle}</p>
@@ -139,7 +139,7 @@ export const AvatarUploadCrop: React.FC<AvatarUploadCropProps> = ({
             <Button
               onClick={() => fileInputRef.current?.click()}
               className="text-white border-none"
-              style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
             >
               <Camera className="w-4 h-4 mr-2" /> Choisir une photo
             </Button>
@@ -168,7 +168,7 @@ export const AvatarUploadCrop: React.FC<AvatarUploadCropProps> = ({
                 step={0.05}
                 value={zoom}
                 onChange={(e) => setZoom(Number(e.target.value))}
-                className="w-full accent-[#7A5CFF]"
+                className="w-full accent-[var(--bt-accent)]"
               />
             </div>
             <div className="flex gap-2 mt-3">
@@ -184,7 +184,7 @@ export const AvatarUploadCrop: React.FC<AvatarUploadCropProps> = ({
                 onClick={handleSave}
                 disabled={uploading}
                 className="flex-1 text-white border-none"
-                style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                 data-testid="avatar-save-btn"
               >
                 {uploading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Envoi…</> : <><Check className="w-4 h-4 mr-2" /> Valider</>}

@@ -99,11 +99,11 @@ const PHASE_LABEL: Record<IntervalPhaseKey, string> = {
   prepare: 'Préparation', work: 'Effort', rest: 'Repos', done: 'Terminé',
 };
 // 🎨 Couleurs de la marque BoostTribe (violet → magenta).
-const AFRO_GRADIENT = 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)';
+const AFRO_GRADIENT = 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)';
 // Phases aux couleurs du site, tout en restant distinguables : effort = magenta, repos = violet,
 // préparation = ambre (« prépare-toi »), terminé = magenta profond.
 const PHASE_COLOR: Record<IntervalPhaseKey, string> = {
-  prepare: '#F5A524', work: '#E24A9E', rest: '#7A5CFF', done: '#9A3FC0',
+  prepare: '#F5A524', work: 'var(--bt-accent-2)', rest: 'var(--bt-accent)', done: 'var(--bt-accent)',
 };
 
 // ⏱️ Info de décompte exposée au parent (LECTURE SEULE) → permet d'afficher un rappel du timer

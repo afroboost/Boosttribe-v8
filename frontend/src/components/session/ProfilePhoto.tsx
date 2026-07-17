@@ -29,7 +29,7 @@ export const ProfilePhoto: React.FC<ProfilePhotoProps> = ({ url, name, size = 28
         onClick={openLightbox}
         disabled={!url}
         style={{ width: size, height: size }}
-        className={`rounded-full overflow-hidden bg-white/10 flex items-center justify-center flex-shrink-0 ${url ? 'cursor-zoom-in hover:ring-2 hover:ring-[#7A5CFF]/50 transition' : 'cursor-default'} ${className}`}
+        className={`rounded-full overflow-hidden bg-white/10 flex items-center justify-center flex-shrink-0 ${url ? 'cursor-zoom-in hover:ring-2 hover:ring-[rgb(var(--bt-accent-rgb)/0.5)] transition' : 'cursor-default'} ${className}`}
         title={url ? `Voir la photo de ${name || ''}`.trim() : undefined}
         data-testid="profile-photo"
       >
@@ -57,7 +57,7 @@ export const ProfilePhoto: React.FC<ProfilePhotoProps> = ({ url, name, size = 28
             <img
               src={url}
               alt={name || ''}
-              className="max-w-[90vw] max-h-[80vh] rounded-2xl object-contain shadow-2xl shadow-[#7A5CFF]/20 border border-white/10"
+              className="max-w-[90vw] max-h-[80vh] rounded-2xl object-contain shadow-2xl shadow-[rgb(var(--bt-accent-rgb)/0.2)] border border-white/10"
             />
             {name && <p className="text-white/80 text-sm font-medium">{name}</p>}
           </div>

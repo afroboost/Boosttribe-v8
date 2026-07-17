@@ -109,10 +109,10 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
       className={`
         flex items-center gap-2 sm:gap-3 p-2 sm:p-3 rounded-lg transition-all group min-w-0 w-full overflow-hidden
         ${isSelected
-          ? 'bg-white/10 border border-[#7A5CFF]/50'
+          ? 'bg-white/10 border border-[rgb(var(--bt-accent-rgb)/0.5)]'
           : 'bg-[var(--bt-surface-alpha)] border border-white/10 hover:bg-white/5'
         }
-        ${isDragging ? 'shadow-lg shadow-[#7A5CFF]/20 z-50' : ''}
+        ${isDragging ? 'shadow-lg shadow-[rgb(var(--bt-accent-rgb)/0.2)] z-50' : ''}
         ${track.hidden && isHost ? 'opacity-50' : ''}
       `}
       data-testid={`track-item-${track.id}`}
@@ -124,7 +124,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
           className={`
             w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 transition-all
             ${isChecked
-              ? 'bg-[#7A5CFF] border-[#7A5CFF]'
+              ? 'bg-[var(--bt-accent)] border-[var(--bt-accent)]'
               : 'border-white/30 hover:border-white/50'
             }
           `}
@@ -157,7 +157,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
         {/* Cover Art */}
         <div
           className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-          style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+          style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
         >
           {isSelected ? (
             <Play size={16} strokeWidth={1.5} className="text-white ml-0.5 sm:w-[18px] sm:h-[18px]" fill="currentColor" />
@@ -176,7 +176,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
               onClick={(e) => e.stopPropagation()}
               onKeyDown={(e) => { if (e.key === 'Enter') saveRename(); else if (e.key === 'Escape') onStopEdit(); }}
               onBlur={saveRename}
-              className="w-full bg-black/40 border border-[#7A5CFF]/60 rounded px-2 py-1 text-white text-sm focus:outline-none"
+              className="w-full bg-black/40 border border-[rgb(var(--bt-accent-rgb)/0.6)] rounded px-2 py-1 text-white text-sm focus:outline-none"
               data-testid={`rename-input-${track.id}`}
             />
           ) : (
@@ -242,7 +242,7 @@ const SortableTrackItem: React.FC<SortableTrackItemProps> = ({
 
       {/* Indicateur de sélection (desktop seulement, ne prend pas de place sur mobile) */}
       {isSelected && !isEditMode && !isEditing && (
-        <div className="hidden sm:block w-2 h-2 rounded-full flex-shrink-0" style={{ background: '#7A5CFF' }} />
+        <div className="hidden sm:block w-2 h-2 rounded-full flex-shrink-0" style={{ background: 'var(--bt-accent)' }} />
       )}
     </div>
   );
@@ -396,7 +396,7 @@ export const PlaylistDnD: React.FC<PlaylistDnDProps> = ({
           {displayTracks.length} / {maxTracks} titres
           {/* 🔒 Indicateur pour les participants */}
           {!isHost && displayTracks.length > 0 && (
-            <span className="ml-2 text-purple-400">(lecture seule)</span>
+            <span className="ml-2 text-[var(--bt-accent)]">(lecture seule)</span>
           )}
         </p>
 

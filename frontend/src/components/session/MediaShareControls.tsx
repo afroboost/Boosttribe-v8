@@ -156,7 +156,7 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
             key={m.id}
             onClick={() => onModeChange(m.id)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              mode === m.id ? 'bg-[#7A5CFF] text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'
+              mode === m.id ? 'bg-[var(--bt-accent)] text-white' : 'bg-white/10 text-white/70 hover:bg-white/20'
             }`}
             data-testid={`share-mode-${m.id}`}
           >
@@ -204,7 +204,7 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
           {busy === 'video' && (
             <>
               <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-                <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #7A5CFF 0%, #E24A9E 100%)' }} />
+                <div className="h-full rounded-full transition-all" style={{ width: `${progress}%`, background: 'linear-gradient(90deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }} />
               </div>
               {/* Item 2 : poids du fichier + temps estimé restant */}
               <div className="flex items-center justify-between gap-2 text-white/50 text-[11px]">
@@ -254,7 +254,7 @@ export const MediaShareControls: React.FC<MediaShareControlsProps> = ({ sessionI
           <Button
             onClick={handleLink}
             className="text-white border-none flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+            style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
           >
             <Send className="w-4 h-4" />
           </Button>

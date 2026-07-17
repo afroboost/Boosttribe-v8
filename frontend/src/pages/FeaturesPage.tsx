@@ -17,8 +17,8 @@ import {
 } from "lucide-react";
 
 // 🎨 Palette Afroboost (cohérente, premium) — magenta / rose, accents sobres.
-const MAGENTA = "#9A3FC0";
-const PINK = "#E24A9E";
+const MAGENTA = "var(--bt-accent)";
+const PINK = "var(--bt-accent-2)";
 
 // Feature data — reflète TOUTES les nouveautés de BoostTribe.
 const FEATURES = [

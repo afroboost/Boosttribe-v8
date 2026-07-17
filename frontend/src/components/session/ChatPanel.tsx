@@ -82,7 +82,7 @@ const MessageBubble: React.FC<{
       <div
         className={`px-3 py-2 rounded-2xl text-sm leading-snug break-words whitespace-pre-wrap ${
           mine
-            ? 'bg-gradient-to-br from-[#7A5CFF] to-[#E24A9E] text-white rounded-tr-sm'
+            ? 'bg-gradient-to-br from-[var(--bt-accent)] to-[var(--bt-accent-2)] text-white rounded-tr-sm'
             : 'bg-white/8 text-white/90 rounded-tl-sm'
         }`}
       >
@@ -114,12 +114,12 @@ const Composer: React.FC<{ onSend: (text: string) => void; placeholder: string }
         }}
         rows={1}
         placeholder={placeholder}
-        className="flex-1 resize-none max-h-28 px-3 py-2 rounded-xl bg-white/8 border border-white/10 text-white text-sm placeholder-white/30 focus:outline-none focus:border-[#7A5CFF]/60 focus:ring-1 focus:ring-[#7A5CFF]/40"
+        className="flex-1 resize-none max-h-28 px-3 py-2 rounded-xl bg-white/8 border border-white/10 text-white text-sm placeholder-white/30 focus:outline-none focus:border-[rgb(var(--bt-accent-rgb)/0.6)] focus:ring-1 focus:ring-[rgb(var(--bt-accent-rgb)/0.4)]"
       />
       <button
         onClick={send}
         disabled={!value.trim()}
-        className="flex-shrink-0 p-2.5 rounded-xl bg-gradient-to-br from-[#7A5CFF] to-[#E24A9E] text-white disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
+        className="flex-shrink-0 p-2.5 rounded-xl bg-gradient-to-br from-[var(--bt-accent)] to-[var(--bt-accent-2)] text-white disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity"
         title="Envoyer"
       >
         <Send size={18} />
@@ -197,7 +197,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         >
           <MessageCircle className="w-6 h-6 text-white" />
           {unreadTotal > 0 && (
-            <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[#E24A9E] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0d0d12]">
+            <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center border-2 border-[#0d0d12]">
               {unreadTotal > 99 ? '99+' : unreadTotal}
             </span>
           )}
@@ -244,7 +244,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                 >
                   {t.icon} {t.label}
                   {t.badge > 0 && tab !== t.key && (
-                    <span className="min-w-[16px] h-4 px-1 rounded-full bg-[#E24A9E] text-white text-[10px] font-bold flex items-center justify-center">
+                    <span className="min-w-[16px] h-4 px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center">
                       {t.badge > 99 ? '99+' : t.badge}
                     </span>
                   )}
@@ -334,7 +334,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                         <ProfilePhoto url={p.avatarUrl} name={p.name} size={36} />
                         <span className="flex-1 min-w-0 text-white/90 text-sm truncate">{p.name}</span>
                         {n > 0 && (
-                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#E24A9E] text-white text-[10px] font-bold flex items-center justify-center">
+                          <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center">
                             {n > 99 ? '99+' : n}
                           </span>
                         )}

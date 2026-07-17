@@ -71,7 +71,7 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
               <Tag size={18} /> Tarifs
             </Link>
             {/* 💎 Point d'entrée VISIBLE vers l'espace coach / abonnement */}
-            <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/10" style={{ color: '#E24A9E' }}>
+            <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-white/10" style={{ color: 'var(--bt-accent-2)' }}>
               <Crown size={18} /> {isAuthenticated ? 'Espace Coach' : 'Devenir Coach'}
             </Link>
             {isAuthenticated && (
@@ -97,7 +97,7 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
               </button>
             )}
             {isAdmin && (
-              <button onClick={() => go('/admin')} className="flex items-center gap-3 px-3 py-3 rounded-lg text-purple-400 hover:bg-purple-500/10 text-left">
+              <button onClick={() => go('/admin')} className="flex items-center gap-3 px-3 py-3 rounded-lg text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.1)] text-left">
                 <Settings size={18} /> Gestion Site
               </button>
             )}

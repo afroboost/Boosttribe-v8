@@ -98,10 +98,35 @@ function clearStoredTheme(): void {
   }
 }
 
+// Convertit une couleur hex (#RGB ou #RRGGBB) en canaux « R G B » pour rgb(var(--x) / alpha).
+// Retourne null si la valeur n'est pas un hex (ex. déjà rgb()/hsl()/var()).
+function hexToRgbChannels(hex: string): string | null {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `${r} ${g} ${b}`;
+}
+
 // Apply CSS variables to document
 function applyCSSVariables(theme: BeattribeTheme): void {
   const root = document.documentElement;
   const { colors, fonts } = theme;
+
+  // 🎨 ACCENT CENTRALISÉ — piloté par l'admin (site_settings.color_primary / _secondary).
+  //    Une seule source de vérité : toute l'app lit var(--bt-accent) / var(--bt-accent-2).
+  //    ⚠️ NE PAS réutiliser --accent (déjà pris par shadcn en format HSL). D'où --bt-accent.
+  //    Variantes « -rgb » pour pouvoir appliquer une opacité : rgb(var(--bt-accent-rgb) / .2).
+  root.style.setProperty('--bt-accent', colors.primary);
+  root.style.setProperty('--bt-accent-2', colors.secondary);
+  const rgb1 = hexToRgbChannels(colors.primary);
+  const rgb2 = hexToRgbChannels(colors.secondary);
+  if (rgb1) root.style.setProperty('--bt-accent-rgb', rgb1);
+  if (rgb2) root.style.setProperty('--bt-accent-2-rgb', rgb2);
+  root.style.setProperty('--bt-accent-gradient', `linear-gradient(135deg, ${colors.primary} 0%, ${colors.secondary} 100%)`);
 
   // Set --bt- CSS variables
   root.style.setProperty('--bt-background', colors.background);

@@ -351,7 +351,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
                   setError('');
                 }}
                 placeholder={isHost ? 'Coach' : 'Entrez votre pseudo'}
-                className="h-12 text-lg text-center bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[#7A5CFF]"
+                className="h-12 text-lg text-center bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[var(--bt-accent)]"
                 autoFocus
                 maxLength={20}
               />
@@ -408,7 +408,7 @@ const SubscriptionBadge: React.FC = () => {
 
   if (isAdmin) {
     return (
-      <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 flex items-center gap-1">
+      <Badge className="bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] border-[rgb(var(--bt-accent-rgb)/0.3)] flex items-center gap-1">
         <Crown className="w-3.5 h-3.5" />
         Mode Admin
       </Badge>
@@ -3418,7 +3418,7 @@ export const SessionPage: React.FC = () => {
   //    Réutilise l'UNIQUE élément musique (#bt-music-audio) et le HOST_COMMAND existant (aucun 2ᵉ <audio>).
   const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
     <div
-      className="flex items-center gap-2 rounded-2xl border border-[#7A5CFF]/25 bg-[rgba(20,20,25,0.95)] px-3 py-2"
+      className="flex items-center gap-2 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] px-3 py-2"
       data-testid="mini-audio-control"
     >
       <button onClick={() => handleMiniTrackNav(-1)} className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors" title="Piste précédente" data-testid="mini-audio-prev">
@@ -3427,7 +3427,7 @@ export const SessionPage: React.FC = () => {
       <button
         onClick={handleMiniPlayPause}
         className="p-2 rounded-full text-white flex-shrink-0"
-        style={{ background: 'linear-gradient(135deg,#7A5CFF,#E24A9E)' }}
+        style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
         title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
         data-testid="mini-audio-playpause"
       >
@@ -3561,8 +3561,8 @@ export const SessionPage: React.FC = () => {
       {/* 💳 Paywall « crédits insuffisants » — remplace la redirection brutale. Clair + CTA d'achat. */}
       {creditsBlocked && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#9A3FC0]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
+          <div className="w-full max-w-md rounded-2xl border-2 border-[rgb(var(--bt-accent-rgb)/0.5)] bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               <Coins className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -3587,7 +3587,7 @@ export const SessionPage: React.FC = () => {
                 <button
                   onClick={() => navigate('/login', { state: { from: window.location.pathname } })}
                   className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02]"
-                  style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                   data-testid="credits-paywall-login"
                 >
                   <Lock className="w-5 h-5" /> Se connecter
@@ -3596,7 +3596,7 @@ export const SessionPage: React.FC = () => {
               <button
                 onClick={() => navigate('/pricing')}
                 className={`w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] ${!user?.id && creditsBlocked !== 'record' ? 'bg-white/10' : ''}`}
-                style={!user?.id && creditsBlocked !== 'record' ? {} : { background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                style={!user?.id && creditsBlocked !== 'record' ? {} : { background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                 data-testid="credits-paywall-buy"
               >
                 <Coins className="w-5 h-5" /> Acheter des crédits
@@ -3646,8 +3646,8 @@ export const SessionPage: React.FC = () => {
       {/* 🎟️ Paywall « place payante » — participant sans billet sur une session payante. */}
       {accessInfo?.mode === 'paid' && !isHost && !isAdminUser && hasTicket === false && !paidAwaitingSignup && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#9A3FC0]/50 bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
+          <div className="w-full max-w-md rounded-2xl border-2 border-[rgb(var(--bt-accent-rgb)/0.5)] bg-[#15151b] p-6 sm:p-7 text-center shadow-2xl">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               <Ticket className="w-8 h-8 text-white" />
             </div>
             <h2 className="text-xl sm:text-2xl font-bold text-white mb-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
@@ -3676,7 +3676,7 @@ export const SessionPage: React.FC = () => {
                   onClick={() => handleBuyTicket('stripe')}
                   disabled={ticketBusy || !user?.id}
                   className="w-full py-3 rounded-xl text-white font-semibold flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] disabled:opacity-60"
-                  style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                   data-testid="ticket-paywall-buy"
                 >
                   <Ticket className="w-5 h-5" />
@@ -3759,9 +3759,9 @@ export const SessionPage: React.FC = () => {
       {/* 🎟️ Hôte : configurateur du mode d'accès (ouverte / payante / privée). */}
       {showSessionSettings && isHost && (
         <div className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/90 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border-2 border-[#9A3FC0]/40 bg-[#15151b] p-6 shadow-2xl">
+          <div className="w-full max-w-md rounded-2xl border-2 border-[rgb(var(--bt-accent-rgb)/0.4)] bg-[#15151b] p-6 shadow-2xl">
             <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-2" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
-              <Ticket size={20} style={{ color: '#E24A9E' }} /> Mode d'accès de la session
+              <Ticket size={20} style={{ color: 'var(--bt-accent-2)' }} /> Mode d'accès de la session
             </h2>
             <p className="text-white/50 text-sm mb-4">Choisis comment les participants accèdent à ce live.</p>
             <div className="space-y-2 mb-4">
@@ -3778,7 +3778,7 @@ export const SessionPage: React.FC = () => {
                   key={opt.v}
                   onClick={() => setModeDraft((d) => ({ ...d, mode: opt.v }))}
                   className={`w-full text-left p-3 rounded-xl border transition-colors ${
-                    modeDraft.mode === opt.v ? 'border-[#9A3FC0] bg-[#9A3FC0]/10' : 'border-white/15 hover:bg-white/5'
+                    modeDraft.mode === opt.v ? 'border-[var(--bt-accent)] bg-[rgb(var(--bt-accent-rgb)/0.1)]' : 'border-white/15 hover:bg-white/5'
                   }`}
                 >
                   <span className="text-white font-medium text-sm">{opt.label}</span>
@@ -3815,7 +3815,7 @@ export const SessionPage: React.FC = () => {
             {/* 📣 Page promo / affiche partageable */}
             <button
               onClick={() => { setShowSessionSettings(false); setShowPromoEditor(true); }}
-              className="w-full mb-3 py-2.5 rounded-xl text-white text-sm font-medium border border-[#9A3FC0]/40 bg-[#9A3FC0]/10 hover:bg-[#9A3FC0]/20 flex items-center justify-center gap-2"
+              className="w-full mb-3 py-2.5 rounded-xl text-white text-sm font-medium border border-[rgb(var(--bt-accent-rgb)/0.4)] bg-[rgb(var(--bt-accent-rgb)/0.1)] hover:bg-[rgb(var(--bt-accent-rgb)/0.2)] flex items-center justify-center gap-2"
               data-testid="open-promo-editor"
             >
               📣 Configurer la page promo (affiche + lien partageable)
@@ -3825,7 +3825,7 @@ export const SessionPage: React.FC = () => {
                 onClick={handleSaveMode}
                 disabled={savingMode}
                 className="flex-1 py-2.5 rounded-xl text-white font-semibold disabled:opacity-60"
-                style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               >
                 {savingMode ? 'Enregistrement…' : 'Enregistrer'}
               </button>
@@ -3898,7 +3898,7 @@ export const SessionPage: React.FC = () => {
             <button
               onClick={() => setRecConsentAck(true)}
               className="w-full h-12 rounded-xl text-white font-bold flex items-center justify-center gap-2 transition-transform hover:scale-105 active:scale-95"
-              style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               data-testid="recording-consent-accept"
             >
               <Check className="w-5 h-5" /> J'ai compris, continuer
@@ -4023,10 +4023,10 @@ export const SessionPage: React.FC = () => {
               {/* PARTICIPANT: Voice receiving indicator */}
               {!isHost && peerState.isReceivingVoice && (
                 <span
-                  className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 animate-pulse flex items-center gap-1 w-fit"
+                  className="text-xs px-2 py-0.5 rounded-full bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] animate-pulse flex items-center gap-1 w-fit"
                   data-testid="voice-receiving-indicator"
                 >
-                  <span className="inline-block w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+                  <span className="inline-block w-2 h-2 rounded-full bg-[var(--bt-accent)] animate-ping" />
                   <Volume2 className="w-3 h-3" />
                   Voix reçue
                 </span>
@@ -4052,7 +4052,7 @@ export const SessionPage: React.FC = () => {
                 <Button
                   variant="outline" size="sm"
                   onClick={() => { setShowSessionSettings(true); setSessionMenuOpen(false); }}
-                  className="border-[#9A3FC0]/40 text-white/80 hover:bg-[#9A3FC0]/15 inline-flex items-center justify-center gap-1 w-full md:w-auto"
+                  className="border-[rgb(var(--bt-accent-rgb)/0.4)] text-white/80 hover:bg-[rgb(var(--bt-accent-rgb)/0.15)] inline-flex items-center justify-center gap-1 w-full md:w-auto"
                   data-testid="session-access-mode"
                 >
                   <Ticket className="w-4 h-4" />
@@ -4099,7 +4099,7 @@ export const SessionPage: React.FC = () => {
                 className="flex-1 whitespace-nowrap px-3 py-2.5 text-sm font-medium border-b-2 transition-colors"
                 style={{
                   color: isActive ? '#FFFFFF' : '#A9A9A9',
-                  borderColor: isActive ? '#9A3FC0' : 'transparent',
+                  borderColor: isActive ? 'var(--bt-accent)' : 'transparent',
                   textShadow: isActive ? '0 0 8px rgba(217,28,210,0.6)' : 'none',
                 }}
                 data-testid={`mobile-tab-${tab.id}`}
@@ -4117,7 +4117,7 @@ export const SessionPage: React.FC = () => {
               <div className="hidden lg:flex items-center gap-1.5 p-1 rounded-xl border border-white/10 bg-white/5 w-fit">
                 <button
                   onClick={() => setLiveMode(false)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[#7A5CFF] text-white' : 'text-white/60 hover:text-white'}`}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${!liveMode ? 'bg-[var(--bt-accent)] text-white' : 'text-white/60 hover:text-white'}`}
                   data-testid="mode-listen"
                 >
                   <Headphones className="w-4 h-4" /> {t('session.mode.listen')}
@@ -4134,7 +4134,7 @@ export const SessionPage: React.FC = () => {
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     isFree ? 'text-white/40 cursor-not-allowed' : liveMode ? 'text-white' : 'text-white/60 hover:text-white'
                   }`}
-                  style={liveMode && !isFree ? { background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' } : undefined}
+                  style={liveMode && !isFree ? { background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' } : undefined}
                   title={isFree ? 'Live Visio : procurez-vous des crédits' : undefined}
                   data-testid="mode-live"
                 >
@@ -4147,7 +4147,7 @@ export const SessionPage: React.FC = () => {
             {isFree && sessionId && (
               <div className="bt-tab-diffusion flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
                 <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio : nécessite des crédits</span>
-                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
+                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
                   Acheter des crédits
                 </button>
               </div>
@@ -4159,7 +4159,7 @@ export const SessionPage: React.FC = () => {
                 onClick={handleTogglePrivacy}
                 className={`bt-tab-access flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium w-fit transition-colors ${
                   isPrivate
-                    ? 'bg-[#7A5CFF]/15 border-[#7A5CFF]/40 text-[#c9a3ff]'
+                    ? 'bg-[rgb(var(--bt-accent-rgb)/0.15)] border-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)]'
                     : 'bg-white/5 border-white/10 text-white/60 hover:text-white'
                 }`}
                 title="Session privée : chaque participant doit être admis manuellement"
@@ -4167,7 +4167,7 @@ export const SessionPage: React.FC = () => {
               >
                 {isPrivate ? <Lock className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
                 {isPrivate ? 'Session privée (salle d\'attente)' : 'Session publique (entrée directe)'}
-                <span className={`ml-1 inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors ${isPrivate ? 'bg-[#7A5CFF]' : 'bg-white/20'}`}>
+                <span className={`ml-1 inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors ${isPrivate ? 'bg-[var(--bt-accent)]' : 'bg-white/20'}`}>
                   <span className={`h-3 w-3 rounded-full bg-white transition-transform ${isPrivate ? 'translate-x-3' : ''}`} />
                 </span>
               </button>
@@ -4213,11 +4213,11 @@ export const SessionPage: React.FC = () => {
                   {isFree ? 'La Live Visio nécessite des crédits.' : 'Active la Live Visio pour afficher les caméras.'}
                 </p>
                 {isFree ? (
-                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
+                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
                     Acheter des crédits
                   </button>
                 ) : (
-                  <button onClick={() => sessionId && setLiveMode(true)} className="px-4 py-2 rounded-lg text-white text-sm font-medium inline-flex items-center gap-2" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
+                  <button onClick={() => sessionId && setLiveMode(true)} className="px-4 py-2 rounded-lg text-white text-sm font-medium inline-flex items-center gap-2" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
                     <Video className="w-4 h-4" /> Démarrer la Live Visio
                   </button>
                 )}
@@ -4286,7 +4286,7 @@ export const SessionPage: React.FC = () => {
                     onClick={handleStartPremiumRec}
                     disabled={recProcessing}
                     className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-white disabled:opacity-60 transition-transform hover:scale-105 active:scale-95"
-                    style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                    style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                     title={`Enregistrer la session (toutes les voix) + transcription IA${isAdminUser ? '' : ` — ${recCost} crédit${recCost > 1 ? 's' : ''}`}`}
                     data-testid="premium-record-start"
                   >
@@ -4307,7 +4307,7 @@ export const SessionPage: React.FC = () => {
                   onClick={handleToggleSelfMonitor}
                   className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
                     selfMonitorOn
-                      ? 'bg-[#7A5CFF]/25 text-[#C9A7FF] border border-[#7A5CFF]/50 hover:bg-[#7A5CFF]/35'
+                      ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[#C9A7FF] border border-[rgb(var(--bt-accent-rgb)/0.5)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
                       : 'bg-white/5 text-white/50 border border-white/10 hover:bg-white/10'
                   }`}
                   title={selfMonitorOn ? 'Couper le monitoring de ma voix' : 'M\'entendre (écouter ma propre voix — attention au larsen)'}
@@ -4321,10 +4321,10 @@ export const SessionPage: React.FC = () => {
 
             {/* 🔴 Enregistrement premium : état/résultat — panneau discret (hôte) */}
             {isHost && (recProcessing || (recResult && (recResult.summary || recResult.transcript))) && (
-              <div className="bt-tab-diffusion rounded-xl border border-[#9A3FC0]/30 bg-white/5 p-3 space-y-2">
+              <div className="bt-tab-diffusion rounded-xl border border-[rgb(var(--bt-accent-rgb)/0.3)] bg-white/5 p-3 space-y-2">
                 {recProcessing && (
                   <p className="text-white/70 text-xs flex items-center gap-2">
-                    <span className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-[#E24A9E] animate-spin" />
+                    <span className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-[var(--bt-accent-2)] animate-spin" />
                     Transcription IA en cours…
                   </p>
                 )}
@@ -4332,7 +4332,7 @@ export const SessionPage: React.FC = () => {
                   <div className="space-y-2 max-h-72 overflow-y-auto">
                     {recResult.summary && (
                       <div>
-                        <p className="text-[#E24A9E] text-xs font-semibold mb-1">Résumé / notes</p>
+                        <p className="text-[var(--bt-accent-2)] text-xs font-semibold mb-1">Résumé / notes</p>
                         <p className="text-white/80 text-xs whitespace-pre-wrap">{recResult.summary}</p>
                       </div>
                     )}
@@ -4421,7 +4421,7 @@ export const SessionPage: React.FC = () => {
                     data-testid="panel-code-toggle"
                   >
                     <CardTitle className="text-white text-lg flex items-center gap-2">
-                      <KeyRound className="w-5 h-5 text-[#7A5CFF]" />
+                      <KeyRound className="w-5 h-5 text-[var(--bt-accent)]" />
                       Code de la session
                     </CardTitle>
                     <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.code ? 'rotate-180' : ''}`} />
@@ -4430,7 +4430,7 @@ export const SessionPage: React.FC = () => {
                 {panelOpen.code && (
                 <CardContent className="p-4 pt-0 space-y-4">
                   {/* 🔢 BUG 5: CODE de session bien visible + explication pour rejoindre */}
-                  <div className="rounded-xl border border-[#7A5CFF]/30 bg-[#7A5CFF]/10 p-4 text-center">
+                  <div className="rounded-xl border border-[rgb(var(--bt-accent-rgb)/0.3)] bg-[rgb(var(--bt-accent-rgb)/0.1)] p-4 text-center">
                     <p className="text-white/50 text-xs mb-2 uppercase tracking-wider">
                       Code de la session
                     </p>
@@ -4506,10 +4506,10 @@ export const SessionPage: React.FC = () => {
                   {sessionUrl && (
                     <div className="flex flex-col items-center gap-2 pt-1">
                       <div className="flex items-center gap-1.5 text-white/50 text-xs">
-                        <QrCode className="w-4 h-4 text-[#7A5CFF]" />
+                        <QrCode className="w-4 h-4 text-[var(--bt-accent)]" />
                         Scannez pour rejoindre
                       </div>
-                      <div className="rounded-xl bg-white p-3 shadow-lg shadow-[#7A5CFF]/10">
+                      <div className="rounded-xl bg-white p-3 shadow-lg shadow-[rgb(var(--bt-accent-rgb)/0.1)]">
                         <QRCodeCanvas
                           value={sessionUrl}
                           size={160}
@@ -4533,24 +4533,24 @@ export const SessionPage: React.FC = () => {
               <>
                 {/* Free Trial Timer Indicator */}
                 {isFreeTrial && !trialLimitReached && (
-                  <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 rounded-lg p-3 mb-4">
+                  <div className="bg-gradient-to-r from-[rgb(var(--bt-accent-rgb)/0.2)] to-pink-500/20 border border-[rgb(var(--bt-accent-rgb)/0.3)] rounded-lg p-3 mb-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="flex items-center gap-1 text-purple-400 text-sm font-medium"><Clock className="w-3.5 h-3.5" /> Essai Gratuit</span>
+                        <span className="flex items-center gap-1 text-[var(--bt-accent)] text-sm font-medium"><Clock className="w-3.5 h-3.5" /> Essai Gratuit</span>
                         <span className="text-white/70 text-sm">
                           {Math.floor((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / 60)}:{String((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) % 60).padStart(2, '0')} restant
                         </span>
                       </div>
                       <Link
                         to="/pricing"
-                        className="text-xs bg-purple-600 hover:bg-purple-700 text-white px-3 py-1 rounded-full transition-colors"
+                        className="text-xs bg-[var(--bt-accent)] hover:bg-[var(--bt-accent)] text-white px-3 py-1 rounded-full transition-colors"
                       >
                         Acheter des crédits
                       </Link>
                     </div>
                     <div className="mt-2 bg-white/10 rounded-full h-1.5 overflow-hidden">
                       <div 
-                        className="bg-gradient-to-r from-purple-500 to-pink-500 h-full transition-all duration-1000"
+                        className="bg-gradient-to-r from-[var(--bt-accent)] to-pink-500 h-full transition-all duration-1000"
                         style={{ width: `${((FREE_TRIAL_LIMIT_SECONDS - totalPlayTime) / FREE_TRIAL_LIMIT_SECONDS) * 100}%` }}
                       />
                     </div>
@@ -4577,7 +4577,7 @@ export const SessionPage: React.FC = () => {
                       {/* Description */}
                       <p className="text-white/70 text-center mb-6">
                         Votre essai gratuit de <strong className="text-red-400">5 minutes</strong> est terminé.<br />
-                        Utilisez un crédit pour une écoute <strong className="text-purple-400">illimitée</strong> !
+                        Utilisez un crédit pour une écoute <strong className="text-[var(--bt-accent)]">illimitée</strong> !
                       </p>
                       
                       {/* Features */}
@@ -4617,12 +4617,12 @@ export const SessionPage: React.FC = () => {
                 
                 {/* Bandeau Mode Participant */}
                 {!isHost && (
-                  <div className="mb-4 px-4 py-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                  <div className="mb-4 px-4 py-3 rounded-lg bg-[rgb(var(--bt-accent-rgb)/0.1)] border border-[rgb(var(--bt-accent-rgb)/0.2)]">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
-                        <Headphones className="w-6 h-6 text-purple-300 flex-shrink-0" />
+                        <Headphones className="w-6 h-6 text-[var(--bt-accent)] flex-shrink-0" />
                         <div className="min-w-0">
-                          <p className="text-purple-300 font-medium text-sm truncate">Mode écoute seule - Synchronisé avec l'hôte</p>
+                          <p className="text-[var(--bt-accent)] font-medium text-sm truncate">Mode écoute seule - Synchronisé avec l'hôte</p>
                           <p className="text-white/50 text-xs truncate">La lecture est contrôlée par l'hôte de la session</p>
                         </div>
                       </div>
@@ -4653,7 +4653,7 @@ export const SessionPage: React.FC = () => {
                     {coachMicInvite && !isTalking && (
                       <button
                         onClick={() => { setCoachMicInvite(false); handleToggleTalk(); }}
-                        className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-[#7A5CFF]/20 text-[#c9a3ff] border border-[#7A5CFF]/40 hover:bg-[#7A5CFF]/30 transition-colors animate-pulse"
+                        className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] border border-[rgb(var(--bt-accent-rgb)/0.4)] hover:bg-[rgb(var(--bt-accent-rgb)/0.3)] transition-colors animate-pulse"
                         data-testid="coach-mic-invite"
                       >
                         <Mic className="w-4 h-4 flex-shrink-0" />
@@ -4798,11 +4798,11 @@ export const SessionPage: React.FC = () => {
                         className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${
                           syncState?.isLive ? 'animate-ping' : ''
                         }`}
-                        style={{ background: syncState?.isLive ? '#7A5CFF' : '#666' }}
+                        style={{ background: syncState?.isLive ? 'var(--bt-accent)' : '#666' }}
                       />
                       <span
                         className="relative inline-flex rounded-full h-3 w-3"
-                        style={{ background: syncState?.isLive ? '#7A5CFF' : '#666' }}
+                        style={{ background: syncState?.isLive ? 'var(--bt-accent)' : '#666' }}
                       />
                     </span>
                     {t('session.status')}
@@ -4920,8 +4920,8 @@ export const SessionPage: React.FC = () => {
               <CardContent className="pt-0 space-y-2">
                 {/* 🎙️ POINT 3 : bandeau "conversation privée" + retour à tous (hôte) */}
                 {isHost && privateTargets.size > 0 && (
-                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[#7A5CFF]/15 border border-[#7A5CFF]/30">
-                    <span className="flex items-center gap-1.5 text-[#c9a3ff] text-xs min-w-0">
+                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-lg bg-[rgb(var(--bt-accent-rgb)/0.15)] border border-[rgb(var(--bt-accent-rgb)/0.3)]">
+                    <span className="flex items-center gap-1.5 text-[var(--bt-accent)] text-xs min-w-0">
                       <Mic className="w-3.5 h-3.5 flex-shrink-0" />
                       <span className="truncate">Conversation privée — {privateTargets.size} participant{privateTargets.size > 1 ? 's' : ''}</span>
                     </span>
@@ -4964,7 +4964,7 @@ export const SessionPage: React.FC = () => {
                   data-testid="panel-instructions-toggle"
                 >
                   <CardTitle className="flex items-center gap-2 text-white text-lg">
-                    <Lightbulb className="w-5 h-5 text-purple-400" />
+                    <Lightbulb className="w-5 h-5 text-[var(--bt-accent)]" />
                     {t('session.instructions')}
                   </CardTitle>
                   <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform ${panelOpen.instructions ? 'rotate-180' : ''}`} />
@@ -5007,7 +5007,7 @@ export const SessionPage: React.FC = () => {
       {isHost && promoAccessReqs.length > 0 && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[145] w-[min(92vw,420px)] space-y-2" data-testid="access-requests">
           {promoAccessReqs.map((r) => (
-            <div key={r.id} className="flex items-center gap-2 rounded-2xl border border-[#7A5CFF]/40 bg-[#15151b] shadow-2xl px-3 py-2.5">
+            <div key={r.id} className="flex items-center gap-2 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.4)] bg-[#15151b] shadow-2xl px-3 py-2.5">
               <span className="flex-1 min-w-0 text-sm text-white truncate">
                 <span className="text-white/50">Demande d'accès : </span><span className="font-medium">{r.requester_name}</span>
               </span>
@@ -5068,7 +5068,7 @@ export const SessionPage: React.FC = () => {
           <button
             onClick={() => setShowMobileCameras((v) => !v)}
             className="fixed bottom-24 right-4 z-[95] flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold text-white shadow-lg"
-            style={{ background: 'linear-gradient(135deg,#7A5CFF,#E24A9E)' }}
+            style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
             data-testid="mobile-see-cameras"
           >
             <Video className="w-4 h-4" /> {showMobileCameras ? 'Masquer' : 'Voir'} les caméras

@@ -164,7 +164,7 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
         maxLength={500}
         className="flex-1 min-w-0 bg-white/5 border-white/10 text-white placeholder:text-white/30 text-sm"
       />
-      <Button onClick={addComment} disabled={busy || !draft.trim()} className="text-white border-none flex-shrink-0" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
+      <Button onClick={addComment} disabled={busy || !draft.trim()} className="text-white border-none flex-shrink-0" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
         <Send className="w-4 h-4" />
       </Button>
     </div>
@@ -174,7 +174,7 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
       <button
         onClick={goLogin}
         className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold text-white"
-        style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+        style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
         data-testid="social-login-btn"
       >
         <LogIn className="w-3.5 h-3.5" /> Se connecter / Créer un compte
@@ -220,13 +220,13 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
           data-testid="comments-modal"
         >
           <div
-            className="w-full sm:max-w-md max-h-[85vh] sm:max-h-[80vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#14141A] shadow-2xl shadow-[#7A5CFF]/10"
+            className="w-full sm:max-w-md max-h-[85vh] sm:max-h-[80vh] flex flex-col rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#14141A] shadow-2xl shadow-[rgb(var(--bt-accent-rgb)/0.1)]"
             onClick={(e) => e.stopPropagation()}
           >
             {/* En-tête */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
               <h3 className="text-white font-semibold flex items-center gap-2">
-                <MessageCircle className="w-4 h-4 text-[#7A5CFF]" />
+                <MessageCircle className="w-4 h-4 text-[var(--bt-accent)]" />
                 Commentaires
                 <span className="text-white/40 text-sm font-normal">({comments.length})</span>
               </h3>

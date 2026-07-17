@@ -58,7 +58,7 @@ export const RequireAuth: React.FC<RequireAuthProps> = ({
     return (
       <div className="min-h-screen flex items-center justify-center bg-black">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-8 h-8 border-2 border-[var(--bt-accent)] border-t-transparent rounded-full animate-spin" />
           <span className="text-white/50 text-sm">Chargement...</span>
         </div>
       </div>

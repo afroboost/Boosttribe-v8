@@ -196,7 +196,7 @@ const EditableField: React.FC<EditableFieldProps> = ({
           value={localValue}
           onChange={handleChange}
           placeholder={placeholder}
-          className={`bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-purple-500 ${
+          className={`bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[var(--bt-accent)] ${
             isColor && !isValid ? 'border-red-500' : ''
           }`}
         />
@@ -955,7 +955,7 @@ const Dashboard: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-black">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-10 h-10 border-2 border-[var(--bt-accent)] border-t-transparent rounded-full animate-spin" />
           <span className="text-white/50">Chargement du CMS...</span>
         </div>
       </div>
@@ -996,7 +996,7 @@ const Dashboard: React.FC = () => {
                 </span>
               </Link>
               <Separator orientation="vertical" className="h-6 bg-white/20 hidden md:block" />
-              <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30 hidden md:inline-flex">
+              <Badge className="bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] border-[rgb(var(--bt-accent-rgb)/0.3)] hidden md:inline-flex">
                 ⚙️ CMS Admin
               </Badge>
 
@@ -1170,7 +1170,7 @@ const Dashboard: React.FC = () => {
               variant={activeTab === tab.id ? 'default' : 'outline'}
               onClick={() => setActiveTab(tab.id as typeof activeTab)}
               className={activeTab === tab.id 
-                ? 'bg-purple-500 text-white hover:bg-purple-600' 
+                ? 'bg-[var(--bt-accent)] text-white hover:bg-[var(--bt-accent)]' 
                 : 'border-white/20 text-white/70 hover:bg-white/10'
               }
             >
@@ -1423,7 +1423,7 @@ const Dashboard: React.FC = () => {
           <Card className="border-white/10 bg-white/5 mb-6">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
-                <KeyRound size={20} className="text-[#7A5CFF]" />
+                <KeyRound size={20} className="text-[var(--bt-accent)]" />
                 Clés API Stripe
               </CardTitle>
               <CardDescription className="text-white/50">
@@ -1480,7 +1480,7 @@ const Dashboard: React.FC = () => {
                 onClick={handleSaveStripeKeys}
                 disabled={keysSaving || keysLoading}
                 className="text-white border-none"
-                style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               >
                 <Save size={16} className="mr-1.5" />
                 {keysSaving ? 'Enregistrement…' : 'Enregistrer les clés'}
@@ -1577,7 +1577,7 @@ const Dashboard: React.FC = () => {
                 onClick={handleSaveAiKey}
                 disabled={aiKeySaving || !aiKeyInput.trim()}
                 className="text-white border-none"
-                style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}
+                style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
               >
                 <Save size={16} className="mr-1.5" />
                 {aiKeySaving ? 'Enregistrement…' : 'Enregistrer la clé IA'}
@@ -1642,9 +1642,9 @@ const Dashboard: React.FC = () => {
               {/* Enterprise Plan */}
               <div className="p-4 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-2 mb-4">
-                  <Building2 size={20} className="text-purple-400" />
+                  <Building2 size={20} className="text-[var(--bt-accent)]" />
                   <h3 className="text-white font-semibold">Plan Enterprise</h3>
-                  <Badge className="bg-purple-500/20 text-purple-400 border-purple-500/30">29.99€/mois</Badge>
+                  <Badge className="bg-[rgb(var(--bt-accent-rgb)/0.2)] text-[var(--bt-accent)] border-[rgb(var(--bt-accent-rgb)/0.3)]">29.99€/mois</Badge>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -1768,7 +1768,7 @@ const Dashboard: React.FC = () => {
               <div className="p-4 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
-                    <Building2 size={20} className="text-purple-400" />
+                    <Building2 size={20} className="text-[var(--bt-accent)]" />
                     <h3 className="text-white font-semibold">{settings.plan_enterprise_label || 'Coach'}</h3>
                   </div>
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -1862,7 +1862,7 @@ const Dashboard: React.FC = () => {
               {/* 3b) Essai gratuit → paiement automatique (Stripe récurrent) */}
               <div className="p-4 rounded-lg bg-white/5 border border-white/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <CreditCard size={20} style={{ color: '#9A3FC0' }} />
+                  <CreditCard size={20} style={{ color: 'var(--bt-accent)' }} />
                   <h3 className="text-white font-semibold">Essai gratuit → paiement automatique</h3>
                 </div>
                 <p className="text-white/50 text-sm mb-4">
@@ -1892,7 +1892,7 @@ const Dashboard: React.FC = () => {
                             type="button"
                             onClick={() => setTrialConfig((prev) => ({ ...prev, auto_charge_enabled: !prev.auto_charge_enabled }))}
                             className="relative w-12 h-6 rounded-full transition-colors"
-                            style={{ background: trialConfig.auto_charge_enabled ? '#9A3FC0' : 'rgba(255,255,255,0.2)' }}
+                            style={{ background: trialConfig.auto_charge_enabled ? 'var(--bt-accent)' : 'rgba(255,255,255,0.2)' }}
                           >
                             <span className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${trialConfig.auto_charge_enabled ? 'translate-x-6' : ''}`} />
                           </button>
@@ -1910,7 +1910,7 @@ const Dashboard: React.FC = () => {
                       onClick={handleSaveTrialConfig}
                       disabled={savingTrial}
                       className="text-white border-none"
-                      style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                      style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                     >
                       <Save size={16} className="mr-2" />
                       {savingTrial ? 'Enregistrement…' : "Enregistrer l'essai gratuit"}
@@ -1930,7 +1930,7 @@ const Dashboard: React.FC = () => {
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Settings size={20} style={{ color: '#E24A9E' }} />
+                  <Settings size={20} style={{ color: 'var(--bt-accent-2)' }} />
                   Réglages des crédits
                 </CardTitle>
                 <CardDescription className="text-white/50">
@@ -1991,7 +1991,7 @@ const Dashboard: React.FC = () => {
                             <Button key={s.key} size="sm" variant={on ? 'default' : 'outline'}
                               onClick={() => toggleService(s.key)}
                               className={on ? 'text-white border-0' : 'border-white/20 text-white/70'}
-                              style={on ? { background: 'linear-gradient(135deg,#9A3FC0,#E24A9E)' } : {}}>
+                              style={on ? { background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' } : {}}>
                               {on ? <Check size={14} className="mr-1" /> : null}{s.label}
                             </Button>
                           );
@@ -2006,7 +2006,7 @@ const Dashboard: React.FC = () => {
                           <Button key={key} size="sm" variant={o?.enabled ? 'default' : 'outline'}
                             onClick={() => toggleOffer(key)}
                             className={o?.enabled ? 'text-white border-0' : 'border-white/20 text-white/70'}
-                            style={o?.enabled ? { background: 'linear-gradient(135deg,#9A3FC0,#E24A9E)' } : {}}>
+                            style={o?.enabled ? { background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' } : {}}>
                             {o?.enabled ? <Check size={14} className="mr-1" /> : null}{o?.title || key}
                           </Button>
                         ))}
@@ -2014,7 +2014,7 @@ const Dashboard: React.FC = () => {
                     </div>
 
                     <Button onClick={handleSavePricingSettings} disabled={savingSettings}
-                      className="text-white border-0" style={{ background: 'linear-gradient(135deg,#9A3FC0,#E24A9E)' }}>
+                      className="text-white border-0" style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}>
                       <Save size={16} className="mr-2" />{savingSettings ? 'Enregistrement…' : 'Enregistrer les réglages'}
                     </Button>
                   </>
@@ -2026,7 +2026,7 @@ const Dashboard: React.FC = () => {
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Coins size={20} style={{ color: '#E24A9E' }} />
+                  <Coins size={20} style={{ color: 'var(--bt-accent-2)' }} />
                   Packs de crédits
                 </CardTitle>
                 <CardDescription className="text-white/50">
@@ -2049,7 +2049,7 @@ const Dashboard: React.FC = () => {
                         {(['participant', 'creator'] as const).map((a) => (
                           <Button key={a} size="sm" variant={packDraft.audience === a ? 'default' : 'outline'}
                             onClick={() => setPackDraft({ ...packDraft, audience: a })}
-                            className={packDraft.audience === a ? 'bg-purple-500 text-white' : 'border-white/20 text-white/70'}>
+                            className={packDraft.audience === a ? 'bg-[var(--bt-accent)] text-white' : 'border-white/20 text-white/70'}>
                             {a === 'participant' ? 'Participer' : 'Animer'}
                           </Button>
                         ))}
@@ -2088,7 +2088,7 @@ const Dashboard: React.FC = () => {
                   </div>
                   <div className="flex gap-2">
                     <Button onClick={handleSavePack} className="text-white border-0"
-                      style={{ background: 'linear-gradient(135deg,#9A3FC0,#E24A9E)' }}>
+                      style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}>
                       <Plus size={16} className="mr-2" />{packDraft.id ? 'Mettre à jour' : 'Créer le pack'}
                     </Button>
                     {packDraft.id && (
@@ -2115,7 +2115,7 @@ const Dashboard: React.FC = () => {
                         <div key={p.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
                           <div className="min-w-0">
                             <p className="text-white text-sm truncate">
-                              {p.name} {p.is_highlighted && <span className="text-xs" style={{ color: '#E24A9E' }}>★</span>}
+                              {p.name} {p.is_highlighted && <span className="text-xs" style={{ color: 'var(--bt-accent-2)' }}>★</span>}
                               {!p.active && <span className="text-white/30 text-xs ml-1">(inactif)</span>}
                             </p>
                             <p className="text-white/50 text-xs">
@@ -2148,7 +2148,7 @@ const Dashboard: React.FC = () => {
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Percent size={20} style={{ color: '#E24A9E' }} /> Billetterie & Commission
+                  <Percent size={20} style={{ color: 'var(--bt-accent-2)' }} /> Billetterie & Commission
                 </CardTitle>
                 <CardDescription className="text-white/60">
                   Réglages des sessions payantes. Modifiable sans code — s'applique en direct.
@@ -2199,7 +2199,7 @@ const Dashboard: React.FC = () => {
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input type="checkbox" checked={commission.fees_included}
                         onChange={(e) => setCommission({ ...commission, fees_included: e.target.checked })}
-                        className="w-4 h-4 accent-[#9A3FC0]" />
+                        className="w-4 h-4 accent-[var(--bt-accent)]" />
                       <span className="text-white/80 text-sm">
                         « Tout compris » — les frais Stripe sont absorbés par la commission (le coach reçoit prix − commission)
                       </span>
@@ -2210,7 +2210,7 @@ const Dashboard: React.FC = () => {
                       <label className="flex items-center gap-3 cursor-pointer">
                         <input type="checkbox" checked={commission.launch_offer?.active}
                           onChange={(e) => setCommission({ ...commission, launch_offer: { ...commission.launch_offer, active: e.target.checked } })}
-                          className="w-4 h-4 accent-[#9A3FC0]" />
+                          className="w-4 h-4 accent-[var(--bt-accent)]" />
                         <span className="text-white font-medium text-sm">Offre de lancement (commission réduite pour les nouveaux coachs)</span>
                       </label>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2246,7 +2246,7 @@ const Dashboard: React.FC = () => {
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Crown size={20} style={{ color: '#E24A9E' }} /> Coachs — type de paiement
+                  <Crown size={20} style={{ color: 'var(--bt-accent-2)' }} /> Coachs — type de paiement
                 </CardTitle>
                 <CardDescription className="text-white/60">
                   Défaut : Abonnement (crédits illimités + 0% commission). « Commission » = billetterie IBAN avec commission.
@@ -2295,9 +2295,9 @@ const Dashboard: React.FC = () => {
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <DollarSign size={20} style={{ color: '#E24A9E' }} /> Virements demandés
+                  <DollarSign size={20} style={{ color: 'var(--bt-accent-2)' }} /> Virements demandés
                   {payoutsPending > 0 && (
-                    <Badge className="ml-2" style={{ background: '#9A3FC0', color: '#fff' }}>
+                    <Badge className="ml-2" style={{ background: 'var(--bt-accent)', color: '#fff' }}>
                       {payoutsPending.toFixed(2)} CHF en attente
                     </Badge>
                   )}
@@ -2349,7 +2349,7 @@ const Dashboard: React.FC = () => {
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Ticket size={20} style={{ color: '#E24A9E' }} /> Ventes & commissions
+                  <Ticket size={20} style={{ color: 'var(--bt-accent-2)' }} /> Ventes & commissions
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -2363,7 +2363,7 @@ const Dashboard: React.FC = () => {
                     <p className="text-white/50 text-xs">CHF encaissés</p>
                   </div>
                   <div className="rounded-xl border border-white/10 p-3 text-center" style={{ background: 'rgba(217,28,210,0.10)' }}>
-                    <p className="text-2xl font-bold" style={{ color: '#E24A9E' }}>{salesTotals.commission_chf.toFixed(0)}</p>
+                    <p className="text-2xl font-bold" style={{ color: 'var(--bt-accent-2)' }}>{salesTotals.commission_chf.toFixed(0)}</p>
                     <p className="text-white/50 text-xs">CHF commissions</p>
                   </div>
                 </div>
@@ -2400,7 +2400,7 @@ const Dashboard: React.FC = () => {
           <Card className="bg-white/5 border-white/10">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
-                <Gift size={20} className="text-purple-400" />
+                <Gift size={20} className="text-[var(--bt-accent)]" />
                 Crédits offerts
               </CardTitle>
               <CardDescription className="text-white/50">
@@ -2446,7 +2446,7 @@ const Dashboard: React.FC = () => {
                   onClick={handleOfferCredits}
                   disabled={offering}
                   className="w-full text-white border-none"
-                  style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}
+                  style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
                 >
                   <Coins size={16} className="mr-2" />
                   {offering ? 'Attribution…' : 'Offrir les crédits'}
@@ -2488,7 +2488,7 @@ const Dashboard: React.FC = () => {
             <CardHeader>
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Coins size={20} style={{ color: '#E24A9E' }} />
+                  <Coins size={20} style={{ color: 'var(--bt-accent-2)' }} />
                   Historique des crédits offerts ({grants.length})
                 </CardTitle>
                 <Button size="sm" variant="outline" onClick={refreshGrants} className="border-white/20 text-white/70">
@@ -2528,7 +2528,7 @@ const Dashboard: React.FC = () => {
                           <div className="flex items-center gap-2">
                             <Button size="sm" disabled={savingGrant} onClick={() => handleUpdateGrant(g.id)}
                               className="text-white border-none"
-                              style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
+                              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
                               <Check size={14} className="mr-1" /> {savingGrant ? 'Enregistrement…' : 'Enregistrer'}
                             </Button>
                             <Button size="sm" variant="outline" onClick={cancelEditGrant} className="border-white/20 text-white/70">
@@ -2548,7 +2548,7 @@ const Dashboard: React.FC = () => {
                           <div className="flex items-center gap-2 flex-shrink-0">
                             <Badge className="bg-white/10 text-white border-white/20">+{g.amount}</Badge>
                             <Button size="sm" variant="outline" onClick={() => startEditGrant(g)}
-                              className="border-white/20" style={{ color: '#E24A9E' }}>
+                              className="border-white/20" style={{ color: 'var(--bt-accent-2)' }}>
                               Modifier
                             </Button>
                             <Button size="sm" variant="outline" onClick={() => handleDeleteGrant(g.id)}
@@ -2573,10 +2573,10 @@ const Dashboard: React.FC = () => {
             <CardHeader>
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <CardTitle className="text-white flex items-center gap-2">
-                  <Users size={20} className="text-purple-400" />
+                  <Users size={20} className="text-[var(--bt-accent)]" />
                   Utilisateurs ({filteredUsers.length})
                 </CardTitle>
-                <Button size="sm" onClick={handleExportCsv} className="text-white border-none" style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
+                <Button size="sm" onClick={handleExportCsv} className="text-white border-none" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
                   <Download size={14} className="mr-1" /> Télécharger la liste
                 </Button>
               </div>
@@ -2616,7 +2616,7 @@ const Dashboard: React.FC = () => {
                         <div className="text-right flex-shrink-0">
                           <p className="text-white/70 text-xs">{u.subscription_status || 'none'}</p>
                           {compActive && (
-                            <p className="text-purple-400 text-[11px]">offert {u.comp_access_plan} · {new Date(u.comp_access_until as string).toLocaleDateString()}</p>
+                            <p className="text-[var(--bt-accent)] text-[11px]">offert {u.comp_access_plan} · {new Date(u.comp_access_until as string).toLocaleDateString()}</p>
                           )}
                           <p className="text-white/30 text-[11px]">{u.created_at ? new Date(u.created_at).toLocaleDateString() : ''}</p>
                         </div>

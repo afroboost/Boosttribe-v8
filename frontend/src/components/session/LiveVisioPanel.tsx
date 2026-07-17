@@ -111,13 +111,13 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   const fsOthers = fsBig ? participants.filter((p) => p.id !== fsBig.id) : [];
 
   return (
-    <div className="rounded-2xl border border-[#7A5CFF]/25 bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="live-visio-panel">
+    <div className="rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="live-visio-panel">
       {/* En-tête */}
       <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/10">
         <h3 className="flex items-center gap-2 text-white text-sm font-semibold">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#E24A9E] opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#E24A9E]" />
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--bt-accent-2)] opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--bt-accent-2)]" />
           </span>
           Live Visio
           <span className="flex items-center gap-1 text-white/40 text-xs font-normal">
@@ -128,7 +128,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         <div className="flex items-center gap-1 bg-white/5 rounded-lg p-0.5">
           <button
             onClick={() => setLayout('grid')}
-            className={`p-1.5 rounded-md ${layout === 'grid' ? 'bg-[#7A5CFF] text-white' : 'text-white/50 hover:text-white'}`}
+            className={`p-1.5 rounded-md ${layout === 'grid' ? 'bg-[var(--bt-accent)] text-white' : 'text-white/50 hover:text-white'}`}
             title="Grille égale"
             data-testid="visio-layout-grid"
           >
@@ -136,7 +136,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </button>
           <button
             onClick={() => setLayout('spotlight')}
-            className={`p-1.5 rounded-md ${layout === 'spotlight' ? 'bg-[#7A5CFF] text-white' : 'text-white/50 hover:text-white'}`}
+            className={`p-1.5 rounded-md ${layout === 'spotlight' ? 'bg-[var(--bt-accent)] text-white' : 'text-white/50 hover:text-white'}`}
             title="Bandeau caméras (laisse la place à la vidéo partagée)"
             data-testid="visio-layout-spotlight"
           >
@@ -267,7 +267,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           <button
             onClick={onToggleCamera}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-              cameraOn ? 'bg-[#7A5CFF]/25 text-[#c9a3ff] hover:bg-[#7A5CFF]/35' : 'bg-white/10 text-white/70 hover:bg-white/20'
+              cameraOn ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
             }`}
             data-testid="visio-camera-toggle"
           >
@@ -278,7 +278,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* Spectateur à l'écran : peut quitter la scène lui-même */
           <button
             onClick={onToggleCamera}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[#7A5CFF]/25 text-[#c9a3ff] hover:bg-[#7A5CFF]/35 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)] transition-colors"
             data-testid="visio-leave-stage"
           >
             <VideoOff className="w-4 h-4" /> Quitter la scène
@@ -287,7 +287,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* Spectateur : demande envoyée, en attente de validation */
           <button
             disabled
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[#7A5CFF]/15 text-[#c9a3ff]/70 cursor-default"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.15)] text-[rgb(var(--bt-accent-rgb)/0.7)] cursor-default"
             data-testid="visio-request-pending"
           >
             <Hand className="w-4 h-4" /> Demande envoyée…
@@ -296,7 +296,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* Spectateur : demander à monter en vidéo */
           <button
             onClick={onRequestStage}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[#7A5CFF]/25 hover:text-[#c9a3ff] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
             data-testid="visio-request-stage"
           >
             <Hand className="w-4 h-4" /> Demander à monter en vidéo
@@ -307,7 +307,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         {participants.length > 0 && (
           <button
             onClick={() => enlarge(spotlightId || fsBig?.id || myUserId)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[#7A5CFF]/25 hover:text-[#c9a3ff] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
             data-testid="visio-camera-fullscreen"
           >
             <Maximize2 className="w-4 h-4" /> Plein écran
@@ -318,7 +318,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         {onStartTimer && canManageStage && (
           <button
             onClick={onStartTimer}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[#7A5CFF]/25 hover:text-[#c9a3ff] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
             data-testid="visio-start-timer"
           >
             <Timer className="w-4 h-4" /> Interval training

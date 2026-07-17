@@ -58,7 +58,7 @@ export const CameraTile: React.FC<CameraTileProps> = ({
             <img src={avatarUrl} alt={name} className="w-12 h-12 rounded-full object-cover opacity-80" />
           ) : (
             <div className="w-12 h-12 rounded-full flex items-center justify-center text-white/80 text-sm font-semibold"
-              style={{ background: 'linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%)' }}>
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               {initials}
             </div>
           )}

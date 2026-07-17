@@ -60,11 +60,15 @@ const ChapterVisual: React.FC<{ icon: Chapter["icon"]; tone: Tone; accent: strin
       className="relative mx-auto w-full max-w-3xl aspect-video rounded-[28px] overflow-hidden flex items-center justify-center"
       style={{ background: c.panelBg, border: `1px solid ${c.panelBorder}` }}
     >
-      <Icon size={84} strokeWidth={1.25} style={{ color: c.icon }} />
-      {/* Motif onde / égaliseur — seule touche d'accent */}
+      <Icon size={84} strokeWidth={1.25} className="bt-icon-breathe" style={{ color: c.icon }} />
+      {/* Motif onde / égaliseur — seule touche d'accent, animé en douceur */}
       <div aria-hidden="true" className="absolute bottom-10 left-1/2 -translate-x-1/2 flex items-end gap-1.5 h-10">
         {[10, 24, 15, 34, 19, 28, 13].map((h, i) => (
-          <span key={i} className="w-1 rounded-full" style={{ height: h, background: accent, opacity: 0.7 }} />
+          <span
+            key={i}
+            className="bt-eq-bar w-1 rounded-full"
+            style={{ height: h, background: accent, opacity: 0.7, animationDelay: `${i * 0.13}s` }}
+          />
         ))}
       </div>
     </div>

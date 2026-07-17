@@ -6,9 +6,9 @@ import { isHttpUrl, videoEmbedUrl } from '@/lib/videoEmbed';
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
-  magenta: '#9A3FC0',
-  pink: '#E24A9E',
-  gradient: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)',
+  magenta: 'var(--bt-accent)',
+  pink: 'var(--bt-accent-2)',
+  gradient: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)',
 };
 
 /**
@@ -198,7 +198,7 @@ const PromoPage: React.FC = () => {
                   <input value={reqName} onChange={(e) => setReqName(e.target.value)} placeholder="Votre nom"
                     className="flex-1 px-3 py-2.5 rounded-xl bg-black/30 border border-white/15 text-white text-sm placeholder:text-white/30" autoFocus />
                   <button onClick={submitAccessRequest} disabled={reqBusy || !reqName.trim()}
-                    className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold border border-[#7A5CFF]/50 bg-[#7A5CFF]/20 hover:bg-[#7A5CFF]/30 disabled:opacity-50">
+                    className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold border border-[rgb(var(--bt-accent-rgb)/0.5)] bg-[rgb(var(--bt-accent-rgb)/0.2)] hover:bg-[rgb(var(--bt-accent-rgb)/0.3)] disabled:opacity-50">
                     {reqBusy ? '…' : 'Envoyer'}
                   </button>
                 </div>

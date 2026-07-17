@@ -78,7 +78,7 @@ export const DraggableWindow: React.FC<DraggableWindowProps> = ({
   return (
     <div
       ref={winRef}
-      className={`fixed ${zClass} rounded-2xl border border-[#7A5CFF]/40 bg-[rgba(15,15,20,0.97)] shadow-2xl shadow-[#7A5CFF]/20 backdrop-blur-sm overflow-hidden`}
+      className={`fixed ${zClass} rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.4)] bg-[rgba(15,15,20,0.97)] shadow-2xl shadow-[rgb(var(--bt-accent-rgb)/0.2)] backdrop-blur-sm overflow-hidden`}
       style={{ left: pos.x, top: pos.y, width: defaultWidth, maxWidth: 'calc(100vw - 16px)' }}
       data-testid="draggable-window"
     >

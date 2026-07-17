@@ -12,8 +12,9 @@ module.exports = {
                         /* Beattribe specific colors */
                         bt: {
                                 background: '#000000',
-                                primary: '#7A5CFF',
-                                secondary: '#E24A9E',
+                                /* Accent piloté par l'admin — voir --bt-accent (ThemeContext + index.css). */
+                                primary: 'var(--bt-accent)',
+                                secondary: 'var(--bt-accent-2)',
                                 surface: 'rgba(18, 18, 24, 0.72)',
                                 'surface-solid': '#131318',
                                 'surface-2': '#1B1B22',
@@ -76,13 +77,13 @@ module.exports = {
                         'bt-md': '0 4px 16px rgba(0, 0, 0, 0.45)',
                         'bt-lg': '0 16px 48px rgba(0, 0, 0, 0.55)',
                         /* "glow" désormais = halo accent TRÈS discret (plus de néon) */
-                        'bt-glow': '0 6px 24px rgba(122, 92, 255, 0.12)',
-                        'bt-glow-lg': '0 12px 48px rgba(122, 92, 255, 0.16)',
+                        'bt-glow': '0 6px 24px rgb(var(--bt-accent-rgb) / 0.12)',
+                        'bt-glow-lg': '0 12px 48px rgb(var(--bt-accent-rgb) / 0.16)',
                 },
                 /* Beattribe Background Gradients (réservé au moment fort : logo/hero) */
                 backgroundImage: {
-                        'bt-gradient': 'linear-gradient(125deg, #7A5CFF 0%, #A24BD6 50%, #E24A9E 100%)',
-                        'bt-gradient-radial': 'radial-gradient(circle, rgba(122, 92, 255, 0.5) 0%, transparent 70%)',
+                        'bt-gradient': 'linear-gradient(125deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)',
+                        'bt-gradient-radial': 'radial-gradient(circle, rgb(var(--bt-accent-rgb) / 0.5) 0%, transparent 70%)',
                 },
                 /* Beattribe Keyframes */
                 keyframes: {

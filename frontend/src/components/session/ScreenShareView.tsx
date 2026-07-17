@@ -32,10 +32,10 @@ export const ScreenShareView: React.FC<ScreenShareViewProps> = ({ stream, isLoca
   }, []);
 
   return (
-    <div className="rounded-2xl overflow-hidden border border-[#7A5CFF]/30 bg-[rgba(20,20,25,0.95)]" data-testid="screen-share-view">
+    <div className="rounded-2xl overflow-hidden border border-[rgb(var(--bt-accent-rgb)/0.3)] bg-[rgba(20,20,25,0.95)]" data-testid="screen-share-view">
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
         <span className="flex items-center gap-2 text-white/80 text-sm min-w-0">
-          <MonitorUp className="w-4 h-4 text-[#7A5CFF]" />
+          <MonitorUp className="w-4 h-4 text-[var(--bt-accent)]" />
           <span className="truncate">{isLocal ? "Votre partage d'écran" : `Partage d'écran de ${hostName || "l'hôte"}`}</span>
         </span>
         <div className="flex items-center gap-1 flex-shrink-0">

@@ -17,7 +17,7 @@ const VOICE_LABELS: { key: 'prepare' | 'work' | 'rest' | 'done'; label: string }
   { key: 'done', label: 'Terminé' },
 ];
 
-const AFRO_GRADIENT = 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)';
+const AFRO_GRADIENT = 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)';
 
 function fmt(total: number): string {
   const s = Math.max(0, Math.round(total));
@@ -156,7 +156,7 @@ export const IntervalConfigModal: React.FC<Props> = ({
       >
         <div className="p-5 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
-            <Timer size={18} style={{ color: '#E24A9E' }} />
+            <Timer size={18} style={{ color: 'var(--bt-accent-2)' }} />
             <div className="min-w-0">
               <h2 className="text-white font-bold text-base leading-tight">Interval training</h2>
               <p className="text-white/45 text-xs truncate">{trackTitle}</p>

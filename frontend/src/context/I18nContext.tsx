@@ -340,14 +340,14 @@ export const LanguageSelector: React.FC<{ className?: string }> = ({ className =
               onClick={() => handleSelect(lang.code)}
               className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
                 language === lang.code
-                  ? 'bg-purple-500/20 text-white'
+                  ? 'bg-[rgb(var(--bt-accent-rgb)/0.2)] text-white'
                   : 'text-white/70 hover:bg-white/10'
               }`}
               role="menuitem"
               data-testid={`lang-${lang.code}`}
             >
               <span>{lang.label}</span>
-              {language === lang.code && <Check className="w-4 h-4 text-purple-400" />}
+              {language === lang.code && <Check className="w-4 h-4 text-[var(--bt-accent)]" />}
             </button>
           ))}
         </div>

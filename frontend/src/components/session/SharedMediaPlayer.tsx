@@ -664,7 +664,7 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
             <ArrowLeft className="w-4 h-4" /> Retour
           </button>
           <span className="flex items-center gap-2 text-white/70 text-sm min-w-0">
-            <span className="text-[#7A5CFF]">{icon}</span>
+            <span className="text-[var(--bt-accent)]">{icon}</span>
             <span className="truncate hidden sm:block">{media.title || 'Contenu partagé'}</span>
           </span>
           {/* spacer pour garder le titre centré (un seul bouton plein écran : pas de doublon) */}
@@ -673,7 +673,7 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
       ) : (
         <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
           <div className="flex items-center gap-2 text-white/80 text-sm min-w-0">
-            <span className="text-[#7A5CFF]">{icon}</span>
+            <span className="text-[var(--bt-accent)]">{icon}</span>
             <span className="truncate">{media.title || 'Contenu partagé'}</span>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
@@ -727,7 +727,7 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-black/75 backdrop-blur-sm text-center p-4">
             <p className="text-white font-semibold text-sm">Aperçu limité à 30 s</p>
             <p className="text-white/60 text-xs">Utilisez des crédits pour la vidéo complète</p>
-            <a href="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)' }}>
+            <a href="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               Acheter des crédits
             </a>
           </div>

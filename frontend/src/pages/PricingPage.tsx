@@ -15,11 +15,11 @@ import {
 
 // 🎨 Couleurs Afroboost
 const AFRO = {
-  magenta: '#9A3FC0',
-  pink: '#E24A9E',
+  magenta: 'var(--bt-accent)',
+  pink: 'var(--bt-accent-2)',
   dark: '#0A0A0F',
   white: '#FFFFFF',
-  gradient: 'linear-gradient(135deg, #9A3FC0 0%, #E24A9E 100%)',
+  gradient: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)',
 };
 
 // Libellés des services configurables (pricing_settings.services_shown)
@@ -663,7 +663,7 @@ const PricingPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowFullTerms((v) => !v); }}
-                    className="text-purple-400 hover:text-purple-300 underline font-medium"
+                    className="text-[var(--bt-accent)] hover:text-[var(--bt-accent)] underline font-medium"
                   >
                     CGU
                   </button>

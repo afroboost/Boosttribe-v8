@@ -54,6 +54,14 @@ body > *[style*="fixed"][style*="bottom"] {
 
 @layer base {
     :root {
+        /* 🎨 ACCENT CENTRALISÉ (fallback avant JS) — surchargé au runtime par ThemeContext
+           depuis site_settings.color_primary / _secondary. Toute l'app lit ces variables. */
+        --bt-accent: #7A5CFF;
+        --bt-accent-2: #E24A9E;
+        --bt-accent-rgb: 122 92 255;
+        --bt-accent-2-rgb: 226 74 158;
+        --bt-accent-gradient: linear-gradient(135deg, #7A5CFF 0%, #E24A9E 100%);
+
         /* Beattribe Design System - --bt- prefix */
         --bt-background: 0 0% 0%;
         --bt-primary: 252 100% 68%;
@@ -244,6 +252,26 @@ body {
 }
 @media (prefers-reduced-motion: reduce) {
     .kenburns-media { animation: none; transform: scale(1.04); }
+}
+
+/* Visuels de chapitres — animations SOBRES façon Apple (icône qui respire + onde égaliseur).
+   Le bloc prefers-reduced-motion global plus bas les neutralise automatiquement. */
+@keyframes bt-icon-breathe {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.055); }
+}
+.bt-icon-breathe {
+    animation: bt-icon-breathe 4.5s ease-in-out infinite;
+    will-change: transform;
+}
+@keyframes bt-eq-bar {
+    0%, 100% { transform: scaleY(0.45); }
+    50%      { transform: scaleY(1); }
+}
+.bt-eq-bar {
+    transform-origin: bottom center;
+    animation: bt-eq-bar 1.4s ease-in-out infinite;
+    will-change: transform;
 }
 
 /* Motion sobre : respecter la préférence système (accessibilité + qualité) */

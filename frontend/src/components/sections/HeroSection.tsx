@@ -248,32 +248,17 @@ export const HeroSection: React.FC = () => {
             </PrimaryButton>
           </form>
 
-          {/* Séparateur */}
-          <div className="relative my-5">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" style={{ borderColor: 'rgba(255,255,255,0.18)' }} />
-            </div>
-            <div className="relative flex justify-center text-xs">
-              <span className="px-3 uppercase tracking-widest text-white/60" style={{ background: 'transparent' }}>
-                ou
-              </span>
-            </div>
-          </div>
-
-          {/* Créer une session */}
-          <button
-            onClick={handleCreateSession}
-            className="group w-full h-12 rounded-2xl font-medium transition-all duration-200 flex items-center justify-center gap-2 text-white"
-            style={{
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.35)',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.color = '#000000'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#FFFFFF'; }}
-          >
-            {t('hero.cta.create')}
-            <ArrowRight size={16} className="transition-transform duration-200 group-hover:translate-x-0.5" />
-          </button>
+          {/* Créer une session — lien secondaire discret (moins de gros boutons empilés) */}
+          <p className="mt-3.5 text-center text-sm text-white/60">
+            Pas de code ?{' '}
+            <button
+              onClick={handleCreateSession}
+              className="group inline-flex items-center gap-1 font-medium text-white hover:text-white/90 underline decoration-white/30 underline-offset-4 hover:decoration-white/70 transition-colors"
+            >
+              {t('hero.cta.create')}
+              <ArrowRight size={14} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+            </button>
+          </p>
         </div>
       </div>
     </section>

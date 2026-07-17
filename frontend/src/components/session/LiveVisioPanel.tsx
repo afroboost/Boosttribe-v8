@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -39,6 +39,16 @@ interface LiveVisioPanelProps {
   onStartTimer?: () => void;
   // ⏱️ Overlay du décompte (lecture seule) à afficher DANS le plein écran caméra — un seul émetteur son (géré au parent).
   timerNode?: React.ReactNode;
+  // 🎥 Sélection de caméra (externe) — additif. Fournis par le hook LiveKit (sans reconnexion).
+  videoDevices?: MediaDeviceInfo[];
+  videoDeviceId?: string | null;
+  onSelectCamera?: (deviceId: string) => void;
+  onFlipCamera?: () => void;
+  onRefreshDevices?: () => void;
+  // 🖥️ Partage d'écran — réutilise la logique existante (getDisplayMedia + LiveKit ScreenShare).
+  onToggleScreenShare?: () => void;
+  screenSharing?: boolean;
+  screenSupported?: boolean;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -51,6 +61,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   canManageStage = true, stageRequestPending = false, onRequestStage,
   spotlightId: spotlightIdProp, onSpotlightChange,
   onStartTimer, timerNode,
+  videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
+  onToggleScreenShare, screenSharing = false, screenSupported = false,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🔍 Chantier A : VRAI plein écran d'UNE caméra (Fullscreen API + repli overlay iOS), orientation AUTO (pas de rotation forcée).
@@ -300,6 +312,58 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             data-testid="visio-request-stage"
           >
             <Hand className="w-4 h-4" /> Demander à monter en vidéo
+          </button>
+        )}
+
+        {/* 🎥 Choisir une caméra (externe) — hôte/co-hôte, quand plusieurs caméras existent.
+            Desktop : menu déroulant (labels) ; mobile : bascule rapide avant/arrière. Sans reconnexion. */}
+        {canManageStage && onSelectCamera && videoDevices.length > 1 && (
+          <div className="flex items-center gap-2">
+            <label className="relative hidden sm:flex items-center">
+              <SwitchCamera className="w-4 h-4 text-white/60 absolute left-2 pointer-events-none" />
+              <select
+                value={videoDeviceId ?? ''}
+                onChange={(e) => onSelectCamera(e.target.value)}
+                onMouseDown={() => onRefreshDevices?.()}
+                className="max-w-[170px] pl-8 pr-2 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/80 border border-white/15 focus:outline-none focus:border-[rgb(var(--bt-accent-rgb)/0.5)] cursor-pointer"
+                title="Choisir la caméra (externe)"
+                data-testid="visio-camera-select"
+              >
+                {videoDeviceId == null && <option value="" className="bg-[#15151b] text-white">Caméra par défaut</option>}
+                {videoDevices.map((d, i) => (
+                  <option key={d.deviceId} value={d.deviceId} className="bg-[#15151b] text-white">
+                    {d.label || `Caméra ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {onFlipCamera && (
+              <button
+                onClick={onFlipCamera}
+                className="sm:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-white/20 transition-colors"
+                title="Changer de caméra"
+                data-testid="visio-camera-flip"
+              >
+                <SwitchCamera className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* 🖥️ Partager l'écran — hôte/co-hôte, desktop (getDisplayMedia supporté). Réutilise l'existant. */}
+        {canManageStage && screenSupported && onToggleScreenShare && (
+          <button
+            onClick={onToggleScreenShare}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              screenSharing
+                ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
+                : 'bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)]'
+            }`}
+            title={screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
+            data-testid="visio-screen-share"
+          >
+            {screenSharing ? <MonitorX className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
+            {screenSharing ? 'Arrêter le partage' : "Partager l'écran"}
           </button>
         )}
 

@@ -3411,6 +3411,14 @@ export const SessionPage: React.FC = () => {
       onSpotlightChange={setVisioSpotlightId}
       onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}
       timerNode={visioTimerReminderNode}
+      videoDevices={videoMesh.videoDevices}
+      videoDeviceId={videoMesh.videoDeviceId}
+      onSelectCamera={videoMesh.setCameraDevice}
+      onFlipCamera={videoMesh.flipCamera}
+      onRefreshDevices={videoMesh.refreshVideoDevices}
+      onToggleScreenShare={handleToggleScreenShare}
+      screenSharing={screenSharing}
+      screenSupported={screenSupported}
     />
   );
 

@@ -55,10 +55,19 @@ export interface LiveKitStageReturn {
   remoteScreen: RemoteCamera | null;
   startScreen: (stream: MediaStream) => void;
   stopScreen: () => void;
+  // 🎥 Sélection de caméra (externe) — sans reconnexion (switchActiveDevice / captureOptions).
+  videoDevices: MediaDeviceInfo[];
+  videoDeviceId: string | null;
+  setCameraDevice: (deviceId: string) => Promise<void>;
+  refreshVideoDevices: () => Promise<void>;
+  flipCamera: () => Promise<void>;
   // 🎤 LEVER LA MAIN — actions hôte/co-hôte (accorder/retirer le droit de publier côté SFU)
   promote: (targetUserId: string) => Promise<PromoteResult>;
   demote: (targetUserId: string) => Promise<void>;
 }
+
+// Dernière caméra choisie (réutilisée à la prochaine ouverture).
+const VIDEO_DEVICE_KEY = 'bt_video_device';
 
 // Récupère un access_token Supabase frais (pour l'autorisation "stage" côté backend). Best-effort.
 async function getAuthHeader(): Promise<Record<string, string>> {
@@ -87,6 +96,13 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   const [screenOn, setScreenOn] = useState(false);
   const [localScreen, setLocalScreen] = useState<MediaStream | null>(null);
   const [remoteScreen, setRemoteScreen] = useState<RemoteCamera | null>(null);
+  // 🎥 Caméras disponibles + périphérique choisi (restauré depuis le dernier choix).
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoDeviceId, setVideoDeviceId] = useState<string | null>(() => {
+    try { return localStorage.getItem(VIDEO_DEVICE_KEY); } catch { return null; }
+  });
+  const videoDeviceIdRef = useRef<string | null>(videoDeviceId);
+  videoDeviceIdRef.current = videoDeviceId;
 
   const roomRef = useRef<Room | null>(null);
   const cameraOnRef = useRef(false); cameraOnRef.current = cameraOn;
@@ -110,23 +126,45 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     setRemoteScreen((prev) => (prev && prev.userId === uid ? null : prev));
   }, []);
 
+  // ─── Énumère les caméras (labels dispo seulement APRÈS une 1ʳᵉ autorisation) ───
+  const refreshVideoDevices = useCallback(async (): Promise<void> => {
+    try {
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      setVideoDevices(devs.filter((d) => d.kind === 'videoinput'));
+    } catch { /* ignore */ }
+  }, []);
+
   // ─── Publier réellement la caméra (suppose la permission accordée) ───
+  //     Utilise le périphérique choisi (caméra externe) ; repli propre si indisponible.
   const publishCamera = useCallback(async (): Promise<boolean> => {
     const room = roomRef.current;
     if (!room) return false;
+    const enable = (deviceId?: string | null) =>
+      room.localParticipant.setCameraEnabled(true, deviceId ? { deviceId: { exact: deviceId } } : undefined);
     try {
-      await room.localParticipant.setCameraEnabled(true);
+      const wanted = videoDeviceIdRef.current;
+      try {
+        await enable(wanted);
+      } catch (e) {
+        // Caméra choisie indisponible (débranchée / refusée) → repli caméra par défaut, on oublie le choix.
+        if (wanted) {
+          videoDeviceIdRef.current = null; setVideoDeviceId(null);
+          try { localStorage.removeItem(VIDEO_DEVICE_KEY); } catch { /* ignore */ }
+          await enable(null);
+        } else { throw e; }
+      }
       const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
       const mst = pub?.track?.mediaStreamTrack;
       if (mst) { setLocalStream(new MediaStream([mst])); }
       setCameraOn(true);
       cameraOnRef.current = true;
+      refreshVideoDevices();   // labels désormais disponibles (permission accordée)
       return true;
     } catch (err) {
       console.warn('[LIVEKIT] activation caméra échouée', err);
       return false;
     }
-  }, []);
+  }, [refreshVideoDevices]);
 
   // ─── Publier les pistes d'un flux d'écran déjà capturé (suppose la permission accordée) ───
   const publishScreen = useCallback((stream: MediaStream): boolean => {
@@ -281,6 +319,45 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     cameraOnRef.current = false;
   }, []);
 
+  // ─── Choisir une caméra (externe) — SANS reconnexion : switchActiveDevice remplace la piste
+  //     en direct (les pairs voient le nouveau flux). Si la caméra n'est pas encore allumée, on
+  //     mémorise juste le choix (utilisé au prochain publishCamera). ───
+  const setCameraDevice = useCallback(async (deviceId: string): Promise<void> => {
+    videoDeviceIdRef.current = deviceId;
+    setVideoDeviceId(deviceId);
+    try { localStorage.setItem(VIDEO_DEVICE_KEY, deviceId); } catch { /* ignore */ }
+    const room = roomRef.current;
+    if (!room || !cameraOnRef.current) return; // caméra éteinte → sera pris en compte à l'allumage
+    try {
+      await room.switchActiveDevice('videoinput', deviceId);
+      const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
+      const mst = pub?.track?.mediaStreamTrack;
+      if (mst) { setLocalStream(new MediaStream([mst])); }
+    } catch (err) {
+      console.warn('[LIVEKIT] changement de caméra échoué (périphérique indisponible ?)', err);
+    }
+  }, []);
+
+  // ─── Bascule rapide (mobile) : passe à la caméra suivante (avant/arrière) ───
+  const flipCamera = useCallback(async (): Promise<void> => {
+    let devs = videoDevices;
+    if (devs.length < 2) {
+      try { devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch { /* ignore */ }
+    }
+    if (devs.length < 2) return;
+    const cur = videoDeviceIdRef.current;
+    const idx = Math.max(0, devs.findIndex((d) => d.deviceId === cur));
+    const next = devs[(idx + 1) % devs.length];
+    if (next) await setCameraDevice(next.deviceId);
+  }, [videoDevices, setCameraDevice]);
+
+  // ─── Rafraîchit la liste quand une caméra est branchée/débranchée ───
+  useEffect(() => {
+    const handler = () => { refreshVideoDevices(); };
+    try { navigator.mediaDevices.addEventListener('devicechange', handler); } catch { /* ignore */ }
+    return () => { try { navigator.mediaDevices.removeEventListener('devicechange', handler); } catch { /* ignore */ } };
+  }, [refreshVideoDevices]);
+
   // ─── Partage d'écran : publie le flux déjà capturé (getDisplayMedia) par l'appelant ───
   // Si la room n'est pas encore connectée/autorisée, on diffère la publication (pendingScreenRef).
   const startScreen = useCallback((stream: MediaStream) => {
@@ -340,6 +417,11 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     remoteScreen,
     startScreen,
     stopScreen,
+    videoDevices,
+    videoDeviceId,
+    setCameraDevice,
+    refreshVideoDevices,
+    flipCamera,
     promote,
     demote,
   };

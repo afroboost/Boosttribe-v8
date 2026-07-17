@@ -225,13 +225,13 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </div>
       )}
 
-      {/* Player Content */}
-      <div className="p-6">
+      {/* Player Content — compact (hauteur réduite, surtout sur mobile) */}
+      <div className="p-4 sm:p-6">
         {/* Track Info */}
-        <div className="flex items-center gap-4 mb-6">
+        <div className="flex items-center gap-3 sm:gap-4 mb-4 sm:mb-6">
           {/* Cover Art */}
-          <div 
-            className="w-20 h-20 rounded-xl flex-shrink-0 flex items-center justify-center overflow-hidden"
+          <div
+            className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl flex-shrink-0 flex items-center justify-center overflow-hidden"
             style={{
               background: coverArt 
                 ? `url(${coverArt}) center/cover`
@@ -247,8 +247,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 
           {/* Title & Artist */}
           <div className="flex-1 min-w-0">
-            <h3 
-              className="text-lg font-semibold text-white truncate"
+            <h3
+              className="text-base sm:text-lg font-semibold text-white truncate"
               style={{ fontFamily: "'Space Grotesk', sans-serif" }}
             >
               {title}
@@ -377,8 +377,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             onClick={handlePlayPause}
             disabled={!isHost || audioState.isLoading || disabled}
             className={`
-              w-14 h-14 rounded-full flex items-center justify-center
-              transition-all duration-200 
+              w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center
+              transition-all duration-200
               ${isHost && !disabled ? 'hover:scale-105 active:scale-95' : 'opacity-40 cursor-not-allowed grayscale'}
             `}
             style={{

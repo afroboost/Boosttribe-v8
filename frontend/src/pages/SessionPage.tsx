@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera } from 'lucide-react';
+import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, Plus } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
 import { PlaylistDnD, Track } from '@/components/audio/PlaylistDnD';
@@ -701,12 +701,14 @@ export const SessionPage: React.FC = () => {
   // 🔊 Une vidéo est-elle partagée ? → le curseur "Volume Musique" devient "Volume Vidéo"
   const isVideoShared = !!sharedMedia && (sharedMedia.type === 'video' || sharedMedia.type === 'youtube' || sharedMedia.type === 'vimeo');
   // Item 2 : panneaux repliables (repliés par défaut pour désencombrer la page)
-  const [panelOpen, setPanelOpen] = useState<{ status: boolean; code: boolean; instructions: boolean }>({
-    status: false, code: false, instructions: false,
+  const [panelOpen, setPanelOpen] = useState<{ status: boolean; code: boolean; instructions: boolean; share: boolean }>({
+    status: false, code: false, instructions: false, share: false,
   });
-  const togglePanel = useCallback((key: 'status' | 'code' | 'instructions') => {
+  const togglePanel = useCallback((key: 'status' | 'code' | 'instructions' | 'share') => {
     setPanelOpen((p) => ({ ...p, [key]: !p[key] }));
   }, []);
+  // 👥 Liste des participants rétractable quand elle dépasse 5 personnes (aération mobile).
+  const [participantsCollapsed, setParticipantsCollapsed] = useState<boolean>(false);
   const mediaSeqRef = useRef(0);
 
   // F : co-animateurs autorisés à partager (userId)
@@ -1287,7 +1289,9 @@ export const SessionPage: React.FC = () => {
   const [liveMode, setLiveMode] = useState(false);
   // 📱 MOBILE UNIQUEMENT : 4 onglets. Le contenu est MASQUÉ/AFFICHÉ en CSS (jamais démonté) ;
   //    le desktop (≥1024px) n'est PAS affecté (la règle CSS est sous @media max-width:1023px).
-  const [mobileTab, setMobileTab] = useState<'diffusion' | 'access' | 'mixer' | 'live'>('diffusion');
+  // 📱 Mobile : 2 onglets seulement (moins de scroll). « player » = Lecteur & Playlist (contenu
+  //    principal + Live), « controls » = Mixeur & Participants (contrôles). Mount-always + hide-CSS.
+  const [mobileTab, setMobileTab] = useState<'player' | 'controls'>('player');
   const [screenSharing, setScreenSharing] = useState(false); // 🖥️ l'hôte/co-hôte partage son écran
   const [remoteScreenActive, setRemoteScreenActive] = useState(false); // un AUTRE partage son écran
   // 🎥 LiveKit (SFU) — remplace le mesh PeerJS pour les caméras/écran. Interface identique à useVideoMesh.
@@ -1430,13 +1434,9 @@ export const SessionPage: React.FC = () => {
   // 🖥️ Desktop ≥ 1024px → Live Visio dans la colonne de droite ; mobile → onglet "Live"
   const isDesktop = useMediaQuery('(min-width: 1024px)');
 
-  // 📱 Mobile : ouvrir l'onglet "Live" active la Live Visio (sauf plan gratuit verrouillé).
-  //    On n'éteint JAMAIS liveMode au changement d'onglet → la connexion LiveKit reste montée.
-  useEffect(() => {
-    if (isDesktop) return;
-    if (mobileTab === 'live' && sessionId && !isFree && !liveMode && !isGuestRestricted) setLiveMode(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mobileTab, isDesktop, sessionId]);
+  // 📱 Mobile : la Live Visio se démarre désormais depuis le bouton « Démarrer la Live Visio »
+  //    (onglet « Lecteur ») ou l'interrupteur de mode. On n'éteint JAMAIS liveMode au changement
+  //    d'onglet → la connexion LiveKit reste montée (mount-always + hide-CSS).
 
   // 🔴 POINT 3 — Bandeau de consentement « enregistrement » diffusé à tous (realtime).
   //    UN SEUL enregistrement : l'option complète (toutes voix + musique) + transcription IA (premiumRec).
@@ -4077,20 +4077,19 @@ export const SessionPage: React.FC = () => {
             démontage) ; ne s'applique PAS au desktop (≥1024px). Voir le <style> ci-dessous. */}
         <style>{`
           @media (max-width: 1023px) {
-            [data-mtab]:not([data-mtab="diffusion"]) .bt-tab-diffusion,
-            [data-mtab]:not([data-mtab="access"]) .bt-tab-access,
-            [data-mtab]:not([data-mtab="mixer"]) .bt-tab-mixer,
-            [data-mtab]:not([data-mtab="live"]) .bt-tab-live { display: none !important; }
+            /* 2 onglets : « player » révèle diffusion+live ; « controls » révèle access+mixer.
+               Les classes par bloc sont inchangées (regroupées différemment). */
+            [data-mtab="controls"] .bt-tab-diffusion,
+            [data-mtab="controls"] .bt-tab-live,
+            [data-mtab="player"] .bt-tab-access,
+            [data-mtab="player"] .bt-tab-mixer { display: none !important; }
           }
         `}</style>
         <nav className="lg:hidden flex items-stretch gap-1 mb-6 overflow-x-auto -mx-1 px-1" data-testid="mobile-session-tabs">
           {([
-            { id: 'diffusion', label: 'Diffusion' },
-            { id: 'access', label: 'Accès & Tribu' },
-            { id: 'mixer', label: 'Mixeur' },
-            { id: 'live', label: 'Live' },
-            // 🚪 Onglet Live masqué pour un invité (accès sans inscription → pas de visio).
-          ] as const).filter((tab) => !(isGuestRestricted && tab.id === 'live')).map((tab) => {
+            { id: 'player', label: '🎧 Lecteur & Playlist' },
+            { id: 'controls', label: '🎚️ Mixeur & Participants' },
+          ] as const).map((tab) => {
             const isActive = mobileTab === tab.id;
             return (
               <button
@@ -4111,7 +4110,7 @@ export const SessionPage: React.FC = () => {
         </nav>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Player */}
-          <div className={`${mobileTab === 'mixer' ? 'hidden' : ''} lg:block lg:col-span-2 space-y-6`}>
+          <div className="lg:block lg:col-span-2 space-y-6">
             {/* 🎥 Interrupteur de mode : Écoute seule / Live Visio (additif, n'altère pas l'existant) */}
             {sessionId && (
               <div className="hidden lg:flex items-center gap-1.5 p-1 rounded-xl border border-white/10 bg-white/5 w-fit">
@@ -4380,33 +4379,54 @@ export const SessionPage: React.FC = () => {
               </div>
             )}
 
-            {/* E + item 6 : Panneau de partage (Audio | Vidéo | Image | Lien) — hôte + co-animateurs */}
+            {/* E + item 6 : Panneau de partage (Audio | Vidéo | Image | Lien) — hôte + co-animateurs.
+                📦 Accordéon REPLIÉ par défaut (aération). Le contenu reste MONTÉ (masqué en CSS) pour
+                ne jamais couper un upload en cours. */}
             {canShare && sessionId && (
-              <div className="bt-tab-diffusion">
-              <MediaShareControls
-                sessionId={sessionId}
-                onShare={handleShareMedia}
-                showToast={showToast}
-                mode={shareMode}
-                onModeChange={setShareMode}
-                maxVideoSeconds={isFree ? 30 : undefined}
-                onToggleScreenShare={handleToggleScreenShare}
-                screenSharing={screenSharing}
-                screenSupported={screenSupported}
-                audioPanel={canShare ? (
-                  <TrackUploader
-                    sessionId={sessionId}
-                    onTrackUploaded={handleTrackUploaded}
-                    currentTrackCount={tracks.length}
-                    maxTracks={20}
-                    disabled={!canShare}
-                    isSessionHost={isHost}
-                    forceUnlimited={isUnlimitedHost}
-                    onUpgradeRequest={handleUpgradeRequest}
-                  />
-                ) : undefined}
-              />
-              </div>
+              <Card className="bt-tab-diffusion border-white/10 bg-white/5">
+                <CardHeader className="p-0">
+                  <button
+                    type="button"
+                    onClick={() => togglePanel('share')}
+                    className="w-full flex items-center justify-between gap-2 px-6 py-4 text-left"
+                    aria-expanded={panelOpen.share}
+                    data-testid="panel-share-toggle"
+                  >
+                    <CardTitle className="text-white text-lg flex items-center gap-2">
+                      <Plus className="w-5 h-5 text-[var(--bt-accent)]" />
+                      Partager un média / Fichier
+                    </CardTitle>
+                    <ChevronDown className={`w-5 h-5 text-white/50 flex-shrink-0 transition-transform duration-300 ${panelOpen.share ? 'rotate-180' : ''}`} />
+                  </button>
+                </CardHeader>
+                <div className={panelOpen.share ? '' : 'hidden'}>
+                  <CardContent className="p-4 pt-0">
+                    <MediaShareControls
+                      sessionId={sessionId}
+                      onShare={handleShareMedia}
+                      showToast={showToast}
+                      mode={shareMode}
+                      onModeChange={setShareMode}
+                      maxVideoSeconds={isFree ? 30 : undefined}
+                      onToggleScreenShare={handleToggleScreenShare}
+                      screenSharing={screenSharing}
+                      screenSupported={screenSupported}
+                      audioPanel={canShare ? (
+                        <TrackUploader
+                          sessionId={sessionId}
+                          onTrackUploaded={handleTrackUploaded}
+                          currentTrackCount={tracks.length}
+                          maxTracks={20}
+                          disabled={!canShare}
+                          isSessionHost={isHost}
+                          forceUnlimited={isUnlimitedHost}
+                          onUpgradeRequest={handleUpgradeRequest}
+                        />
+                      ) : undefined}
+                    />
+                  </CardContent>
+                </div>
+              </Card>
             )}
 
             {/* Share Link Card (Host only) — Item 2 : repliable */}
@@ -4713,7 +4733,8 @@ export const SessionPage: React.FC = () => {
                 </CardHeader>
                 <CardContent className="pt-0 space-y-4">
                   {/* L'ajout de pistes se fait via le panneau de partage (mode Audio) ci-dessus */}
-                  {/* Playlist with DnD */}
+                  {/* Playlist with DnD — hauteur limitée + scroll interne (évite d'étirer la page). */}
+                  <div className="max-h-64 overflow-y-auto -mr-1 pr-1">
                   <PlaylistDnD
                     tracks={tracks}
                     selectedTrack={selectedTrack}
@@ -4726,6 +4747,7 @@ export const SessionPage: React.FC = () => {
                     isHost={isHost}
                     maxTracks={20}
                   />
+                  </div>
                   
                   {/* Supabase status */}
                   {!isSupabaseConfigured && (
@@ -4763,6 +4785,7 @@ export const SessionPage: React.FC = () => {
                   </div>
                   
                   {/* Read-only playlist for participants - NO delete buttons, NO drag handles */}
+                  <div className="max-h-64 overflow-y-auto -mr-1 pr-1">
                   <PlaylistDnD
                     tracks={tracks}
                     selectedTrack={selectedTrack}
@@ -4772,13 +4795,14 @@ export const SessionPage: React.FC = () => {
                     isHost={false}
                     maxTracks={20}
                   />
+                  </div>
                 </CardContent>
               </Card>
             )}
           </div>
 
           {/* Sidebar */}
-          <div className={`${mobileTab === 'diffusion' || mobileTab === 'live' ? 'hidden' : ''} lg:block space-y-6`}>
+          <div className={`${mobileTab === 'player' ? 'hidden' : ''} lg:block space-y-6`}>
             {/* 🎥 Desktop : Live Visio à côté de la vidéo partagée (en haut de la colonne de droite) */}
             {liveMode && sessionId && isDesktop && liveVisioNode}
 
@@ -4894,7 +4918,7 @@ export const SessionPage: React.FC = () => {
               timerVolume={mixerState.timerVolume}
               onTimerVolumeChange={handleTimerVolumeChange}
               isMicActive={hostMicActive}
-              defaultCollapsed={false}
+              defaultCollapsed={!isDesktop}
               isVideoShared={isVideoShared}
               remoteMicSliders={remoteMicSliders}
               onRemoteMicVolumeChange={handleRemoteMicVolumeChange}
@@ -4905,17 +4929,33 @@ export const SessionPage: React.FC = () => {
             />
             </div>
 
-            {/* Participants */}
+            {/* Participants — rétractable si la liste dépasse 5 personnes (aération). */}
             <Card className="bt-tab-access border-white/10 bg-white/5">
               <CardHeader className="pb-3">
-                <CardTitle className="text-white text-lg">
-                  Participants ({participants.length})
-                </CardTitle>
-                {isHost && (
-                  <CardDescription className="text-white/50 text-xs">
-                    Contrôlez le volume de chaque participant
-                  </CardDescription>
-                )}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <CardTitle className="text-white text-lg">
+                      Participants ({participants.length})
+                    </CardTitle>
+                    {isHost && (
+                      <CardDescription className="text-white/50 text-xs">
+                        Contrôlez le volume de chaque participant
+                      </CardDescription>
+                    )}
+                  </div>
+                  {participants.length > 5 && (
+                    <button
+                      type="button"
+                      onClick={() => setParticipantsCollapsed((v) => !v)}
+                      aria-expanded={!participantsCollapsed}
+                      data-testid="participants-toggle"
+                      className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors text-xs"
+                    >
+                      {participantsCollapsed ? 'Afficher' : 'Réduire'}
+                      <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${participantsCollapsed ? '' : 'rotate-180'}`} />
+                    </button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="pt-0 space-y-2">
                 {/* 🎙️ POINT 3 : bandeau "conversation privée" + retour à tous (hôte) */}
@@ -4934,19 +4974,22 @@ export const SessionPage: React.FC = () => {
                     </button>
                   </div>
                 )}
-                <ParticipantControls
-                  participants={participants}
-                  isHost={isHost}
-                  onVolumeChange={handleParticipantVolumeChange}
-                  onMuteToggle={handleParticipantMuteToggle}
-                  onEject={handleParticipantEject}
-                  onToggleCoHost={isHost ? handleToggleCoHost : undefined}
-                  privateTargetIds={privateTargets}
-                  onTogglePrivate={isHost ? handleTogglePrivateTalk : undefined}
-                  micActiveIds={micActiveIds}
-                  onToggleHostMic={isHost ? handleToggleHostMic : undefined}
-                  theme={theme}
-                />
+                {/* >5 participants : scroll interne + rétractable (monté en permanence). */}
+                <div className={`${participants.length > 5 ? 'max-h-96 overflow-y-auto -mr-1 pr-1' : ''} ${participantsCollapsed ? 'hidden' : ''}`}>
+                  <ParticipantControls
+                    participants={participants}
+                    isHost={isHost}
+                    onVolumeChange={handleParticipantVolumeChange}
+                    onMuteToggle={handleParticipantMuteToggle}
+                    onEject={handleParticipantEject}
+                    onToggleCoHost={isHost ? handleToggleCoHost : undefined}
+                    privateTargetIds={privateTargets}
+                    onTogglePrivate={isHost ? handleTogglePrivateTalk : undefined}
+                    micActiveIds={micActiveIds}
+                    onToggleHostMic={isHost ? handleToggleHostMic : undefined}
+                    theme={theme}
+                  />
+                </div>
               </CardContent>
             </Card>
 

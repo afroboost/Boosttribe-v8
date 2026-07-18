@@ -207,11 +207,11 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
       {!open ? null : (
         <>
           {/* 💬 Chat COEXISTANT avec la vidéo/visio (jamais plein écran, pas de fond opaque qui masque) :
-              • Mobile/tablette : feuille BASSE (~58vh) ancrée en bas → la vidéo/visio reste visible au-dessus.
-              • Desktop (lg) : panneau LATÉRAL droit pleine hauteur, compact → la page se redimensionne à côté
-                (cf. padding droit appliqué au conteneur de session quand le chat est ouvert). */}
+              • Mobile/tablette : feuille BASSE (~46vh, BUG 6) ancrée en bas → la vidéo/visio reste VISIBLE
+                au-dessus et continue de jouer.
+              • Desktop (lg) : panneau LATÉRAL droit pleine hauteur, compact → la vidéo reste visible à côté. */}
           <div
-            className="fixed z-[120] inset-x-0 bottom-0 h-[58vh] max-h-[62vh] rounded-t-2xl border-t border-white/10
+            className="fixed z-[120] inset-x-0 bottom-0 h-[46vh] max-h-[50vh] rounded-t-2xl border-t border-white/10
                        lg:inset-y-0 lg:left-auto lg:right-0 lg:h-screen lg:w-[372px] lg:max-h-none lg:rounded-t-none lg:border-t-0 lg:border-l
                        flex flex-col bg-[#0d0d12] shadow-2xl overflow-hidden"
             data-testid="chat-panel"

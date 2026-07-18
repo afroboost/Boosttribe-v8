@@ -1071,8 +1071,11 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             reconnectAttempts.current++;
             // Production: log removed
             setTimeout(() => {
-              if (peerRef.current && !peerRef.current.destroyed) {
-                peerRef.current.reconnect();
+              const p = peerRef.current;
+              // 🐛 BUG 2 : ne reconnecter QUE si réellement déconnecté et NON détruit, sinon PeerJS lève
+              //    « cannot reconnect because it is not disconnected from the server! ». try/catch = filet.
+              if (p && !p.destroyed && p.disconnected) {
+                try { p.reconnect(); } catch { /* état inattendu → on n'insiste pas (le peer sera recréé si besoin) */ }
               }
             }, 1000 * reconnectAttempts.current);
           }

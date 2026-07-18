@@ -172,18 +172,31 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       // 3. DIRECT getUserMedia call - browser will show permission dialog
       // Production: log removed
       
-      // POINT 1.1: contraintes anti-écho / anti-bruit + mono (1 canal) pour TOUTE capture
-      const constraints: MediaStreamConstraints = {
+      // POINT 1.1: contraintes anti-écho / anti-bruit + mono (1 canal) pour TOUTE capture.
+      // 🐛 BUG 1 : `ideal` (pas `exact`) → ne fait pas ÉCHOUER si le périphérique mémorisé est absent.
+      const buildConstraints = (withDevice: boolean): MediaStreamConstraints => ({
         audio: {
           autoGainControl,
           echoCancellation,
           noiseSuppression,
           channelCount: 1,
-          deviceId: state.deviceId ? { exact: state.deviceId } : undefined,
+          ...(withDevice && state.deviceId ? { deviceId: { ideal: state.deviceId } } : {}),
         },
-      };
+      });
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // 🐛 BUG 1 : si l'ouverture échoue avec un periphérique choisi (NotFoundError/OverconstrainedError…),
+      //    on RÉESSAYE immédiatement SANS deviceId (micro par défaut) et on OUBLIE le périphérique invalide.
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(buildConstraints(true));
+      } catch (errFirst) {
+        if (state.deviceId) {
+          updateState({ deviceId: null });
+          stream = await navigator.mediaDevices.getUserMedia(buildConstraints(false));
+        } else {
+          throw errFirst;
+        }
+      }
       streamRef.current = stream;
       
       const audioTrack = stream.getAudioTracks()[0];

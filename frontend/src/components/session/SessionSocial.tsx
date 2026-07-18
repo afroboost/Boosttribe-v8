@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ProfilePhoto } from '@/components/session/ProfilePhoto';
 import { useToast } from '@/components/ui/Toast';
+import { isUuid } from '@/utils/ids';
 
 interface CommentRow {
   id: string | number;
@@ -45,17 +46,21 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
     if (!supabase) return;
     const missing = userIds.filter((id) => id && !authorsRef.current[id]);
     if (missing.length === 0) return;
+    // 🐛 BUG 3 : ne requêter QUE les UUID (les invités `user_…` → 400). Les autres = « Invité » par défaut.
+    const uuidMissing = missing.filter(isUuid);
+    const guests = missing.filter((id) => !isUuid(id));
     try {
-      const { data } = await supabase.from('profiles').select('id, full_name, avatar_url').in('id', missing);
-      if (data) {
-        setAuthors((prev) => {
-          const next = { ...prev };
-          (data as { id: string; full_name: string | null; avatar_url: string | null }[]).forEach((p) => {
-            next[p.id] = { name: p.full_name || 'Invité', avatar: p.avatar_url };
-          });
-          return next;
+      const { data } = uuidMissing.length > 0
+        ? await supabase.from('profiles').select('id, full_name, avatar_url').in('id', uuidMissing)
+        : { data: [] as { id: string; full_name: string | null; avatar_url: string | null }[] };
+      setAuthors((prev) => {
+        const next = { ...prev };
+        (data || []).forEach((p) => {
+          next[p.id] = { name: p.full_name || 'Invité', avatar: p.avatar_url };
         });
-      }
+        guests.forEach((id) => { if (!next[id]) next[id] = { name: 'Invité', avatar: null }; }); // pas de re-fetch
+        return next;
+      });
     } catch { /* profils non lisibles → fallback initiales */ }
   }, []);
 

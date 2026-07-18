@@ -42,6 +42,7 @@ import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
 import { createPortal } from 'react-dom';
+import { isUuid } from '@/utils/ids';
 import { StageRequestsPanel } from '@/components/session/StageRequestsPanel';
 import type { StageRequest } from '@/components/session/StageRequestsPanel';
 import { ChatPanel } from '@/components/session/ChatPanel';
@@ -2332,9 +2333,14 @@ export const SessionPage: React.FC = () => {
     if (!supabase) return;
     const ids = socket.presentUsers.map(u => u.userId).filter(id => id && !(id in profileAvatarsRef.current));
     if (ids.length === 0) return;
+    // 🐛 BUG 3 : les invités (id `user_…`) ne sont pas des UUID → la requête profiles renverrait 400.
+    //    On ne requête QUE les UUID valides ; les autres sont marqués « sans profil » (avatar par défaut).
+    const uuidIds = ids.filter(isUuid);
     (async () => {
       try {
-        const { data } = await supabase!.from('profiles').select('id, avatar_url').in('id', ids);
+        const { data } = uuidIds.length > 0
+          ? await supabase!.from('profiles').select('id, avatar_url').in('id', uuidIds)
+          : { data: [] as { id: string; avatar_url: string | null }[] };
         setProfileAvatars(prev => {
           const next = { ...prev };
           (data as { id: string; avatar_url: string | null }[] | null || []).forEach(p => { next[p.id] = p.avatar_url; });
@@ -3469,6 +3475,22 @@ export const SessionPage: React.FC = () => {
     />
   );
 
+  // 🐛 BUG 5 : gestion de SCÈNE (accepter/refuser/faire descendre) réutilisée telle quelle. Rendue
+  //    en flux (colonne) hors plein écran, ou PORTÉE dans l'élément plein écran (visio/vidéo partagée)
+  //    pour rester atteignable par-dessus. isFsActive = un vrai élément est en plein écran natif.
+  const isFsActive = typeof document !== 'undefined' && !!fsChatPortalTarget && fsChatPortalTarget !== document.body;
+  const stageRequestsPanel = (
+    <StageRequestsPanel
+      requests={stageRequests}
+      onStage={onStageOccupants}
+      onStageCount={videoMesh.activeCameraCount}
+      maxCameras={MAX_VISIO_CAMERAS}
+      onAccept={handleAcceptStage}
+      onRefuse={handleRefuseStage}
+      onSwap={handleSwapStage}
+    />
+  );
+
   // 🎚️ Chantier D : mini-contrôle audio partagé (hôte / co-hôte) — play/pause + titre + préc./suiv.
   //    Réutilise l'UNIQUE élément musique (#bt-music-audio) et le HOST_COMMAND existant (aucun 2ᵉ <audio>).
   const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
@@ -4238,17 +4260,9 @@ export const SessionPage: React.FC = () => {
             {/* 🎤 Panneau "Demandes de prise de parole" — hôte + co-hôtes, visible s'il y a des demandes.
                 📱 Mobile : épinglé en haut, AU-DESSUS de la visio flottante (z-[90] > DraggableWindow z-[80])
                 pour rester lisible et cliquable. Desktop (lg) : flux normal dans la colonne (inchangé). */}
-            {canShare && stageRequests.length > 0 && (
+            {canShare && stageRequests.length > 0 && !isFsActive && (
               <div className="fixed inset-x-2 top-16 z-[90] max-h-[80vh] overflow-y-auto rounded-2xl shadow-2xl shadow-black/40 lg:static lg:inset-x-auto lg:top-auto lg:z-auto lg:max-h-none lg:overflow-visible lg:rounded-none lg:shadow-none">
-                <StageRequestsPanel
-                  requests={stageRequests}
-                  onStage={onStageOccupants}
-                  onStageCount={videoMesh.activeCameraCount}
-                  maxCameras={MAX_VISIO_CAMERAS}
-                  onAccept={handleAcceptStage}
-                  onRefuse={handleRefuseStage}
-                  onSwap={handleSwapStage}
-                />
+                {stageRequestsPanel}
               </div>
             )}
 
@@ -5187,6 +5201,15 @@ export const SessionPage: React.FC = () => {
       {/* 🐛 BUG 3 : chat porté dans l'élément plein écran (visio) s'il y en a un → visible/utilisable
           par-dessus le plein écran ; sinon dans body (comportement inchangé). Rendu inside video plein écran = SharedMediaPlayer. */}
       {!videoEnlarged && fsChatPortalTarget && createPortal(chatPanelNode, fsChatPortalTarget)}
+
+      {/* 🐛 BUG 5 : demandes de scène PORTÉES dans l'élément plein écran → accepter/refuser/faire descendre
+          par-dessus le plein écran (visio ET vidéo partagée), sans quitter le plein écran. */}
+      {canShare && stageRequests.length > 0 && isFsActive && fsChatPortalTarget && createPortal(
+        <div className="fixed inset-x-2 top-3 z-[125] max-h-[70vh] overflow-y-auto rounded-2xl shadow-2xl shadow-black/40">
+          {stageRequestsPanel}
+        </div>,
+        fsChatPortalTarget,
+      )}
     </div>
   );
 };

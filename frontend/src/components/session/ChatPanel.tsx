@@ -182,18 +182,68 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     { key: 'private', label: 'Privé', icon: <MessageCircle size={14} />, badge: privateUnread },
   ];
 
+  // 🫧 BUG 2 : bulle chat DÉPLAÇABLE (souris + tactile), bornée à l'écran, position mémorisée.
+  //    Simple tap (< 6px) = ouvre le chat ; glisser = déplace. Défaut = bas-droite (pos null).
+  const BUBBLE_POS_KEY = 'bt_chat_bubble_pos';
+  const bubbleRef = useRef<HTMLButtonElement>(null);
+  const [bubblePos, setBubblePos] = useState<{ x: number; y: number } | null>(() => {
+    try { const raw = localStorage.getItem(BUBBLE_POS_KEY); if (raw) { const p = JSON.parse(raw); if (typeof p?.x === 'number' && typeof p?.y === 'number') return p; } } catch { /* ignore */ }
+    return null;
+  });
+  const bubbleDragRef = useRef<{ sx: number; sy: number; bx: number; by: number; moved: boolean } | null>(null);
+  const clampBubble = (x: number, y: number) => {
+    const w = bubbleRef.current?.offsetWidth ?? 56;
+    const h = bubbleRef.current?.offsetHeight ?? 56;
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 360;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 640;
+    return { x: Math.min(Math.max(8, x), Math.max(8, vw - w - 8)), y: Math.min(Math.max(8, y), Math.max(8, vh - h - 8)) };
+  };
+  const onBubbleDown = (e: React.PointerEvent) => {
+    const r = bubbleRef.current?.getBoundingClientRect();
+    bubbleDragRef.current = { sx: e.clientX, sy: e.clientY, bx: r?.left ?? 0, by: r?.top ?? 0, moved: false };
+    try { bubbleRef.current?.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+  const onBubbleMove = (e: React.PointerEvent) => {
+    const d = bubbleDragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+    if (!d.moved && Math.hypot(dx, dy) > 6) d.moved = true;
+    if (d.moved) setBubblePos(clampBubble(d.bx + dx, d.by + dy));
+  };
+  const onBubbleUp = (e: React.PointerEvent) => {
+    const d = bubbleDragRef.current;
+    bubbleDragRef.current = null;
+    try { bubbleRef.current?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    if (d?.moved) {
+      setBubblePos((p) => { if (p) { try { localStorage.setItem(BUBBLE_POS_KEY, JSON.stringify(p)); } catch { /* ignore */ } } return p; });
+    } else {
+      onToggle(); // tap sans déplacement → ouvrir le chat
+    }
+  };
+  // Re-borne à l'écran au redimensionnement / rotation.
+  useEffect(() => {
+    const onResize = () => setBubblePos((p) => (p ? clampBubble(p.x, p.y) : p));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   return (
     <>
       {/* 🚀 Lanceur flottant bas-droite (badge non-lus groupe + privé) — masqué quand le chat est ouvert
           (le panneau a son propre bouton « fermer ») pour ne pas chevaucher le panneau ancré. */}
       {!open && (
         <button
-          onClick={onToggle}
+          ref={bubbleRef}
+          onPointerDown={onBubbleDown}
+          onPointerMove={onBubbleMove}
+          onPointerUp={onBubbleUp}
+          onPointerCancel={onBubbleUp}
           // z-[130] : AU-DESSUS de la vidéo agrandie (overlay z-[100]) → le lanceur reste visible/cliquable.
-          className="fixed bottom-6 right-6 z-[130] w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
-          style={{ background: gradient }}
+          //    DÉPLAÇABLE (BUG 2) : pos par défaut bas-droite (bubblePos null), sinon left/top mémorisés.
+          className={`fixed z-[130] w-14 h-14 rounded-full shadow-lg flex items-center justify-center transition-transform hover:scale-110 ${bubblePos ? '' : 'bottom-6 right-6'}`}
+          style={{ background: gradient, touchAction: 'none', ...(bubblePos ? { left: bubblePos.x, top: bubblePos.y } : {}) }}
           data-testid="session-chat-launcher"
-          aria-label="Ouvrir le chat de la session"
+          aria-label="Ouvrir le chat de la session (déplaçable)"
         >
           <MessageCircle className="w-6 h-6 text-white" />
           {unreadTotal > 0 && (

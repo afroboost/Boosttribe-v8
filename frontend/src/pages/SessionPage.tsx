@@ -1333,12 +1333,16 @@ export const SessionPage: React.FC = () => {
     if (videoMesh.cameraOn) {
       videoMesh.stopCamera();
     } else {
+      // 🐛 BUG 1 : allumer la caméra depuis le plein écran de la vidéo partagée (hors Live Visio) doit
+      //    ACTIVER la room LiveKit (sinon startCamera reste en attente et rien ne se publie). Additif :
+      //    en Live Visio liveMode est déjà true (no-op) ; la vidéo partagée reste affichée.
+      if (!liveMode && sessionId) setLiveMode(true);
       const ok = await videoMesh.startCamera();
       if (!ok && videoMesh.activeCameraCount < MAX_VISIO_CAMERAS) {
         showToast('Impossible d\'accéder à la caméra (autorisez l\'accès)', 'error');
       }
     }
-  }, [videoMesh, showToast]);
+  }, [videoMesh, showToast, liveMode, sessionId]);
 
   // 🖥️ PARTAGE ÉCRAN (desktop) — capture getDisplayMedia puis diffusion mesh à tous
   const screenSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia;
@@ -1448,6 +1452,11 @@ export const SessionPage: React.FC = () => {
   const [coachPaymentType, setCoachPaymentType] = useState<'subscription' | 'commission'>('subscription');
   const [stageRequests, setStageRequests] = useState<StageRequest[]>([]); // hôte : demandes en attente
   const [stageRequestPending, setStageRequestPending] = useState(false);  // spectateur : ma demande envoyée
+  // 🙋 Panneau des demandes de scène (plein écran) : ouvert par défaut ; le bouton « Demandes » le
+  //    masque/affiche → l'hôte peut le pousser pour voir la vidéo. Réouvert automatiquement à chaque
+  //    nouvelle demande. Aucune incidence sur la vue normale (le panneau y reste toujours affiché).
+  const [stagePanelOpen, setStagePanelOpen] = useState(true);
+  useEffect(() => { if (stageRequests.length > 0) setStagePanelOpen(true); }, [stageRequests.length]);
   // Refs pour piloter la caméra depuis les handlers Realtime (souscrits une seule fois)
   const startCameraRef = useRef(videoMesh.startCamera);
   const stopCameraRef = useRef(videoMesh.stopCamera);
@@ -3455,6 +3464,8 @@ export const SessionPage: React.FC = () => {
       screenSupported={screenSupported}
       onOpenChat={sessionId && !isGuestRestricted ? () => setChatOpen(true) : undefined}
       chatUnread={chatUnreadTotal}
+      onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
+      stageRequestCount={stageRequests.length}
     />
   );
 
@@ -3472,6 +3483,8 @@ export const SessionPage: React.FC = () => {
       onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}
       onOpenChat={sessionId && !isGuestRestricted ? () => setChatOpen(true) : undefined}
       chatUnread={chatUnreadTotal}
+      onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
+      stageRequestCount={stageRequests.length}
     />
   );
 
@@ -4446,7 +4459,7 @@ export const SessionPage: React.FC = () => {
                 chatNode={chatPanelNode}
                 liveCamerasNode={liveCamerasNode}
                 timerNode={visioTimerReminderNode}
-                controlsNode={liveMode ? sharedVideoControlsNode : undefined}
+                controlsNode={canShare ? sharedVideoControlsNode : undefined}
               />
               </div>
             )}
@@ -5204,7 +5217,7 @@ export const SessionPage: React.FC = () => {
 
       {/* 🐛 BUG 5 : demandes de scène PORTÉES dans l'élément plein écran → accepter/refuser/faire descendre
           par-dessus le plein écran (visio ET vidéo partagée), sans quitter le plein écran. */}
-      {canShare && stageRequests.length > 0 && isFsActive && fsChatPortalTarget && createPortal(
+      {canShare && stageRequests.length > 0 && stagePanelOpen && isFsActive && fsChatPortalTarget && createPortal(
         <div className="fixed inset-x-2 top-3 z-[125] max-h-[70vh] overflow-y-auto rounded-2xl shadow-2xl shadow-black/40">
           {stageRequestsPanel}
         </div>,

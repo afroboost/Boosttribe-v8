@@ -18,6 +18,8 @@ export interface VisioControlBarProps {
   onStartTimer?: () => void;
   onOpenChat?: () => void;
   chatUnread?: number;
+  onToggleStageRequests?: () => void; // 🙋 gestion de scène (demandes de prise de caméra)
+  stageRequestCount?: number;
   onReduce?: () => void; // bouton « Réduire » (plein écran caméra) — optionnel
 }
 
@@ -28,7 +30,8 @@ const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover
 
 export const VisioControlBar: React.FC<VisioControlBarProps> = ({
   micActive, onToggleMic, cameraOn, canManageStage, onToggleCamera, onRequestStage,
-  stageRequestPending, onStartTimer, onOpenChat, chatUnread, onReduce,
+  stageRequestPending, onStartTimer, onOpenChat, chatUnread,
+  onToggleStageRequests, stageRequestCount, onReduce,
 }) => {
   return (
     <div
@@ -82,6 +85,22 @@ export const VisioControlBar: React.FC<VisioControlBarProps> = ({
           <Hand className="w-5 h-5" />
         </button>
       ) : null)}
+
+      {/* 🙋 Demandes de scène (hôte/co-hôte) — badge = nombre en attente ; ouvre/ferme le panneau. */}
+      {canManageStage && onToggleStageRequests && (stageRequestCount ?? 0) > 0 && (
+        <button
+          onClick={onToggleStageRequests}
+          className={`${ROUND} ${ACCENT} relative`}
+          title="Demandes de prise de caméra"
+          aria-label="Demandes de scène"
+          data-testid="visio-fs-stage-requests"
+        >
+          <Hand className="w-5 h-5" />
+          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center">
+            {(stageRequestCount ?? 0) > 9 ? '9+' : stageRequestCount}
+          </span>
+        </button>
+      )}
 
       {/* ⏱️ Interval training (hôte) */}
       {onStartTimer && (

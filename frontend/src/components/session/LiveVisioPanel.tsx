@@ -53,6 +53,9 @@ interface LiveVisioPanelProps {
   // 💬 Chat accessible depuis le plein écran (BUG 3) : ouvre le panneau + badge non-lus.
   onOpenChat?: () => void;
   chatUnread?: number;
+  // 🙋 Demandes de scène (badge + toggle) accessibles depuis le plein écran.
+  onToggleStageRequests?: () => void;
+  stageRequestCount?: number;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -78,7 +81,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onStartTimer, timerNode,
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
-  onOpenChat, chatUnread,
+  onOpenChat, chatUnread, onToggleStageRequests, stageRequestCount,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
@@ -213,6 +216,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               onStartTimer={onStartTimer && canManageStage ? onStartTimer : undefined}
               onOpenChat={onOpenChat}
               chatUnread={chatUnread}
+              onToggleStageRequests={onToggleStageRequests}
+              stageRequestCount={stageRequestCount}
               onReduce={exitCamFullscreen}
             />
             <div className="flex-1 min-h-0 flex items-center justify-center">

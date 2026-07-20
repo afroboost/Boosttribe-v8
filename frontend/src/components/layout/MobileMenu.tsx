@@ -43,7 +43,7 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
   };
 
   return (
-    <div ref={ref} className="md:hidden flex items-center">
+    <div ref={ref} className="md:hidden flex items-center flex-shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
         className="p-2 rounded-lg text-white/80 hover:bg-white/10 transition-colors"

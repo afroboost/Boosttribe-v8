@@ -141,8 +141,8 @@ export const Header: React.FC = () => {
             <PWAInstallPrompt variant="minimal" className="hidden sm:flex" />
             
             {/* Language Selector - TOUJOURS VISIBLE avec z-index élevé.
-                🐛 BUG 2 : petite marge horizontale sur MOBILE pour ne pas coller au logo / à la déconnexion. */}
-            <div className="relative z-50 mx-1.5 sm:mx-0">
+                🐛 Petite marge à DROITE sur mobile (léger, n'élargit pas la rangée → le hamburger reste dans le cadre). */}
+            <div className="relative z-50 mr-1 sm:mx-0 flex-shrink-0">
               <LanguageSelector className="flex" />
             </div>
             
@@ -173,16 +173,17 @@ export const Header: React.FC = () => {
                   </button>
                 )}
 
-                {/* Sign out button */}
+                {/* Sign out button — 📱 caché sur mobile (présent dans le menu hamburger) */}
                 <button
                   onClick={handleSignOut}
-                  className="p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
+                  className="hidden md:inline-flex p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors"
                   title="Déconnexion"
                 >
                   <LogOut size={18} />
                 </button>
 
-                <PrimaryButton size="sm" onClick={handleStartClick} className="whitespace-nowrap">
+                {/* 📱 « Ma session » caché sur mobile (présent dans le menu hamburger) → évite le débordement */}
+                <PrimaryButton size="sm" onClick={handleStartClick} className="hidden md:inline-flex whitespace-nowrap">
                   Ma session
                 </PrimaryButton>
               </>

@@ -24,6 +24,7 @@ interface SharedMediaPlayerProps {
   remote?: RemoteMediaState | null;
   onClose?: () => void; // hôte : retirer le média partagé
   mediaVolume?: number;  // 0–1 : "Volume Vidéo" du mixeur → pilote le lecteur courant
+  micActive?: boolean;   // 🐛 BUG 1 : micro hôte actif → compensation anti-ducking sur la vidéo (fichier)
   maxSeconds?: number;   // plan gratuit : coupe la lecture à 30s (émetteur) ; Pro : Infinity
   // 🔔 Notifie le parent quand la vue agrandie (plein écran) s'ouvre/ferme → le parent rend le chat
   //    À L'INTÉRIEUR de l'élément plein écran (sinon invisible en plein écran natif).
@@ -67,7 +68,7 @@ function loadYouTubeApi(): Promise<any> {
 const DRIFT = 1.0;          // s : seuil de resynchro de position participant (anti-saccade)
 const HOST_EMIT_MS = 700;   // intervalle UNIQUE d'émission de l'hôte (lit l'état LIVE du lecteur)
 
-export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode, timerNode, controlsNode }, ref) => {
+export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMediaPlayerProps>(({ media, isHost, onState, remote, onClose, mediaVolume, micActive, maxSeconds = Infinity, onEnlargedChange, chatNode, liveCamerasNode, timerNode, controlsNode }, ref) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // 🔍 Racine du lecteur : c'est ELLE qu'on passe en plein écran (contient vidéo + overlay caméras + bouton Retour).
   const rootRef = useRef<HTMLDivElement>(null);
@@ -75,6 +76,63 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
   const [enlarged, setEnlarged] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaVolumeInitRef = useRef(true); // ignorer la 1re valeur (montage) pour ne pas casser l'autoplay muet
+
+  // 🐛 BUG 1 : anti-ducking sur la VIDÉO fichier. element.volume est plafonné à 1.0 → impossible de
+  //   « remonter » quand Android ducke (~-20% en mode communication micro). On route donc l'audio de la
+  //   <video> via Web Audio (createMediaElementSource → GainNode) : gain = mediaVolume * 1.25 quand le
+  //   micro hôte est actif → compense EXACTEMENT comme la musique. iOS EXCLU (AudioContext suspendu écran
+  //   verrouillé) et IFRAMES exclues (audio YouTube/Vimeo non routable) → repli element.volume classique.
+  const IS_IOS_SMP = typeof navigator !== 'undefined' && (
+    /iP(hone|ad|od)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && ((navigator as unknown as { maxTouchPoints?: number }).maxTouchPoints || 0) > 1)
+  );
+  const VIDEO_DUCK_COMP = 1.25; // même valeur que MIC_DUCK_COMPENSATION de la musique
+  const vAudioCtxRef = useRef<AudioContext | null>(null);
+  const vSrcRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const vGainRef = useRef<GainNode | null>(null);
+  const lastVideoVolRef = useRef(0); // dernier volume 0..1 appliqué (pour ré-appliquer à la bascule micro)
+  // Branche l'élément <video> au graphe Web Audio (une seule fois). Renvoie true si routé.
+  const ensureVideoRouting = useCallback((): boolean => {
+    const el = videoRef.current;
+    // Router UNIQUEMENT côté hôte/co-hôte (isHost = canShare) : eux seuls ont un micro qui « ducke »
+    //   leur propre audio → compensation utile. Les participants gardent element.volume (aucun risque de
+    //   contexte suspendu/muet, aucune régression), ils n'ont pas de micro hôte de toute façon.
+    if (!el || IS_IOS_SMP || !isHost) return false;
+    if (vSrcRef.current) return true; // déjà routé
+    try {
+      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return false;
+      const ctx = new Ctx();
+      const src = ctx.createMediaElementSource(el); // appelable UNE seule fois par élément
+      const gain = ctx.createGain();
+      src.connect(gain); gain.connect(ctx.destination);
+      vAudioCtxRef.current = ctx; vSrcRef.current = src; vGainRef.current = gain;
+      el.volume = 1; // le GainNode contrôle désormais le volume (element.volume resterait plafonné à 1)
+      return true;
+    } catch { return false; }
+  }, [IS_IOS_SMP, isHost]);
+  // Applique le volume (0..1) au gain vidéo avec la compensation micro.
+  const applyVideoGain = useCallback((v: number, mic: boolean) => {
+    lastVideoVolRef.current = v;
+    const ctx = vAudioCtxRef.current, gain = vGainRef.current;
+    if (!ctx || !gain) return;
+    const comp = mic ? VIDEO_DUCK_COMP : 1;
+    try {
+      gain.gain.setValueAtTime(Math.max(0, v) * comp, ctx.currentTime);
+      if (ctx.state === 'suspended') ctx.resume().catch(() => { /* ignore */ });
+    } catch { /* ignore */ }
+  }, []);
+  // Nettoyage au démontage : fermer le contexte audio vidéo.
+  useEffect(() => () => {
+    try { vSrcRef.current?.disconnect(); } catch { /* ignore */ }
+    try { vGainRef.current?.disconnect(); } catch { /* ignore */ }
+    try { vAudioCtxRef.current?.close(); } catch { /* ignore */ }
+    vSrcRef.current = null; vGainRef.current = null; vAudioCtxRef.current = null;
+  }, []);
+  // 🐛 BUG 1 : à la bascule du micro hôte, ré-appliquer le gain vidéo (compensation) sans changer le volume.
+  useEffect(() => {
+    if (vGainRef.current) applyVideoGain(lastVideoVolRef.current, !!micActive);
+  }, [micActive, applyVideoGain]);
 
   // Identifiants STABLES du média (primitifs) : ce sont les SEULES dépendances des effets de
   // CRÉATION des players. Tant que l'id ne change pas, le player n'est jamais recréé — même si
@@ -351,7 +409,17 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
         if (p?.setVolume) { p.setVolume(Math.round(v * 100)); if (v > 0) { p.unMute?.(); setMuted(false); } else { p.mute?.(); } }
       } else if (media.type === 'video') {
         const el = videoRef.current;
-        if (el) { el.volume = v; if (v > 0) { el.muted = false; setMuted(false); } else { el.muted = true; } }
+        if (el) {
+          // 🐛 BUG 1 : routage Web Audio (non-iOS) → volume via GainNode compensé ; sinon element.volume.
+          if (ensureVideoRouting()) {
+            el.muted = v <= 0;
+            el.volume = 1;
+            applyVideoGain(v, !!micActive);
+            if (v > 0) setMuted(false);
+          } else {
+            el.volume = v; if (v > 0) { el.muted = false; setMuted(false); } else { el.muted = true; }
+          }
+        }
       } else if (media.type === 'vimeo') {
         const p = vimeoPlayerRef.current;
         if (p) { p.setVolume(v).catch(() => { /* ignore */ }); if (v > 0) { p.setMuted(false).catch(() => { /* ignore */ }); setMuted(false); } }
@@ -562,6 +630,10 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
       <video
         ref={videoRef}
         src={media.url}
+        // 🐛 BUG 1 : requis pour router l'audio en Web Audio SANS le rendre muet (taint cross-origin).
+        //   Les vidéos « fichier » sont hébergées sur Supabase Storage (CORS `Access-Control-Allow-Origin`
+        //   présent) → chargement OK. Les liens collés passent par le chemin IFRAME (non concerné).
+        crossOrigin="anonymous"
         // Item 1 : seul l'hôte/co-animateur a les contrôles ; le participant ne peut pas piloter
         controls={isHost}
         tabIndex={isHost ? 0 : -1}

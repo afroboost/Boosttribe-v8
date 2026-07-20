@@ -168,7 +168,10 @@ export const HeroSection: React.FC = () => {
           />
         ) : bgImage ? (
           <div
-            className="kenburns-media absolute inset-0 w-full h-full bg-center bg-cover"
+            // 🐛 BUG 4 : sur mobile (portrait), le cadrage « cover » rogne les côtés → on remonte/ajuste le
+            //    point focal (50% 30%) pour garder les DEUX personnages visibles ; desktop = centré (inchangé).
+            //    (Idéal : un champ « image hero mobile » séparé en admin — non implémenté ici.)
+            className="kenburns-media absolute inset-0 w-full h-full bg-cover bg-[position:50%_30%] md:bg-center"
             // 🎞️ Noir & blanc forcé sur l'image de fond (même si le client met une photo colorée).
             key={bgImage}
             style={{ backgroundImage: `url("${bgImage}")`, filter: "grayscale(100%) contrast(1.06) brightness(0.92)" }}

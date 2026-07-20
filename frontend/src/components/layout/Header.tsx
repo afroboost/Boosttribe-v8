@@ -140,8 +140,9 @@ export const Header: React.FC = () => {
             {/* PWA Install Button - Discret */}
             <PWAInstallPrompt variant="minimal" className="hidden sm:flex" />
             
-            {/* Language Selector - TOUJOURS VISIBLE avec z-index élevé */}
-            <div className="relative z-50">
+            {/* Language Selector - TOUJOURS VISIBLE avec z-index élevé.
+                🐛 BUG 2 : petite marge horizontale sur MOBILE pour ne pas coller au logo / à la déconnexion. */}
+            <div className="relative z-50 mx-1.5 sm:mx-0">
               <LanguageSelector className="flex" />
             </div>
             
@@ -181,7 +182,7 @@ export const Header: React.FC = () => {
                   <LogOut size={18} />
                 </button>
 
-                <PrimaryButton size="sm" onClick={handleStartClick}>
+                <PrimaryButton size="sm" onClick={handleStartClick} className="whitespace-nowrap">
                   Ma session
                 </PrimaryButton>
               </>

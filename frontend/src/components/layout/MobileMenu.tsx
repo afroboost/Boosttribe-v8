@@ -124,7 +124,7 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
                 }
                 go('/session');
               }}
-              className="mt-2 w-full px-4 py-3 rounded-xl text-white font-semibold text-center"
+              className="mt-2 w-full px-4 py-3 rounded-xl text-white font-semibold text-center whitespace-nowrap"
               style={{ background: colors.gradient.primary }}
             >
               {isAuthenticated ? 'Ma session' : buttons.start}

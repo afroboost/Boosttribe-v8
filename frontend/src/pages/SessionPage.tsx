@@ -4454,6 +4454,7 @@ export const SessionPage: React.FC = () => {
                 remote={!canShare ? remoteMediaState : null}
                 onClose={canShare ? handleCloseMedia : undefined}
                 mediaVolume={mixerState.musicVolume}
+                micActive={hostMicActive}
                 maxSeconds={isFree ? 30 : Infinity}
                 onEnlargedChange={setVideoEnlarged}
                 chatNode={chatPanelNode}

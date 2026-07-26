@@ -38,6 +38,7 @@ import type { RemoteMediaState, SharedMediaPlayerHandle } from '@/components/ses
 import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
+import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
@@ -1679,6 +1680,27 @@ export const SessionPage: React.FC = () => {
     if (data) setAccessInfo(data);
   }, [sessionId]);
   useEffect(() => { refreshAccess(); }, [refreshAccess]);
+
+  // 🔗 Intégration afroboost (iframe) : au démarrage RÉEL du live (accès accordé, aucun paywall),
+  //    on prévient afroboost pour débiter 1 crédit (idempotent sur jti côté afroboost) + postMessage.
+  //    100% no-op hors mode embed → aucun impact pour les utilisateurs BoostTribe normaux.
+  const embedStartedRef = useRef(false);
+  useEffect(() => {
+    if (embedStartedRef.current) return;
+    if (!isEmbedMode()) return;               // pas d'accès afroboost → ne rien faire
+    if (!sessionId) return;                   // pas encore dans une session
+    if (!accessInfo) return;                  // mode d'accès pas encore résolu
+    if (creditsBlocked) return;               // bloqué par le paywall crédits → live pas démarré
+    if (hasTicket === false) return;          // bloqué par billet → live pas démarré
+    if (paidAwaitingSignup) return;
+    embedStartedRef.current = true;
+    void notifyEmbedSessionStarted();
+  }, [sessionId, accessInfo, creditsBlocked, hasTicket, paidAwaitingSignup]);
+
+  // Fin de session (démontage de la page) → informe afroboost, seulement si le live avait démarré.
+  useEffect(() => {
+    return () => { if (embedStartedRef.current) notifyEmbedSessionEnded(); };
+  }, []);
 
   // 🎟️ Session payante : le participant non-hôte a besoin d'un billet valide pour accéder au live.
   useEffect(() => {

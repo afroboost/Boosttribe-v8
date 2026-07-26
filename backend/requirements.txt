@@ -5,4 +5,5 @@ httpx==0.28.1
 python-dotenv==1.0.1
 python-multipart==0.0.18
 cryptography==44.0.0
+PyJWT==2.10.1
 livekit-api==0.8.2

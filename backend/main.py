@@ -26,6 +26,16 @@ from fastapi import FastAPI, Request, HTTPException, Header, File, UploadFile, F
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# PyJWT (import `jwt`) — utilisé par l'intégration iframe afroboost (/api/embed/*).
+# Import GARDÉ : si PyJWT manque, l'app démarre quand même et seuls les endpoints /api/embed/*
+# renverront une erreur 500 claire (le reste de l'app n'en dépend pas).
+try:
+    import jwt as _pyjwt  # PyJWT (HS256) — vérification du jeton signé afroboost
+    _PYJWT_IMPORT_ERROR: Optional[str] = None
+except Exception as _jwt_exc:  # pragma: no cover
+    _pyjwt = None  # type: ignore[assignment]
+    _PYJWT_IMPORT_ERROR = str(_jwt_exc)
+
 # LiveKit (SFU) — import GARDÉ : si le SDK n'est pas installé, l'app démarre quand même
 # et seul l'endpoint /livekit/token renverra une erreur 500 claire.
 try:
@@ -60,6 +70,22 @@ ADMIN_EMAILS = [
     for e in os.environ.get("ADMIN_EMAILS", "contact.artboost@gmail.com").split(",")
     if e.strip()
 ]
+
+# --------------------------------------------------------------------------- #
+# Intégration iframe afroboost — accès gratuit des abonnés afroboost via jeton signé
+# Secret PARTAGÉ (même valeur exacte que le backend afroboost), UNIQUEMENT côté serveur.
+# Signature JWT HS256, iss=afroboost, aud=boosttribe.
+# --------------------------------------------------------------------------- #
+AFRO_BT_SHARED_SECRET = os.environ.get("AFRO_BT_SHARED_SECRET", "")
+AFRO_BT_ISSUER = "afroboost"
+AFRO_BT_AUDIENCE = "boosttribe"
+# URL du callback de consommation de crédit (serveur→serveur) côté afroboost.
+AFROBOOST_CONSUME_URL = os.environ.get(
+    "AFROBOOST_CONSUME_URL", "https://afroboost.com/api/boosttribe/consume"
+).rstrip("/")
+# Durée de l'accès gratuit accordé (comp_access) à un utilisateur afroboost après vérification du jeton.
+# Le jeton lui-même est court (~15 min) ; l'accès doit couvrir toute la durée d'un live → fenêtre large.
+AFRO_BT_ACCESS_HOURS = int(os.environ.get("AFRO_BT_ACCESS_HOURS", "12"))
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -3929,3 +3955,169 @@ async def pawapay_claim(authorization: Optional[str] = Header(default=None)):
                 subscription_activated = row.get("plan")
 
     return {"tickets": attached_sessions, "subscription": subscription_activated}
+
+
+# =========================================================================== #
+# 🔗 INTÉGRATION IFRAME AFROBOOST — accès gratuit via jeton signé (HS256)
+#     Les abonnés afroboost (auth + crédit gérés côté afroboost) accèdent à
+#     BoostTribe SANS payer : afroboost signe un jeton court, BoostTribe le
+#     vérifie, crée/lie un compte, ACCORDE l'accès gratuit (comp_access) et
+#     connecte l'utilisateur (magic-link). Le crédit est débité côté afroboost
+#     seulement au démarrage réel d'une session (idempotent sur `jti`).
+# =========================================================================== #
+class EmbedTokenBody(BaseModel):
+    token: Optional[str] = None
+
+
+def _decode_afro_token(token: Optional[str]) -> Dict[str, Any]:
+    """Vérifie le jeton afroboost (HS256, iss=afroboost, aud=boosttribe, exp).
+    Lève une HTTPException 401 explicite en cas de problème."""
+    if _pyjwt is None:
+        logger.error("PyJWT indisponible pour /api/embed/* : %s", _PYJWT_IMPORT_ERROR)
+        raise HTTPException(status_code=500, detail="Dépendance JWT manquante côté serveur")
+    if not token:
+        raise HTTPException(status_code=401, detail="Jeton manquant")
+    if not AFRO_BT_SHARED_SECRET:
+        logger.error("AFRO_BT_SHARED_SECRET non configuré — intégration afroboost désactivée")
+        raise HTTPException(status_code=500, detail="Intégration afroboost non configurée (secret absent)")
+    try:
+        return _pyjwt.decode(
+            token,
+            AFRO_BT_SHARED_SECRET,
+            algorithms=["HS256"],
+            issuer=AFRO_BT_ISSUER,
+            audience=AFRO_BT_AUDIENCE,
+        )
+    except _pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Jeton expiré — retournez sur afroboost.com")
+    except _pyjwt.InvalidTokenError as exc:  # signature/iss/aud invalides
+        logger.warning("Jeton afroboost invalide : %s", exc)
+        raise HTTPException(status_code=401, detail="Jeton invalide")
+
+
+async def _find_auth_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Retrouve un compte Supabase (GoTrue) par email. profiles d'abord (rapide),
+    repli sur l'API admin (source de vérité)."""
+    prof = await get_profile_by_email(email)
+    if prof and prof.get("id"):
+        return {"id": prof["id"], "email": prof.get("email") or email}
+    au = next(
+        (u for u in await list_auth_users() if (u.get("email") or "").lower() == email),
+        None,
+    )
+    return au
+
+
+async def _create_auth_user(email: str, name: str) -> Optional[Dict[str, Any]]:
+    """Crée un compte Supabase confirmé (sans mot de passe) via l'API admin GoTrue."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/admin/users",
+            headers=_service_headers(),
+            json={"email": email, "email_confirm": True,
+                  "user_metadata": {"full_name": name} if name else {}},
+        )
+    if resp.status_code in (200, 201):
+        return resp.json()
+    # 422 = déjà existant → on le retrouvera par email en amont/aval.
+    if resp.status_code != 422:
+        logger.error("Création compte afroboost échec HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+    return None
+
+
+async def _generate_magic_link(email: str) -> Optional[Dict[str, Any]]:
+    """Génère un lien magique (GoTrue admin) SANS envoyer d'email — renvoie les propriétés
+    (hashed_token, email_otp) pour connecter l'utilisateur côté frontend via verifyOtp."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"{SUPABASE_URL}/auth/v1/admin/generate_link",
+            headers=_service_headers(),
+            json={"type": "magiclink", "email": email},
+        )
+    if resp.status_code not in (200, 201):
+        logger.error("generate_link afroboost échec HTTP %s — %s", resp.status_code, (resp.text or "")[:300])
+        return None
+    data = resp.json() if resp.content else {}
+    # GoTrue peut renvoyer les champs à plat OU sous "properties" selon la version.
+    props = data.get("properties") if isinstance(data.get("properties"), dict) else data
+    return {
+        "hashed_token": props.get("hashed_token"),
+        "email_otp": props.get("email_otp"),
+        "verification_type": props.get("verification_type") or "magiclink",
+    }
+
+
+async def notify_afroboost_session_started(token: str) -> Dict[str, Any]:
+    """Prévient afroboost qu'une session a réellement démarré → débit d'1 crédit (idempotent sur jti
+    côté afroboost). Souci réseau → on NE bloque PAS l'UX (return ok:true)."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(AFROBOOST_CONSUME_URL, json={"token": token})
+        data = resp.json() if resp.content else {}
+        if not data.get("ok") and data.get("reason") == "no_credit":
+            return {"ok": False, "reason": "no_credit"}
+        return {"ok": bool(data.get("ok", True)),
+                "remaining_credits": data.get("remaining_credits")}
+    except Exception as exc:  # réseau/DNS/TLS → ne pas bloquer l'expérience
+        logger.warning("Callback afroboost/consume injoignable : %s", exc)
+        return {"ok": True, "reason": "callback_unreachable"}
+
+
+@app.post("/api/embed/verify")
+async def verify_embed_token(body: EmbedTokenBody):
+    """Vérifie le jeton afroboost, crée/lie un compte BoostTribe, ACCORDE l'accès gratuit
+    (comp_access = crédits illimités → aucun paywall) et renvoie de quoi connecter l'utilisateur."""
+    payload = _decode_afro_token(body.token)
+    if not payload.get("free"):
+        raise HTTPException(status_code=403, detail="Accès gratuit non autorisé par ce jeton")
+
+    email = (payload.get("email") or "").strip().lower()
+    name = (payload.get("name") or "").strip()
+    jti = payload.get("jti")
+    if not email:
+        raise HTTPException(status_code=401, detail="Jeton sans email")
+
+    # 1) Trouver ou créer le compte Supabase pour cet email.
+    au = await _find_auth_user_by_email(email)
+    if not au:
+        au = await _create_auth_user(email, name)
+        if not au:
+            au = await _find_auth_user_by_email(email)  # course : créé entre-temps / déjà existant
+    if not au or not au.get("id"):
+        raise HTTPException(status_code=500, detail="Impossible de créer/retrouver le compte")
+    uid = au["id"]
+
+    # 2) ACCÈS GRATUIT — on réutilise le mécanisme d'accès existant (comp_access) : un accès
+    #    « pro » non expiré = crédits illimités (is_coach_unlimited) → aucun débit ni paywall
+    #    lors du join/host. On ne touche PAS coach_payment_type (ce n'est pas un coach vendeur).
+    until = (datetime.now(timezone.utc) + timedelta(hours=AFRO_BT_ACCESS_HOURS)).isoformat()
+    grant_row: Dict[str, Any] = {"id": uid, "email": email,
+                                 "comp_access_plan": "pro", "comp_access_until": until}
+    if not await upsert_profile(grant_row):
+        await update_profile(uid, {"comp_access_plan": "pro", "comp_access_until": until})
+
+    # 3) Connexion automatique : lien magique (pas d'email envoyé) → verifyOtp côté frontend.
+    link = await _generate_magic_link(email)
+
+    return {
+        "status": "ok",
+        "user": {"email": email, "name": name},
+        "session_id": jti,      # session logique liée au jti (débit idempotent afroboost)
+        "jti": jti,
+        "login": {
+            "token_hash": (link or {}).get("hashed_token"),
+            "email_otp": (link or {}).get("email_otp"),
+            "email": email,
+            "type": (link or {}).get("verification_type") or "magiclink",
+        },
+    }
+
+
+@app.post("/api/embed/session-started")
+async def embed_session_started(body: EmbedTokenBody):
+    """Appelé par le frontend quand une session live démarre RÉELLEMENT → déclenche le débit
+    d'1 crédit côté afroboost (idempotent sur jti). Renvoie {ok, reason?, remaining_credits?}."""
+    payload = _decode_afro_token(body.token)  # re-vérifie signature/iss/aud/exp
+    result = await notify_afroboost_session_started(body.token or "")
+    result["jti"] = payload.get("jti")
+    return result

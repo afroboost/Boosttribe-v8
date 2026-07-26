@@ -20,6 +20,7 @@ import PricingPage from "@/pages/PricingPage";
 import FeaturesPage from "@/pages/FeaturesPage";
 import LoginPage from "@/pages/LoginPage";
 import PromoPage from "@/pages/PromoPage";
+import EmbedPage from "@/pages/EmbedPage";
 import ChatBot from "@/components/ChatBot";
 
 // Global settings loader component
@@ -127,6 +128,8 @@ const App: React.FC = () => {
                       <Route path="/features" element={<FeaturesPage />} />
                       {/* 📣 Page promo PUBLIQUE (lien partageable, pas d'auth) */}
                       <Route path="/promo/:sessionId" element={<PromoPage />} />
+                      {/* 🔗 Intégration iframe afroboost : accès gratuit des abonnés via jeton signé */}
+                      <Route path="/embed" element={<EmbedPage />} />
                       <Route 
                         path="/session" 
                         element={

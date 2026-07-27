@@ -289,6 +289,9 @@ const FeaturesPage: React.FC = () => {
               <Link to="/login" className="text-white/40 hover:text-white text-sm transition-colors">
                 Connexion
               </Link>
+              <Link to="/confidentialite" className="text-white/40 hover:text-white text-sm transition-colors">
+                Confidentialité
+              </Link>
             </div>
           </div>
         </div>

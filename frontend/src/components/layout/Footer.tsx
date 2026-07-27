@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 
 // Mention de copyright discrète, affichée en pied de page sur les pages publiques.
@@ -8,9 +9,14 @@ export const Footer: React.FC<{ className?: string }> = ({ className = '' }) => 
   const year = new Date().getFullYear();
   return (
     <footer className={`py-6 border-t border-white/10 ${className}`}>
-      <p className="text-center text-white/40 text-sm px-4">
-        © 2024–{year} {theme.name}. Tous droits réservés.
-      </p>
+      <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 text-sm text-white/40">
+        <span>© 2024–{year} {theme.name}. Tous droits réservés.</span>
+        <span aria-hidden="true" className="hidden sm:inline text-white/20">·</span>
+        {/* 📄 Lien légal discret — requis pour la fiche Play Store */}
+        <Link to="/confidentialite" className="hover:text-white transition-colors">
+          Confidentialité
+        </Link>
+      </div>
     </footer>
   );
 };

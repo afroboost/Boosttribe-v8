@@ -21,6 +21,7 @@ import FeaturesPage from "@/pages/FeaturesPage";
 import LoginPage from "@/pages/LoginPage";
 import PromoPage from "@/pages/PromoPage";
 import EmbedPage from "@/pages/EmbedPage";
+import PrivacyPage from "@/pages/PrivacyPage";
 import ChatBot from "@/components/ChatBot";
 
 // Global settings loader component
@@ -126,6 +127,9 @@ const App: React.FC = () => {
                       <Route path="/login" element={<LoginPage />} />
                       <Route path="/pricing" element={<PricingPage />} />
                       <Route path="/features" element={<FeaturesPage />} />
+                      {/* 📄 Politique de confidentialité — URL publique fixe (obligatoire fiche Play Store) */}
+                      <Route path="/confidentialite" element={<PrivacyPage />} />
+                      <Route path="/privacy" element={<PrivacyPage />} />
                       {/* 📣 Page promo PUBLIQUE (lien partageable, pas d'auth) */}
                       <Route path="/promo/:sessionId" element={<PromoPage />} />
                       {/* 🔗 Intégration iframe afroboost : accès gratuit des abonnés via jeton signé */}

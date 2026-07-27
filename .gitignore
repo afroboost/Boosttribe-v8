@@ -77,7 +77,15 @@ agenthub/agents/youtube/db
 .cache/
 
 # Mobile development
-android-sdk/ -e 
+
+# 🔐 Signature Android release — NE JAMAIS committer (clé privée + mots de passe).
+# La perte du keystore empêche toute mise à jour future de l'app sur le Play Store :
+# sauvegarder boosttribe-release.keystore + son mot de passe hors du repo.
+frontend/android/keystore.properties
+frontend/android/app/*.keystore
+frontend/android/app/*.jks
+
+android-sdk/ -e
 # Environment files
 *.env
 *.env.*

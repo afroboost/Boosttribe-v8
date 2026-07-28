@@ -9,7 +9,7 @@ import { Footer } from "@/components/layout/Footer";
 // Page statique : aucune donnée chargée, aucun état, accessible sans login.
 
 const LAST_UPDATE = "27 juillet 2026";
-const CONTACT_EMAIL = "contact.artboost@gmail.com";
+const CONTACT_EMAIL = "contact@afroboosteur.com";
 
 // Section numérotée : titre sobre, numéro en accent (--bt-accent piloté par l'admin).
 const Section: React.FC<{ n: number; title: string; children: React.ReactNode }> = ({

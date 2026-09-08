@@ -9,7 +9,7 @@ import { MobileMenu } from "@/components/layout/MobileMenu";
 import { ProfilePhotoEditor } from "@/components/profile/ProfilePhotoEditor";
 import { sessionExists } from "@/lib/supabaseClient";
 import { getMyLastSession } from "@/lib/paymentApi";
-import { LogOut, Settings } from "lucide-react";
+import { LogOut, Settings, Video } from "lucide-react";
 
 export const Header: React.FC = () => {
   const { theme } = useTheme();
@@ -125,6 +125,18 @@ export const Header: React.FC = () => {
             >
               Tarifs
             </Link>
+            {/* 🎬 Studio « Vidéo face caméra » — réservé aux connectés (la route est
+                sous RequireAuth : l'afficher aux visiteurs mènerait à un mur de connexion). */}
+            {isAuthenticated && (
+              <Link
+                to="/studio"
+                className="inline-flex items-center gap-1.5 text-white/70 hover:text-white transition-colors duration-200 text-sm font-medium"
+                style={{ fontFamily: fonts.body }}
+                data-testid="nav-studio"
+              >
+                <Video size={16} /> Vidéo face caméra
+              </Link>
+            )}
             {/* 💎 Point d'entrée VISIBLE vers l'espace coach / abonnement (tout le monde) */}
             <Link
               to="/wallet"

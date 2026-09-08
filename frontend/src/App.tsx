@@ -22,6 +22,7 @@ import LoginPage from "@/pages/LoginPage";
 import PromoPage from "@/pages/PromoPage";
 import EmbedPage from "@/pages/EmbedPage";
 import PrivacyPage from "@/pages/PrivacyPage";
+import StudioPage from "@/pages/StudioPage";
 import ChatBot from "@/components/ChatBot";
 
 // Global settings loader component
@@ -145,6 +146,16 @@ const App: React.FC = () => {
                       <Route
                         path="/session/:sessionId"
                         element={<SessionPage />}
+                      />
+                      {/* 🎬 Studio « Vidéo face caméra » — caméra + aperçu + prompteur.
+                          100 % local : aucune room, aucune publication, aucun Go Live. */}
+                      <Route
+                        path="/studio"
+                        element={
+                          <RequireAuth>
+                            <StudioPage />
+                          </RequireAuth>
+                        }
                       />
                       <Route
                         path="/wallet"

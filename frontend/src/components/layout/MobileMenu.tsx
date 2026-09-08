@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
-import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet, Crown } from 'lucide-react';
+import { LogOut, User, Settings, Menu, X, Home, Sparkles, Tag, Camera, Wallet, Crown, Video } from 'lucide-react';
 import { ProfilePhotoModal } from '@/components/profile/ProfilePhotoEditor';
 import { sessionExists } from '@/lib/supabaseClient';
 import { getMyLastSession } from '@/lib/paymentApi';
@@ -77,6 +77,12 @@ export const MobileMenu: React.FC<MobileMenuProps> = ({ dropdownTopClass = 'top-
             {isAuthenticated && (
               <Link to="/wallet" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10">
                 <Wallet size={18} /> Portefeuille
+              </Link>
+            )}
+            {/* 🎬 Studio « Vidéo face caméra » (connectés seulement — route sous RequireAuth) */}
+            {isAuthenticated && (
+              <Link to="/studio" onClick={() => setOpen(false)} className="flex items-center gap-3 px-3 py-3 rounded-lg text-white/80 hover:bg-white/10" data-testid="mobile-nav-studio">
+                <Video size={18} /> Vidéo face caméra
               </Link>
             )}
             {!isAuthenticated && (

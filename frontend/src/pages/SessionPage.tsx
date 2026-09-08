@@ -2919,6 +2919,47 @@ export const SessionPage: React.FC = () => {
     socket.syncPlayback(true, 0, nt.id);
   }, [canShare, tracks, selectedTrack, socket]);
 
+  // ⏭️ LOT 1 — « MORCEAU SUIVANT » DU LECTEUR (hôte / co-hôte).
+  //
+  //  Réutilise EXACTEMENT les primitives déjà en place — `setSelectedTrack`, `setAutoPlayPending`,
+  //  `socket.syncPlaylist`, `socket.syncPlayback` — c'est-à-dire le même chemin que l'enchaînement
+  //  automatique (`handleTrackEnded`) et que le mini-contrôle du Live (`handleMiniTrackNav`).
+  //  Aucun second moteur audio, aucune interaction avec Go Live.
+  //
+  //  Deux écarts ASSUMÉS avec `handleMiniTrackNav`, et c'est tout l'objet de ce lot :
+  //   1. L'ÉTAT DE LECTURE EST CONSERVÉ. `handleMiniTrackNav` force `syncPlayback(true, …)` : il
+  //      relance toujours. Ici on lit l'état RÉEL de l'élément (`audioEl.paused`) et non un état
+  //      React qui peut retarder d'un rendu → si la musique était en pause, la piste suivante se
+  //      charge et RESTE en pause, pour l'hôte comme pour les participants.
+  //   2. PAS DE REBOUCLAGE ARBITRAIRE. `handleMiniTrackNav` boucle en modulo quoi qu'il arrive.
+  //      Ici on applique la règle DÉJÀ suivie par l'enchaînement automatique : on ne repart au
+  //      début que si la répétition est « all » ; sinon, dernière piste = « Fin de la playlist »,
+  //      exactement le même message.
+  //  La répétition « one » n'est pas piégeante sur un clic MANUEL : demander « suivant » avance
+  //  d'une piste (comme dans tout lecteur), et la répétition s'appliquera au titre suivant.
+  //  `currentTime` repart à 0 par construction : changer de source déclenche `loadAudio` →
+  //  `src=…; load()`. Le volume, lui, est une propriété de l'élément : il n'est pas touché.
+  const handlePlayerNext = useCallback(() => {
+    if (!canShare || tracks.length < 2 || !selectedTrack) return;
+    const currentIndex = tracks.findIndex((t) => t.id === selectedTrack.id);
+    if (currentIndex === -1) return;
+
+    if (currentIndex >= tracks.length - 1 && repeatMode !== 'all') {
+      showToast('Fin de la playlist', 'default');
+      return;
+    }
+    const nextTrack = tracks[(currentIndex + 1) % tracks.length];
+    if (!nextTrack) return;
+
+    const audioEl = getMusicEl();
+    const wasPlaying = !!audioEl && !audioEl.paused && !audioEl.ended && !!audioEl.src;
+
+    setSelectedTrack(nextTrack);
+    if (wasPlaying) setAutoPlayPending(nextTrack.src); // relance à 0 via l'effet autoplay existant
+    socket.syncPlaylist(tracks, nextTrack.id);
+    socket.syncPlayback(wasPlaying, 0, nextTrack.id);  // participants : même état, même position
+  }, [canShare, tracks, selectedTrack, repeatMode, socket, showToast, getMusicEl]);
+
   // ▶️⏸️ Chantier D : lecture / pause du mini-contrôle → agit sur L'UNIQUE élément #bt-music-audio
   //    (comme l'auto-pause/reprise voix) ; l'événement play/pause déclenche l'émission HOST_COMMAND existante.
   const handleMiniPlayPause = useCallback(() => {
@@ -4802,6 +4843,8 @@ export const SessionPage: React.FC = () => {
                   onSyncUpdate={handleSyncStateChange}
                   onTrackEnded={handleTrackEnded}
                   onRepeatModeChange={setRepeatMode}
+                  onNext={handlePlayerNext}
+                  canNext={canShare && tracks.length > 1}
                   onBeforePlay={async () => { initializeMixer(); try { await getMixerContext()?.resume(); } catch { /* ignore */ } }}
                 />
               </>

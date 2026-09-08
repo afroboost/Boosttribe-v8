@@ -1,5 +1,5 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { Repeat, Repeat1, AlertCircle } from 'lucide-react';
+import { Repeat, Repeat1, AlertCircle, SkipForward } from 'lucide-react';
 import { useAudioSync, AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
 
 // Format time helper - formats seconds into mm:ss
@@ -22,6 +22,11 @@ export interface AudioPlayerProps {
   onSyncUpdate?: (syncState: SyncState) => void;
   onTrackEnded?: () => void;
   onRepeatModeChange?: (mode: RepeatMode) => void;
+  // ⏭️ LOT 1 — « Morceau suivant ». Le lecteur ne connaît PAS la playlist (elle vit dans
+  //    SessionPage) : il se contente d'exposer le bouton et de remonter le clic. Aucun second
+  //    moteur audio, aucune interaction avec Go Live. `canNext` = il existe au moins deux titres.
+  onNext?: () => void;
+  canNext?: boolean;
   // 🔊 Appelé AVANT la lecture (geste utilisateur) → réveille l'AudioContext du mixeur pour que la
   //    musique démarre dès le 1er clic (l'élément est routé via createMediaElementSource → sinon muet).
   onBeforePlay?: () => void | Promise<void>;
@@ -40,6 +45,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   onSyncUpdate,
   onTrackEnded,
   onRepeatModeChange,
+  onNext,
+  canNext = false,
   onBeforePlay,
   className = '',
   disabled = false,
@@ -372,7 +379,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             )}
           </div>
 
-          {/* Center: Play/Pause - DÉSACTIVÉ pour participants */}
+          {/* Center: Play/Pause + ⏭️ Morceau suivant (LOT 1) - DÉSACTIVÉ pour participants */}
+          <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={handlePlayPause}
             disabled={!isHost || audioState.isLoading || disabled}
@@ -404,6 +412,30 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               </svg>
             )}
           </button>
+
+          {/* ⏭️ LOT 1 — Morceau suivant. Rendu seulement si la page fournit le handler ET qu'il y
+              a au moins deux titres : sans cela le bouton serait mort. La règle de fin de playlist
+              (rebouclage uniquement en répétition « all ») est celle de l'enchaînement automatique,
+              appliquée par SessionPage — le lecteur n'en décide rien. */}
+          {onNext && canNext && (
+            <button
+              onClick={onNext}
+              disabled={!isHost || audioState.isLoading || disabled}
+              className={`
+                w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center
+                border border-white/15 transition-all duration-200
+                ${isHost && !disabled
+                  ? 'text-white/80 hover:text-white hover:bg-white/10 active:scale-95'
+                  : 'text-white/30 opacity-40 cursor-not-allowed'}
+              `}
+              title="Morceau suivant"
+              aria-label="Morceau suivant"
+              data-testid="next-track-btn"
+            >
+              <SkipForward size={18} strokeWidth={2} />
+            </button>
+          )}
+          </div>
 
           {/* Right: Live Toggle (Host) or Sync Status (Participant) */}
           <div className="flex items-center gap-2">

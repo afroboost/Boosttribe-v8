@@ -22,9 +22,13 @@ export interface AudioPlayerProps {
   onSyncUpdate?: (syncState: SyncState) => void;
   onTrackEnded?: () => void;
   onRepeatModeChange?: (mode: RepeatMode) => void;
-  // ⏭️ LOT 1 — « Morceau suivant ». Le lecteur ne connaît PAS la playlist (elle vit dans
+  // ⏭️ « Morceau suivant ». Le lecteur ne connaît PAS la playlist (elle vit dans
   //    SessionPage) : il se contente d'exposer le bouton et de remonter le clic. Aucun second
-  //    moteur audio, aucune interaction avec Go Live. `canNext` = il existe au moins deux titres.
+  //    moteur audio, aucune interaction avec Go Live.
+  //    `canNext` = il EXISTE une piste suivante. Il gouverne l'état ACTIVÉ/DÉSACTIVÉ,
+  //    jamais la présence du bouton : un contrôle de transport qui disparaît selon la
+  //    playlist est introuvable pour l'utilisateur — c'est précisément ce qui l'a rendu
+  //    invisible en production quand la playlist ne contenait qu'un seul titre.
   onNext?: () => void;
   canNext?: boolean;
   // 🔊 Appelé AVANT la lecture (geste utilisateur) → réveille l'AudioContext du mixeur pour que la
@@ -413,23 +417,25 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             )}
           </button>
 
-          {/* ⏭️ LOT 1 — Morceau suivant. Rendu seulement si la page fournit le handler ET qu'il y
-              a au moins deux titres : sans cela le bouton serait mort. La règle de fin de playlist
-              (rebouclage uniquement en répétition « all ») est celle de l'enchaînement automatique,
-              appliquée par SessionPage — le lecteur n'en décide rien. */}
-          {onNext && canNext && (
+          {/* ⏭️ Morceau suivant — TOUJOURS visible dès que la page fournit le handler, sur
+              desktop comme sur mobile. Désactivé (et non masqué) quand il n'existe pas de
+              piste suivante : dernière piste hors répétition « all », playlist d'un seul
+              titre, ou spectateur. La règle de fin de playlist est calculée par
+              SessionPage via `aUnePisteSuivante` — le lecteur n'en décide rien. */}
+          {onNext && (
             <button
               onClick={onNext}
-              disabled={!isHost || audioState.isLoading || disabled}
+              disabled={!isHost || audioState.isLoading || disabled || !canNext}
               className={`
                 w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center
                 border border-white/15 transition-all duration-200
-                ${isHost && !disabled
+                ${isHost && !disabled && canNext
                   ? 'text-white/80 hover:text-white hover:bg-white/10 active:scale-95'
                   : 'text-white/30 opacity-40 cursor-not-allowed'}
               `}
               title="Morceau suivant"
               aria-label="Morceau suivant"
+              aria-disabled={!isHost || disabled || !canNext}
               data-testid="next-track-btn"
             >
               <SkipForward size={18} strokeWidth={2} />

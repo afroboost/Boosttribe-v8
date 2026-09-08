@@ -76,7 +76,7 @@
     "preview": "vite preview",
     "cap:sync": "yarn build && npx cap sync",
     "cap:android": "npx cap open android",
-    "test": "esbuild src/lib/studioLogic.ts --format=esm --outfile=tests/.build/studioLogic.mjs --log-level=error && node --test tests/"
+    "test": "esbuild src/lib/studioLogic.ts src/lib/playlistNav.ts --format=esm --outdir=tests/.build --out-extension:.js=.mjs --log-level=error && node --test tests/"
   },
   "browserslist": {
     "production": [

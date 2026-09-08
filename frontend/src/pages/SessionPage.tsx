@@ -62,6 +62,7 @@ import {
 } from '@/lib/paymentApi';
 import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone } from 'lucide-react';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
+import { indexSuivant, aUnePisteSuivante } from '@/lib/playlistNav';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -2919,46 +2920,38 @@ export const SessionPage: React.FC = () => {
     socket.syncPlayback(true, 0, nt.id);
   }, [canShare, tracks, selectedTrack, socket]);
 
-  // ⏭️ LOT 1 — « MORCEAU SUIVANT » DU LECTEUR (hôte / co-hôte).
+  // ⏭️ « MORCEAU SUIVANT » DU LECTEUR (hôte / co-hôte).
   //
-  //  Réutilise EXACTEMENT les primitives déjà en place — `setSelectedTrack`, `setAutoPlayPending`,
-  //  `socket.syncPlaylist`, `socket.syncPlayback` — c'est-à-dire le même chemin que l'enchaînement
-  //  automatique (`handleTrackEnded`) et que le mini-contrôle du Live (`handleMiniTrackNav`).
-  //  Aucun second moteur audio, aucune interaction avec Go Live.
+  //  RÉUTILISE `handleTrackSelectWithSync` — LA fonction déjà appelée quand on clique
+  //  directement sur un titre dans la playlist. Aucun second état de playlist, aucune
+  //  seconde mécanique de sélection : le bouton ne fait que désigner la piste suivante
+  //  et déléguer. On y ajoute seulement ce que la sélection manuelle ne fait pas :
+  //  conserver l'état de lecture.
   //
-  //  Deux écarts ASSUMÉS avec `handleMiniTrackNav`, et c'est tout l'objet de ce lot :
-  //   1. L'ÉTAT DE LECTURE EST CONSERVÉ. `handleMiniTrackNav` force `syncPlayback(true, …)` : il
-  //      relance toujours. Ici on lit l'état RÉEL de l'élément (`audioEl.paused`) et non un état
-  //      React qui peut retarder d'un rendu → si la musique était en pause, la piste suivante se
-  //      charge et RESTE en pause, pour l'hôte comme pour les participants.
-  //   2. PAS DE REBOUCLAGE ARBITRAIRE. `handleMiniTrackNav` boucle en modulo quoi qu'il arrive.
-  //      Ici on applique la règle DÉJÀ suivie par l'enchaînement automatique : on ne repart au
-  //      début que si la répétition est « all » ; sinon, dernière piste = « Fin de la playlist »,
-  //      exactement le même message.
-  //  La répétition « one » n'est pas piégeante sur un clic MANUEL : demander « suivant » avance
-  //  d'une piste (comme dans tout lecteur), et la répétition s'appliquera au titre suivant.
-  //  `currentTime` repart à 0 par construction : changer de source déclenche `loadAudio` →
-  //  `src=…; load()`. Le volume, lui, est une propriété de l'élément : il n'est pas touché.
+  //  L'index vient de `indexSuivant`, LA MÊME fonction que celle qui décide si le bouton
+  //  est actif. Tant que les deux étaient calculés séparément, ils ont divergé — et le
+  //  bouton s'est retrouvé invisible en production sur une playlist d'un seul titre.
+  //
+  //  État de lecture : lu sur l'élément RÉEL (`audioEl.paused`), jamais sur un état React
+  //  qui peut retarder d'un rendu. En lecture → la suivante enchaîne ; en pause → elle se
+  //  charge et RESTE en pause, pour l'hôte comme pour les participants. `currentTime`
+  //  repart à 0 par construction (changer de source déclenche `loadAudio`). Le volume est
+  //  une propriété de l'élément : il n'est pas touché. Aucune interaction avec Go Live.
   const handlePlayerNext = useCallback(() => {
-    if (!canShare || tracks.length < 2 || !selectedTrack) return;
-    const currentIndex = tracks.findIndex((t) => t.id === selectedTrack.id);
-    if (currentIndex === -1) return;
-
-    if (currentIndex >= tracks.length - 1 && repeatMode !== 'all') {
-      showToast('Fin de la playlist', 'default');
-      return;
-    }
-    const nextTrack = tracks[(currentIndex + 1) % tracks.length];
+    if (!canShare || !selectedTrack) return;
+    const i = tracks.findIndex((t) => t.id === selectedTrack.id);
+    const suivant = indexSuivant(tracks.length, i, repeatMode);
+    if (suivant === null) { showToast('Fin de la playlist', 'default'); return; }
+    const nextTrack = tracks[suivant];
     if (!nextTrack) return;
 
     const audioEl = getMusicEl();
     const wasPlaying = !!audioEl && !audioEl.paused && !audioEl.ended && !!audioEl.src;
 
-    setSelectedTrack(nextTrack);
-    if (wasPlaying) setAutoPlayPending(nextTrack.src); // relance à 0 via l'effet autoplay existant
-    socket.syncPlaylist(tracks, nextTrack.id);
-    socket.syncPlayback(wasPlaying, 0, nextTrack.id);  // participants : même état, même position
-  }, [canShare, tracks, selectedTrack, repeatMode, socket, showToast, getMusicEl]);
+    handleTrackSelectWithSync(nextTrack);              // ← sélection : la mécanique existante
+    if (wasPlaying) setAutoPlayPending(nextTrack.src); // relance à 0 via l'effet autoplay
+    socket.syncPlayback(wasPlaying, 0, nextTrack.id);  // participants : même état, position 0
+  }, [canShare, tracks, selectedTrack, repeatMode, showToast, getMusicEl, handleTrackSelectWithSync, socket]);
 
   // ▶️⏸️ Chantier D : lecture / pause du mini-contrôle → agit sur L'UNIQUE élément #bt-music-audio
   //    (comme l'auto-pause/reprise voix) ; l'événement play/pause déclenche l'émission HOST_COMMAND existante.
@@ -4844,7 +4837,7 @@ export const SessionPage: React.FC = () => {
                   onTrackEnded={handleTrackEnded}
                   onRepeatModeChange={setRepeatMode}
                   onNext={handlePlayerNext}
-                  canNext={canShare && tracks.length > 1}
+                  canNext={canShare && aUnePisteSuivante(tracks.length, tracks.findIndex((t) => t.id === selectedTrack.id), repeatMode)}
                   onBeforePlay={async () => { initializeMixer(); try { await getMixerContext()?.resume(); } catch { /* ignore */ } }}
                 />
               </>

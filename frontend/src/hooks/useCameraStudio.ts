@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { contrainteVideo, messageErreurCamera, cameraRetenue } from '@/lib/studioLogic';
+import {
+  contrainteVideo, messageErreurCamera, cameraRetenue,
+  cameraToujoursPresente, MESSAGE_CAMERA_DEBRANCHEE,
+} from '@/lib/studioLogic';
 
 /**
  * 🎥 useCameraStudio — choix et cycle de vie de la caméra pour le Studio face caméra.
@@ -68,6 +71,20 @@ export function useCameraStudio(): CameraStudio {
     setStream(null);
   }, []);
 
+  // 🔌 LA CAMÉRA DISPARAÎT PENDANT QU'ON S'EN SERT.
+  //
+  // Câble arraché, téléphone déconnecté, logiciel de caméra virtuelle fermé : la piste
+  // s'arrête, mais rien ne le DISAIT. L'aperçu restait figé sur la dernière image et on
+  // croyait à un plantage. On coupe donc proprement, on l'annonce en français, et on
+  // ré-énumère pour que la caméra redevienne sélectionnable dès qu'elle revient.
+  //
+  // `track.stop()` (notre propre `couper`) ne déclenche PAS `ended` : aucune boucle.
+  const surCameraPerdue = useCallback(() => {
+    if (!streamRef.current) return;          // déjà coupée : rien à annoncer
+    couper();
+    setError(MESSAGE_CAMERA_DEBRANCHEE);
+  }, [couper]);
+
   const refresh = useCallback(async (probe = false): Promise<void> => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
     try {
@@ -99,6 +116,7 @@ export function useCameraStudio(): CameraStudio {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: contrainte, audio: false });
       couper();                       // jamais deux flux ouverts en même temps
+      s.getVideoTracks().forEach((t) => t.addEventListener('ended', surCameraPerdue));
       streamRef.current = s;
       setStream(s);
       // Le périphérique RÉELLEMENT obtenu peut différer du souhait (repli navigateur).
@@ -124,6 +142,7 @@ export function useCameraStudio(): CameraStudio {
             video: repli ? { deviceId: { exact: repli } } : true, audio: false,
           });
           couper();
+          s2.getVideoTracks().forEach((t) => t.addEventListener('ended', surCameraPerdue));
           streamRef.current = s2;
           setStream(s2);
           const reel2 = s2.getVideoTracks()[0]?.getSettings?.().deviceId || null;
@@ -138,7 +157,7 @@ export function useCameraStudio(): CameraStudio {
       setStarting(false);
       return false;
     }
-  }, [couper, refresh, facing]);
+  }, [couper, refresh, facing, surCameraPerdue]);
 
   const stop = useCallback(() => { couper(); setError(null); }, [couper]);
 
@@ -156,6 +175,7 @@ export function useCameraStudio(): CameraStudio {
     try {
       const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: suivant } }, audio: false });
       couper();
+      s.getVideoTracks().forEach((t) => t.addEventListener('ended', surCameraPerdue));
       streamRef.current = s;
       setStream(s);
       const reel = s.getVideoTracks()[0]?.getSettings?.().deviceId || null;
@@ -166,15 +186,24 @@ export function useCameraStudio(): CameraStudio {
     const idx = Math.max(0, devices.findIndex((d) => d.deviceId === deviceIdRef.current));
     const next = devices[(idx + 1) % devices.length];
     if (next) await select(next.deviceId);
-  }, [facing, devices, couper, select]);
+  }, [facing, devices, couper, select, surCameraPerdue]);
 
   // Branchement / débranchement à chaud — rafraîchissement SILENCIEUX (n'ouvre rien).
   useEffect(() => {
     if (!navigator.mediaDevices?.addEventListener) return;
-    const h = () => { refresh(false); };
+    const h = async () => {
+      await refresh(false);
+      // Tous les navigateurs n'émettent pas `ended` sur la piste : la liste des
+      // périphériques, elle, est toujours à jour. Deuxième filet, même conclusion.
+      if (!streamRef.current) return;
+      try {
+        const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+        if (!cameraToujoursPresente(devs, deviceIdRef.current)) surCameraPerdue();
+      } catch { /* énumération impossible : on ne conclut rien */ }
+    };
     navigator.mediaDevices.addEventListener('devicechange', h);
     return () => { try { navigator.mediaDevices.removeEventListener('devicechange', h); } catch { /* ignore */ } };
-  }, [refresh]);
+  }, [refresh, surCameraPerdue]);
 
   // Énumération silencieuse au montage (aucune permission demandée, aucun flux ouvert).
   useEffect(() => { refresh(false); }, [refresh]);

@@ -168,7 +168,14 @@ export const StudioPage: React.FC = () => {
           {!cam.active && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-4 text-center">
               <VideoOff className="h-8 w-8 text-white/30" />
-              <p className="text-sm text-white/60">{cam.error || 'Ta caméra est éteinte.'}</p>
+              {/* La phrase par défaut DIT POURQUOI on demande la caméra. « Ta caméra est
+                  éteinte » ne disait ni ce qui allait se passer, ni ce qu'on peut
+                  brancher — or c'est exactement le moment où Chrome demande
+                  l'autorisation. Un message d'erreur réel, lui, prime toujours. */}
+              <p className="text-sm text-white/60">
+                {cam.error
+                  || 'Autorise la caméra pour utiliser ta webcam, une caméra USB ou ton téléphone dans le Studio.'}
+              </p>
               <button
                 type="button"
                 onClick={() => { cam.start(); cam.refresh(true); }}

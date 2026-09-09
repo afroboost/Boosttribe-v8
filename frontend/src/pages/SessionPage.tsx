@@ -62,7 +62,7 @@ import {
 } from '@/lib/paymentApi';
 import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone } from 'lucide-react';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
-import { indexSuivant, aUnePisteSuivante } from '@/lib/playlistNav';
+import { indexSuivant, aUnePisteSuivante, indexPrecedent, aUnePistePrecedente, actionPrecedent } from '@/lib/playlistNav';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -2953,6 +2953,40 @@ export const SessionPage: React.FC = () => {
     socket.syncPlayback(wasPlaying, 0, nextTrack.id);  // participants : même état, position 0
   }, [canShare, tracks, selectedTrack, repeatMode, showToast, getMusicEl, handleTrackSelectWithSync, socket]);
 
+  // ⏮️ MORCEAU PRÉCÉDENT — même mécanique que « suivant », une décision en plus.
+  //
+  //  Ce que fait le clic dépend de la POSITION DE LECTURE : au-delà de quelques
+  //  secondes on REDÉMARRE le titre en cours (personne ne veut quitter par erreur un
+  //  morceau écouté depuis trois minutes), sinon on recule d'une piste. Cette décision
+  //  n'est pas prise ici : elle sort d'`actionPrecedent`, la MÊME fonction qui décide si
+  //  le bouton est actif. Tant que deux endroits en décidaient, ils divergeaient.
+  //
+  //  La position vient du lecteur, qui est le seul à la connaître à la seconde près.
+  //  Le redémarrage se fait sur l'élément RÉEL et se synchronise aux participants
+  //  comme le reste — aucun second moteur audio, aucune interaction avec Go Live.
+  const handlePlayerPrevious = useCallback((position: number) => {
+    if (!canShare || !selectedTrack) return;
+    const i = tracks.findIndex((t) => t.id === selectedTrack.id);
+    const quoi = actionPrecedent(position, aUnePistePrecedente(tracks.length, i, repeatMode));
+    if (quoi === 'rien') return;
+
+    const audioEl = getMusicEl();
+    const wasPlaying = !!audioEl && !audioEl.paused && !audioEl.ended && !!audioEl.src;
+
+    if (quoi === 'redemarrer') {
+      if (audioEl) { try { audioEl.currentTime = 0; } catch { /* source pas encore prête */ } }
+      socket.syncPlayback(wasPlaying, 0, selectedTrack.id);
+      return;
+    }
+
+    const precedent = indexPrecedent(tracks.length, i, repeatMode);
+    const prevTrack = precedent === null ? null : tracks[precedent];
+    if (!prevTrack) return;
+    handleTrackSelectWithSync(prevTrack);              // ← sélection : la mécanique existante
+    if (wasPlaying) setAutoPlayPending(prevTrack.src); // relance à 0 via l'effet autoplay
+    socket.syncPlayback(wasPlaying, 0, prevTrack.id);  // participants : même état, position 0
+  }, [canShare, tracks, selectedTrack, repeatMode, getMusicEl, handleTrackSelectWithSync, socket]);
+
   // ▶️⏸️ Chantier D : lecture / pause du mini-contrôle → agit sur L'UNIQUE élément #bt-music-audio
   //    (comme l'auto-pause/reprise voix) ; l'événement play/pause déclenche l'émission HOST_COMMAND existante.
   const handleMiniPlayPause = useCallback(() => {
@@ -4838,6 +4872,8 @@ export const SessionPage: React.FC = () => {
                   onRepeatModeChange={setRepeatMode}
                   onNext={handlePlayerNext}
                   canNext={canShare && aUnePisteSuivante(tracks.length, tracks.findIndex((t) => t.id === selectedTrack.id), repeatMode)}
+                  onPrevious={handlePlayerPrevious}
+                  canPreviousTrack={canShare && aUnePistePrecedente(tracks.length, tracks.findIndex((t) => t.id === selectedTrack.id), repeatMode)}
                   onBeforePlay={async () => { initializeMixer(); try { await getMixerContext()?.resume(); } catch { /* ignore */ } }}
                 />
               </>

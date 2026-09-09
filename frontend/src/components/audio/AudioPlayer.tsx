@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { Repeat, Repeat1, AlertCircle, SkipForward } from 'lucide-react';
+import { Repeat, Repeat1, AlertCircle, SkipForward, SkipBack } from 'lucide-react';
 import { useAudioSync, AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
+import { actionPrecedent } from '@/lib/playlistNav';
 
 // Format time helper - formats seconds into mm:ss
 function formatTime(seconds: number): string {
@@ -31,6 +32,15 @@ export interface AudioPlayerProps {
   //    invisible en production quand la playlist ne contenait qu'un seul titre.
   onNext?: () => void;
   canNext?: boolean;
+  // ⏮️ « Morceau précédent ». Même contrat que ci-dessus, à une nuance près : ce que
+  //    fait le clic dépend de la POSITION DE LECTURE, que seul le lecteur connaît. Il
+  //    la remonte donc en argument, et la page décide avec `actionPrecedent` — la même
+  //    fonction que celle qui gouverne ici l'état activé/désactivé. Une seule règle,
+  //    deux lecteurs : c'est ce qui empêche l'écran et l'action de diverger.
+  onPrevious?: (position: number) => void;
+  //    `canPreviousTrack` = il EXISTE une piste avant. Le bouton, lui, reste actif dès
+  //    qu'un redémarrage a du sens (au-delà du seuil), même sur la première piste.
+  canPreviousTrack?: boolean;
   // 🔊 Appelé AVANT la lecture (geste utilisateur) → réveille l'AudioContext du mixeur pour que la
   //    musique démarre dès le 1er clic (l'élément est routé via createMediaElementSource → sinon muet).
   onBeforePlay?: () => void | Promise<void>;
@@ -51,6 +61,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   onRepeatModeChange,
   onNext,
   canNext = false,
+  onPrevious,
+  canPreviousTrack = false,
   onBeforePlay,
   className = '',
   disabled = false,
@@ -167,6 +179,15 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   const handleVolumeChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setVolume(parseFloat(e.target.value));
   }, [setVolume]);
+
+  // ⏮️ CE QUE FERAIT UN CLIC SUR « PRÉCÉDENT », DEMANDÉ À LA RÈGLE PARTAGÉE.
+  // L'état du bouton et l'action de la page sortent de la MÊME fonction : le bouton ne
+  // peut donc pas être actif quand le clic ne ferait rien, ni grisé quand il ferait
+  // quelque chose. C'est exactement la divergence qui avait rendu « suivant »
+  // invisible en production.
+  const quePeutFairePrecedent = actionPrecedent(audioState.currentTime, canPreviousTrack);
+  const peutReculer = quePeutFairePrecedent !== 'rien';
+  const precedentRedemarre = quePeutFairePrecedent === 'redemarrer';
 
   // Calculate progress percentage
   const progressPercent = audioState.duration > 0 
@@ -383,8 +404,34 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
             )}
           </div>
 
-          {/* Center: Play/Pause + ⏭️ Morceau suivant (LOT 1) - DÉSACTIVÉ pour participants */}
+          {/* Center: ⏮️ Précédent + Play/Pause + ⏭️ Suivant - DÉSACTIVÉ pour participants */}
           <div className="flex items-center gap-2 sm:gap-3">
+          {/* ⏮️ Morceau précédent — à GAUCHE du Play, l'ordre que tout le monde connaît.
+              Ce qu'il fait dépend de la position : au-delà de quelques secondes il
+              REDÉMARRE le titre en cours (on ne quitte pas par erreur un morceau
+              écouté depuis trois minutes) ; au tout début il recule d'une piste.
+              La décision est prise par `actionPrecedent`, la MÊME fonction qu'utilise
+              la page pour exécuter le clic : l'état du bouton ne peut pas mentir sur
+              ce que le clic va faire. */}
+          {onPrevious && (
+            <button
+              onClick={() => onPrevious(audioState.currentTime)}
+              disabled={!isHost || audioState.isLoading || disabled || !peutReculer}
+              className={`
+                w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center
+                border transition-all duration-200
+                ${isHost && !disabled && peutReculer
+                  ? 'text-white border-white/25 hover:bg-white/10 active:scale-95'
+                  : 'text-white/45 border-white/10 cursor-not-allowed'}
+              `}
+              title={precedentRedemarre ? 'Revenir au début du morceau' : 'Morceau précédent'}
+              aria-label="Morceau précédent"
+              aria-disabled={!isHost || disabled || !peutReculer}
+              data-testid="prev-track-btn"
+            >
+              <SkipBack size={18} strokeWidth={2} />
+            </button>
+          )}
           <button
             onClick={handlePlayPause}
             disabled={!isHost || audioState.isLoading || disabled}
@@ -428,10 +475,10 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
               disabled={!isHost || audioState.isLoading || disabled || !canNext}
               className={`
                 w-10 h-10 sm:w-11 sm:h-11 rounded-full flex items-center justify-center
-                border border-white/15 transition-all duration-200
+                border transition-all duration-200
                 ${isHost && !disabled && canNext
-                  ? 'text-white/80 hover:text-white hover:bg-white/10 active:scale-95'
-                  : 'text-white/30 opacity-40 cursor-not-allowed'}
+                  ? 'text-white border-white/25 hover:bg-white/10 active:scale-95'
+                  : 'text-white/45 border-white/10 cursor-not-allowed'}
               `}
               title="Morceau suivant"
               aria-label="Morceau suivant"

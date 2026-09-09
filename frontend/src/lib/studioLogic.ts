@@ -69,6 +69,27 @@ export function messageErreurCamera(nom: string): string {
 }
 
 /**
+ * Message affiché quand la caméra EN COURS D'USAGE disparaît (câble débranché,
+ * téléphone déconnecté, logiciel de caméra virtuelle fermé).
+ *
+ * Sans lui, l'aperçu se figeait sur la dernière image et rien ne le disait : on
+ * croyait à un plantage. Il dit ce qui s'est passé ET quoi faire.
+ */
+export const MESSAGE_CAMERA_DEBRANCHEE =
+  "La caméra s'est déconnectée. Rebranche-la, puis choisis-la à nouveau ci-dessous.";
+
+/**
+ * La caméra utilisée est-elle TOUJOURS dans la liste des périphériques ?
+ *
+ * Sert à réagir à un débranchement pendant l'usage. Sans identifiant courant, on ne
+ * conclut rien : « aucune caméra choisie » n'est pas « caméra débranchée ».
+ */
+export function cameraToujoursPresente(devices: { deviceId: string }[], actif: string | null): boolean {
+  if (!actif) return true;
+  return devices.some((d) => d.deviceId === actif);
+}
+
+/**
  * Quelle caméra retenir ? La mémorisée si elle est encore là, sinon la première
  * disponible, sinon rien. C'est ce qui évite l'écran bloqué quand on débranche la
  * webcam entre deux visites.

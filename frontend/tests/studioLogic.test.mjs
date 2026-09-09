@@ -143,3 +143,29 @@ test('libellés : identifiant USB retiré, repli numéroté', () => {
   assert.equal(L.nomCamera('OBS Virtual Camera', 1), 'OBS Virtual Camera');
   assert.equal(L.nomCamera('', 2), 'Caméra 3');   // avant permission : libellé vide
 });
+
+// ── 🔌 LA CAMÉRA DISPARAÎT PENDANT QU'ON S'EN SERT ─────────────────────────
+// L'aperçu restait figé sur la dernière image, sans un mot. Ces bancs tiennent la
+// règle qui décide s'il faut l'annoncer.
+test('camera encore presente : rien a annoncer', () => {
+  const devs = [{ deviceId: 'a' }, { deviceId: 'b' }];
+  assert.equal(L.cameraToujoursPresente(devs, 'a'), true);
+  assert.equal(L.cameraToujoursPresente(devs, 'b'), true);
+});
+
+test('camera disparue de la liste : il faut le dire', () => {
+  assert.equal(L.cameraToujoursPresente([{ deviceId: 'b' }], 'a'), false);
+  assert.equal(L.cameraToujoursPresente([], 'a'), false);
+});
+
+test('aucune camera choisie n est PAS une camera debranchee', () => {
+  assert.equal(L.cameraToujoursPresente([], null), true);
+  assert.equal(L.cameraToujoursPresente([{ deviceId: 'a' }], null), true);
+});
+
+test('le message de debranchement dit quoi faire, sans jargon', () => {
+  assert.ok(L.MESSAGE_CAMERA_DEBRANCHEE.length > 20);
+  for (const jargon of ['deviceId', 'MediaStream', 'getUserMedia', 'track', 'NotReadableError']) {
+    assert.ok(!L.MESSAGE_CAMERA_DEBRANCHEE.includes(jargon), `jargon : ${jargon}`);
+  }
+});

@@ -40,6 +40,7 @@ import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
+import { PanneauPrompteur } from '@/components/session/PanneauPrompteur';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
 import { createPortal } from 'react-dom';
@@ -3515,6 +3516,18 @@ export const SessionPage: React.FC = () => {
     </div>
   ) : null;
 
+  // 📜 LE PROMPTEUR, DANS LA SESSION — plus besoin d'aller sur /studio.
+  //
+  //  Le coach travaille ICI : musique, playlist, participants, caméra, Go Live.
+  //  Lui demander de changer de page pour lire son texte, c'était lui demander de
+  //  quitter son direct. Le panneau est REPLIÉ par défaut : tant qu'il ne l'ouvre
+  //  pas, la caméra et les participants gardent exactement leur place.
+  //
+  //  RÉSERVÉ À L'HÔTE : un participant n'a pas de texte à lire, et le script ne
+  //  doit apparaître nulle part chez lui. Le texte ne quitte de toute façon jamais
+  //  le navigateur — aucun socket, aucune requête (un banc le vérifie).
+  const prompteurNode = isHost ? <PanneauPrompteur /> : null;
+
   // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
   const liveVisioNode = (
     <LiveVisioPanel
@@ -4376,11 +4389,16 @@ export const SessionPage: React.FC = () => {
                 {/* 🎚️ Chantier D : contrôle audio partagé compact (hôte) accessible depuis l'onglet Live. */}
                 {miniAudioControlNode}
                 {liveVisioNode}
+                {prompteurNode}
               </div>
             )}
             {/* 📱 Onglet « Live » sans visio active (mobile) : invite à démarrer / message plan gratuit. */}
             {!isDesktop && !(liveMode && sessionId) && (
-              <div className="bt-tab-live lg:hidden rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+              <div className="bt-tab-live lg:hidden space-y-2">
+              {/* Le prompteur est disponible AVANT le Go Live : c'est là qu'on prépare
+                  son texte, pas une fois le direct commencé. */}
+              {prompteurNode}
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
                 <p className="text-white/70 text-sm mb-3">
                   {isFree ? 'La Live Visio nécessite des crédits.' : 'Active la Live Visio pour afficher les caméras.'}
                 </p>
@@ -4393,6 +4411,7 @@ export const SessionPage: React.FC = () => {
                     <Video className="w-4 h-4" /> Démarrer la Live Visio
                   </button>
                 )}
+              </div>
               </div>
             )}
 
@@ -4985,6 +5004,7 @@ export const SessionPage: React.FC = () => {
           <div className={`${mobileTab === 'player' ? 'hidden' : ''} lg:block space-y-6`}>
             {/* 🎥 Desktop : Live Visio à côté de la vidéo partagée (en haut de la colonne de droite) */}
             {liveMode && sessionId && isDesktop && liveVisioNode}
+            {isDesktop && prompteurNode}
 
             {/* Session Info — Item 2 : repliable */}
             <Card className="bt-tab-access border-white/10 bg-white/5">

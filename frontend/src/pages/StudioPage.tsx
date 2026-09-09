@@ -6,10 +6,8 @@ import {
 } from 'lucide-react';
 import { Prompteur, type PrompteurHandle } from '@/components/studio/Prompteur';
 import { useCameraStudio } from '@/hooks/useCameraStudio';
-import {
-  VITESSE_MIN, VITESSE_MAX, VITESSE_PAS, TAILLE_MIN, TAILLE_MAX, TAILLE_PAS,
-  bornerVitesse, bornerTaille, nomCamera, estChampDeSaisie,
-} from '@/lib/studioLogic';
+import { nomCamera } from '@/lib/studioLogic';
+import { usePrompteur } from '@/hooks/usePrompteur';
 
 /**
  * 🎬 StudioPage — « Vidéo face caméra » : choisir sa caméra, se voir, lire son texte.
@@ -26,52 +24,25 @@ import {
  * de plus : pas d'infrastructure vidéo bâtie à la volée.
  */
 
-const CLE_SCRIPT = 'bt_studio_script';
-const CLE_REGLAGES = 'bt_studio_reglages';
-
-interface Reglages { vitesse: number; taille: number; miroir: boolean; compteur: boolean }
-
-function lireReglages(): Reglages {
-  const defaut: Reglages = { vitesse: 1, taille: 44, miroir: true, compteur: true };
-  try {
-    const brut = localStorage.getItem(CLE_REGLAGES);
-    if (!brut) return defaut;
-    const r = JSON.parse(brut) as Partial<Reglages>;
-    return {
-      vitesse: typeof r.vitesse === 'number' ? bornerVitesse(r.vitesse) : defaut.vitesse,
-      taille: typeof r.taille === 'number' ? bornerTaille(r.taille) : defaut.taille,
-      miroir: typeof r.miroir === 'boolean' ? r.miroir : defaut.miroir,
-      compteur: typeof r.compteur === 'boolean' ? r.compteur : defaut.compteur,
-    };
-  } catch { return defaut; }
-}
-
+/**
+ * 🎬 StudioPage — « Vidéo face caméra » : choisir sa caméra, se voir, lire son texte.
+ *
+ * Le prompteur (texte, réglages, Play/Pause, décompte) vit désormais dans
+ * `usePrompteur`, PARTAGÉ avec le panneau de la session Live : un seul script, une
+ * seule sauvegarde, une seule logique de lecture. Cette page garde ce qui lui est
+ * propre : la caméra, l'aperçu plein cadre et le Mode Focus.
+ */
 export const StudioPage: React.FC = () => {
   const cam = useCameraStudio();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const prompteurRef = useRef<PrompteurHandle | null>(null);
 
-  const [script, setScript] = useState<string>(() => {
-    try { return localStorage.getItem(CLE_SCRIPT) || ''; } catch { return ''; }
-  });
-  const reglagesInit = useMemo(lireReglages, []);
-  const [vitesse, setVitesse] = useState(reglagesInit.vitesse);
-  const [taille, setTaille] = useState(reglagesInit.taille);
-  const [miroir, setMiroir] = useState(reglagesInit.miroir);
-  const [compteurActif, setCompteurActif] = useState(reglagesInit.compteur);
+  // Raccourcis clavier ACTIFS ici : cette page n'a pas de lecteur audio avec qui
+  // se disputer la barre d'espace.
+  const p = usePrompteur(true);
+  const { script, setScript, vitesse, taille, miroir, compteurActif, enLecture, compteA } = p;
 
-  const [enLecture, setEnLecture] = useState(false);
   const [focus, setFocus] = useState(false);
-  const [compteA, setCompteA] = useState<number | null>(null);
-
-  // Le script reste LOCAL. Aucune écriture réseau ici, volontairement.
-  useEffect(() => {
-    try { localStorage.setItem(CLE_SCRIPT, script); } catch { /* quota / navigation privée */ }
-  }, [script]);
-  useEffect(() => {
-    try { localStorage.setItem(CLE_REGLAGES, JSON.stringify({ vitesse, taille, miroir, compteur: compteurActif })); }
-    catch { /* ignore */ }
-  }, [vitesse, taille, miroir, compteurActif]);
 
   // Branche le flux sur la balise <video>. `srcObject` ne peut pas passer par le JSX.
   useEffect(() => {
@@ -81,50 +52,8 @@ export const StudioPage: React.FC = () => {
     if (cam.stream) v.play().catch(() => { /* un geste sera requis, sans conséquence */ });
   }, [cam.stream]);
 
-  const demarrerLecture = useCallback(() => {
-    if (!script.trim()) return;
-    if (compteurActif) {
-      setCompteA(3);
-      return;                       // le décompte lancera la lecture
-    }
-    setEnLecture(true);
-  }, [script, compteurActif]);
-
-  const basculerLecture = useCallback(() => {
-    if (compteA !== null) return;   // décompte en cours : on ne double-déclenche pas
-    if (enLecture) setEnLecture(false);
-    else demarrerLecture();
-  }, [enLecture, compteA, demarrerLecture]);
-
-  const reinitialiser = useCallback(() => {
-    setEnLecture(false);
-    setCompteA(null);
-    prompteurRef.current?.reset();
-  }, []);
-
-  // ⏱️ Décompte 3-2-1 — il ne démarre QUE le prompteur. Jamais un Live, jamais un
-  //    enregistrement : rien d'autre n'est déclenché depuis cet écran.
-  useEffect(() => {
-    if (compteA === null) return;
-    if (compteA === 0) { setCompteA(null); setEnLecture(true); return; }
-    const id = window.setTimeout(() => setCompteA((n) => (n === null ? null : n - 1)), 1000);
-    return () => window.clearTimeout(id);
-  }, [compteA]);
-
-  // ⌨️ Raccourcis — inertes dès que l'utilisateur écrit dans un champ, sinon Espace
-  //    insérerait une espace dans le script au lieu de mettre en pause.
-  useEffect(() => {
-    const surTouche = (e: KeyboardEvent) => {
-      const c = e.target as HTMLElement | null;
-      if (estChampDeSaisie(c?.tagName, !!c?.isContentEditable)) return;
-      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); basculerLecture(); }
-      else if (e.key === 'ArrowUp' || e.key === '+') { e.preventDefault(); setVitesse((v) => bornerVitesse(v + VITESSE_PAS)); }
-      else if (e.key === 'ArrowDown' || e.key === '-') { e.preventDefault(); setVitesse((v) => bornerVitesse(v - VITESSE_PAS)); }
-      else if (e.key === 'Home') { e.preventDefault(); reinitialiser(); }
-    };
-    window.addEventListener('keydown', surTouche);
-    return () => window.removeEventListener('keydown', surTouche);
-  }, [basculerLecture, reinitialiser]);
+  const basculerLecture = p.basculerLecture;
+  const reinitialiser = useCallback(() => { p.reinitialiser(); prompteurRef.current?.reset(); }, [p]);
 
   const BTN = 'inline-flex items-center justify-center gap-1.5 rounded-lg text-xs font-medium transition-colors px-3 py-2';
   const BTN_SOMBRE = `${BTN} bg-white/10 text-white/75 hover:bg-white/20`;
@@ -200,7 +129,7 @@ export const StudioPage: React.FC = () => {
             tailleTexte={taille}
             vitesse={vitesse}
             enLecture={enLecture}
-            onFin={() => setEnLecture(false)}
+            onFin={p.surFin}
             className="absolute inset-x-0 top-0 h-[58%] px-2 sm:px-8"
           />
 
@@ -242,16 +171,16 @@ export const StudioPage: React.FC = () => {
           {/* Vitesse */}
           <div className="flex items-center gap-1 rounded-full bg-white/5 px-1 py-1" role="group" aria-label="Vitesse de défilement">
             <button type="button" className={ROND} data-testid="studio-vitesse-moins"
-                    onClick={() => setVitesse((v) => bornerVitesse(v - VITESSE_PAS))}
-                    disabled={vitesse <= VITESSE_MIN} aria-label="Réduire la vitesse">
+                    onClick={p.moinsVite}
+                    disabled={vitesse <= p.bornes.vitesseMin} aria-label="Réduire la vitesse">
               <Minus className="h-4 w-4" />
             </button>
             <span className="min-w-[3.2rem] text-center text-xs tabular-nums text-white/80" data-testid="studio-vitesse">
               {vitesse.toFixed(2).replace(/0$/, '')}×
             </span>
             <button type="button" className={ROND} data-testid="studio-vitesse-plus"
-                    onClick={() => setVitesse((v) => bornerVitesse(v + VITESSE_PAS))}
-                    disabled={vitesse >= VITESSE_MAX} aria-label="Augmenter la vitesse">
+                    onClick={p.plusVite}
+                    disabled={vitesse >= p.bornes.vitesseMax} aria-label="Augmenter la vitesse">
               <Plus className="h-4 w-4" />
             </button>
           </div>
@@ -259,14 +188,14 @@ export const StudioPage: React.FC = () => {
           {/* Taille du texte */}
           <div className="flex items-center gap-1 rounded-full bg-white/5 px-1 py-1" role="group" aria-label="Taille du texte">
             <button type="button" className={ROND} data-testid="studio-taille-moins"
-                    onClick={() => setTaille((t) => bornerTaille(t - TAILLE_PAS))}
-                    disabled={taille <= TAILLE_MIN} aria-label="Réduire la taille du texte">
+                    onClick={p.plusPetit}
+                    disabled={taille <= p.bornes.tailleMin} aria-label="Réduire la taille du texte">
               <Minus className="h-4 w-4" />
             </button>
             <span className="min-w-[3.2rem] text-center text-xs tabular-nums text-white/80" data-testid="studio-taille">{taille} px</span>
             <button type="button" className={ROND} data-testid="studio-taille-plus"
-                    onClick={() => setTaille((t) => bornerTaille(t + TAILLE_PAS))}
-                    disabled={taille >= TAILLE_MAX} aria-label="Augmenter la taille du texte">
+                    onClick={p.plusGrand}
+                    disabled={taille >= p.bornes.tailleMax} aria-label="Augmenter la taille du texte">
               <Plus className="h-4 w-4" />
             </button>
           </div>
@@ -287,13 +216,13 @@ export const StudioPage: React.FC = () => {
                 </button>
               )}
 
-              <button type="button" onClick={() => setMiroir((m) => !m)}
+              <button type="button" onClick={() => p.setMiroir((m) => !m)}
                       className={miroir ? BTN_ACCENT : BTN_SOMBRE} data-testid="studio-miroir"
                       aria-pressed={miroir} title="N'inverse que ton aperçu, rien d'autre">
                 <FlipHorizontal2 className="w-4 h-4" /> Miroir
               </button>
 
-              <button type="button" onClick={() => setCompteurActif((c) => !c)}
+              <button type="button" onClick={() => p.setCompteurActif((c) => !c)}
                       className={compteurActif ? BTN_ACCENT : BTN_SOMBRE} data-testid="studio-compteur"
                       aria-pressed={compteurActif} title="Décompte 3-2-1 avant le défilement">
                 <Timer className="w-4 h-4" /> 3-2-1

@@ -75,9 +75,11 @@ test('le texte reste PRIVÉ : aucun réseau dans la chaîne du prompteur', () =>
   }
 });
 
-test('le panneau est monté dans la session Live, et réservé à l hôte', () => {
+test('le panneau est monté dans la session Live, et réservé à qui présente', () => {
   assert.ok(SESSION.includes("from '@/components/session/PanneauPrompteur'"));
-  assert.ok(/const prompteurNode = isHost \?/.test(SESSION), 'réservé à l’hôte');
+  // Hôte ET co-hôte : la même condition que « Caméra externe » ou « Partager l’écran ».
+  // Avec `isHost` seul, un co-animateur voyait sa caméra mais pas son prompteur.
+  assert.ok(/const prompteurNode = canShare \?/.test(SESSION), 'réservé à qui présente');
   // Monté aux DEUX endroits : colonne desktop et onglet Live mobile.
   const occurrences = (SESSION.match(/\{prompteurNode\}/g) || []).length;
   assert.ok(occurrences >= 2, `attendu au moins 2 montages, trouvé ${occurrences}`);
@@ -85,7 +87,9 @@ test('le panneau est monté dans la session Live, et réservé à l hôte', () =
 });
 
 test('le panneau ne vole pas la barre d espace au lecteur audio', () => {
-  assert.ok(PANNEAU.includes('usePrompteur(false)'),
+  // L’instance est désormais tenue par la PAGE (et partagée avec l’overlay caméra) :
+  // c’est donc là que se décide « pas de raccourcis clavier dans une session ».
+  assert.ok(SESSION.includes('usePrompteur(false)'),
     'raccourcis clavier désactivés dans la session Live');
   assert.ok(STUDIO.includes('usePrompteur(true)'),
     'raccourcis actifs sur /studio, qui n’a pas de lecteur audio');

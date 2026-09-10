@@ -41,6 +41,8 @@ import { SessionSocial } from '@/components/session/SessionSocial';
 import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PanneauPrompteur } from '@/components/session/PanneauPrompteur';
+import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
+import { usePrompteur } from '@/hooks/usePrompteur';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
 import { createPortal } from 'react-dom';
@@ -730,6 +732,19 @@ export const SessionPage: React.FC = () => {
   const [coHostIds, setCoHostIds] = useState<Set<string>>(new Set());
   const isCoHost = !isHost && !!user && coHostIds.has(socket.userId);
   const canShare = isHost || isCoHost;
+
+  // 📜 LE prompteur de cette page — UNE seule instance, tenue ICI et partagée.
+  //
+  //  Le panneau de préparation et l'overlay posé sur la caméra lisent le MÊME objet.
+  //  S'ils appelaient chacun `usePrompteur`, ils auraient deux textes, deux Play/Pause
+  //  et deux vitesses qui divergeraient dès le premier réglage — le coach appuierait
+  //  sur ▶ dans le panneau et rien ne défilerait sur sa vidéo.
+  //
+  //  Raccourcis clavier OFF : dans une session, la barre d'espace appartient déjà au
+  //  lecteur audio, et deux consommateurs d'une même touche = comportement imprévisible.
+  const prompteur = usePrompteur(false);
+  // Overlay refermé au départ : la caméra garde sa place tant que le coach ne l'ouvre pas.
+  const [prompteurSurVideo, setPrompteurSurVideo] = useState(false);
 
   // 💓 POINT 3a: dernier état de lecture de l'hôte (pour heartbeat de resynchro)
   const heartbeatStateRef = useRef<{ isPlaying: boolean; currentTime: number; trackId: number | null }>({
@@ -2907,19 +2922,10 @@ export const SessionPage: React.FC = () => {
     persistOwnerPlaylist(tracks, track.id);
   }, [showToast, isHost, socket, tracks, persistOwnerPlaylist]);
 
-  // 🎚️ Chantier D : piste précédente / suivante depuis le mini-contrôle audio (hôte). Réutilise la même
-  //    mécanique que l'enchaînement automatique (setAutoPlayPending + syncPlayback) → aucun 2ᵉ moteur audio.
-  const handleMiniTrackNav = useCallback((delta: number) => {
-    if (!canShare || tracks.length === 0) return;
-    const idx = selectedTrack ? tracks.findIndex((t) => t.id === selectedTrack.id) : -1;
-    const nextIdx = (((idx < 0 ? 0 : idx) + delta) % tracks.length + tracks.length) % tracks.length;
-    const nt = tracks[nextIdx];
-    if (!nt) return;
-    setSelectedTrack(nt);
-    setAutoPlayPending(nt.src);
-    socket.syncPlaylist(tracks, nt.id);
-    socket.syncPlayback(true, 0, nt.id);
-  }, [canShare, tracks, selectedTrack, socket]);
+  // 🎚️ (Le mini-contrôle audio n'a plus SA PROPRE navigation de piste : ⏮ et ⏭ appellent
+  //     `handlePlayerPrevious` / `handlePlayerNext`, les gestionnaires du grand lecteur.
+  //     Deux mécaniques de sélection cohabitaient — l'une rebouclait sans tenir compte du
+  //     mode répétition, l'autre non. Il n'en reste qu'une.)
 
   // ⏭️ « MORCEAU SUIVANT » DU LECTEUR (hôte / co-hôte).
   //
@@ -3523,10 +3529,99 @@ export const SessionPage: React.FC = () => {
   //  quitter son direct. Le panneau est REPLIÉ par défaut : tant qu'il ne l'ouvre
   //  pas, la caméra et les participants gardent exactement leur place.
   //
-  //  RÉSERVÉ À L'HÔTE : un participant n'a pas de texte à lire, et le script ne
-  //  doit apparaître nulle part chez lui. Le texte ne quitte de toute façon jamais
-  //  le navigateur — aucun socket, aucune requête (un banc le vérifie).
-  const prompteurNode = isHost ? <PanneauPrompteur /> : null;
+  //  RÉSERVÉ À QUI PRÉSENTE (hôte ET co-hôte, soit exactement `canShare` — la même
+  //  condition que « Caméra externe » ou « Partager l'écran »). Un simple spectateur
+  //  n'a pas de texte à lire et le script n'apparaît nulle part chez lui. Le gate
+  //  était `isHost` seul : un co-animateur voyait sa caméra mais pas son prompteur.
+  //  Le texte ne quitte de toute façon jamais le navigateur — aucun socket, aucune
+  //  requête (un banc le vérifie).
+  const prompteurNode = canShare ? (
+    <PanneauPrompteur p={prompteur} onAfficherSurLaVideo={() => setPrompteurSurVideo(true)} />
+  ) : null;
+
+  // 📜 LE PROMPTEUR FACE CAMÉRA — le texte SUR la vidéo, pas à côté.
+  //
+  //  Un panneau latéral oblige à regarder à droite pendant qu'on parle à l'objectif :
+  //  sur un téléphone tenu à bout de bras, c'est un regard fuyant toute la séance. Le
+  //  texte est donc posé EN HAUT de l'aperçu, le bord le plus proche de la caméra
+  //  frontale, avec une bande courte qui laisse le visage visible en dessous.
+  //
+  //  LOCAL, ET SEULEMENT LOCAL : c'est une surface DOM au-dessus du <video>. Elle
+  //  n'entre dans aucun MediaStream, aucune piste WebRTC, aucune synchro, aucun
+  //  enregistrement. Les participants reçoivent la caméra, rien d'autre.
+  const prompteurOverlayNode = (canShare && prompteurSurVideo) ? (
+    <PrompteurOverlay
+      p={prompteur}
+      hauteur="clamp(104px, 26vh, 240px)"
+      largeurMax="34rem"
+      prise="8%"
+      barre
+      compte
+      onFermer={() => setPrompteurSurVideo(false)}
+    />
+  ) : null;
+
+  // 🎚️ COMMANDES MUSIQUE COMPACTES — ⏮ ▶/⏸ ⏭ + titre, LÀ OÙ LE COACH REGARDE.
+  //
+  //  Le coach filme : il ne doit pas quitter la vue caméra pour changer de morceau.
+  //  Ce bloc est rendu dans le panneau Live Visio ET dans son plein écran (`audioNode`).
+  //
+  //  CE N'EST PAS UN SECOND LECTEUR. Aucun `<audio>` n'est créé ici : play/pause agit
+  //  sur L'UNIQUE élément musique (#bt-music-audio) via `handleMiniPlayPause`, et
+  //  ⏮ / ⏭ appellent `handlePlayerPrevious` / `handlePlayerNext` — exactement les
+  //  gestionnaires du grand lecteur, avec leur synchro participants.
+  //
+  //  ⏮ suit la convention de tous les lecteurs, et elle n'est PAS décidée ici :
+  //  `actionPrecedent` répond « redémarrer » au-delà de 3 s, « précédent » au tout
+  //  début s'il existe un titre avant, « rien » sinon. La MÊME fonction sert à
+  //  désactiver le bouton — deux endroits qui en décideraient finiraient par diverger.
+  //  Premier / dernier morceau : le bouton reste VISIBLE et devient désactivé, jamais
+  //  masqué : un bouton qui disparaît laisse croire à une panne.
+  const miniAudioIndex = selectedTrack ? tracks.findIndex((t) => t.id === selectedTrack.id) : -1;
+  const miniAudioAPrecedente = canShare && aUnePistePrecedente(tracks.length, miniAudioIndex, repeatMode);
+  const miniAudioPrecedent = actionPrecedent(audioState?.currentTime ?? 0, miniAudioAPrecedente);
+  const miniAudioSuivante = canShare && aUnePisteSuivante(tracks.length, miniAudioIndex, repeatMode);
+  const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
+    <div
+      className="flex items-center gap-2 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] px-3 py-2"
+      data-testid="mini-audio-control"
+    >
+      <button
+        onClick={() => handlePlayerPrevious(audioState?.currentTime ?? 0)}
+        disabled={miniAudioPrecedent === 'rien'}
+        className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+        title={miniAudioPrecedent === 'redemarrer' ? 'Reprendre au début' : 'Morceau précédent'}
+        aria-label={miniAudioPrecedent === 'redemarrer' ? 'Reprendre le morceau au début' : 'Morceau précédent'}
+        data-testid="mini-audio-prev"
+      >
+        <SkipBack className="w-4 h-4" />
+      </button>
+      <button
+        onClick={handleMiniPlayPause}
+        className="p-2 rounded-full text-white flex-shrink-0"
+        style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
+        title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
+        aria-label={audioState?.isPlaying ? 'Mettre la musique en pause' : 'Lancer la musique'}
+        data-testid="mini-audio-playpause"
+      >
+        {audioState?.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+      </button>
+      <button
+        onClick={handlePlayerNext}
+        disabled={!miniAudioSuivante}
+        className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+        title="Morceau suivant"
+        aria-label="Morceau suivant"
+        data-testid="mini-audio-next"
+      >
+        <SkipForward className="w-4 h-4" />
+      </button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-white text-xs font-medium">{selectedTrack.title}</p>
+        {selectedTrack.artist && <p className="truncate text-white/40 text-[11px]">{selectedTrack.artist}</p>}
+      </div>
+    </div>
+  ) : null;
 
   // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
   const liveVisioNode = (
@@ -3569,6 +3664,10 @@ export const SessionPage: React.FC = () => {
       chatUnread={chatUnreadTotal}
       onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
       stageRequestCount={stageRequests.length}
+      prompteurNode={prompteurOverlayNode}
+      prompteurOuvert={prompteurSurVideo}
+      onTogglePrompteur={canShare ? () => setPrompteurSurVideo((o) => !o) : undefined}
+      audioNode={miniAudioControlNode}
     />
   );
 
@@ -3607,34 +3706,6 @@ export const SessionPage: React.FC = () => {
     />
   );
 
-  // 🎚️ Chantier D : mini-contrôle audio partagé (hôte / co-hôte) — play/pause + titre + préc./suiv.
-  //    Réutilise l'UNIQUE élément musique (#bt-music-audio) et le HOST_COMMAND existant (aucun 2ᵉ <audio>).
-  const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
-    <div
-      className="flex items-center gap-2 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] px-3 py-2"
-      data-testid="mini-audio-control"
-    >
-      <button onClick={() => handleMiniTrackNav(-1)} className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors" title="Piste précédente" data-testid="mini-audio-prev">
-        <SkipBack className="w-4 h-4" />
-      </button>
-      <button
-        onClick={handleMiniPlayPause}
-        className="p-2 rounded-full text-white flex-shrink-0"
-        style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
-        title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
-        data-testid="mini-audio-playpause"
-      >
-        {audioState?.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-      </button>
-      <button onClick={() => handleMiniTrackNav(1)} className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors" title="Piste suivante" data-testid="mini-audio-next">
-        <SkipForward className="w-4 h-4" />
-      </button>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-white text-xs font-medium">{selectedTrack.title}</p>
-        {selectedTrack.artist && <p className="truncate text-white/40 text-[11px]">{selectedTrack.artist}</p>}
-      </div>
-    </div>
-  ) : null;
 
   // 🎥 Vignettes caméra COMPACTES (hôte + participants) pour la fenêtre flottante de la vue agrandie.
   //    + bouton « agrandir » (spotlight) par tuile — UI uniquement (même état que le panneau visio).
@@ -4386,8 +4457,9 @@ export const SessionPage: React.FC = () => {
                 (monté en permanence, masqué en CSS hors onglet → la connexion LiveKit ne se coupe pas). */}
             {!isDesktop && liveMode && sessionId && (
               <div className="bt-tab-live lg:hidden space-y-2">
-                {/* 🎚️ Chantier D : contrôle audio partagé compact (hôte) accessible depuis l'onglet Live. */}
-                {miniAudioControlNode}
+                {/* 🎚️ La barre audio compacte est maintenant rendue DANS le panneau visio
+                    (et dans son plein écran) : elle suit la caméra au lieu de rester
+                    au-dessus d'elle, et il n'en existe toujours qu'une. */}
                 {liveVisioNode}
                 {prompteurNode}
               </div>

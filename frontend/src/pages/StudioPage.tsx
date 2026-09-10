@@ -4,7 +4,8 @@ import {
   ArrowLeft, Video, VideoOff, RefreshCw, SwitchCamera, FlipHorizontal2,
   Play, Pause, RotateCcw, Minus, Plus, Maximize2, Minimize2, Timer,
 } from 'lucide-react';
-import { Prompteur, type PrompteurHandle } from '@/components/studio/Prompteur';
+import { type PrompteurHandle } from '@/components/studio/Prompteur';
+import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useCameraStudio } from '@/hooks/useCameraStudio';
 import { nomCamera } from '@/lib/studioLogic';
 import { usePrompteur } from '@/hooks/usePrompteur';
@@ -122,16 +123,9 @@ export const StudioPage: React.FC = () => {
               l'objectif sur un portable comme sur un téléphone, donc le moins de
               mouvement des yeux. Il ne couvre jamais tout le cadre (le visage reste
               visible en bas). */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-[58%] bg-gradient-to-b from-black/80 via-black/60 to-transparent" />
-          <Prompteur
-            ref={prompteurRef}
-            texte={script}
-            tailleTexte={taille}
-            vitesse={vitesse}
-            enLecture={enLecture}
-            onFin={p.surFin}
-            className="absolute inset-x-0 top-0 h-[58%] px-2 sm:px-8"
-          />
+          {/* MÊME overlay que dans la session Live : une seule présentation du texte
+              sur la vidéo, donc un seul endroit à corriger le jour où elle bouge. */}
+          <PrompteurOverlay ref={prompteurRef} p={p} />
 
           {compteA !== null && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/60" data-testid="studio-compte-a-rebours">

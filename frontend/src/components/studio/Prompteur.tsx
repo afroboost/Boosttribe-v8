@@ -29,11 +29,23 @@ export interface PrompteurProps {
   enLecture: boolean;
   /** Appelé quand le bas du texte est atteint. */
   onFin?: () => void;
+  /**
+   * « Prise d'élan » avant la première ligne, et « chute » après la dernière (CSS).
+   *
+   * Ces marges sont exprimées en POURCENTAGE DE LA LARGEUR — c'est ainsi que le CSS
+   * calcule un padding vertical en %. Sur l'aperçu presque carré de /studio, 45 %
+   * font environ une hauteur de bande : le texte monte depuis le bas, comme sur un
+   * vrai prompteur. Sur une bande large et courte posée sur une vidéo, les mêmes
+   * 45 % feraient attendre plusieurs secondes devant un cadre VIDE — d'où le
+   * réglage. Personne n'appuie sur ▶ pour regarder du noir.
+   */
+  prise?: string;
+  chute?: string;
   className?: string;
 }
 
 export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Prompteur(
-  { texte, tailleTexte, vitesse, enLecture, onFin, className = '' },
+  { texte, tailleTexte, vitesse, enLecture, onFin, prise = '45%', chute = '55%', className = '' },
   ref,
 ) {
   const conteneurRef = useRef<HTMLDivElement | null>(null);
@@ -114,7 +126,7 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
         <p
           data-testid="prompteur-texte"
           className="text-white text-center font-medium whitespace-pre-wrap break-words px-4"
-          style={{ fontSize: `${tailleTexte}px`, lineHeight: 1.45, paddingTop: '45%', paddingBottom: '55%' }}
+          style={{ fontSize: `${tailleTexte}px`, lineHeight: 1.45, paddingTop: prise, paddingBottom: chute }}
         >
           {texte}
         </p>

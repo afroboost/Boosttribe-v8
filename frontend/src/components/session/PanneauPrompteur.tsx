@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Play, Pause, RotateCcw, Minus, Plus, FlipHorizontal2, ScrollText, ChevronUp } from 'lucide-react';
 import { Prompteur, type PrompteurHandle } from '@/components/studio/Prompteur';
-import { usePrompteur } from '@/hooks/usePrompteur';
+import type { Prompteur as EtatPrompteur } from '@/hooks/usePrompteur';
 
 /**
  * 📜 PanneauPrompteur — le prompteur LÀ OÙ LE COACH TRAVAILLE DÉJÀ.
@@ -12,9 +12,14 @@ import { usePrompteur } from '@/hooks/usePrompteur';
  * de quitter son direct. Le panneau vient donc à lui.
  *
  * CE N'EST PAS UN SECOND PROMPTEUR. L'affichage est le composant `Prompteur`
- * existant ; l'état, la persistance et le Play/Pause viennent de `usePrompteur`,
- * le même hook qu'utilise `/studio`. Un seul texte, une seule sauvegarde, une seule
- * logique de lecture — écrire ici, c'est écrire là-bas.
+ * existant ; l'état arrive par la prop `p` : l'instance UNIQUE d'`usePrompteur`
+ * tenue par la page, celle-là même que lit l'overlay posé sur la vidéo. Un seul
+ * texte, une seule sauvegarde, une seule logique de lecture — écrire ici, c'est
+ * écrire là-bas, et appuyer sur ▶ ici lance le texte SUR la caméra.
+ *
+ * CE PANNEAU SERT À PRÉPARER : écrire ou coller le script, régler le miroir. Pour
+ * LIRE face caméra, c'est l'overlay qui sert — on ne demande pas à un coach de
+ * regarder à droite pendant qu'il parle à son objectif.
  *
  * CONFIDENTIALITÉ : le texte ne quitte pas le navigateur. Aucun `socket`, aucun
  * `axios`, aucune piste WebRTC dans ce fichier — un banc le vérifie.
@@ -27,13 +32,18 @@ const ROND = 'w-9 h-9 inline-flex items-center justify-center rounded-full bg-wh
   + 'hover:bg-white/20 transition-colors disabled:opacity-35 disabled:cursor-not-allowed';
 
 export interface PanneauPrompteurProps {
+  /** L'instance PARTAGÉE du prompteur (jamais un second `usePrompteur`). */
+  p: EtatPrompteur;
   className?: string;
   /** Hauteur de la zone de défilement. Plus courte sur mobile, où l'écran est rare. */
   hauteur?: number;
+  /** Ouvre le prompteur SUR la vidéo — c'est là qu'on lit, pas ici. */
+  onAfficherSurLaVideo?: () => void;
 }
 
-export const PanneauPrompteur: React.FC<PanneauPrompteurProps> = ({ className = '', hauteur = 190 }) => {
-  const p = usePrompteur(false);   // raccourcis clavier OFF : la barre d'espace appartient au lecteur audio
+export const PanneauPrompteur: React.FC<PanneauPrompteurProps> = ({
+  p, className = '', hauteur = 190, onAfficherSurLaVideo,
+}) => {
   const ref = useRef<PrompteurHandle | null>(null);
   const [ouvert, setOuvert] = useState(false);
 
@@ -156,6 +166,21 @@ export const PanneauPrompteur: React.FC<PanneauPrompteurProps> = ({ className = 
             className="mt-2 w-full resize-y rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white placeholder-white/30 focus:border-[rgb(var(--bt-accent-rgb)/0.5)] focus:outline-none"
             data-testid="live-prompteur-script"
           />
+          {onAfficherSurLaVideo && (
+            /* Le geste utile après avoir écrit : renvoyer le coach vers SA caméra,
+               où le texte défile là où son regard doit rester. */
+            <button
+              type="button"
+              onClick={onAfficherSurLaVideo}
+              className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-[rgb(var(--bt-accent-rgb)/0.4)]
+                         bg-[rgb(var(--bt-accent-rgb)/0.15)] px-3 py-2 text-xs font-medium text-[var(--bt-accent)]
+                         hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] transition-colors"
+              data-testid="live-prompteur-sur-video"
+            >
+              <ScrollText className="h-4 w-4" /> Afficher le texte sur ma caméra
+            </button>
+          )}
+
           <p className="mt-1 text-[11px] leading-snug text-white/40">
             Ton texte reste sur cet appareil : il n'est envoyé à personne, n'apparaît pas dans ta vidéo
             et reste invisible pour les participants.

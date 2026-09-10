@@ -1,5 +1,5 @@
 import React from 'react';
-import { Mic, MicOff, Video, VideoOff, Hand, Timer, Minimize2, MessageCircle } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, Hand, Timer, Minimize2, MessageCircle, ScrollText } from 'lucide-react';
 
 /**
  * 🎛️ Barre de contrôles VERTICALE (façon TikTok/Reels) ancrée à droite, réutilisée dans TOUS les
@@ -20,6 +20,10 @@ export interface VisioControlBarProps {
   chatUnread?: number;
   onToggleStageRequests?: () => void; // 🙋 gestion de scène (demandes de prise de caméra)
   stageRequestCount?: number;
+  // 📜 Prompteur — le texte SUR la vidéo doit pouvoir s'ouvrir et se fermer SANS quitter
+  //    le plein écran : sinon le coach doit sortir de son direct pour lire son script.
+  onTogglePrompteur?: () => void;
+  prompteurOuvert?: boolean;
   onReduce?: () => void; // bouton « Réduire » (plein écran caméra) — optionnel
 }
 
@@ -31,7 +35,7 @@ const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover
 export const VisioControlBar: React.FC<VisioControlBarProps> = ({
   micActive, onToggleMic, cameraOn, canManageStage, onToggleCamera, onRequestStage,
   stageRequestPending, onStartTimer, onOpenChat, chatUnread,
-  onToggleStageRequests, stageRequestCount, onReduce,
+  onToggleStageRequests, stageRequestCount, onTogglePrompteur, prompteurOuvert, onReduce,
 }) => {
   return (
     <div
@@ -99,6 +103,20 @@ export const VisioControlBar: React.FC<VisioControlBarProps> = ({
           <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center">
             {(stageRequestCount ?? 0) > 9 ? '9+' : stageRequestCount}
           </span>
+        </button>
+      )}
+
+      {/* 📜 Prompteur — bascule l'overlay de texte posé sur la caméra. Local au coach. */}
+      {onTogglePrompteur && (
+        <button
+          onClick={onTogglePrompteur}
+          className={`${ROUND} ${prompteurOuvert ? ACCENT : DARK}`}
+          title={prompteurOuvert ? 'Masquer le prompteur' : 'Afficher le prompteur'}
+          aria-label={prompteurOuvert ? 'Masquer le prompteur' : 'Afficher le prompteur'}
+          aria-pressed={!!prompteurOuvert}
+          data-testid="visio-fs-prompteur"
+        >
+          <ScrollText className="w-5 h-5" />
         </button>
       )}
 

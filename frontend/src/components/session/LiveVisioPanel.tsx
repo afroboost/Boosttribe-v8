@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw, ScrollText } from 'lucide-react';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreen } from '@/hooks/useFullscreen';
@@ -56,6 +56,17 @@ interface LiveVisioPanelProps {
   // 🙋 Demandes de scène (badge + toggle) accessibles depuis le plein écran.
   onToggleStageRequests?: () => void;
   stageRequestCount?: number;
+  // 📜 PROMPTEUR SUR LA VIDÉO. `prompteurNode` est une surface DOM LOCALE posée par-dessus
+  //    les caméras : elle n'entre dans aucun MediaStream, aucune piste WebRTC, aucune synchro.
+  //    Elle est rendue DANS la zone caméra — donc elle suit le plein écran, qui prend cette
+  //    zone pour cible. Le coach lit son texte sans jamais quitter son direct.
+  prompteurNode?: React.ReactNode;
+  prompteurOuvert?: boolean;
+  onTogglePrompteur?: () => void;
+  // 🎵 Commandes musique compactes (⏮ ▶/⏸ ⏭ + titre) — LE lecteur existant, pas un second.
+  //    Rendues dans le panneau ET dans le plein écran : changer de morceau ne doit pas
+  //    obliger à sortir de la vue caméra.
+  audioNode?: React.ReactNode;
 }
 
 type Layout = 'grid' | 'spotlight';
@@ -82,6 +93,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   onOpenChat, chatUnread, onToggleStageRequests, stageRequestCount,
+  prompteurNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
@@ -196,7 +208,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           Ce conteneur EST la cible du plein écran (chantier A) : en plein écran il devient une surface fixe noire. */}
       <div
         ref={camAreaRef}
-        className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'p-3'}
+        className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'relative p-3'}
         data-testid="visio-camera-area"
       >
         {camFullscreen ? (
@@ -218,6 +230,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               chatUnread={chatUnread}
               onToggleStageRequests={onToggleStageRequests}
               stageRequestCount={stageRequestCount}
+              onTogglePrompteur={onTogglePrompteur}
+              prompteurOuvert={prompteurOuvert}
               onReduce={exitCamFullscreen}
             />
             <div className="flex-1 min-h-0 flex items-center justify-center">
@@ -260,6 +274,18 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               </div>
             )}
             {timerNode}
+            {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle. */}
+            {prompteurNode}
+            {/* 🎵 Musique atteignable sans sortir du plein écran, au-dessus de la safe-area. */}
+            {audioNode && (
+              <div
+                className="pointer-events-none absolute inset-x-0 z-[116] flex justify-center px-3"
+                style={{ bottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+                data-testid="visio-fs-audio"
+              >
+                <div className="pointer-events-auto w-full max-w-sm">{audioNode}</div>
+              </div>
+            )}
           </>
         ) : spotlightP ? (
           /* 🔍 Vue agrandie : une grande caméra + les autres en miniatures (clic sur une miniature = l'agrandir) */
@@ -292,7 +318,14 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             ))}
           </div>
         )}
+        {/* Hors plein écran aussi : le texte se lit SUR l'aperçu, jamais à côté. */}
+        {!camFullscreen && prompteurNode}
       </div>
+
+      {/* 🎵 Commandes musique — dans le panneau, juste sous les caméras. */}
+      {audioNode && !camFullscreen && (
+        <div className="px-3 pb-1" data-testid="visio-audio">{audioNode}</div>
+      )}
 
       {/* Barre de contrôle — accessible au pouce sur mobile */}
       <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-2.5 border-t border-white/10 bg-black/20">
@@ -391,6 +424,24 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           >
             {screenSharing ? <MonitorX className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
             {screenSharing ? 'Arrêter le partage' : "Partager l'écran"}
+          </button>
+        )}
+
+        {/* 📜 Prompteur — affiche/masque le texte SUR la vidéo. Réservé à qui présente
+            (le parent ne fournit le gestionnaire qu'à l'hôte / co-hôte). */}
+        {onTogglePrompteur && (
+          <button
+            onClick={onTogglePrompteur}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+              prompteurOuvert
+                ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
+                : 'bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)]'
+            }`}
+            title={prompteurOuvert ? 'Masquer le prompteur' : 'Afficher le prompteur sur la vidéo'}
+            aria-pressed={prompteurOuvert}
+            data-testid="visio-prompteur-toggle"
+          >
+            <ScrollText className="w-4 h-4" /> Prompteur
           </button>
         )}
 

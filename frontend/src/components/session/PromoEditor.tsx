@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { sessionShareUrl } from '@/lib/publicUrl';
 import RawCropper from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
 import { X, Upload, Loader2, Copy, Check, Image as ImageIcon, Video, ArrowRight, Ticket, Play } from 'lucide-react';
@@ -62,7 +63,8 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
   const [zoom, setZoom] = useState(1);
   const cropPixelsRef = useRef<Area | null>(null);
 
-  const shareUrl = `${window.location.origin}/promo/${sessionId}`;
+  // Doit inclure le préfixe de la marque (/live) : voir lib/publicUrl.ts.
+  const shareUrl = sessionShareUrl(sessionId);
   const aspect = format === '9:16' ? 9 / 16 : 16 / 9;
 
   useEffect(() => {

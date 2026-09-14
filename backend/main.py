@@ -120,9 +120,21 @@ def decrypt_secret(token: Optional[str]) -> Optional[str]:
 
 app = FastAPI(title="BoostTribe Pay")
 
+# Origines autorisées — configurables (liste séparée par des virgules).
+# Le MÊME backend sert boosttribe.pro (défaut) et l'habillage Afroboost Live,
+# dont le front est servi sous https://afroboost.com/live et appelle son
+# backend sur un autre hôte (api-live.afroboost.com) : sans afroboost.com dans
+# cette liste, le navigateur bloquerait tous ses appels. Poser
+# CORS_ORIGINS="https://afroboost.com,https://www.afroboost.com" sur ce déploiement-là.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("CORS_ORIGINS", "https://boosttribe.pro,https://www.boosttribe.pro").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://boosttribe.pro", "https://www.boosttribe.pro"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Send, Lock } from 'lucide-react';
 import { getCreditsConfig, type CreditsConfig } from '@/lib/paymentApi';
 
@@ -171,13 +172,14 @@ export const AssistantChat: React.FC<AssistantChatProps> = ({ hasAccess, gradien
         </div>
         <h3 className="text-white font-semibold mb-2">Assistant BoostTribe</h3>
         <p className="text-white/60 text-sm mb-4">Procurez-vous des crédits pour accéder à l'assistant et aux lives.</p>
-        <a
-          href="/pricing"
+        {/* <Link> et non <a href> : sous /live, un lien brut sortirait de l'app. */}
+        <Link
+          to="/pricing"
           className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
           style={{ background: gradient }}
         >
           Acheter des crédits
-        </a>
+        </Link>
       </div>
     );
   }

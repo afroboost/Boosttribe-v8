@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import supabase, { isSupabaseConfigured } from '@/lib/supabaseClient';
 import { useTheme } from '@/context/ThemeContext';
 import { resolveImageSource } from '@/utils/mediaUrl';
+import { BRAND, BRAND_THEME } from '@/config/brand';
 
 // Site settings interface
 interface SiteSettings {
@@ -40,16 +41,18 @@ interface SiteSettings {
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
-  site_name: 'Boosttribe',
-  site_slogan: 'Unite Through Rhythm',
-  site_description: 'Rejoignez la communauté des beatmakers et producteurs.',
-  site_badge: 'La communauté des créateurs',
+  // Défauts = la MARQUE du build (cf. config/brand.ts) ; la base `site_settings`
+  // les surcharge ensuite, comme avant.
+  site_name: BRAND_THEME.name,
+  site_slogan: BRAND_THEME.slogan,
+  site_description: BRAND_THEME.description,
+  site_badge: BRAND.communityBadge.fr,
   favicon_url: '',
   hero_video_url: '',
   hero_poster_url: '',
   home_carousel: [],
-  color_primary: '#7A5CFF',
-  color_secondary: '#E24A9E',
+  color_primary: BRAND_THEME.colors.primary,
+  color_secondary: BRAND_THEME.colors.secondary,
   color_background: '#000000',
   btn_login: 'Connexion',
   btn_start: 'Commencer',

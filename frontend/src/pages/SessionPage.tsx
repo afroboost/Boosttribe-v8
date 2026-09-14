@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { sessionShareUrl } from '@/lib/publicUrl';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, Plus, ListMusic, SlidersHorizontal } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
@@ -3284,8 +3285,9 @@ export const SessionPage: React.FC = () => {
   // /promo redirige automatiquement vers la session (parcours transparent).
   const sessionUrl = useMemo(() => {
     if (!sessionId) return '';
-    const baseUrl = window.location.origin;
-    return `${baseUrl}/promo/${sessionId}`;
+    // Sous /live, `window.location.origin` seul perdait le préfixe (QR cassé) :
+    // le lien passe par la base publique de la marque. Voir lib/publicUrl.ts.
+    return sessionShareUrl(sessionId);
   }, [sessionId]);
 
   // Copy session link to clipboard
@@ -3603,15 +3605,17 @@ export const SessionPage: React.FC = () => {
   const miniAudioAPrecedente = canShare && aUnePistePrecedente(tracks.length, miniAudioIndex, repeatMode);
   const miniAudioPrecedent = actionPrecedent(audioState?.currentTime ?? 0, miniAudioAPrecedente);
   const miniAudioSuivante = canShare && aUnePisteSuivante(tracks.length, miniAudioIndex, repeatMode);
+  //  ZONE TACTILE : chaque bouton fait au moins 44 × 44 px (pouce, Samsung, plein
+  //  écran) — l'icône reste petite, c'est la cible qui grandit.
   const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
     <div
-      className="flex items-center gap-2 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] px-3 py-2"
+      className="flex items-center gap-1 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] px-2 py-1"
       data-testid="mini-audio-control"
     >
       <button
         onClick={() => handlePlayerPrevious(audioState?.currentTime ?? 0)}
         disabled={miniAudioPrecedent === 'rien'}
-        className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+        className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
         title={miniAudioPrecedent === 'redemarrer' ? 'Reprendre au début' : 'Morceau précédent'}
         aria-label={miniAudioPrecedent === 'redemarrer' ? 'Reprendre le morceau au début' : 'Morceau précédent'}
         data-testid="mini-audio-prev"
@@ -3620,7 +3624,7 @@ export const SessionPage: React.FC = () => {
       </button>
       <button
         onClick={handleMiniPlayPause}
-        className="p-2 rounded-full text-white flex-shrink-0"
+        className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-full text-white flex-shrink-0"
         style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
         title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
         aria-label={audioState?.isPlaying ? 'Mettre la musique en pause' : 'Lancer la musique'}
@@ -3631,7 +3635,7 @@ export const SessionPage: React.FC = () => {
       <button
         onClick={handlePlayerNext}
         disabled={!miniAudioSuivante}
-        className="p-2 rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+        className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
         title="Morceau suivant"
         aria-label="Morceau suivant"
         data-testid="mini-audio-next"

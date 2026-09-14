@@ -24,84 +24,84 @@
 
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-        <meta name="theme-color" content="#8A2EFF" />
+        <meta name="theme-color" content="%REACT_APP_BRAND_THEME_COLOR%" />
         <meta name="color-scheme" content="dark" />
 
-        <!-- SEO & Branding Boosttribe -->
-        <title>Boosttribe - Unite Through Rhythm</title>
-        <meta name="description" content="Boosttribe - La plateforme d'écoute musicale synchronisée. Créez des sessions, partagez vos beats et connectez-vous avec la communauté des producteurs." />
-        <meta name="keywords" content="Boosttribe, musique, beatmaker, producteur, écoute synchronisée, session, beats, communauté" />
-        <meta name="author" content="Boosttribe" />
+        <!-- SEO & Branding — la MARQUE du build (src/config/brands.json via vite.config.ts) -->
+        <title>%REACT_APP_BRAND_TITLE%</title>
+        <meta name="description" content="%REACT_APP_BRAND_DESCRIPTION%" />
+        <meta name="keywords" content="%REACT_APP_BRAND_KEYWORDS%" />
+        <meta name="author" content="%REACT_APP_BRAND_AUTHOR%" />
 
         <!-- OpenGraph (Partage réseaux sociaux) -->
         <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://boosttribe.pro" />
-        <meta property="og:title" content="Boosttribe - Unite Through Rhythm" />
-        <meta property="og:description" content="La plateforme d'écoute musicale synchronisée. Créez des sessions, partagez vos beats et connectez-vous avec la communauté." />
-        <meta property="og:site_name" content="Boosttribe" />
+        <meta property="og:url" content="%REACT_APP_PUBLIC_URL%" />
+        <meta property="og:title" content="%REACT_APP_BRAND_TITLE%" />
+        <meta property="og:description" content="%REACT_APP_BRAND_DESCRIPTION%" />
+        <meta property="og:site_name" content="%REACT_APP_BRAND_NAME%" />
         <meta property="og:locale" content="fr_FR" />
 
         <!-- Twitter Card -->
         <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Boosttribe - Unite Through Rhythm" />
-        <meta name="twitter:description" content="La plateforme d'écoute musicale synchronisée pour les beatmakers et producteurs." />
+        <meta name="twitter:title" content="%REACT_APP_BRAND_TITLE%" />
+        <meta name="twitter:description" content="%REACT_APP_BRAND_SHORT_DESCRIPTION%" />
 
         <!-- Canonical URL -->
-        <link rel="canonical" href="https://boosttribe.pro" />
+        <link rel="canonical" href="%REACT_APP_PUBLIC_URL%" />
 
         <!-- 🍏 PWA iOS Optimization -->
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="Boosttribe" />
-        <link rel="icon" type="image/png" href="/icon-192x192.png" />
-        <link rel="apple-touch-icon" href="/icon-192x192.png" />
-        <link rel="apple-touch-icon" sizes="192x192" href="/icon-192x192.png" />
-        <link rel="apple-touch-icon" sizes="512x512" href="/icon-512x512.png" />
+        <meta name="apple-mobile-web-app-title" content="%REACT_APP_BRAND_NAME%" />
+        <link rel="icon" type="image/png" href="%REACT_APP_BASE_PATH%icon-192x192.png" />
+        <link rel="apple-touch-icon" href="%REACT_APP_BASE_PATH%icon-192x192.png" />
+        <link rel="apple-touch-icon" sizes="192x192" href="%REACT_APP_BASE_PATH%icon-192x192.png" />
+        <link rel="apple-touch-icon" sizes="512x512" href="%REACT_APP_BASE_PATH%icon-512x512.png" />
 
         <!-- 🍏 iOS Splash Screens (Launch Images) -->
         <!-- iPhone SE, 8, 7, 6s, 6 (750x1334) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone 8 Plus, 7 Plus, 6s Plus, 6 Plus (1242x2208) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone X, XS, 11 Pro (1125x2436) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone XR, 11 (828x1792) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone XS Max, 11 Pro Max (1242x2688) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone 12 mini (1080x2340) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 360px) and (device-height: 780px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone 12, 12 Pro, 13, 13 Pro, 14 (1170x2532) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone 12 Pro Max, 13 Pro Max, 14 Plus (1284x2778) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone 14 Pro (1179x2556) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
         <!-- iPhone 14 Pro Max (1290x2796) -->
         <link rel="apple-touch-startup-image"
               media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)"
-              href="/icon-512x512.png" />
+              href="%REACT_APP_BASE_PATH%icon-512x512.png" />
 
         <!-- 📱 PWA Manifest -->
-        <link rel="manifest" href="/manifest.json" />
+        <link rel="manifest" href="%REACT_APP_BASE_PATH%manifest.json" />
 
         <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script>
 
@@ -238,9 +238,11 @@
                         window.location.reload();
                     });
 
-                    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+                    // Servi sous-chemin (/live/) : la PORTÉE d'un service worker est limitée à son
+                    // répertoire — il doit être servi ET enregistré depuis la base du build.
+                    navigator.serviceWorker.register('%REACT_APP_BASE_PATH%sw.js', { updateViaCache: 'none' })
                         .then(function (registration) {
-                            console.log('🚀 Boosttribe PWA: Service Worker registered');
+                            console.log('🚀 %REACT_APP_BRAND_NAME% PWA: Service Worker registered');
 
                             // Un SW est déjà en attente → l'activer immédiatement
                             if (registration.waiting) {
@@ -265,7 +267,7 @@
                             });
                         })
                         .catch(function (error) {
-                            console.log('🚀 Boosttribe PWA: SW registration failed:', error);
+                            console.log('🚀 %REACT_APP_BRAND_NAME% PWA: SW registration failed:', error);
                         });
                 });
             }

@@ -1,3 +1,4 @@
+import { BRAND } from '@/config/brand';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
@@ -49,7 +50,7 @@ function pickMime(): string {
 }
 
 export function useSessionRecorder(options: SessionRecorderOptions): SessionRecorderReturn {
-  const { getLocalStream, getRemoteStreams, fileBaseName = 'boosttribe-session' } = options;
+  const { getLocalStream, getRemoteStreams, fileBaseName = `${BRAND.filePrefix}-session` } = options;
 
   const [isRecording, setIsRecording] = useState(false);
 

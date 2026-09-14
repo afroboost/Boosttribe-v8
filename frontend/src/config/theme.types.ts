@@ -64,6 +64,9 @@ export interface BeattribeTheme {
   scrollIndicator: string;
 }
 
-// Re-export the theme JSON with proper typing
-import themeData from './theme.json';
-export const theme: BeattribeTheme = themeData as BeattribeTheme;
+// Le thème initial dépend de la MARQUE du build (cf. ./brand.ts) : Boosttribe
+// par défaut, Afroboost Live quand REACT_APP_BRAND=afroboost.
+import themeBoosttribe from './theme.json';
+import themeAfroboost from './theme.afroboost.json';
+const _brandId = String(import.meta.env.REACT_APP_BRAND || '').trim().toLowerCase();
+export const theme: BeattribeTheme = (_brandId === 'afroboost' ? themeAfroboost : themeBoosttribe) as BeattribeTheme;

@@ -1,0 +1,56 @@
+{
+  "name": "Afroboost Live",
+  "slogan": "Bouge · Transpire · Boost",
+  "description": "Danse, bouge et transpire en direct avec Coach Bassi, où que tu sois. Même musique, même énergie, au même instant.",
+  "badge": "Le live Afroboost",
+  "colors": {
+    "background": "#000000",
+    "primary": "#9f2d70",
+    "secondary": "#132058",
+    "surface": "rgba(18, 18, 24, 0.72)",
+    "surfaceSolid": "#131318",
+    "text": {
+      "primary": "#F5F5F7",
+      "secondary": "rgba(255, 255, 255, 0.66)",
+      "muted": "rgba(255, 255, 255, 0.42)"
+    },
+    "gradient": {
+      "primary": "linear-gradient(125deg, #9f2d70 0%, #6b2560 50%, #132058 100%)",
+      "glow": "rgba(159, 45, 112, 0.18)"
+    }
+  },
+  "fonts": {
+    "heading": "'Space Grotesk', sans-serif",
+    "body": "'Inter', sans-serif"
+  },
+  "borderRadius": {
+    "sm": "6px",
+    "md": "12px",
+    "lg": "16px",
+    "full": "9999px"
+  },
+  "navigation": {
+    "links": [
+      {
+        "label": "Le live",
+        "href": "#features"
+      },
+      {
+        "label": "Les cours",
+        "href": "#community"
+      },
+      {
+        "label": "Tarifs",
+        "href": "#pricing"
+      }
+    ]
+  },
+  "buttons": {
+    "login": "Connexion",
+    "start": "Commencer",
+    "joinTribe": "Rejoindre le live",
+    "exploreBeats": "Voir les cours"
+  },
+  "scrollIndicator": "Découvrir",
+  "stats": []
+}

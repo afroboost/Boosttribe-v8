@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { X, Send, Users, MessageCircle, ArrowLeft, Trash2, Lock, Bot } from 'lucide-react';
 import { ProfilePhoto } from '@/components/session/ProfilePhoto';
 import { AssistantChat } from '@/components/AssistantChat';
@@ -136,13 +137,14 @@ const ProLock: React.FC<{ gradient: string }> = ({ gradient }) => (
     </div>
     <h3 className="text-white font-semibold mb-2">Le chat (groupé et privé) nécessite des crédits</h3>
     <p className="text-white/60 text-sm mb-4">Procurez-vous des crédits pour discuter avec le groupe et en privé.</p>
-    <a
-      href="/pricing"
+    {/* <Link> et non <a href> : sous /live, un lien brut sortirait de l'app. */}
+    <Link
+      to="/pricing"
       className="px-6 py-2 rounded-full text-white text-sm font-medium transition-all hover:opacity-90"
       style={{ background: gradient }}
     >
       Acheter des crédits
-    </a>
+    </Link>
   </div>
 );
 

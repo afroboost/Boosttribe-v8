@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
+import { Link } from 'react-router-dom';
 import { Maximize2, ArrowLeft, X, Video as VideoIcon, Image as ImageIcon, Link as LinkIcon, Youtube, Volume2 } from 'lucide-react';
 import Vimeo from '@vimeo/player';
 import type { SharedMedia } from '@/lib/supabaseClient';
@@ -801,9 +802,10 @@ export const SharedMediaPlayer = forwardRef<SharedMediaPlayerHandle, SharedMedia
           <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-black/75 backdrop-blur-sm text-center p-4">
             <p className="text-white font-semibold text-sm">Aperçu limité à 30 s</p>
             <p className="text-white/60 text-xs">Utilisez des crédits pour la vidéo complète</p>
-            <a href="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
+            {/* <Link> et non <a href> : sous /live, un lien brut sortirait de l'app. */}
+            <Link to="/pricing" className="mt-1 px-3 py-1.5 rounded-full text-white text-xs font-semibold" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
               Acheter des crédits
-            </a>
+            </Link>
           </div>
         )}
       </div>

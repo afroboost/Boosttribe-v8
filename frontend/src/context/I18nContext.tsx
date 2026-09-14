@@ -1,3 +1,4 @@
+import { BRAND } from '@/config/brand';
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from 'react';
 import { Globe, Check } from 'lucide-react';
 
@@ -33,9 +34,10 @@ const translations: Translations = {
   
   // Hero Section
   'hero.badge': {
-    fr: 'La communauté des créateurs',
-    en: 'The community of creators',
-    de: 'Die Gemeinschaft der Schöpfer',
+    // Texte de MARQUE (cf. config/brand.ts) : Boosttribe ou Afroboost Live.
+    fr: BRAND.communityBadge.fr,
+    en: BRAND.communityBadge.en,
+    de: BRAND.communityBadge.de,
   },
   'hero.title': {
     fr: 'Unite Through Rhythm',

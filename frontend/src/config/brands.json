@@ -1,0 +1,42 @@
+{
+  "boosttribe": {
+    "id": "boosttribe",
+    "name": "Boosttribe",
+    "title": "Boosttribe - Unite Through Rhythm",
+    "description": "Boosttribe - La plateforme d'écoute musicale synchronisée. Créez des sessions, partagez vos beats et connectez-vous avec la communauté des producteurs.",
+    "shortDescription": "La plateforme d'écoute musicale synchronisée pour les beatmakers et producteurs.",
+    "keywords": "Boosttribe, musique, beatmaker, producteur, écoute synchronisée, session, beats, communauté",
+    "author": "Boosttribe",
+    "publicUrl": "https://boosttribe.pro",
+    "basePath": "/",
+    "themeColor": "#8A2EFF",
+    "communityBadge": { "fr": "La communauté des créateurs", "en": "The community of creators", "de": "Die Gemeinschaft der Schöpfer" },
+    "filePrefix": "boosttribe",
+    "vendCredits": true,
+    "manifest": {
+      "description": "La plateforme d'écoute musicale synchronisée pour les beatmakers et producteurs",
+      "categories": ["music", "social"],
+      "shortcut": { "name": "Nouvelle Session", "short_name": "Session", "description": "Créer une nouvelle session d'écoute" }
+    }
+  },
+  "afroboost": {
+    "id": "afroboost",
+    "name": "Afroboost Live",
+    "title": "Afroboost Live — Bouge · Transpire · Boost",
+    "description": "Danse, bouge et transpire en direct avec Coach Bassi, où que tu sois. Même musique, même énergie, au même instant.",
+    "shortDescription": "Danse, bouge et transpire en direct avec Coach Bassi, où que tu sois.",
+    "keywords": "Afroboost, live, cours en direct, danse, fitness, afrobeat, cardio, Coach Bassi, session",
+    "author": "Afroboost",
+    "publicUrl": "https://afroboost.com/live",
+    "basePath": "/live/",
+    "themeColor": "#9f2d70",
+    "communityBadge": { "fr": "La communauté Afroboost", "en": "The Afroboost community", "de": "Die Afroboost-Community" },
+    "filePrefix": "afroboost-live",
+    "vendCredits": false,
+    "manifest": {
+      "description": "Le live Afroboost : même musique, même énergie, au même instant.",
+      "categories": ["fitness", "health", "lifestyle"],
+      "shortcut": { "name": "Rejoindre le live", "short_name": "Live", "description": "Rejoindre une session Afroboost Live" }
+    }
+  }
+}

@@ -1,3 +1,4 @@
+import { BRAND } from '@/config/brand';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useTheme } from '@/context/ThemeContext';
@@ -233,7 +234,12 @@ const PricingPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumePlan]);
 
-  const packs = config?.packs || [];
+  // 🏷️ MARQUE : l'habillage Afroboost ne vend QUE des abonnements (V405 de la
+  //  copie « Afroboost Live », 7 août) — aucun pack de crédits, aucune promo
+  //  de crédits, pas d'option tarifée en crédits, et pas la section « Tu es
+  //  coach ? » qui doublonnait la carte Coach ci-dessus. Boosttribe garde tout.
+  const vendCredits = BRAND.vendCredits;
+  const packs = vendCredits ? (config?.packs || []) : [];
   const participantPacks = packs.filter((p) => p.audience === 'participant');
   const creatorPacks = packs.filter((p) => p.audience === 'creator');
   const offers = config?.offers || {};
@@ -356,15 +362,28 @@ const PricingPage: React.FC = () => {
         <div className="text-center pt-10">
           <p className="eyebrow mb-5" style={{ color: theme.colors.primary }}>Tarifs</p>
           <h1 className="font-display display-hero text-white mb-6">
-            Payez ce que<br /><span className="font-display-italic text-white/90">vous utilisez.</span>
+            {vendCredits ? (
+              <>Payez ce que<br /><span className="font-display-italic text-white/90">vous utilisez.</span></>
+            ) : (
+              <>Un abonnement,<br /><span className="font-display-italic text-white/90">tout l'accès.</span></>
+            )}
           </h1>
           <p className="text-white/55 text-lg max-w-2xl mx-auto mb-8 leading-relaxed">
-            <span className="font-semibold text-white">1 crédit = 1 accès à un live.</span>{' '}
-            Pas d'abonnement : tu paies uniquement ce que tu utilises, et tes crédits restent valables {validityMonths} mois.
+            {vendCredits ? (
+              <>
+                <span className="font-semibold text-white">1 crédit = 1 accès à un live.</span>{' '}
+                Pas d'abonnement : tu paies uniquement ce que tu utilises, et tes crédits restent valables {validityMonths} mois.
+              </>
+            ) : (
+              <>
+                <span className="font-semibold text-white">Un abonnement, tout l'accès.</span>{' '}
+                Rejoins les lives autant que tu veux, sans compter. Résiliable à tout moment.
+              </>
+            )}
           </p>
 
-          {/* Solde courant */}
-          {isAuthenticated && !isAdmin && (
+          {/* Solde courant — en crédits : n'a de sens que si la marque en vend. */}
+          {vendCredits && isAuthenticated && !isAdmin && (
             <Badge className="px-4 py-2 text-white border-0" style={{ background: AFRO.gradient }}>
               <Coins size={16} className="mr-2" />
               {credits} crédit{credits > 1 ? 's' : ''} disponible{credits > 1 ? 's' : ''}
@@ -490,8 +509,8 @@ const PricingPage: React.FC = () => {
         </div>
       )}
 
-      {/* Offres mises en avant (configurables en admin) */}
-      {activeOffers.length > 0 && (
+      {/* Offres mises en avant (configurables en admin) — promotions sur les packs de crédits */}
+      {vendCredits && activeOffers.length > 0 && (
         <div className="max-w-5xl mx-auto mb-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {activeOffers.map((o) => (
             <div key={o.key} className="flex items-start gap-3 p-4 rounded-xl bg-white/5 border border-white/10">
@@ -543,8 +562,8 @@ const PricingPage: React.FC = () => {
         </>
       )}
 
-      {/* Services inclus (configurables en admin) */}
-      {services.length > 0 && (
+      {/* Services inclus (configurables en admin) — « avec tes crédits » */}
+      {vendCredits && services.length > 0 && (
         <div className="max-w-3xl mx-auto mt-4 mb-8">
           <h3 className="text-white/80 text-center font-semibold mb-4">Ce que tu débloques avec tes crédits</h3>
           <div className="flex flex-wrap justify-center gap-3">
@@ -558,7 +577,8 @@ const PricingPage: React.FC = () => {
         </div>
       )}
 
-      {/* 🔴 Option premium : Enregistrement complet + Transcription IA */}
+      {/* 🔴 Option premium : Enregistrement complet + Transcription IA — tarifée en crédits */}
+      {vendCredits && (
       <div className="max-w-4xl mx-auto mt-2 mb-8 px-1">
         <div className="flex items-start gap-4 rounded-2xl border border-white/10 bg-white/5 p-5 sm:p-6">
           <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 text-white" style={{ background: AFRO.gradient }}>
@@ -575,7 +595,12 @@ const PricingPage: React.FC = () => {
         </div>
       </div>
 
-      {/* 💎 Section COACHS — abonnement illimité (point d'entrée visible) */}
+      )}
+
+      {/* 💎 Section COACHS — abonnement illimité (point d'entrée visible).
+          Marque Afroboost : masquée, doublon de la carte Coach (même prix, même
+          handleSubscribe('enterprise')) — c'était le « Devenir Coach » en double. */}
+      {vendCredits && (
       <div className="max-w-4xl mx-auto mt-6 mb-10 px-1">
         <div
           className="rounded-2xl border p-6 sm:p-8 text-center"
@@ -617,6 +642,8 @@ const PricingPage: React.FC = () => {
           </div>
         </div>
       </div>
+
+      )}
 
       {/* CGU Modal */}
       {showTermsModal && (

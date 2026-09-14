@@ -13,15 +13,23 @@
 
 const CACHE_NAME = 'boosttribe-v11-shell-network-only';
 const CACHE_VERSION = '2.2.0';
+// 🏷️ BASE DU BUILD, déduite de la PORTÉE d'enregistrement : « / » sur boosttribe.pro,
+// « /live/ » pour l'habillage Afroboost servi sous afroboost.com/live. Un service
+// worker ne contrôle que son répertoire ; ses chemins doivent donc suivre la base
+// au lieu d'être figés à la racine (la copie « Afroboost Live » les recopiait à
+// la main — c'est ce que le dépôt unique supprime).
+const BASE = (function () {
+  try { return new URL(self.registration.scope).pathname.replace(/\/*$/, '/'); } catch (e) { return '/'; }
+})();
 
 // Assets à pré-cacher lors de l'installation.
 // ⚠️ On NE pré-cache PLUS l'app shell (« / » et « /index.html ») : il doit TOUJOURS venir du réseau
 //    (cf. networkOnlyNoStore) → plus jamais de version périmée servie après un déploiement.
 const STATIC_ASSETS = [
-  '/manifest.json',
-  '/icon-192x192.png',
-  '/icon-512x512.png',
-  '/icon-512x512-maskable.png'
+  BASE + 'manifest.json',
+  BASE + 'icon-192x192.png',
+  BASE + 'icon-512x512.png',
+  BASE + 'icon-512x512-maskable.png'
 ];
 
 // URLs à TOUJOURS exclure du cache
@@ -163,7 +171,7 @@ async function networkOnlyNoStore(request) {
     return await fetch(request, { cache: 'no-store' });
   } catch (error) {
     // Hors-ligne uniquement : dernier recours (un shell éventuellement présent, sinon message hors-ligne).
-    const cached = await caches.match('/index.html') || await caches.match('/');
+    const cached = await caches.match(BASE + 'index.html') || await caches.match(BASE);
     return cached || new Response('Hors ligne', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   }
 }
@@ -191,7 +199,7 @@ async function cacheFirstStrategy(request) {
     return networkResponse;
   } catch (error) {
     // Fallback vers le cache si offline
-    return caches.match('/') || new Response('Offline', { status: 503 });
+    return caches.match(BASE) || new Response('Offline', { status: 503 });
   }
 }
 
@@ -219,7 +227,7 @@ async function networkFirstStrategy(request) {
     }
     
     // Dernier recours : page d'accueil
-    return caches.match('/') || new Response('Offline', { status: 503 });
+    return caches.match(BASE) || new Response('Offline', { status: 503 });
   }
 }
 

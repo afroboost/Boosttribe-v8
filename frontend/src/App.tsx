@@ -1,5 +1,8 @@
 import React, { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+// Base du routeur, dérivée de la base Vite ("/" ou "/live/") — sans barre finale.
+const ROUTER_BASENAME = ((import.meta.env.BASE_URL as string) || "/").replace(/\/+$/, "") || "/";
 import "@/styles/globals.css";
 import { ThemeProvider } from "@/context/ThemeContext";
 import { SocketProvider } from "@/context/SocketContext";
@@ -116,7 +119,12 @@ const App: React.FC = () => {
     <ThemeProvider>
       <I18nProvider defaultLanguage="fr">
         <ToastProvider>
-          <BrowserRouter>
+          {/* Le `basename` suit la base du build (Vite `BASE_URL`) : « / » pour
+              boosttribe.pro, « /live » pour l'habillage Afroboost servi sous
+              afroboost.com/live. Toutes les routes et tous les navigate('/…')
+              sont préfixés automatiquement. Doit rester aligné sur vite.config.ts
+              et sur start_url/scope du manifeste (générés depuis la même base). */}
+          <BrowserRouter basename={ROUTER_BASENAME}>
             <AuthProvider>
               <SiteSettingsLoader>
                 <SocketProvider>

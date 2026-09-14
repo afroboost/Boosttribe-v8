@@ -1,3 +1,4 @@
+import { BRAND } from '@/config/brand';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { resolveImageSource, describeVideoSource, isImgbbPageLink } from "@/utils/mediaUrl";
 import { Link, useNavigate } from "react-router-dom";
@@ -118,7 +119,7 @@ const DEFAULT_SETTINGS: SiteSettings = {
   site_name: 'Boosttribe',
   site_slogan: 'Unite Through Rhythm',
   site_description: 'Rejoignez la communauté des beatmakers et producteurs.',
-  site_badge: 'La communauté des créateurs',
+  site_badge: BRAND.communityBadge.fr,
   favicon_url: '',
   home_carousel: [],
   hero_video_url: '',
@@ -650,7 +651,7 @@ const Dashboard: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `boosttribe-utilisateurs-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `${BRAND.filePrefix}-utilisateurs-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }, [filteredUsers]);
@@ -1260,7 +1261,7 @@ const Dashboard: React.FC = () => {
                 label="Badge (Hero Section)"
                 value={settings.site_badge}
                 onChange={(v) => handleUpdate('site_badge', v)}
-                placeholder="La communauté des créateurs"
+                placeholder={BRAND.communityBadge.fr}
               />
               {/* Favicon paramétrable — vide = favicon par défaut (icône note de musique) */}
               <div className="space-y-1">

@@ -1,3 +1,4 @@
+import { PUBLIC_URL } from '@/config/brand';
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
@@ -357,8 +358,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: { message: 'Supabase non configuré' } as AuthError };
     }
 
-    // 🔒 VERROUILLAGE DOMAINE PRODUCTION - Force toujours boosttribe.pro
-    const PRODUCTION_URL = 'https://boosttribe.pro';
+    // 🔒 VERROUILLAGE DOMAINE PRODUCTION — l'URL publique de la MARQUE du build
+    // (boosttribe.pro, ou afroboost.com/live pour l'habillage Afroboost) : figée
+    // sur boosttribe.pro, la connexion Google renvoyait les abonnés Afroboost
+    // chez Boosttribe. Voir config/brand.ts.
+    const PRODUCTION_URL = PUBLIC_URL;
     const redirectUrl = `${PRODUCTION_URL}/session`;
     
     console.log('[AUTH] Google OAuth redirect URL (LOCKED):', redirectUrl);
@@ -418,8 +422,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { error: { message: 'Supabase non configuré' } as AuthError };
     }
 
-    // 🔒 VERROUILLAGE DOMAINE PRODUCTION - Force toujours boosttribe.pro
-    const PRODUCTION_URL = 'https://boosttribe.pro';
+    // 🔒 VERROUILLAGE DOMAINE PRODUCTION — même règle : l'URL publique de la marque.
+    const PRODUCTION_URL = PUBLIC_URL;
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${PRODUCTION_URL}/reset-password`,
     });

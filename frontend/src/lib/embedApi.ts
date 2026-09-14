@@ -90,14 +90,17 @@ export async function verifyEmbedToken(token: string): Promise<EmbedVerifyResult
  * Déclenche le débit d'1 crédit côté afroboost (idempotent sur jti) puis notifie le parent.
  * En cas de « no_credit », notifie une fin de session (le parent gère le CTA de recharge).
  */
-export async function notifyEmbedSessionStarted(): Promise<void> {
+export async function notifyEmbedSessionStarted(contexte: { sessionCode?: string | null; isHost?: boolean } = {}): Promise<void> {
   const token = getStored(TOKEN_KEY);
   if (!token) return; // pas en mode embed → aucun impact pour les utilisateurs normaux
   const jti = getStored(JTI_KEY) || '';
+  // LIVE RAPIDE : afroboost apprend QUELLE session a démarré et si c'est l'hôte —
+  // c'est ainsi qu'il sait qu'un live est « en cours » et où envoyer les suivants.
+  const detail = { session_code: String(contexte.sessionCode || ''), is_host: !!contexte.isHost };
 
   // Déjà consommé pour ce jti → on se contente de re-signaler au parent.
   if (jti && getStored(CONSUMED_KEY) === jti) {
-    postToParent({ type: 'bt:session-started', jti });
+    postToParent({ type: 'bt:session-started', jti, ...detail });
     return;
   }
 
@@ -117,16 +120,16 @@ export async function notifyEmbedSessionStarted(): Promise<void> {
   try { if (jti) sessionStorage.setItem(CONSUMED_KEY, jti); } catch { /* ignore */ }
 
   if (!ok) {
-    postToParent({ type: 'bt:session-ended', jti });
+    postToParent({ type: 'bt:session-ended', jti, ...detail });
     return;
   }
-  postToParent({ type: 'bt:session-started', jti });
+  postToParent({ type: 'bt:session-started', jti, ...detail });
 }
 
 /** Fin de session (no-op hors mode embed) → informe le parent afroboost. */
-export function notifyEmbedSessionEnded(): void {
+export function notifyEmbedSessionEnded(contexte: { sessionCode?: string | null; isHost?: boolean } = {}): void {
   const token = getStored(TOKEN_KEY);
   if (!token) return;
   const jti = getStored(JTI_KEY) || '';
-  postToParent({ type: 'bt:session-ended', jti });
+  postToParent({ type: 'bt:session-ended', jti, session_code: String(contexte.sessionCode || ''), is_host: !!contexte.isHost });
 }

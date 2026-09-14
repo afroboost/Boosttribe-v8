@@ -19,12 +19,19 @@ const EmbedPage: React.FC = () => {
   const [verified, setVerified] = useState(false);
   const ranRef = useRef(false);
   const navigatedRef = useRef(false);
+  const sessionCibleRef = useRef('');
 
   // 1) Vérifier le jeton + connexion automatique (une seule fois).
   useEffect(() => {
     if (ranRef.current) return;
     ranRef.current = true;
-    const token = new URLSearchParams(window.location.search).get('bt_token') || '';
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('bt_token') || '';
+    // LIVE RAPIDE : afroboost peut désigner la session à rejoindre (`bt_session`),
+    // celle du live EN COURS. Un code de session est [A-Z0-9-] ; tout le reste
+    // est ignoré et on retombe sur le hub.
+    const cible = (params.get('bt_session') || '').trim().toUpperCase();
+    sessionCibleRef.current = /^[A-Z0-9-]{4,40}$/.test(cible) ? cible : '';
     if (!token) {
       setStatus('error');
       setError('Lien invalide — aucun jeton fourni. Retournez sur afroboost.com.');
@@ -47,7 +54,9 @@ const EmbedPage: React.FC = () => {
     if (!verified || navigatedRef.current) return;
     if (isAuthenticated) {
       navigatedRef.current = true;
-      navigate('/session', { replace: true });
+      // Session désignée par afroboost -> directement dedans (1 clic côté afroboost),
+      // sinon le hub habituel (créer / rejoindre).
+      navigate(sessionCibleRef.current ? `/session/${sessionCibleRef.current}` : '/session', { replace: true });
     }
   }, [verified, isAuthenticated, navigate]);
 

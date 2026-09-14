@@ -1714,6 +1714,9 @@ export const SessionPage: React.FC = () => {
   //    on prévient afroboost pour débiter 1 crédit (idempotent sur jti côté afroboost) + postMessage.
   //    100% no-op hors mode embed → aucun impact pour les utilisateurs BoostTribe normaux.
   const embedStartedRef = useRef(false);
+  // Le rôle peut se résoudre APRÈS le démarrage (host_id relu) : on garde le
+  // dernier connu pour que « ended » parle de la même session, avec le bon rôle.
+  const embedContexteRef = useRef<{ sessionCode?: string | null; isHost?: boolean }>({});
   useEffect(() => {
     if (embedStartedRef.current) return;
     if (!isEmbedMode()) return;               // pas d'accès afroboost → ne rien faire
@@ -1723,12 +1726,21 @@ export const SessionPage: React.FC = () => {
     if (hasTicket === false) return;          // bloqué par billet → live pas démarré
     if (paidAwaitingSignup) return;
     embedStartedRef.current = true;
-    void notifyEmbedSessionStarted();
-  }, [sessionId, accessInfo, creditsBlocked, hasTicket, paidAwaitingSignup]);
+    embedContexteRef.current = { sessionCode: sessionId, isHost };
+    void notifyEmbedSessionStarted(embedContexteRef.current);
+  }, [sessionId, accessInfo, creditsBlocked, hasTicket, paidAwaitingSignup, isHost]);
+  useEffect(() => {
+    if (!embedStartedRef.current) return;
+    embedContexteRef.current = { sessionCode: sessionId, isHost };
+    if (!isEmbedMode()) return;
+    // Seul l'HÔTE ré-annonce : c'est son live qu'afroboost affiche « en cours ».
+    if (!embedContexteRef.current.isHost) return;
+    void notifyEmbedSessionStarted(embedContexteRef.current);
+  }, [isHost, sessionId]);
 
   // Fin de session (démontage de la page) → informe afroboost, seulement si le live avait démarré.
   useEffect(() => {
-    return () => { if (embedStartedRef.current) notifyEmbedSessionEnded(); };
+    return () => { if (embedStartedRef.current) notifyEmbedSessionEnded({ sessionCode: embedContexteRef.current.sessionCode || '', isHost: !!embedContexteRef.current.isHost }); };
   }, []);
 
   // 🎟️ Session payante : le participant non-hôte a besoin d'un billet valide pour accéder au live.

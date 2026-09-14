@@ -99,7 +99,9 @@ test('les quatre outils du coach ont UNE seule condition : canShare (hôte ou co
 
 test('direct et embed atterrissent sur la MÊME page de session', () => {
   const code = codeSeul(EMBED);
-  assert.ok(code.includes("navigate('/session', { replace: true })"), 'l embed navigue vers /session, il ne rend rien lui-même');
+  assert.ok(code.includes("navigate(sessionCibleRef.current ? `/session/${sessionCibleRef.current}` : '/session', { replace: true })"),
+    'l embed navigue vers /session (ou la session désignée par bt_session), il ne rend rien lui-même');
+  assert.ok(code.includes("/^[A-Z0-9-]{4,40}$/.test(cible)"), 'bt_session est borné à un code de session');
   assert.ok(!code.includes('LiveVisio'), 'EmbedPage ne monte aucun Live');
   const app = codeSeul(APP);
   assert.equal((app.match(/element={<SessionPage/g) || []).length >= 1, true);

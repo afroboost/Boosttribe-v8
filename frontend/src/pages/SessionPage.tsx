@@ -42,6 +42,7 @@ import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded } from 
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PanneauPrompteur } from '@/components/session/PanneauPrompteur';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
+import { TiroirPrompteur } from '@/components/session/TiroirPrompteur';
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
@@ -745,6 +746,8 @@ export const SessionPage: React.FC = () => {
   const prompteur = usePrompteur(false);
   // Overlay refermé au départ : la caméra garde sa place tant que le coach ne l'ouvre pas.
   const [prompteurSurVideo, setPrompteurSurVideo] = useState(false);
+  // Tiroir d'écriture — la SEULE surface où l'on tape son texte quand on est en Live vidéo.
+  const [prompteurEnEdition, setPrompteurEnEdition] = useState(false);
 
   // 💓 POINT 3a: dernier état de lecture de l'hôte (pour heartbeat de resynchro)
   const heartbeatStateRef = useRef<{ isPlaying: boolean; currentTime: number; trackId: number | null }>({
@@ -1356,7 +1359,15 @@ export const SessionPage: React.FC = () => {
       //    en Live Visio liveMode est déjà true (no-op) ; la vidéo partagée reste affichée.
       if (!liveMode && sessionId) setLiveMode(true);
       const ok = await videoMesh.startCamera();
-      if (!ok && videoMesh.activeCameraCount < MAX_VISIO_CAMERAS) {
+      if (ok) return;
+      // DIRE POURQUOI. Un échec de caméra a deux causes très différentes, et les
+      // confondre coûte des heures : le navigateur refuse l'accès (c'est chez toi), ou
+      // le serveur vidéo est injoignable (ce n'est PAS chez toi, et aucune permission
+      // n'y changera rien). Le message générique « autorisez l'accès » envoyait chercher
+      // dans les réglages du navigateur une panne qui était côté serveur.
+      if (videoMesh.connexion === 'echec') {
+        showToast('Serveur vidéo injoignable : la caméra ne peut pas démarrer. Ce n\'est pas une autorisation à donner.', 'error');
+      } else if (videoMesh.activeCameraCount < MAX_VISIO_CAMERAS) {
         showToast('Impossible d\'accéder à la caméra (autorisez l\'accès)', 'error');
       }
     }
@@ -3558,7 +3569,18 @@ export const SessionPage: React.FC = () => {
       barre
       compte
       onFermer={() => setPrompteurSurVideo(false)}
+      onEditer={() => setPrompteurEnEdition(true)}
     />
+  ) : null;
+
+  // ✍️ ÉCRIRE SON TEXTE SANS QUITTER LE DIRECT.
+  //
+  //  Le panneau de préparation vit dans la colonne de droite ; le plein écran le fait
+  //  disparaître. Le coach se retrouvait devant « écris ton texte ci-dessous » sans
+  //  aucun « ci-dessous ». Ce tiroir est monté DANS la zone caméra, donc il suit le
+  //  plein écran — c'est la seule façon d'y être visible.
+  const prompteurTiroirNode = (canShare && prompteurEnEdition) ? (
+    <TiroirPrompteur p={prompteur} onFermer={() => setPrompteurEnEdition(false)} />
   ) : null;
 
   // 🎚️ COMMANDES MUSIQUE COMPACTES — ⏮ ▶/⏸ ⏭ + titre, LÀ OÙ LE COACH REGARDE.
@@ -3665,8 +3687,17 @@ export const SessionPage: React.FC = () => {
       onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
       stageRequestCount={stageRequests.length}
       prompteurNode={prompteurOverlayNode}
+      prompteurTiroirNode={prompteurTiroirNode}
       prompteurOuvert={prompteurSurVideo}
-      onTogglePrompteur={canShare ? () => setPrompteurSurVideo((o) => !o) : undefined}
+      // Aucun texte encore écrit ? Ouvrir le prompteur SANS ouvrir de quoi écrire serait
+      // montrer un cadre vide. On ouvre les deux : demander le prompteur, c'est demander
+      // à s'en servir.
+      onTogglePrompteur={canShare ? () => {
+        const vide = !prompteur.script.trim();
+        setPrompteurSurVideo((o) => (vide ? true : !o));
+        if (vide) setPrompteurEnEdition(true);
+      } : undefined}
+      connexionScene={videoMesh.connexion}
       audioNode={miniAudioControlNode}
     />
   );

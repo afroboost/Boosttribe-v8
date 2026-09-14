@@ -61,8 +61,16 @@ interface LiveVisioPanelProps {
   //    Elle est rendue DANS la zone caméra — donc elle suit le plein écran, qui prend cette
   //    zone pour cible. Le coach lit son texte sans jamais quitter son direct.
   prompteurNode?: React.ReactNode;
+  /**
+   * ✍️ Tiroir d'écriture du prompteur. Rendu DANS la zone caméra pour la même raison
+   * que l'overlay : c'est la cible du plein écran, et rien d'autre n'y est visible.
+   * Sans lui, écrire son texte obligeait à quitter le plein écran — donc le direct.
+   */
+  prompteurTiroirNode?: React.ReactNode;
   prompteurOuvert?: boolean;
   onTogglePrompteur?: () => void;
+  /** État de la connexion au serveur vidéo — affiché, jamais tu. */
+  connexionScene?: 'inactive' | 'en-cours' | 'connectee' | 'echec';
   // 🎵 Commandes musique compactes (⏮ ▶/⏸ ⏭ + titre) — LE lecteur existant, pas un second.
   //    Rendues dans le panneau ET dans le plein écran : changer de morceau ne doit pas
   //    obliger à sortir de la vue caméra.
@@ -93,7 +101,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   onOpenChat, chatUnread, onToggleStageRequests, stageRequestCount,
-  prompteurNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
+  prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
+  connexionScene,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
@@ -204,6 +213,17 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         </div>
       </div>
 
+      {/* ⚠️ SERVEUR VIDÉO INJOIGNABLE — à dire, et à dire ICI. Sans ce bandeau, « Allumer la
+          caméra » ne produisait rien du tout : ni image, ni erreur. Une panne du SFU était
+          alors indiscernable d'un bouton mort, et se cherchait dans le code de la caméra. */}
+      {connexionScene === 'echec' && (
+        <div className="px-4 py-2 text-xs leading-snug text-red-300 bg-red-500/10 border-b border-red-500/25"
+             role="status" data-testid="visio-connexion-echec">
+          Serveur vidéo injoignable : les caméras ne peuvent pas démarrer. Ce n'est pas une
+          autorisation à donner — le problème est côté serveur.
+        </div>
+      )}
+
       {/* Grille / bandeau de caméras — ou vue agrandie (spotlight) si une caméra est épinglée.
           Ce conteneur EST la cible du plein écran (chantier A) : en plein écran il devient une surface fixe noire. */}
       <div
@@ -276,6 +296,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             {timerNode}
             {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle. */}
             {prompteurNode}
+            {/* ✍️ …et on peut l'ÉCRIRE là aussi, sans sortir du plein écran. */}
+            {prompteurTiroirNode}
             {/* 🎵 Musique atteignable sans sortir du plein écran, au-dessus de la safe-area. */}
             {audioNode && (
               <div
@@ -320,6 +342,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         )}
         {/* Hors plein écran aussi : le texte se lit SUR l'aperçu, jamais à côté. */}
         {!camFullscreen && prompteurNode}
+        {!camFullscreen && prompteurTiroirNode}
       </div>
 
       {/* 🎵 Commandes musique — dans le panneau, juste sous les caméras. */}

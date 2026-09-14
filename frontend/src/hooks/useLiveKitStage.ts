@@ -42,8 +42,18 @@ export interface LiveKitStageOptions {
 
 export type PromoteResult = 'ok' | 'stage_full' | 'error';
 
+/**
+ * État de la connexion au SFU. Il EXISTE parce que son absence coûte cher : quand la
+ * room ne se connecte pas, `startCamera` met la demande en attente et répond « oui ».
+ * L'écran ne montrait alors RIEN — ni caméra, ni erreur. Une panne serveur devenait
+ * indiscernable d'un bouton mort, et se cherchait dans le code de la caméra.
+ */
+export type EtatConnexionScene = 'inactive' | 'en-cours' | 'connectee' | 'echec';
+
 export interface LiveKitStageReturn {
   ready: boolean;
+  /** Où en est la connexion au serveur vidéo — à AFFICHER, jamais à taire. */
+  connexion: EtatConnexionScene;
   cameraOn: boolean;
   localStream: MediaStream | null;
   remoteCameras: RemoteCamera[];
@@ -90,6 +100,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   const { sessionId, userId, name, active, canPublish, maxCameras = MAX_STAGE, onStageFull } = options;
 
   const [ready, setReady] = useState(false);
+  const [connexion, setConnexion] = useState<EtatConnexionScene>('inactive');
   const [cameraOn, setCameraOn] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [remoteCameras, setRemoteCameras] = useState<RemoteCamera[]>([]);
@@ -105,6 +116,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   videoDeviceIdRef.current = videoDeviceId;
 
   const roomRef = useRef<Room | null>(null);
+  const connexionRef = useRef<EtatConnexionScene>('inactive'); connexionRef.current = connexion;
   const cameraOnRef = useRef(false); cameraOnRef.current = cameraOn;
   const pendingCameraRef = useRef(false);     // caméra demandée mais permission/connexion pas encore prête
   const pendingScreenRef = useRef<MediaStream | null>(null); // écran à publier dès que possible
@@ -213,9 +225,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
 
   // ─── Cycle de vie : connexion à la room selon `active` + rôle initial (canPublish) ───
   useEffect(() => {
-    if (!active || !sessionId || !userId || !API_URL) return;
+    if (!active || !sessionId || !userId || !API_URL) { setConnexion('inactive'); return; }
 
     let cancelled = false;
+    setConnexion('en-cours');
     const room = new Room({ adaptiveStream: true, dynacast: true });
     roomRef.current = room;
     const screenStreams = screenStreamsRef.current; // référence stable (jamais réassignée) pour le cleanup
@@ -272,18 +285,27 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
         if (creds === 'stage_full') { onStageFullRef.current?.(); creds = await fetchToken('viewer'); }
       }
       if (!creds || creds === 'stage_full') creds = await fetchToken('viewer');
-      if (!creds || creds === 'stage_full' || cancelled) return;
+      if (!creds || creds === 'stage_full') {
+        // Pas de jeton : backend injoignable, ou refus. Le dire, ne pas attendre en silence.
+        if (!cancelled) setConnexion('echec');
+        return;
+      }
+      if (cancelled) return;
       try {
         await room.connect(creds.url, creds.token);
         if (cancelled) { await room.disconnect(); return; }
         setReady(true);
+        setConnexion('connectee');
         // Vider les publications différées (caméra/écran demandés avant la fin de la connexion).
         if (room.localParticipant.permissions?.canPublish) {
           if (pendingCameraRef.current) { pendingCameraRef.current = false; publishCamera().catch(() => { /* ignore */ }); }
           if (pendingScreenRef.current) { const s = pendingScreenRef.current; pendingScreenRef.current = null; publishScreen(s); }
         }
       } catch (err) {
+        // Cas RÉEL observé le 10/09/2026 : le SFU refuse le jeton (« invalid API key »).
+        // Sans cet état, le clic « Allumer la caméra » ne produisait STRICTEMENT rien.
         console.warn('[LIVEKIT] connexion échouée', err);
+        if (!cancelled) setConnexion('echec');
       }
     })();
 
@@ -297,6 +319,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       pendingCameraRef.current = false;
       pendingScreenRef.current = null;
       setReady(false);
+      setConnexion('inactive');
       setCameraOn(false);
       setLocalStream(null);
       setRemoteCameras([]);
@@ -308,6 +331,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   }, [active, sessionId, userId, canPublish]);
 
   const startCamera = useCallback(async (_force = false): Promise<boolean> => {
+    // Connexion en échec : répondre « oui » ferait taire l'appelant, qui n'afficherait
+    // aucune erreur — c'est exactement ce qui a masqué une panne du SFU pendant des
+    // semaines. Une demande mise en attente sur une connexion morte n'est pas un succès.
+    if (connexionRef.current === 'echec') return false;
     const room = roomRef.current;
     if (!room) { pendingCameraRef.current = true; return true; }
     if (cameraOnRef.current) return true;
@@ -416,6 +443,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
 
   return {
     ready,
+    connexion,
     cameraOn,
     localStream,
     remoteCameras,

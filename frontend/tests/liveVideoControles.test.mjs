@@ -9,11 +9,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import { lire, codeSeul, lister } from './lireSource.mjs';
 
-const SRC = path.join(process.cwd(), 'src');
-const lire = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
 
 const OVERLAY = lire('components', 'session', 'PrompteurOverlay.tsx');
 const PANEL = lire('components', 'session', 'LiveVisioPanel.tsx');
@@ -22,14 +19,6 @@ const SESSION = lire('pages', 'SessionPage.tsx');
 const STUDIO = lire('pages', 'StudioPage.tsx');
 const PANNEAU = lire('components', 'session', 'PanneauPrompteur.tsx');
 
-/** Le code exécuté, commentaires retirés : une explication n'est pas une preuve. */
-function codeSeul(txt) {
-  return txt
-    .split('\n')
-    .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-}
 
 /* ───────────────────────── PROMPTEUR : SUR la vidéo ───────────────────────── */
 
@@ -74,10 +63,8 @@ test('l overlay ne peut PAS entrer dans le flux des participants', () => {
     assert.ok(!code.includes(interdit), `PrompteurOverlay ne doit contenir aucun « ${interdit} »`);
   }
   // Et personne ne va le chercher depuis la couche média.
-  const hooks = fs.readdirSync(path.join(SRC, 'hooks'));
-  for (const f of hooks) {
-    const t = fs.readFileSync(path.join(SRC, 'hooks', f), 'utf8');
-    assert.ok(!t.includes('PrompteurOverlay'), `${f} ne doit pas connaître l overlay`);
+  for (const f of lister('hooks')) {
+    assert.ok(!lire('hooks', f).includes('PrompteurOverlay'), `${f} ne doit pas connaître l overlay`);
   }
 });
 
@@ -87,7 +74,7 @@ test('un participant n a NI panneau NI overlay', () => {
     'le panneau est réservé à qui présente (hôte ou co-hôte)');
   assert.ok(/const prompteurOverlayNode = \(canShare && prompteurSurVideo\) \?/.test(code),
     'l overlay est réservé à qui présente');
-  assert.ok(code.includes('onTogglePrompteur={canShare ? () => setPrompteurSurVideo((o) => !o) : undefined}'),
+  assert.ok(/onTogglePrompteur=\{canShare \?[\s\S]{0,400}?: undefined\}/.test(code),
     'la bascule elle-même n est fournie qu à qui présente');
 });
 

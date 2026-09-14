@@ -41,11 +41,18 @@ export interface PrompteurProps {
    */
   prise?: string;
   chute?: string;
+  /**
+   * Invite affichée quand le texte est vide. Le libellé par défaut dit « écris ton
+   * texte CI-DESSOUS » : vrai sur /studio, faux quand le prompteur est posé sur une
+   * vidéo en plein écran, où il n'y a aucun « ci-dessous ». L'appelant qui propose
+   * autre chose de plus utile passe `false` et affiche le sien.
+   */
+  montrerInvite?: boolean;
   className?: string;
 }
 
 export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Prompteur(
-  { texte, tailleTexte, vitesse, enLecture, onFin, prise = '45%', chute = '55%', className = '' },
+  { texte, tailleTexte, vitesse, enLecture, onFin, prise = '45%', chute = '55%', montrerInvite = true, className = '' },
   ref,
 ) {
   const conteneurRef = useRef<HTMLDivElement | null>(null);
@@ -118,11 +125,11 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
         scrollbarWidth: 'none',
       }}
     >
-      {vide ? (
+      {vide ? (montrerInvite ? (
         <p className="text-white/40 text-center px-4 py-10" style={{ fontSize: Math.max(14, tailleTexte / 3) }}>
           Écris ou colle ton texte ci-dessous, puis appuie sur Démarrer.
         </p>
-      ) : (
+      ) : null) : (
         <p
           data-testid="prompteur-texte"
           className="text-white text-center font-medium whitespace-pre-wrap break-words px-4"

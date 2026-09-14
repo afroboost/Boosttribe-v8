@@ -11,11 +11,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import { lire, codeSeul } from './lireSource.mjs';
 
-const SRC = path.join(process.cwd(), 'src');
-const lire = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
 
 const HOOK = lire('hooks', 'usePrompteur.ts');
 const PANNEAU = lire('components', 'session', 'PanneauPrompteur.tsx');
@@ -23,14 +20,6 @@ const STUDIO = lire('pages', 'StudioPage.tsx');
 const SESSION = lire('pages', 'SessionPage.tsx');
 const PROMPTEUR = lire('components', 'studio', 'Prompteur.tsx');
 
-/** Le code exécuté, commentaires retirés : une explication n'est pas une preuve. */
-function codeSeul(txt) {
-  return txt
-    .split('\n')
-    .filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*'))
-    .join('\n')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-}
 
 test('un seul endroit écrit le script — une seule sauvegarde', () => {
   const cle = "'bt_studio_script'";

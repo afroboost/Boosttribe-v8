@@ -1,5 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useRef } from 'react';
-import { Play, Pause, RotateCcw, Minus, Plus, X } from 'lucide-react';
+import { Play, Pause, RotateCcw, Minus, Plus, X, Pencil } from 'lucide-react';
 import { Prompteur, type PrompteurHandle } from '@/components/studio/Prompteur';
 import type { Prompteur as EtatPrompteur } from '@/hooks/usePrompteur';
 
@@ -57,10 +57,15 @@ export interface PrompteurOverlayProps {
   /** Décompte 3-2-1 rendu dans la bande (sinon le parent l'affiche à sa façon). */
   compte?: boolean;
   onFermer?: () => void;
+  /**
+   * Ouvre le tiroir d'écriture. SANS lui, l'overlay affiche un texte vide et invite à
+   * écrire « ci-dessous » — alors qu'en plein écran il n'y a aucun « ci-dessous ».
+   */
+  onEditer?: () => void;
 }
 
 export const PrompteurOverlay = forwardRef<PrompteurHandle, PrompteurOverlayProps>(function PrompteurOverlay(
-  { p, hauteur = '58%', largeurMax = 'none', prise = '45%', barre = false, compte = false, onFermer },
+  { p, hauteur = '58%', largeurMax = 'none', prise = '45%', barre = false, compte = false, onFermer, onEditer },
   ref,
 ) {
   const interne = useRef<PrompteurHandle | null>(null);
@@ -93,8 +98,28 @@ export const PrompteurOverlay = forwardRef<PrompteurHandle, PrompteurOverlayProp
           onFin={p.surFin}
           prise={prise}
           chute="60%"
+          montrerInvite={!onEditer}
           className="absolute inset-0 px-2 sm:px-8"
         />
+
+        {onEditer && !p.script.trim() && (
+          /* Le composant `Prompteur` dit « écris ton texte ci-dessous » — vrai sur /studio,
+             faux ici : posé sur la vidéo, il n'y a pas de « ci-dessous ». On le recouvre
+             par la seule chose utile à cet instant : le moyen d'écrire. */
+          <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-2 px-4 text-center"
+               data-testid="prompteur-overlay-vide">
+            <p className="text-sm text-white/70">Aucun texte pour l'instant.</p>
+            <button
+              type="button"
+              onClick={onEditer}
+              className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-white"
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
+              data-testid="prompteur-overlay-ajouter"
+            >
+              <Pencil className="h-4 w-4" /> Ajouter mon texte
+            </button>
+          </div>
+        )}
 
         {compte && p.compteA !== null && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60"
@@ -167,6 +192,14 @@ export const PrompteurOverlay = forwardRef<PrompteurHandle, PrompteurOverlayProp
               <Plus className="h-3.5 w-3.5" />
             </button>
           </div>
+
+          {onEditer && (
+            <button type="button" onClick={onEditer} className={ROND}
+                    aria-label="Modifier le texte du prompteur" title="Modifier le texte"
+                    data-testid="prompteur-overlay-editer">
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
 
           {onFermer && (
             <button type="button" onClick={onFermer} className={ROND}

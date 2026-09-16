@@ -41,6 +41,14 @@ export interface UseAudioMixerReturn {
   connectHostVoice: (audioElement: HTMLAudioElement) => void;
   disconnectMusic: () => void;
   disconnectMic: () => void;
+  // 🎛️ Phase 1 Sources — MICRO SECONDAIRE (optionnel) : 2ᵉ source branchée sur la MÊME chaîne
+  //    de diffusion (son propre GainNode → limiteur → micStreamDest). Réutilise le mixeur, rien
+  //    de parallèle. `niveau` = 0..1 pour un vumètre ; `gain` = 0..2.5 comme le micro principal.
+  connectSecondaryMic: (stream: MediaStream, gain?: number) => boolean;
+  setSecondaryMicGain: (gain: number) => void;
+  setSecondaryMicMuted: (muted: boolean) => void;
+  getSecondaryMicLevel: () => number;
+  disconnectSecondaryMic: () => void;
   getContext: () => AudioContext | null;
   // 🔴 Flux de la musique (son RÉEL post-gain) pour l'enregistrement — jamais muet contrairement à
   //    element.captureStream() (l'élément est routé via createMediaElementSource).
@@ -126,6 +134,13 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
 
   // 🎤 POINT 5: destination de flux pour le micro hôte (sortie WebRTC, JAMAIS les HP de l'hôte)
   const micStreamDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  // 🎛️ Micro secondaire (Phase 1) : source → gain2 → limiteur du micro principal → micStreamDest.
+  const mic2SourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const mic2GainRef = useRef<GainNode | null>(null);
+  const mic2AnalyserRef = useRef<AnalyserNode | null>(null);
+  const mic2GainValueRef = useRef(1);
+  const mic2MutedRef = useRef(false);
+  const micLimiterRef = useRef<DynamicsCompressorNode | null>(null);
   // 🎙️ ANTI-DUCKING : le micro vit dans son PROPRE AudioContext, SÉPARÉ de celui de la musique.
   //    Chrome « duck » (baisse ~20%) la sortie d'un AudioContext qui contient une source micro live ;
   //    en isolant le micro, le contexte musique reste à PLEIN volume quand le micro est actif.
@@ -336,6 +351,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
         micGain.connect(micLimiter);
         micLimiter.connect(micDest); // source → micGain → limiteur → dest (diffusion WebRTC)
         micGainRef.current = micGain;
+        micLimiterRef.current = micLimiter;
         micStreamDestRef.current = micDest;
         // « M'entendre » (monitoring local, #6 / 3b) : SÉPARÉ du chemin diffusé et NON saturant.
         //   - On tape la SOURCE micro AVANT micGain (le boost de diffusion peut monter à 250% et
@@ -706,6 +722,55 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     };
   }, [disconnectMusic, disconnectMic]);
 
+  // ─── 🎛️ MICRO SECONDAIRE (Phase 1 Sources) ───
+  const disconnectSecondaryMic = useCallback(() => {
+    for (const r of [mic2SourceRef, mic2GainRef, mic2AnalyserRef]) {
+      if (r.current) { try { r.current.disconnect(); } catch { /* ignore */ } r.current = null; }
+    }
+  }, []);
+  const connectSecondaryMic = useCallback((stream: MediaStream, gain = 1): boolean => {
+    const micCtx = micCtxRef.current;
+    const limiter = micLimiterRef.current;
+    if (!micCtx || !limiter) return false; // le micro principal n'est pas encore branché → la chaîne n'existe pas
+    disconnectSecondaryMic();
+    try {
+      const source = micCtx.createMediaStreamSource(stream);
+      const g = micCtx.createGain();
+      mic2GainValueRef.current = Math.max(0, Math.min(2.5, gain));
+      g.gain.value = mic2MutedRef.current ? 0 : mic2GainValueRef.current;
+      const analyser = micCtx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(g);
+      g.connect(limiter);       // même limiteur brickwall, même destination → un seul flux diffusé
+      source.connect(analyser); // dérivation dead-end pour le vumètre
+      mic2SourceRef.current = source; mic2GainRef.current = g; mic2AnalyserRef.current = analyser;
+      if (micCtx.state === 'suspended') micCtx.resume().catch(() => { /* ignore */ });
+      return true;
+    } catch (e) {
+      console.warn('[MIXER] micro secondaire non branché', e);
+      return false;
+    }
+  }, [disconnectSecondaryMic]);
+  const setSecondaryMicGain = useCallback((gain: number) => {
+    mic2GainValueRef.current = Math.max(0, Math.min(2.5, gain));
+    const g = mic2GainRef.current; const ctx = micCtxRef.current;
+    if (g && ctx && !mic2MutedRef.current) g.gain.setTargetAtTime(mic2GainValueRef.current, ctx.currentTime, 0.02);
+  }, []);
+  const setSecondaryMicMuted = useCallback((muted: boolean) => {
+    mic2MutedRef.current = muted;
+    const g = mic2GainRef.current; const ctx = micCtxRef.current;
+    if (g && ctx) g.gain.setTargetAtTime(muted ? 0 : mic2GainValueRef.current, ctx.currentTime, 0.02);
+  }, []);
+  const getSecondaryMicLevel = useCallback((): number => {
+    const a = mic2AnalyserRef.current;
+    if (!a) return 0;
+    const buf = new Uint8Array(a.fftSize);
+    a.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+    return Math.min(1, Math.sqrt(sum / buf.length) * 3);
+  }, []);
+
   return {
     state,
     initialize,
@@ -721,6 +786,11 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     connectHostVoice,
     disconnectMusic,
     disconnectMic,
+    connectSecondaryMic,
+    setSecondaryMicGain,
+    setSecondaryMicMuted,
+    getSecondaryMicLevel,
+    disconnectSecondaryMic,
     getContext,
     getMusicStream,
     getTimerOutput,

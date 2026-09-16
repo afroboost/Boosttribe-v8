@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, RefreshCw, ScrollText } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw } from 'lucide-react';
+import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreen } from '@/hooks/useFullscreen';
@@ -46,6 +47,12 @@ interface LiveVisioPanelProps {
   onSelectCamera?: (deviceId: string) => void;
   onFlipCamera?: () => void;
   onRefreshDevices?: (probe?: boolean) => void;
+  // 🎛️ Phase 1 Sources : tiroir Caméra/Audio (remplace l'ancien menu « Caméra externe »).
+  //    Optionnel : sans `sources`, l'ancien menu déroulant reste (compatibilité).
+  sources?: Omit<SourcesDrawerProps, 'ouvert' | 'onFermer' | 'videoDevices' | 'videoDeviceId' | 'cameraOn' | 'onSelectCamera' | 'onRefreshDevices'>;
+  // Avis caméra discret (aucune caméra / retour à l'interne / caméra perdue) + fermeture.
+  cameraNotice?: 'aucune-camera' | 'retour-interne' | 'camera-perdue' | null;
+  onDismissCameraNotice?: () => void;
   // 🖥️ Partage d'écran — réutilise la logique existante (getDisplayMedia + LiveKit ScreenShare).
   onToggleScreenShare?: () => void;
   screenSharing?: boolean;
@@ -99,6 +106,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   spotlightId: spotlightIdProp, onSpotlightChange,
   onStartTimer, timerNode,
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
+  sources, cameraNotice = null, onDismissCameraNotice,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   onOpenChat, chatUnread, onToggleStageRequests, stageRequestCount,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
@@ -414,10 +422,12 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
               camMenuOpen ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
             }`}
-            title="Choisir une caméra externe (USB / carte de capture)"
-            data-testid="visio-camera-menu"
+            title={sources ? 'Sources : caméras et micros' : 'Choisir une caméra externe (USB / carte de capture)'}
+            aria-label={sources ? 'Sources : caméras et micros' : 'Choisir une caméra externe'}
+            aria-expanded={camMenuOpen}
+            data-testid={sources ? 'visio-sources' : 'visio-camera-menu'}
           >
-            <SwitchCamera className="w-4 h-4" /> Caméra externe
+            {sources ? <SlidersHorizontal className="w-4 h-4" /> : <SwitchCamera className="w-4 h-4" />} {sources ? 'Sources' : 'Caméra externe'}
           </button>
         )}
 
@@ -499,8 +509,36 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         </button>
       </div>
 
-      {/* 🎥 Menu caméra (en flux, pas en overlay → jamais rogné par overflow-hidden du panneau). */}
-      {camMenuOpen && canManageStage && onSelectCamera && (
+      {/* 🎛️ Avis caméra discret — jamais bloquant, fermable. */}
+      {cameraNotice && (
+        <div className="flex items-center gap-2 px-3 py-1.5 border-t border-white/10 bg-black/30 text-xs text-white/70" role="status" data-testid="visio-camera-notice">
+          <span className="flex-1">
+            {cameraNotice === 'aucune-camera' && 'Aucune caméra disponible — le live continue en audio.'}
+            {cameraNotice === 'retour-interne' && 'Caméra externe débranchée — retour à la caméra de l’appareil.'}
+            {cameraNotice === 'camera-perdue' && 'Caméra débranchée — le live continue en audio.'}
+          </span>
+          {onDismissCameraNotice && (
+            <button type="button" onClick={onDismissCameraNotice} aria-label="Fermer" className="p-0.5 rounded text-white/50 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+          )}
+        </div>
+      )}
+
+      {/* 🎛️ Tiroir Sources (Phase 1) — en flux, fermé = rien de visible. */}
+      {sources && canManageStage && onSelectCamera && (
+        <SourcesDrawer
+          ouvert={camMenuOpen}
+          onFermer={() => setCamMenuOpen(false)}
+          videoDevices={videoDevices}
+          videoDeviceId={videoDeviceId}
+          cameraOn={cameraOn}
+          onSelectCamera={(id) => { onSelectCamera(id); }}
+          onRefreshDevices={onRefreshDevices}
+          {...sources}
+        />
+      )}
+
+      {/* 🎥 Menu caméra (ancien, conservé quand `sources` n'est pas fourni). */}
+      {!sources && camMenuOpen && canManageStage && onSelectCamera && (
         <div className="border-t border-white/10 bg-black/30 px-3 py-2.5" data-testid="visio-camera-list">
           <div className="flex items-center justify-between mb-2">
             <span className="text-white/60 text-xs font-medium">{hasFacingCam ? 'Caméra externe' : 'Choisir la caméra'}</span>

@@ -13,6 +13,9 @@ interface MicrophoneControlProps {
   // 🎙️ Mode voix mains-libres (VAD) vs manuel. Double-clic sur le bouton micro = bascule (micro allumé).
   mode?: 'voice' | 'manual';
   onToggleMode?: () => void;
+  // 🎛️ Phase 1 Sources : remonte la liste des micros + le micro courant au parent (panneau Sources),
+  //    pour que la sélection du micro PRINCIPAL passe par le MÊME chemin que ce contrôle (setDevice).
+  onDevicesChange?: (devices: MediaDeviceInfo[], deviceId: string | null) => void;
 }
 
 // 🎤 Poignée impérative : permet à un contrôle externe (ex. barre plein écran du Live Visio) de
@@ -20,6 +23,9 @@ interface MicrophoneControlProps {
 export interface MicrophoneControlHandle {
   toggle: () => void;
   isCapturing: () => boolean;
+  // 🎛️ Phase 1 Sources : choisir / rafraîchir le micro principal depuis le panneau Sources.
+  selectDevice: (deviceId: string) => Promise<void>;
+  refreshDevices: () => Promise<void>;
 }
 
 /**
@@ -34,6 +40,7 @@ export const MicrophoneControl = forwardRef<MicrophoneControlHandle, MicrophoneC
   className = '',
   mode = 'voice',
   onToggleMode,
+  onDevicesChange,
 }, ref) => {
   const [showDevices, setShowDevices] = useState(false);
 
@@ -95,7 +102,11 @@ export const MicrophoneControl = forwardRef<MicrophoneControlHandle, MicrophoneC
   useImperativeHandle(ref, () => ({
     toggle: () => { handleToggleCapture(); },
     isCapturing: () => state.isCapturing,
-  }), [handleToggleCapture, state.isCapturing]);
+    selectDevice: (deviceId: string) => setDevice(deviceId),
+    refreshDevices: async () => { await refreshDevices(); },
+  }), [handleToggleCapture, state.isCapturing, setDevice, refreshDevices]);
+  // 🎛️ Phase 1 Sources : la liste des micros et le micro courant remontent au parent.
+  useEffect(() => { onDevicesChange?.(state.devices, state.deviceId); }, [state.devices, state.deviceId, onDevicesChange]);
 
   // 🎙️ Discrimination simple-clic / double-clic (hôte, si onToggleMode fourni) :
   //   - micro ÉTEINT : simple clic = allumer IMMÉDIATEMENT (garde le geste utilisateur pour getUserMedia) ;

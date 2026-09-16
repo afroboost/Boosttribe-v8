@@ -518,21 +518,58 @@ RECORDINGS_BUCKET = "session-recordings"
 TRANSCRIBE_MODEL = os.environ.get("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-transcribe")
 SUMMARY_MODEL = os.environ.get("OPENAI_SUMMARY_MODEL", "gpt-4o-mini")
 
+# 🎙️ TRANSCRIPTION FIDÈLE (Phase 1 mini studio, 16/09/2026) — TRANSCRIPTION ≠ RÉSUMÉ.
+#   La donnée de référence est le texte du moteur speech-to-text, tel quel : ce qui a été DIT.
+#   Plus aucune passe LLM ne réécrit, raccourcit ou résume ce texte dans le parcours Live Visio
+#   (`_openai_refine` est conservé mais DÉCOUPLÉ : il n'est plus appelé ici).
+#   Le seul contexte donné au moteur est un vocabulaire court (noms propres et termes Afroboost /
+#   BoostTribe) pour qu'il ne les déforme pas — jamais pour lui faire inventer un mot absent.
+TRANSCRIBE_PROMPT = os.environ.get(
+    "OPENAI_TRANSCRIBE_PROMPT",
+    "Afroboost, Afroboosteur, BoostTribe, Bassi, cardio, afrobeat, casque audio, Silent Party, "
+    "Pulse, Fondateurs, Freedom, Flex, Neuchâtel, Auvernier, Interval training, Live Visio.",
+)
+
 class RecordStartBody(BaseModel):
     session_id: str
 
-async def _openai_transcribe(audio: bytes, filename: str, content_type: str, key: str) -> str:
-    data = {"model": TRANSCRIBE_MODEL, "language": "fr", "response_format": "text"}
+async def _openai_transcribe(audio: bytes, filename: str, content_type: str, key: str,
+                             prompt: Optional[str] = None) -> str:
+    """Speech-to-text FIDÈLE : texte brut du moteur, température 0, vocabulaire en contexte.
+    Aucune reformulation. Si le moteur ne sait pas, il ne doit pas inventer — la consigne
+    l'y encourage, mais c'est le moteur qui tranche."""
+    data = {"model": TRANSCRIBE_MODEL, "language": "fr", "response_format": "text", "temperature": "0"}
+    ctx = (prompt if prompt is not None else TRANSCRIBE_PROMPT).strip()
+    if ctx:
+        data["prompt"] = ctx[:900]
     files = {"file": (filename or "audio.webm", audio, content_type or "audio/webm")}
     async with httpx.AsyncClient(timeout=600) as client:
         resp = await client.post("https://api.openai.com/v1/audio/transcriptions",
                                  headers={"Authorization": f"Bearer {key}"}, data=data, files=files)
     if resp.status_code != 200:
         raise RuntimeError(f"transcription HTTP {resp.status_code}: {(resp.text or '')[:300]}")
-    return (resp.text or "").strip()
+    return _nettoyer_transcription((resp.text or "").strip())
 
-async def _openai_refine(raw_text: str, key: str) -> Dict[str, str]:
-    """Réécrit proprement en FR + génère un résumé / notes de cours. Renvoie {transcript, summary}."""
+def _nettoyer_transcription(texte: str) -> str:
+    """Mise en forme MINIMALE et sans perte : une phrase par ligne (ponctuation forte), espaces
+    normalisés, suppression d'une répétition purement technique du moteur (la MÊME phrase collée
+    3 fois de suite, artefact connu sur du silence). Aucun mot n'est réécrit ni retiré autrement."""
+    import re as _re
+    t = _re.sub(r"[ \t]+", " ", texte or "").strip()
+    if not t:
+        return ""
+    phrases = [p.strip() for p in _re.split(r"(?<=[.!?…])\s+", t) if p.strip()]
+    propres: list = []
+    for p in phrases:
+        if len(propres) >= 2 and propres[-1] == p and propres[-2] == p:
+            continue  # 3ᵉ répétition identique consécutive = artefact moteur, pas une parole
+        propres.append(p)
+    return "\n".join(propres)
+
+async def _openai_refine(raw_text: str, key: str) -> Dict[str, str]:  # noqa: F841 — DÉCOUPLÉ (16/09/2026)
+    """Réécrit proprement en FR + génère un résumé / notes de cours. Renvoie {transcript, summary}.
+    ⚠️ N'est PLUS appelé par le parcours d'enregistrement Live Visio : la transcription affichée
+    est le texte fidèle du moteur. Conservé pour un usage explicite ultérieur (résumé À LA DEMANDE)."""
     if not raw_text.strip():
         return {"transcript": "", "summary": ""}
     sys = ("Tu es un assistant qui met en forme la transcription d'une session live (cours/coaching) en français. "
@@ -680,8 +717,9 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
                          "summary": "⚠️ Aucun audio capté pendant l'enregistrement (silence). "
                                     "Vérifiez que le micro est activé et que la musique joue, puis réessayez."}
             else:
-                refined = await _openai_refine(raw, key)
-                patch = {"status": "done", "transcript": refined["transcript"], "summary": refined["summary"]}
+                # 🎙️ Transcription fidèle : le texte du moteur EST la transcription. Aucun résumé
+                #    automatique (TRANSCRIPTION ≠ RÉSUMÉ) : `summary` reste vide.
+                patch = {"status": "done", "transcript": raw, "summary": ""}
         except Exception as exc:  # noqa: BLE001
             logger.error("transcription échec (rec=%s): %s", rec_id, exc)
             patch = {"status": "error", "error": str(exc)[:500]}

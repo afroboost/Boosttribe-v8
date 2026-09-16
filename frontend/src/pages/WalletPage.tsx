@@ -368,7 +368,7 @@ const WalletPage: React.FC = () => {
                   <CardTitle className="text-white text-lg flex items-center gap-2">
                     <Radio size={20} style={{ color: AFRO.pink }} /> Mes enregistrements
                   </CardTitle>
-                  <p className="text-white/50 text-sm">Audio complet (toutes les voix) + transcription FR et résumé.</p>
+                  <p className="text-white/50 text-sm">Audio complet (toutes les voix) + transcription fidèle en français (texte de ce qui a été dit, sans résumé).</p>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {recordings.map((r) => (

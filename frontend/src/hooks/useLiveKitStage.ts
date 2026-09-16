@@ -10,6 +10,7 @@ import {
 } from 'livekit-client';
 import { supabase } from '@/lib/supabaseClient';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
+import { choisirCameraPrincipale, cibleBascule, decisionDebranchement } from '@/lib/sourcesLogic';
 
 /**
  * 🎥 useLiveKitStage — Mode "Live / Visio" via LiveKit (SFU), remplaçant du mesh PeerJS (useVideoMesh).
@@ -71,6 +72,15 @@ export interface LiveKitStageReturn {
   setCameraDevice: (deviceId: string) => Promise<void>;
   refreshVideoDevices: (probe?: boolean) => Promise<void>;
   flipCamera: () => Promise<void>;
+  /**
+   * 🎛️ Phase 1 Sources — avis DISCRET à afficher (jamais bloquant) :
+   *  - 'aucune-camera'  : aucun `videoinput` → le live continue en audio.
+   *  - 'retour-interne' : la caméra externe a disparu → on est revenu à la caméra de l'appareil.
+   *  - 'camera-perdue'  : la caméra a disparu et il n'en reste aucune → live audio.
+   * `null` = rien à dire. `effacerCameraNotice` le remet à null (fermeture par l'utilisateur).
+   */
+  cameraNotice: 'aucune-camera' | 'retour-interne' | 'camera-perdue' | null;
+  effacerCameraNotice: () => void;
   // 🎤 LEVER LA MAIN — actions hôte/co-hôte (accorder/retirer le droit de publier côté SFU)
   promote: (targetUserId: string) => Promise<PromoteResult>;
   demote: (targetUserId: string) => Promise<void>;
@@ -114,6 +124,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   });
   const videoDeviceIdRef = useRef<string | null>(videoDeviceId);
   videoDeviceIdRef.current = videoDeviceId;
+  // 🎛️ Phase 1 : avis caméra (aucune caméra / retour à l'interne / caméra perdue) — jamais bloquant.
+  const [cameraNotice, setCameraNotice] = useState<'aucune-camera' | 'retour-interne' | 'camera-perdue' | null>(null);
+  const effacerCameraNotice = useCallback(() => setCameraNotice(null), []);
+  const videoDevicesRef = useRef<MediaDeviceInfo[]>([]);
 
   const roomRef = useRef<Room | null>(null);
   const connexionRef = useRef<EtatConnexionScene>('inactive'); connexionRef.current = connexion;
@@ -152,8 +166,27 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
           devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
         } catch { /* permission refusée → on garde ce qu'on a */ }
       }
+      videoDevicesRef.current = devs;
       setVideoDevices(devs);
     } catch { /* ignore */ }
+  }, []);
+
+  // ─── 🎛️ Phase 1 : une caméra externe débranchée termine sa piste ('ended'). Le live ne doit pas
+  //     tomber : on repasse sur la caméra de l'appareil s'il en reste une, sinon on reste en audio
+  //     et on le dit. (Le `devicechange` ci-dessous couvre le même cas quand le navigateur ne
+  //     termine pas la piste.) ───
+  const basculeAutoRef = useRef<((retour: string | null) => Promise<void>) | null>(null);
+  const surveillerFinDePiste = useCallback((mst: MediaStreamTrack) => {
+    const onEnded = () => {
+      if (!cameraOnRef.current) return;
+      navigator.mediaDevices.enumerateDevices().then((all) => {
+        const cams = all.filter((d) => d.kind === 'videoinput');
+        videoDevicesRef.current = cams; setVideoDevices(cams);
+        const { retour } = decisionDebranchement(cams, videoDeviceIdRef.current);
+        basculeAutoRef.current?.(retour);
+      }).catch(() => { basculeAutoRef.current?.(null); });
+    };
+    try { mst.addEventListener('ended', onEnded, { once: true }); } catch { /* ignore */ }
   }, []);
 
   // ─── Publier réellement la caméra (suppose la permission accordée) ───
@@ -164,12 +197,26 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     const enable = (deviceId?: string | null) =>
       room.localParticipant.setCameraEnabled(true, deviceId ? { deviceId: { exact: deviceId } } : undefined);
     try {
+      // 🎛️ Phase 1 — règle des sources : externe choisie (si encore branchée) → caméra de
+      //    l'appareil → aucune. Sans caméra du tout, on NE jette PAS : le live reste en audio et
+      //    l'avis 'aucune-camera' s'affiche discrètement (l'hôte n'est jamais obligé d'avoir une
+      //    caméra externe).
+      let cams = videoDevicesRef.current;
+      if (!cams.length) {
+        try { cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); videoDevicesRef.current = cams; } catch { /* ignore */ }
+      }
       const wanted = videoDeviceIdRef.current;
+      const cible = cams.length ? choisirCameraPrincipale(cams, wanted) : wanted;
+      if (cams.length && cible !== wanted) {
+        // le choix mémorisé n'existe plus (débranché) → on l'oublie, la caméra de l'appareil prend le relais
+        videoDeviceIdRef.current = cible; setVideoDeviceId(cible);
+        try { if (cible) localStorage.setItem(VIDEO_DEVICE_KEY, cible); else localStorage.removeItem(VIDEO_DEVICE_KEY); } catch { /* ignore */ }
+      }
       try {
-        await enable(wanted);
+        await enable(cible);
       } catch (e) {
         // Caméra choisie indisponible (débranchée / refusée) → repli caméra par défaut, on oublie le choix.
-        if (wanted) {
+        if (cible) {
           videoDeviceIdRef.current = null; setVideoDeviceId(null);
           try { localStorage.removeItem(VIDEO_DEVICE_KEY); } catch { /* ignore */ }
           await enable(null);
@@ -177,15 +224,20 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       }
       const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
       const mst = pub?.track?.mediaStreamTrack;
-      if (mst) { setLocalStream(new MediaStream([mst])); }
+      if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
       setCameraOn(true);
       cameraOnRef.current = true;
+      setCameraNotice(null);
       refreshVideoDevices();   // labels désormais disponibles (permission accordée)
       return true;
     } catch (err) {
       console.warn('[LIVEKIT] activation caméra échouée', err);
+      // Aucun `videoinput` (ou tous refusés) : le live continue en audio, on le DIT sans bloquer.
+      const nom = (err as { name?: string } | null)?.name || '';
+      if (!videoDevicesRef.current.length || nom === 'NotFoundError' || nom === 'OverconstrainedError') setCameraNotice('aucune-camera');
       return false;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshVideoDevices]);
 
   // ─── Publier les pistes d'un flux d'écran déjà capturé (suppose la permission accordée) ───
@@ -369,11 +421,26 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       await room.switchActiveDevice('videoinput', deviceId);
       const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
       const mst = pub?.track?.mediaStreamTrack;
-      if (mst) { setLocalStream(new MediaStream([mst])); }
+      if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
     } catch (err) {
       console.warn('[LIVEKIT] changement de caméra échoué (périphérique indisponible ?)', err);
     }
-  }, []);
+  }, [surveillerFinDePiste]);
+
+  // 🎛️ Bascule automatique après débranchement : retour à la caméra de l'appareil, ou live audio.
+  basculeAutoRef.current = async (retour: string | null) => {
+    if (retour) {
+      await setCameraDevice(retour);
+      setCameraNotice('retour-interne');
+    } else {
+      const room = roomRef.current;
+      if (room) { try { await room.localParticipant.setCameraEnabled(false); } catch { /* ignore */ } }
+      setLocalStream(null); setCameraOn(false); cameraOnRef.current = false;
+      videoDeviceIdRef.current = null; setVideoDeviceId(null);
+      try { localStorage.removeItem(VIDEO_DEVICE_KEY); } catch { /* ignore */ }
+      setCameraNotice('camera-perdue');
+    }
+  };
 
   // ─── Bascule rapide (mobile) : passe à la caméra suivante (avant/arrière) ───
   const flipCamera = useCallback(async (): Promise<void> => {
@@ -382,15 +449,21 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       try { devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput'); } catch { /* ignore */ }
     }
     if (devs.length < 2) return;
-    const cur = videoDeviceIdRef.current;
-    const idx = Math.max(0, devs.findIndex((d) => d.deviceId === cur));
-    const next = devs[(idx + 1) % devs.length];
-    if (next) await setCameraDevice(next.deviceId);
+    // Avant ↔ Arrière quand les libellés le permettent ; sinon caméra suivante (comportement d'avant).
+    const next = cibleBascule(devs, videoDeviceIdRef.current);
+    if (next) await setCameraDevice(next);
   }, [videoDevices, setCameraDevice]);
 
   // ─── Rafraîchit la liste quand une caméra est branchée/débranchée ───
   useEffect(() => {
-    const handler = () => { refreshVideoDevices(); };
+    const handler = () => {
+      refreshVideoDevices().then(() => {
+        // 🎛️ Phase 1 : la caméra publiée n'est plus dans la liste → retour à l'interne (ou audio).
+        if (!cameraOnRef.current) return;
+        const { debranchee, retour } = decisionDebranchement(videoDevicesRef.current, videoDeviceIdRef.current);
+        if (debranchee) basculeAutoRef.current?.(retour);
+      });
+    };
     try { navigator.mediaDevices.addEventListener('devicechange', handler); } catch { /* ignore */ }
     return () => { try { navigator.mediaDevices.removeEventListener('devicechange', handler); } catch { /* ignore */ } };
   }, [refreshVideoDevices]);
@@ -460,6 +533,8 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     setCameraDevice,
     refreshVideoDevices,
     flipCamera,
+    cameraNotice,
+    effacerCameraNotice,
     promote,
     demote,
   };

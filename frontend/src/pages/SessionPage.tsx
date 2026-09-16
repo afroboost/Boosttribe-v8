@@ -56,6 +56,8 @@ import { PromoEditor } from '@/components/session/PromoEditor';
 import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
+import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
+import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest } from '@/lib/paymentApi';
@@ -775,6 +777,11 @@ export const SessionPage: React.FC = () => {
     setMicDuckCompensation,
     startVoiceActivity,
     stopVoiceActivity,
+    connectSecondaryMic,
+    setSecondaryMicGain,
+    setSecondaryMicMuted,
+    getSecondaryMicLevel,
+    disconnectSecondaryMic,
   } = useAudioMixer({
     onInitialized: () => {
       // Silencieux - démarrage réussi
@@ -1351,6 +1358,29 @@ export const SessionPage: React.FC = () => {
     onLimit: () => showToast(`Limite de ${MAX_VISIO_CAMERAS} caméras atteinte`, 'warning'),
     onStageFull: () => showToast('Scène pleine (10 max)', 'warning'),
   });
+
+  // 🎛️ Phase 1 Sources — caméras secondaires (aperçus locaux, ordinateur Chromium) + micro secondaire
+  //    (branché sur le mixeur existant) + liste des micros remontée par le contrôle micro principal.
+  const hostMicCtrlRef = useRef<MicrophoneControlHandle | null>(null);
+  const camerasSecondaires = useSecondaryCameras();
+  const micSecondaire = useSecondaryMic({ connectSecondaryMic, setSecondaryMicGain, setSecondaryMicMuted, getSecondaryMicLevel, disconnectSecondaryMic });
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
+  const [micDeviceId, setMicDeviceId] = useState<string | null>(null);
+  const handleMicDevicesChange = useCallback((devices: MediaDeviceInfo[], deviceId: string | null) => {
+    setMicDevices((prev) => (prev.length === devices.length && prev.every((d, k) => d.deviceId === devices[k]?.deviceId && d.label === devices[k]?.label) ? prev : devices));
+    setMicDeviceId((prev) => (prev === deviceId ? prev : deviceId));
+  }, []);
+  const sourcesProps = useMemo(() => ({
+    multiCamPossible: camerasSecondaires.possible,
+    camerasSecondaires: camerasSecondaires.cameras,
+    onAjouterCamera: (id: string, label: string) => { camerasSecondaires.ajouter(id, label); },
+    onRetirerCamera: camerasSecondaires.retirer,
+    micDevices,
+    micDeviceId,
+    onSelectMic: (id: string) => { hostMicCtrlRef.current?.selectDevice(id); },
+    onRefreshMics: () => { hostMicCtrlRef.current?.refreshDevices(); },
+    micSecondaire,
+  }), [camerasSecondaires, micDevices, micDeviceId, micSecondaire]);
   const handleToggleCamera = useCallback(async () => {
     if (videoMesh.cameraOn) {
       videoMesh.stopCamera();
@@ -1410,7 +1440,6 @@ export const SessionPage: React.FC = () => {
   }, [screenSharing, sessionId, broadcastScreenState]);
   // 🎤 Poignée du micro HÔTE (MicrophoneControl) → permet de (dé)activer le micro depuis la barre plein
   //    écran du Live Visio (BUG 5), via le MÊME chemin que le bouton principal.
-  const hostMicCtrlRef = useRef<MicrophoneControlHandle | null>(null);
   const handleLiveMicToggle = useCallback(() => {
     if (isHost) { hostMicCtrlRef.current?.toggle(); return; } // 🐛 BUG 5 : le micro hôte s'active/coupe même en plein écran
     handleToggleTalk();
@@ -1548,7 +1577,7 @@ export const SessionPage: React.FC = () => {
       setRecProcessing(true);
       uploadRecording(sid, blob, ext).then((r) => {
         setRecProcessing(false);
-        if (r.ok) { setRecResult({ id: r.id, transcript: r.transcript, summary: r.summary }); refreshCredits(); showToast('Transcription IA prête ✅', 'success'); }
+        if (r.ok) { setRecResult({ id: r.id, transcript: r.transcript, summary: r.summary }); refreshCredits(); showToast('Transcription prête', 'success'); }
         else { showToast(r.error || 'Transcription échouée', 'error'); }
       });
     },
@@ -3695,6 +3724,9 @@ export const SessionPage: React.FC = () => {
       onSelectCamera={videoMesh.setCameraDevice}
       onFlipCamera={videoMesh.flipCamera}
       onRefreshDevices={videoMesh.refreshVideoDevices}
+      sources={canShare ? sourcesProps : undefined}
+      cameraNotice={videoMesh.cameraNotice}
+      onDismissCameraNotice={videoMesh.effacerCameraNotice}
       onToggleScreenShare={handleToggleScreenShare}
       screenSharing={screenSharing}
       screenSupported={screenSupported}
@@ -4204,7 +4236,7 @@ export const SessionPage: React.FC = () => {
             </h2>
             <p className="text-white/70 text-sm mb-6">
               Cette session est <strong>enregistrée et transcrite</strong> (audio + voix) afin de générer une transcription
-              et un résumé pour l'organisateur. En continuant, tu acceptes cet enregistrement.
+              fidèle (texte de ce qui a été dit) pour l'organisateur. En continuant, tu acceptes cet enregistrement.
             </p>
             <button
               onClick={() => setRecConsentAck(true)}
@@ -4575,6 +4607,7 @@ export const SessionPage: React.FC = () => {
                   onStreamReady={setHostMicStream}
                   mode={micMode}
                   onToggleMode={handleToggleMicMode}
+                  onDevicesChange={handleMicDevicesChange}
                 />
                 {/* 🎚️ MANUEL : contrôle visible pour couper/reprendre la musique (micro allumé) */}
                 {micMode === 'manual' && hostMicActive && (
@@ -4636,7 +4669,7 @@ export const SessionPage: React.FC = () => {
                 {recProcessing && (
                   <p className="text-white/70 text-xs flex items-center gap-2">
                     <span className="inline-block w-3 h-3 rounded-full border-2 border-white/30 border-t-[var(--bt-accent-2)] animate-spin" />
-                    Transcription IA en cours…
+                    Transcription en cours…
                   </p>
                 )}
                 {recResult && (recResult.summary || recResult.transcript) && (
@@ -4649,7 +4682,7 @@ export const SessionPage: React.FC = () => {
                     )}
                     {recResult.transcript && (
                       <details>
-                        <summary className="text-white/70 text-xs cursor-pointer">Transcription complète</summary>
+                        <summary className="text-white/70 text-xs cursor-pointer">Transcription (texte fidèle de ce qui a été dit)</summary>
                         <p className="text-white/70 text-xs whitespace-pre-wrap mt-1">{recResult.transcript}</p>
                       </details>
                     )}

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles, Clapperboard } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
@@ -60,6 +60,12 @@ interface LiveVisioPanelProps {
   screenSupported?: boolean;
   // ✨ Embellir le visage (agent beauté) : réglage rendu dans le menu ⋮ — optionnel.
   embellirNode?: React.ReactNode;
+  // 🎬 Studio (Phase 2) : mini régie Preview / Programme / scènes. Fermée = rien de visible.
+  //    Entrée : item « Studio » du menu ⋮ (partout) + icône ronde discrète sur desktop.
+  //    `studioNode` est le panneau lui-même (rendu sous la barre quand `studioOpen`).
+  studioNode?: React.ReactNode;
+  studioOpen?: boolean;
+  onToggleStudio?: () => void;
   // 🙋 Demandes de scène (badge + toggle) accessibles depuis le plein écran.
   onToggleStageRequests?: () => void;
   stageRequestCount?: number;
@@ -114,7 +120,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   sources, cameraNotice = null, onDismissCameraNotice,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
-  embellirNode, onToggleStageRequests, stageRequestCount,
+  embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene,
 }) => {
@@ -447,6 +453,21 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </button>
         )}
 
+        {/* 🎬 Studio — icône discrète, desktop seulement (sur mobile : item du menu ⋮ → tiroir). */}
+        {canManageStage && onToggleStudio && (
+          <button
+            type="button"
+            onClick={onToggleStudio}
+            className={`hidden lg:inline-flex ${ROUND} ${studioOpen ? ACCENT : DARK}`}
+            title={studioOpen ? 'Fermer le studio' : 'Studio'}
+            aria-label={studioOpen ? 'Fermer le studio' : 'Ouvrir le studio'}
+            aria-pressed={studioOpen}
+            data-testid="studio-toggle"
+          >
+            <Clapperboard className="w-5 h-5" />
+          </button>
+        )}
+
         {/* ⋮ Actions secondaires. Les data-testid des anciens boutons sont conservés sur les items. */}
         <MenuActions
           buttonClassName={`${ROUND} ${DARK}`}
@@ -474,6 +495,14 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               onSelect: onStartTimer,
               testId: 'visio-start-timer',
             }] : []),
+            ...(onToggleStudio && canManageStage ? [{
+              id: 'studio',
+              label: 'Studio',
+              icon: <Clapperboard className="w-5 h-5" />,
+              onSelect: onToggleStudio,
+              active: studioOpen,
+              testId: 'visio-studio',
+            }] : []),
             ...(embellirNode && canManageStage ? [{
               id: 'embellir',
               label: 'Embellir le visage',
@@ -493,6 +522,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           ]}
         />
       </div>
+
+      {/* 🎬 Studio — panneau (desktop) ou tiroir plein écran (mobile, `fixed` dans le nœud). Fermé = rien. */}
+      {studioOpen && studioNode}
 
       {/* 🎛️ Avis caméra discret — jamais bloquant, fermable. */}
       {cameraNotice && (

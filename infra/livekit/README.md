@@ -123,3 +123,21 @@ puis ouvrir 5349/tcp (proxy + `ufw allow 5349/tcp` si actif).
 `docker-compose.yml` + `livekit.yaml.example` de ce dossier décrivent une variante **standalone**
 (config montée depuis un fichier hôte `/etc/livekit/livekit.yaml`, passée via `--config`), utile
 pour un déploiement sans Coolify. La prod utilise la méthode Coolify ci-dessus.
+
+---
+
+## 📡 Egress (multistream Instagram / Facebook / YouTube / TikTok) — préparé, NON déployé
+
+Fichier : `docker-compose.egress.yml` (Redis + `livekit/egress`). Le backend (`backend/multistream.py`)
+reste en **mode `mock`** tant que `MULTISTREAM_MODE=egress` n'est pas posé : aucun appel Egress,
+aucune plateforme. Pour activer (actions humaines, dans l'ordre) :
+
+1. `livekit` : ajouter `redis:\n  address: redis:6379` à sa config (fichier ou `printf` de
+   l'entrypoint Coolify) → Redeploy.
+2. Coolify → projet boosttribe → nouveau service Docker Compose = `docker-compose.egress.yml`,
+   variables `LK_SECRET` (identique au service livekit) et `LK_WS_URL=wss://livekit.boosttribe.pro`.
+3. Backend : `MULTISTREAM_MODE=egress` (+ `LIVEKIT_URL/LIVEKIT_API_KEY/LIVEKIT_API_SECRET` déjà présents) → Redeploy.
+4. Vérifier : `GET /live/broadcast/status?room=<id>` renvoie `"mode": "egress"`.
+
+Les URLs/clés RTMP sont résolues côté serveur (`social_destinations.resoudre_destination`) et ne
+transitent jamais vers le navigateur. Aucun live social réel sans « GO BASSI — TEST LIVE SOCIAL ».

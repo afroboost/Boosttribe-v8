@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles, Clapperboard } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles, Clapperboard, Radio } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
@@ -66,6 +66,17 @@ interface LiveVisioPanelProps {
   studioNode?: React.ReactNode;
   studioOpen?: boolean;
   onToggleStudio?: () => void;
+  // 📡 Diffuser en direct (multistream) : icône Radio dans la barre + item ⋮ ; le tiroir des
+  //    réseaux est `broadcastNode` (rendu quand `broadcastOpen`). Fuchsia quand `broadcastLive`.
+  //    L'UI ne reçoit jamais de clé/URL/jeton : seulement ces quatre props.
+  broadcastNode?: React.ReactNode;
+  broadcastOpen?: boolean;
+  broadcastLive?: boolean;
+  onToggleBroadcast?: () => void;
+  // 🖥️ Capacité réelle du partage d'écran sur l'appareil (getDisplayMedia). `false` = bouton
+  //    désactivé « Indisponible sur cet appareil » (desktop), masqué sur mobile — sans toucher
+  //    à la caméra du téléphone.
+  screenShareDisponible?: boolean;
   // 🙋 Demandes de scène (badge + toggle) accessibles depuis le plein écran.
   onToggleStageRequests?: () => void;
   stageRequestCount?: number;
@@ -121,6 +132,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   sources, cameraNotice = null, onDismissCameraNotice,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
+  broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene,
 }) => {
@@ -442,14 +454,35 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         {/* 🖥️ Partager l'écran — hôte/co-hôte, desktop (getDisplayMedia supporté). Réutilise l'existant. */}
         {canManageStage && screenSupported && onToggleScreenShare && (
           <button
-            onClick={onToggleScreenShare}
-            className={`${ROUND} ${screenSharing ? ACCENT : DARK}`}
-            title={screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
-            aria-label={screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
+            onClick={screenShareDisponible ? onToggleScreenShare : undefined}
+            disabled={!screenShareDisponible}
+            className={`${screenShareDisponible ? '' : 'hidden sm:inline-flex opacity-40 cursor-not-allowed '}${ROUND} ${screenSharing ? ACCENT : DARK}`}
+            title={!screenShareDisponible ? 'Indisponible sur cet appareil' : screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
+            aria-label={!screenShareDisponible ? 'Partage d\'écran indisponible sur cet appareil' : screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
             aria-pressed={screenSharing}
+            aria-disabled={!screenShareDisponible}
             data-testid="visio-screen-share"
           >
             {screenSharing ? <MonitorX className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
+          </button>
+        )}
+
+        {/* 📡 Diffuser en direct — icône ronde (mobile et desktop), fuchsia quand un direct tourne. */}
+        {canManageStage && onToggleBroadcast && (
+          <button
+            type="button"
+            onClick={onToggleBroadcast}
+            className={`relative ${ROUND} ${broadcastLive ? ACCENT : DARK}`}
+            title={broadcastLive ? 'En direct — gérer la diffusion' : 'Diffuser en direct'}
+            aria-label={broadcastLive ? 'En direct — gérer la diffusion' : 'Diffuser en direct'}
+            aria-pressed={broadcastOpen}
+            data-testid="visio-broadcast"
+            data-broadcast-live={broadcastLive ? 'true' : 'false'}
+          >
+            <Radio className="w-5 h-5" />
+            {broadcastLive && (
+              <span className="absolute -top-1 -right-1 px-1 rounded-full bg-[var(--bt-accent)] text-[8px] font-bold tracking-wide text-white leading-4" aria-hidden="true" data-testid="visio-broadcast-badge">LIVE</span>
+            )}
           </button>
         )}
 
@@ -503,6 +536,14 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               active: studioOpen,
               testId: 'visio-studio',
             }] : []),
+            ...(onToggleBroadcast && canManageStage ? [{
+              id: 'broadcast',
+              label: broadcastLive ? 'En direct — gérer' : 'Diffuser en direct',
+              icon: <Radio className="w-5 h-5" />,
+              onSelect: onToggleBroadcast,
+              active: broadcastLive || broadcastOpen,
+              testId: 'visio-broadcast-item',
+            }] : []),
             ...(embellirNode && canManageStage ? [{
               id: 'embellir',
               label: 'Embellir le visage',
@@ -525,6 +566,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
 
       {/* 🎬 Studio — panneau (desktop) ou tiroir plein écran (mobile, `fixed` dans le nœud). Fermé = rien. */}
       {studioOpen && studioNode}
+
+      {/* 📡 Tiroir « Diffuser en direct » (fixed dans le nœud : panneau desktop ou plein écran mobile). Fermé = rien. */}
+      {broadcastOpen && broadcastNode}
 
       {/* 🎛️ Avis caméra discret — jamais bloquant, fermable. */}
       {cameraNotice && (

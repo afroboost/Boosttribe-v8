@@ -61,6 +61,10 @@ import BeauteToggle from '@/components/session/BeauteToggle';
 import { useStudio } from '@/hooks/useStudio';
 import { StudioPanel } from '@/components/session/StudioPanel';
 import SceneRenderer from '@/components/session/SceneRenderer';
+import BroadcastDrawer from '@/components/session/BroadcastDrawer';
+import { useProgramStream } from '@/hooks/useProgramStream';
+import { useBroadcast } from '@/hooks/useBroadcast';
+import { capacitePartageEcran, arreterPistesPartage } from '@/lib/screenShareLogic';
 import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -1102,6 +1106,7 @@ export const SessionPage: React.FC = () => {
     setTribeUserVolume,
     setTribeUserMuted,
     remoteAudioRef,
+    getTribeAudioStreams,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
     isHost,
@@ -1230,6 +1235,7 @@ export const SessionPage: React.FC = () => {
   }, [addMicHold, removeMicHold, ensureVoiceAudible]);
 
   const broadcastedStreamRef = useRef<MediaStream | null>(null);
+  const micDiffuseRef = useRef<MediaStream | null>(null);
   useEffect(() => {
     if (!isHost) return;
     if (hostMicStream === broadcastedStreamRef.current) return;
@@ -1238,10 +1244,12 @@ export const SessionPage: React.FC = () => {
     if (hostMicStream) {
       initializeMixer();
       const micBroadcastStream = connectMicSource(hostMicStream);
+      micDiffuseRef.current = micBroadcastStream; // 🎬 Phase 3 : c'est CE flux (gain + limiteur) qui entre dans le programme
       broadcastAudio(micBroadcastStream); // mémorise le flux, diffuse aux participants connectés
       // 🎙️ Micro diffusé en continu. En mode VOIX, la VAD décide de l'auto-pause ; en MANUEL, l'hôte pilote.
       if (micMode === 'voice') startVoiceActivity(handleSpeechStart, handleSpeechEnd);
     } else {
+      micDiffuseRef.current = null;
       stopBroadcast(); // retire le flux sortant, garde le peer actif
       stopVoiceActivity();
       if (vadResumeTimerRef.current) { clearTimeout(vadResumeTimerRef.current); vadResumeTimerRef.current = null; }
@@ -1410,7 +1418,11 @@ export const SessionPage: React.FC = () => {
   }, [videoMesh, showToast, liveMode, sessionId]);
 
   // 🖥️ PARTAGE ÉCRAN (desktop) — capture getDisplayMedia puis diffusion mesh à tous
-  const screenSupported = typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getDisplayMedia;
+  // 🖥️ Capacité RÉELLE (iOS Safari et la plupart des Android n'ont pas getDisplayMedia) — le bouton
+  //    n'est proposé que si le navigateur sait partager ; sinon « Indisponible sur cet appareil ».
+  const capaciteEcran = capacitePartageEcran(typeof navigator !== 'undefined' ? navigator : null);
+  const screenSupported = capaciteEcran.supporte;
+  const screenStreamRef = useRef<MediaStream | null>(null);
   const broadcastScreenState = useCallback((active: boolean) => {
     if (sessionId && supabase && isSupabaseConfigured) {
       supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'SCREEN_SHARE_STATE', payload: { active } });
@@ -1418,25 +1430,35 @@ export const SessionPage: React.FC = () => {
   }, [sessionId]);
   const handleToggleScreenShare = useCallback(async () => {
     if (screenSharing) {
+      // Arrêt depuis Live Visio : dépublier ET libérer la capture (sinon la barre « Arrêter le
+      // partage » du navigateur reste et la source resterait noire) ; repartage possible ensuite.
       videoMesh.stopScreen();
+      arreterPistesPartage(screenStreamRef.current?.getTracks() ?? []);
+      screenStreamRef.current = null;
       setScreenSharing(false);
       broadcastScreenState(false);
       return;
     }
-    if (!screenSupported) { showToast('Partage d\'écran disponible sur ordinateur uniquement', 'warning'); return; }
+    if (!screenSupported) { showToast(capaciteEcran.motif || 'Partage d\'écran indisponible sur cet appareil', 'warning'); return; }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      screenStreamRef.current = stream;
       setScreenSharing(true);          // active le Peer visio
       videoMesh.startScreen(stream);   // diffuse le flux écran
       broadcastScreenState(true);      // prévient les participants → ils activent leur Peer pour recevoir
       // l'arrêt natif du navigateur ("Arrêter le partage") coupe la piste → on stoppe proprement
-      const onEnded = () => { videoMesh.stopScreen(); setScreenSharing(false); broadcastScreenState(false); };
+      const onEnded = () => {
+        videoMesh.stopScreen();
+        arreterPistesPartage(stream.getTracks());
+        if (screenStreamRef.current === stream) screenStreamRef.current = null;
+        setScreenSharing(false); broadcastScreenState(false);
+      };
       stream.getVideoTracks().forEach((tr) => tr.addEventListener('ended', onEnded, { once: true }));
       showToast('Partage d\'écran démarré', 'success');
     } catch {
       // l'utilisateur a annulé le sélecteur, ou refus → rien
     }
-  }, [screenSharing, screenSupported, videoMesh, showToast, broadcastScreenState]);
+  }, [screenSharing, screenSupported, capaciteEcran.motif, videoMesh, showToast, broadcastScreenState]);
   // Heartbeat de l'état partage écran (late-join : un participant qui arrive active son Peer)
   useEffect(() => {
     if (!screenSharing || !sessionId || !supabase || !isSupabaseConfigured) return;
@@ -2551,6 +2573,54 @@ export const SessionPage: React.FC = () => {
     localScreen: videoMesh.localScreen,
   });
   const studioMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches;
+  // 🎬 PHASE 3 — programStream : la scène PROGRAMME devient un flux A/V (compositeur canvas +
+  //    bus audio programme). Deux consommateurs : Live Visio (la piste vidéo remplace la caméra
+  //    publiée, drapeau `programmeVersParticipants`, ON par défaut dès qu'une scène est à l'antenne)
+  //    et le multistream (« Diffuser en direct »). `program === null` → rien ne change.
+  const [programmeVersParticipants, setProgrammeVersParticipants] = useState(true);
+  const programme = useProgramStream({
+    boxes: studio.boxesProgram,
+    resolveMedia: studio.resolveMedia,
+    audio: {
+      getMicStream: () => micDiffuseRef.current,
+      getMusicStream: () => getMusicStream(),
+      getTribeStreams: () => getTribeAudioStreams(),
+    },
+  });
+  const programmeALAntenne = studio.boxesProgram.length > 0;
+  useEffect(() => {
+    if (!isHost) return;
+    if (programmeALAntenne && programmeVersParticipants) {
+      const s = programme.actif && programme.stream ? programme.stream : programme.demarrer();
+      const v = s?.getVideoTracks()[0];
+      if (v) videoMesh.publishProgram(v).catch(() => { /* ignore */ });
+    } else {
+      videoMesh.unpublishProgram().catch(() => { /* ignore */ });
+      if (!programmeALAntenne) { videoMesh.unpublishProgramAudio().catch(() => { /* ignore */ }); programme.arreter(); }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, programmeALAntenne, programmeVersParticipants, programme.actif]);
+  useEffect(() => { if (programme.avis) showToast(programme.avis, 'warning'); }, [programme.avis, showToast]);
+
+  // 📡 « Diffuser en direct » (multistream) — contrat pour le panneau Broadcast ; rien ne part
+  //    tant que l'hôte ne démarre pas. Les réseaux reçoivent le PROGRAMME, jamais la caméra brute.
+  const broadcast = useBroadcast({
+    room: sessionId || '',
+    enabled: isHost,
+    program: { actif: programme.actif, stream: programme.stream, demarrer: programme.demarrer },
+    publierProgramme: async (s) => {
+      const v = s.getVideoTracks()[0]; const a = s.getAudioTracks()[0];
+      if (v) await videoMesh.publishProgram(v);
+      return a ? videoMesh.publishProgramAudio(a) : null;
+    },
+  });
+  void setProgrammeVersParticipants; // branché plus tard par le menu Studio (ON par défaut à l'antenne)
+  // Panneau « Diffuser en direct » : tout reste dans le tiroir, l'écran principal ne porte que l'icône.
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const broadcastNode: React.ReactNode = (
+    <BroadcastDrawer broadcast={broadcast} open={broadcastOpen} onClose={() => setBroadcastOpen(false)} mobile={studioMobile} />
+  );
+
   const studioNode: React.ReactNode = (
     <StudioPanel
       studio={studio}
@@ -3780,6 +3850,11 @@ export const SessionPage: React.FC = () => {
       prompteurNode={prompteurOverlayNode}
       embellirNode={embellirNode} // ✨ slot du menu ⋮ (lot beauté) — null = rien
       studioNode={studioNode}
+      broadcastNode={broadcastNode}
+      broadcastOpen={broadcastOpen}
+      broadcastLive={broadcast.live}
+      onToggleBroadcast={() => setBroadcastOpen((o) => !o)}
+      screenShareDisponible={screenSupported}
       studioOpen={studioOpen}
       onToggleStudio={() => setStudioOpen((o) => !o)}
       prompteurTiroirNode={prompteurTiroirNode}

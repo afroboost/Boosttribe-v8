@@ -85,6 +85,23 @@ export interface LiveKitStageReturn {
   effacerCameraNotice: () => void;
   /** ✨ Piste caméra LiveKit locale du moment (pour y poser un processeur, ex. Embellir le visage). */
   getCameraTrack: () => LocalVideoTrack | null;
+  /**
+   * 🎬 Phase 3 — LE PROGRAMME VERS LES PARTICIPANTS. La piste vidéo du programme (canvas
+   * composé) est publiée À LA PLACE de la caméra (même source `Camera` : les participants la
+   * reçoivent dans la tuile du coach, rien ne change chez eux). La piste caméra locale reste
+   * VIVANTE (dépubliée sans être stoppée) : « Embellir » continue de la traiter et le
+   * compositeur continue de la lire. `unpublishProgram()` republie la caméra telle quelle.
+   */
+  publishProgram: (track: MediaStreamTrack) => Promise<boolean>;
+  unpublishProgram: () => Promise<void>;
+  programLive: boolean;
+  /**
+   * 📡 Multistream (Egress Track Composite) : publie la piste AUDIO du programme dans la room
+   * (nom `program-audio`) et renvoie les SIDs des pistes programme. Les participants ne
+   * l'attachent pas (leur audio reste PeerJS) ; seul l'Egress la consomme.
+   */
+  publishProgramAudio: (track: MediaStreamTrack) => Promise<{ videoSid?: string; audioSid?: string } | null>;
+  unpublishProgramAudio: () => Promise<void>;
   // 🎤 LEVER LA MAIN — actions hôte/co-hôte (accorder/retirer le droit de publier côté SFU)
   promote: (targetUserId: string) => Promise<PromoteResult>;
   demote: (targetUserId: string) => Promise<void>;
@@ -134,6 +151,11 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   const videoDevicesRef = useRef<MediaDeviceInfo[]>([]);
 
   const roomRef = useRef<Room | null>(null);
+  // 🎬 Phase 3 : piste caméra locale (survit à sa dépublication) + piste programme publiée.
+  const cameraTrackRef = useRef<LocalVideoTrack | null>(null);
+  const programTrackRef = useRef<MediaStreamTrack | null>(null);
+  const programAudioRef = useRef<MediaStreamTrack | null>(null);
+  const [programLive, setProgramLive] = useState(false);
   const connexionRef = useRef<EtatConnexionScene>('inactive'); connexionRef.current = connexion;
   const cameraOnRef = useRef(false); cameraOnRef.current = cameraOn;
   const pendingCameraRef = useRef(false);     // caméra demandée mais permission/connexion pas encore prête
@@ -241,6 +263,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       const mst = pub?.track?.mediaStreamTrack;
       if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
       suivreProcesseur(pub?.track as LocalVideoTrack | undefined);
+      cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
       setCameraOn(true);
       cameraOnRef.current = true;
       setCameraNotice(null);
@@ -386,6 +409,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       screenStreams.clear();
       pendingCameraRef.current = false;
       pendingScreenRef.current = null;
+      programTrackRef.current = null;
+      programAudioRef.current = null;
+      cameraTrackRef.current = null;
+      setProgramLive(false);
       setReady(false);
       setConnexion('inactive');
       setCameraOn(false);
@@ -419,6 +446,9 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     const room = roomRef.current;
     pendingCameraRef.current = false;
     if (room) { try { room.localParticipant.setCameraEnabled(false); } catch { /* ignore */ } }
+    // 🎬 Programme à l'antenne : la caméra est dépubliée mais vivante → on l'arrête ici.
+    if (programTrackRef.current && cameraTrackRef.current) { try { cameraTrackRef.current.stop(); } catch { /* ignore */ } }
+    cameraTrackRef.current = null;
     setLocalStream(null);
     setCameraOn(false);
     cameraOnRef.current = false;
@@ -434,6 +464,14 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     const room = roomRef.current;
     if (!room || !cameraOnRef.current) return; // caméra éteinte → sera pris en compte à l'allumage
     try {
+      if (programTrackRef.current && cameraTrackRef.current) {
+        // 🎬 Programme à l'antenne : la caméra n'est pas publiée → on la redémarre localement
+        //    (le processeur « Embellir » suit via restartTrack, comme lors d'un switchActiveDevice).
+        await cameraTrackRef.current.restartTrack({ deviceId: { exact: deviceId } });
+        const mst = cameraTrackRef.current.mediaStreamTrack;
+        if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
+        return;
+      }
       await room.switchActiveDevice('videoinput', deviceId);
       const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
       const mst = pub?.track?.mediaStreamTrack;
@@ -533,8 +571,76 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   const getCameraTrack = useCallback((): LocalVideoTrack | null => {
     const room = roomRef.current;
     if (!room || !cameraOnRef.current) return null;
+    if (cameraTrackRef.current) return cameraTrackRef.current; // vivante même dépubliée (programme à l'antenne)
     const t = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
     return (t as LocalVideoTrack | undefined) ?? null;
+  }, []);
+
+  // 🎬 Phase 3 — publier le programme à la place de la caméra (source Camera), sans stopper la caméra.
+  const publishProgram = useCallback(async (track: MediaStreamTrack): Promise<boolean> => {
+    const room = roomRef.current;
+    if (!room || !room.localParticipant.permissions?.canPublish) return false;
+    try {
+      if (programTrackRef.current && programTrackRef.current !== track) {
+        try { await room.localParticipant.unpublishTrack(programTrackRef.current, false); } catch { /* ignore */ }
+        programTrackRef.current = null;
+      }
+      const cam = cameraTrackRef.current ?? (room.localParticipant.getTrackPublication(Track.Source.Camera)?.track as LocalVideoTrack | undefined) ?? null;
+      if (cam && !programTrackRef.current) {
+        cameraTrackRef.current = cam;
+        await room.localParticipant.unpublishTrack(cam, false); // dépubliée, PAS stoppée (beauté + compositeur continuent)
+      }
+      if (programTrackRef.current !== track) {
+        await room.localParticipant.publishTrack(track, { source: Track.Source.Camera, name: 'program' });
+        programTrackRef.current = track;
+      }
+      setProgramLive(true);
+      return true;
+    } catch (err) {
+      console.warn('[LIVEKIT] publication du programme échouée', err);
+      return false;
+    }
+  }, []);
+
+  const publishProgramAudio = useCallback(async (track: MediaStreamTrack) => {
+    const room = roomRef.current;
+    if (!room || !room.localParticipant.permissions?.canPublish) return null;
+    try {
+      if (programAudioRef.current && programAudioRef.current !== track) {
+        try { await room.localParticipant.unpublishTrack(programAudioRef.current, false); } catch { /* ignore */ }
+      }
+      if (programAudioRef.current !== track) {
+        await room.localParticipant.publishTrack(track, { source: Track.Source.Microphone, name: 'program-audio', dtx: false, red: false });
+        programAudioRef.current = track;
+      }
+      const pubs = [...room.localParticipant.trackPublications.values()];
+      const videoSid = pubs.find((p) => p.track?.mediaStreamTrack === programTrackRef.current)?.trackSid
+        ?? room.localParticipant.getTrackPublication(Track.Source.Camera)?.trackSid;
+      const audioSid = pubs.find((p) => p.track?.mediaStreamTrack === track)?.trackSid;
+      return { videoSid, audioSid };
+    } catch (err) {
+      console.warn('[LIVEKIT] publication audio programme échouée', err);
+      return null;
+    }
+  }, []);
+
+  const unpublishProgramAudio = useCallback(async (): Promise<void> => {
+    const room = roomRef.current; const t = programAudioRef.current;
+    programAudioRef.current = null;
+    if (room && t) { try { await room.localParticipant.unpublishTrack(t, false); } catch { /* ignore */ } }
+  }, []);
+
+  const unpublishProgram = useCallback(async (): Promise<void> => {
+    const room = roomRef.current;
+    const prog = programTrackRef.current;
+    programTrackRef.current = null;
+    setProgramLive(false);
+    if (!room) return;
+    if (prog) { try { await room.localParticipant.unpublishTrack(prog, false); } catch { /* ignore */ } }
+    const cam = cameraTrackRef.current;
+    if (cam && cameraOnRef.current && !room.localParticipant.getTrackPublication(Track.Source.Camera)) {
+      try { await room.localParticipant.publishTrack(cam, { source: Track.Source.Camera }); } catch (err) { console.warn('[LIVEKIT] republication caméra échouée', err); }
+    }
   }, []);
 
   return {
@@ -559,6 +665,11 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     cameraNotice,
     effacerCameraNotice,
     getCameraTrack,
+    publishProgram,
+    unpublishProgram,
+    programLive,
+    publishProgramAudio,
+    unpublishProgramAudio,
     promote,
     demote,
   };

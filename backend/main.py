@@ -1285,6 +1285,63 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
     return {"token": token, "url": LIVEKIT_URL, "identity": identity, "role": "stage" if can_publish else "viewer"}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# 📡 MULTISTREAM — « Diffuser en direct » : 1 programme → N destinations (voir multistream.py).
+#    Mode `mock` par défaut (aucun appel Egress, aucune plateforme). Réponses = statuts seulement.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+import multistream as _ms
+
+
+class BroadcastStartBody(BaseModel):
+    room: str
+    destinations: List[Dict[str, str]] = []
+    video_track_sid: Optional[str] = None
+    audio_track_sid: Optional[str] = None
+
+
+class BroadcastStopBody(BaseModel):
+    room: str
+    platform: Optional[str] = None
+
+
+async def _broadcast_user_hote(room: str, authorization: Optional[str]) -> str:
+    user = await get_user_from_token(authorization)  # 401 si token invalide
+    uid = user.get("id")
+    if not room or not SESSION_ID_RE.match(room):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if not await _is_host_or_cohost(room, uid):
+        raise HTTPException(status_code=403, detail="host_only")
+    return str(uid)
+
+
+@app.get("/live/broadcast/accounts")
+async def broadcast_accounts(room: str, authorization: Optional[str] = Header(default=None)):
+    uid = await _broadcast_user_hote(room, authorization)
+    return {"accounts": await _ms.comptes(uid), "mode": _ms.mode_multistream()}
+
+
+@app.post("/live/broadcast/start")
+async def broadcast_start(body: BroadcastStartBody, authorization: Optional[str] = Header(default=None)):
+    uid = await _broadcast_user_hote(body.room, authorization)
+    plateformes = [str(d.get("platform", "")).lower() for d in body.destinations]
+    plateformes = [p for p in plateformes if p in _ms.PLATEFORMES]
+    if not plateformes:
+        raise HTTPException(status_code=400, detail="Choisissez au moins un réseau")
+    return await _ms.demarrer(body.room, uid, plateformes, body.video_track_sid, body.audio_track_sid)
+
+
+@app.post("/live/broadcast/stop")
+async def broadcast_stop(body: BroadcastStopBody, authorization: Optional[str] = Header(default=None)):
+    uid = await _broadcast_user_hote(body.room, authorization)
+    return await _ms.arreter(body.room, uid, body.platform)
+
+
+@app.get("/live/broadcast/status")
+async def broadcast_status(room: str, authorization: Optional[str] = Header(default=None)):
+    uid = await _broadcast_user_hote(room, authorization)
+    return await _ms.statut(room, uid)
+
+
 @app.post("/livekit/promote")
 async def livekit_promote(body: LiveKitParticipantBody, authorization: Optional[str] = Header(default=None)):
     """(Hôte/co-hôte) promeut un viewer en stage — accorde le droit de publier (cap 10)."""

@@ -64,6 +64,12 @@ export interface UsePeerAudioReturn {
   setTribeUserMuted: (userId: string, muted: boolean) => void;
   reconnect: () => Promise<boolean>;
   remoteAudioRef: React.RefObject<HTMLAudioElement | null>;
+  /**
+   * 🎬 Phase 3 (hôte) — LECTURE SEULE : les voix participants reçues (parole accordée), avec
+   * l'identité applicative quand elle est connue. Sert au bus audio du programme ; ne crée
+   * ni ne modifie aucune connexion.
+   */
+  getTribeAudioStreams: () => { peerId: string; userId: string | null; stream: MediaStream }[];
 }
 
 const initialState: PeerState = {
@@ -1545,6 +1551,19 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     if (hostEl && !running) { hostEl.muted = false; hostEl.volume = Math.min(1, hostVoiceVolumeRef.current); hostEl.play().catch(() => { /* ignore */ }); }
   }, []);
 
+  // 🎬 Phase 3 : voix participants reçues chez l'hôte (éléments `.bt-tribe-audio`, id = tribe-audio-<peerId>).
+  const getTribeAudioStreams = useCallback((): { peerId: string; userId: string | null; stream: MediaStream }[] => {
+    if (typeof document === 'undefined') return [];
+    const out: { peerId: string; userId: string | null; stream: MediaStream }[] = [];
+    document.querySelectorAll<HTMLAudioElement>(`.${TRIBE_AUDIO_CLASS}`).forEach((el) => {
+      const s = el.srcObject as MediaStream | null;
+      if (!s || !s.getAudioTracks().length) return;
+      const peerId = el.id.replace(/^tribe-audio-/, '');
+      out.push({ peerId, userId: peerIdToUserIdRef.current.get(peerId) ?? null, stream: s });
+    });
+    return out;
+  }, []);
+
   return {
     state,
     connect,
@@ -1563,6 +1582,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     setTribeUserMuted,
     reconnect,
     remoteAudioRef,
+    getTribeAudioStreams,
   };
 }
 

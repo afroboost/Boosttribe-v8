@@ -1304,6 +1304,12 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
 # 📡 MULTISTREAM — « Diffuser en direct » : 1 programme → N destinations (voir multistream.py).
 #    Mode `mock` par défaut (aucun appel Egress, aucune plateforme). Réponses = statuts seulement.
 # ═══════════════════════════════════════════════════════════════════════════════════════════
+# Module frère : quand `main.py` est chargé par chemin (bancs `spec_from_file_location`), son
+# dossier n'est pas sur `sys.path` — on l'ajoute, sans effet sous uvicorn (cwd = backend/).
+import os as _ms_os, sys as _ms_sys
+_MS_ICI = _ms_os.path.dirname(_ms_os.path.abspath(__file__))
+if _MS_ICI not in _ms_sys.path:
+    _ms_sys.path.insert(0, _MS_ICI)
 import multistream as _ms
 
 

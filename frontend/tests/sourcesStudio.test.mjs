@@ -93,6 +93,10 @@ test('tiroir fermé = rien de visible ; ouvert = CAMÉRA puis AUDIO ; aucun term
   assert.ok(DRAWER.includes("from 'lucide-react'"), 'même famille d’icônes SVG');
   assert.doesNotMatch(codeSeul(DRAWER), /[\u{1F300}-\u{1FAFF}]/u, 'aucun emoji dans le code rendu');
   assert.ok(DRAWER.includes('var(--bt-accent)'), 'l’état actif prend la couleur de marque');
+  // Dédoublonnage (17/09) : le tiroir consomme les listes pures, jamais `videoDevices` brut ligne par ligne.
+  assert.ok(DRAWER.includes('camerasAffichables(videoDevices, { mobile })') && DRAWER.includes('microsAffichables(micDevices)'), 'listes dédupliquées');
+  assert.ok(!DRAWER.includes('Branche un micro puis rafraîchis') && !DRAWER.includes('Branche une caméra (USB'), 'plus de bloc « Branche… » ouvert sans candidat');
+  assert.ok(DRAWER.includes('peutAjouterMicro') && DRAWER.includes('peutAjouterCamera'), '« Ajouter » n’apparaît que s’il y a un candidat');
 });
 
 test('le panneau monte le tiroir et affiche l avis caméra ; la page le renseigne', () => {

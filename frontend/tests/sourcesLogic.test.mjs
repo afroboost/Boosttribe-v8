@@ -17,7 +17,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   familleCamera, libelleCamera, choisirCameraPrincipale, decisionDebranchement, cibleBascule,
-  multiCamPossible, estMobile, libelleMicro,
+  multiCamPossible, estMobile, libelleMicro, camerasAffichables, microsAffichables,
 } from './.build/sourcesLogic.mjs';
 
 const FACETIME = { deviceId: 'int', label: 'FaceTime HD Camera (Built-in)' };
@@ -110,4 +110,99 @@ test('micros : libellé lisible, jamais un deviceId brut', () => {
   assert.equal(libelleMicro('Rode Wireless GO II (19f7:0035)', 1), 'Rode Wireless GO II');
   assert.equal(libelleMicro('', 0), 'Micro de l’appareil');
   assert.equal(libelleMicro('', 2), 'Micro 3');
+});
+
+
+/* ═══════════════ DÉDOUBLONNAGE (constat iPhone du 17/09/2026 : « Caméra avant » ×2, « arrière » ×2) ═══════════════ */
+
+const IPHONE_FR = [
+  { deviceId: 'a', label: 'Caméra avant' },
+  { deviceId: 'b', label: 'Caméra arrière' },
+  { deviceId: 'c', label: 'Caméra arrière (double grand angle)' },
+  { deviceId: 'd', label: 'Caméra avant (TrueDepth)' },
+];
+const IPHONE_EN = [
+  { deviceId: '1', label: 'Front Camera' },
+  { deviceId: '2', label: 'Back Camera' },
+  { deviceId: '3', label: 'Back Dual Wide Camera' },
+  { deviceId: '4', label: 'Back Ultra Wide Camera' },
+  { deviceId: '5', label: 'Back Triple Camera' },
+];
+const SAMSUNG = [
+  { deviceId: '0', label: 'camera2 0, facing back' },
+  { deviceId: '1', label: 'camera2 1, facing front' },
+  { deviceId: '2', label: 'camera2 2, facing back' },
+];
+const PIXEL = [{ deviceId: 'p0', label: 'Back Camera' }, { deviceId: 'p1', label: 'Front Camera' }];
+const MAC = [
+  { deviceId: 'ft', label: 'FaceTime HD Camera (Built-in)', groupId: 'g1' },
+  { deviceId: 's1', label: 'Sony ZV-E10 (054c:0a3d)', groupId: 'g2' },
+  { deviceId: 's2', label: 'Sony ZV-E10 (054c:0a3d)', groupId: 'g2' },      // 2ᵉ profil du même boîtier
+  { deviceId: 'obs', label: 'OBS Virtual Camera' },
+  { deviceId: 'h', label: 'USB Capture HDMI (534d:2109)' },
+];
+const WIN = [{ deviceId: 'i', label: 'Integrated Camera' }, { deviceId: 'w', label: 'Logitech BRIO' }];
+
+test('iPhone FR : 4 objectifs → 2 entrées « Caméra avant » / « Caméra arrière », deviceId stable = premier de la face', () => {
+  const l = camerasAffichables(IPHONE_FR, { mobile: true });
+  assert.deepEqual(l.map((e) => e.libelle), ['Caméra avant', 'Caméra arrière']);
+  assert.deepEqual(l.map((e) => e.deviceId), ['a', 'b']);
+  assert.deepEqual(l.map((e) => e.membres), [['a', 'd'], ['b', 'c']]);
+});
+
+test('iPhone EN : « Back Dual/Ultra Wide/Triple » sont bien ARRIÈRE (plus « externe ») → 2 entrées', () => {
+  assert.equal(familleCamera('Back Dual Wide Camera'), 'arriere');
+  assert.equal(familleCamera('Back Ultra Wide Camera'), 'arriere');
+  assert.equal(familleCamera('Back Triple Camera'), 'arriere');
+  const l = camerasAffichables(IPHONE_EN, { mobile: true });
+  assert.deepEqual(l.map((e) => [e.libelle, e.deviceId]), [['Caméra avant', '1'], ['Caméra arrière', '2']]);
+});
+
+test('Android Samsung / Pixel : une entrée par face, deviceId = premier énuméré de la face', () => {
+  const s = camerasAffichables(SAMSUNG, { mobile: true });
+  assert.deepEqual(s.map((e) => [e.libelle, e.deviceId]), [['Caméra avant', '1'], ['Caméra arrière', '0']]);
+  const p = camerasAffichables(PIXEL, { mobile: true });
+  assert.deepEqual(p.map((e) => [e.libelle, e.deviceId]), [['Caméra avant', 'p1'], ['Caméra arrière', 'p0']]);
+});
+
+test('Mac : intégrée d abord, puis chaque externe UNE fois (Sony à 2 profils = 1 ligne), virtuelle et HDMI gardées', () => {
+  const l = camerasAffichables(MAC, { mobile: false });
+  assert.deepEqual(l.map((e) => e.libelle), ['Caméra intégrée', 'Sony ZV-E10', 'OBS Virtual Camera', 'USB Capture HDMI']);
+  assert.deepEqual(l[1].membres, ['s1', 's2']);
+  assert.equal(camerasAffichables(WIN, { mobile: false }).map((e) => e.libelle).join(' | '), 'Caméra intégrée | Logitech BRIO');
+});
+
+test('libellés affichés : jamais de jargon, jamais de doublon', () => {
+  for (const [devs, mobile] of [[IPHONE_FR, true], [IPHONE_EN, true], [SAMSUNG, true], [MAC, false], [WIN, false]]) {
+    const libs = camerasAffichables(devs, { mobile }).map((e) => e.libelle);
+    assert.equal(new Set(libs).size, libs.length, 'aucun libellé en double');
+    for (const x of libs) assert.doesNotMatch(x, /\buser\b|environment|facing|[0-9a-f]{4}:[0-9a-f]{4}/i);
+  }
+});
+
+test('bascule Avant ↔ Arrière reste cohérente avec la liste dédupliquée (même deviceId cible)', () => {
+  const affiches = camerasAffichables(IPHONE_EN, { mobile: true });
+  const arriere = affiches.find((e) => e.libelle === 'Caméra arrière');
+  assert.equal(cibleBascule(IPHONE_EN, '1'), arriere.deviceId);        // depuis l'avant → l'arrière affichée
+  assert.equal(cibleBascule(IPHONE_EN, '4'), '1');                    // depuis un objectif arrière secondaire → l'avant
+  assert.equal(choisirCameraPrincipale(IPHONE_EN, null), '1');         // repli inchangé : premier proposé
+});
+
+test('micros : « Default / Communications » Windows et doublons de groupe → une ligne ; externe reconnu', () => {
+  const win = microsAffichables([
+    { deviceId: 'd', label: 'Default - Microphone (Realtek)' },
+    { deviceId: 'c', label: 'Communications - Microphone (Realtek)' },
+    { deviceId: 'r', label: 'Microphone (Realtek)' },
+    { deviceId: 'rode', label: 'Rode Wireless GO II (19f7:0030)' },
+  ]);
+  assert.deepEqual(win.map((m) => [m.libelle, m.deviceId]), [['Micro de l’appareil', 'd'], ['Rode Wireless GO II', 'rode']]);
+  const mac = microsAffichables([
+    { deviceId: 'default', label: 'Default - MacBook Pro Microphone', groupId: 'g' },
+    { deviceId: 'm', label: 'MacBook Pro Microphone', groupId: 'g' },
+    { deviceId: 'z', label: 'Shure MV7' },
+  ]);
+  assert.deepEqual(mac.map((m) => m.libelle), ['Micro de l’appareil', 'Shure MV7']);
+  const phone = microsAffichables([{ deviceId: 'x', label: 'iPhone Microphone' }, { deviceId: 'y', label: 'Rode Wireless GO' }]);
+  assert.deepEqual(phone.map((m) => m.libelle), ['Micro de l’appareil', 'Rode Wireless GO']);
+  assert.deepEqual(microsAffichables([{ deviceId: 'seul', label: '' }]).map((m) => m.libelle), ['Micro de l’appareil']);
 });

@@ -56,6 +56,8 @@ import { PromoEditor } from '@/components/session/PromoEditor';
 import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
+import { useBeauteVisage } from '@/hooks/useBeauteVisage';
+import BeauteToggle from '@/components/session/BeauteToggle';
 import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -1999,7 +2001,8 @@ export const SessionPage: React.FC = () => {
   const fsChatPortalTarget = useFullscreenPortalTarget();
   // ✨ Embellir le visage — point de branchement pour le lot beauté : un composant de réglage
   //    (Off / Léger / Moyen) rendu dans le menu ⋮ du panneau visio. `null` tant que non branché.
-  const embellirNode: React.ReactNode = null;
+  const beaute = useBeauteVisage({ getCameraTrack: videoMesh.getCameraTrack, cameraOn: videoMesh.cameraOn });
+  const embellirNode: React.ReactNode = beaute.supporte ? <BeauteToggle beaute={beaute} compact /> : null;
   // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
   const [chatOpen, setChatOpen] = useState(false);
   const [chatTab, setChatTab] = useState<'assistant' | 'group' | 'private'>('assistant');

@@ -1,9 +1,11 @@
 import React from 'react';
-import { Mic, MicOff, Video, VideoOff, Hand, Timer, Minimize2, MessageCircle, ScrollText } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, Hand, Timer, Minimize2, ScrollText } from 'lucide-react';
 
 /**
  * 🎛️ Barre de contrôles VERTICALE (façon TikTok/Reels) ancrée à droite, réutilisée dans TOUS les
- *    plein écran (Live Visio ET vidéo partagée) : Micro, Caméra/scène, Interval, Chat, (Réduire).
+ *    plein écran (Live Visio ET vidéo partagée) : Micro, Caméra/scène, Prompteur, Interval, (Réduire).
+ *    Le chat n'y est PLUS : la bulle « session-chat-launcher » (ChatPanel) est portée dans chaque plein
+ *    écran et reste l'unique entrée — deux icônes chat à l'écran étaient un doublon (17/09).
  *    Boutons ronds, accent --bt-accent, safe-area. 100 % piloté par les props du parent (SessionPage)
  *    → aucun nouveau comportement, juste rendre les contrôles ATTEIGNABLES en plein écran.
  */
@@ -16,8 +18,6 @@ export interface VisioControlBarProps {
   onRequestStage?: () => void;
   stageRequestPending?: boolean;
   onStartTimer?: () => void;
-  onOpenChat?: () => void;
-  chatUnread?: number;
   onToggleStageRequests?: () => void; // 🙋 gestion de scène (demandes de prise de caméra)
   stageRequestCount?: number;
   // 📜 Prompteur — le texte SUR la vidéo doit pouvoir s'ouvrir et se fermer SANS quitter
@@ -34,7 +34,7 @@ const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover
 
 export const VisioControlBar: React.FC<VisioControlBarProps> = ({
   micActive, onToggleMic, cameraOn, canManageStage, onToggleCamera, onRequestStage,
-  stageRequestPending, onStartTimer, onOpenChat, chatUnread,
+  stageRequestPending, onStartTimer,
   onToggleStageRequests, stageRequestCount, onTogglePrompteur, prompteurOuvert, onReduce,
 }) => {
   return (
@@ -130,24 +130,6 @@ export const VisioControlBar: React.FC<VisioControlBarProps> = ({
           data-testid="visio-fs-timer"
         >
           <Timer className="w-5 h-5" />
-        </button>
-      )}
-
-      {/* 💬 Chat (ouvre le panneau par-dessus le plein écran) + badge non-lus */}
-      {onOpenChat && (
-        <button
-          onClick={onOpenChat}
-          className={`${ROUND} ${DARK} relative`}
-          title="Chat"
-          aria-label="Ouvrir le chat"
-          data-testid="visio-fs-chat"
-        >
-          <MessageCircle className="w-5 h-5" />
-          {chatUnread ? (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center">
-              {chatUnread > 9 ? '9+' : chatUnread}
-            </span>
-          ) : null}
         </button>
       )}
 

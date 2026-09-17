@@ -7,6 +7,8 @@ import {
   RemoteTrackPublication,
   RemoteParticipant,
   Participant,
+  LocalVideoTrack,
+  TrackEvent,
 } from 'livekit-client';
 import { supabase } from '@/lib/supabaseClient';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -81,6 +83,8 @@ export interface LiveKitStageReturn {
    */
   cameraNotice: 'aucune-camera' | 'retour-interne' | 'camera-perdue' | null;
   effacerCameraNotice: () => void;
+  /** ✨ Piste caméra LiveKit locale du moment (pour y poser un processeur, ex. Embellir le visage). */
+  getCameraTrack: () => LocalVideoTrack | null;
   // 🎤 LEVER LA MAIN — actions hôte/co-hôte (accorder/retirer le droit de publier côté SFU)
   promote: (targetUserId: string) => Promise<PromoteResult>;
   demote: (targetUserId: string) => Promise<void>;
@@ -189,6 +193,17 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     try { mst.addEventListener('ended', onEnded, { once: true }); } catch { /* ignore */ }
   }, []);
 
+  // ✨ Embellir le visage : quand un processeur est posé/retiré sur la piste caméra, LiveKit publie
+  //    une autre MediaStreamTrack (`mediaStreamTrack` = traitée ou brute). L'aperçu local suit.
+  const suivreProcesseur = useCallback((track: LocalVideoTrack | undefined) => {
+    if (!track) return;
+    const maj = () => {
+      const mst = track.mediaStreamTrack;
+      if (mst && cameraOnRef.current) setLocalStream(new MediaStream([mst]));
+    };
+    try { track.off(TrackEvent.TrackProcessorUpdate, maj); track.on(TrackEvent.TrackProcessorUpdate, maj); } catch { /* ignore */ }
+  }, []);
+
   // ─── Publier réellement la caméra (suppose la permission accordée) ───
   //     Utilise le périphérique choisi (caméra externe) ; repli propre si indisponible.
   const publishCamera = useCallback(async (): Promise<boolean> => {
@@ -225,6 +240,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
       const mst = pub?.track?.mediaStreamTrack;
       if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
+      suivreProcesseur(pub?.track as LocalVideoTrack | undefined);
       setCameraOn(true);
       cameraOnRef.current = true;
       setCameraNotice(null);
@@ -514,6 +530,13 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     } catch { /* ignore */ }
   }, [sessionId]);
 
+  const getCameraTrack = useCallback((): LocalVideoTrack | null => {
+    const room = roomRef.current;
+    if (!room || !cameraOnRef.current) return null;
+    const t = room.localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+    return (t as LocalVideoTrack | undefined) ?? null;
+  }, []);
+
   return {
     ready,
     connexion,
@@ -535,6 +558,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     flipCamera,
     cameraNotice,
     effacerCameraNotice,
+    getCameraTrack,
     promote,
     demote,
   };

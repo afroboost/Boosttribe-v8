@@ -28,6 +28,8 @@ export interface MenuAction {
   testId?: string;
   /** Rendu libre à la place du libellé (ex. réglage « Embellir » avec ses niveaux). */
   node?: React.ReactNode;
+  /** Un item à `node` reste ouvert par défaut (réglage en place) ; `fermeApres` force la fermeture. */
+  fermeApres?: boolean;
 }
 
 interface MenuActionsProps {
@@ -98,7 +100,7 @@ export const MenuActions: React.FC<MenuActionsProps> = ({ items, buttonClassName
       type="button"
       role={it.active === undefined ? 'menuitem' : 'menuitemcheckbox'}
       aria-checked={it.active === undefined ? undefined : it.active}
-      onClick={() => { it.onSelect(); if (!it.node) setOpen(false); }}
+      onClick={() => { it.onSelect(); if (!it.node || it.fermeApres) setOpen(false); }}
       className={`w-full flex items-center gap-3 px-3.5 py-2.5 text-sm text-left rounded-lg transition-colors ${
         it.danger
           ? 'text-red-300 hover:bg-red-500/15'

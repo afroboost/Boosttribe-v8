@@ -58,6 +58,9 @@ import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
 import { useBeauteVisage } from '@/hooks/useBeauteVisage';
 import BeauteToggle from '@/components/session/BeauteToggle';
+import { useStudio } from '@/hooks/useStudio';
+import { StudioPanel } from '@/components/session/StudioPanel';
+import SceneRenderer from '@/components/session/SceneRenderer';
 import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -2528,6 +2531,42 @@ export const SessionPage: React.FC = () => {
     // Place current user at the top
     return [currentUser, ...participantsState];
   }, [nickname, isHost, isCoHost, myAvatar, participantsState, socket.userId, isRemoteMuted]);
+  // 🎬 STUDIO (Phase 2) — Preview / Programme / scènes. Sources = l'existant (aucun flux créé ici) ;
+  //    le PROGRAMME reste un état local : les participants reçoivent toujours le flux LiveKit tel quel.
+  const [studioOpen, setStudioOpen] = useState(false);
+  const studioParticipants = useMemo(
+    () => videoMesh.remoteCameras.map((c) => ({
+      identity: c.userId,
+      name: participants.find((pp) => pp.id === c.userId)?.name || 'Participant',
+      stream: c.stream || null,
+    })),
+    [videoMesh.remoteCameras, participants],
+  );
+  const studio = useStudio({
+    coachLabel: 'Coach',
+    localStream: videoMesh.cameraOn ? videoMesh.localStream : null,
+    secondaryCameras: camerasSecondaires.cameras,
+    participants: studioParticipants,
+    screenShareActive: videoMesh.screenOn,
+    localScreen: videoMesh.localScreen,
+  });
+  const studioMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches;
+  const studioNode: React.ReactNode = (
+    <StudioPanel
+      studio={studio}
+      participants={studioParticipants.map((p) => ({ identity: p.identity, name: p.name }))}
+      open={studioOpen}
+      onClose={() => setStudioOpen(false)}
+      mobile={studioMobile}
+      renderScene={(zone) => (
+        <SceneRenderer
+          zone={zone}
+          boxes={zone === 'preview' ? studio.boxesPreview : studio.boxesProgram}
+          resolveMedia={studio.resolveMedia}
+        />
+      )}
+    />
+  );
 
   // 🔊 POINT 2 : un curseur "Volume — <pseudo>" pour CHAQUE autre participant présent (sauf soi
   // et sauf l'hôte), TOUJOURS visible ; micActive = il parle (voix relayée reçue) en ce moment.
@@ -3740,6 +3779,9 @@ export const SessionPage: React.FC = () => {
       stageRequestCount={stageRequests.length}
       prompteurNode={prompteurOverlayNode}
       embellirNode={embellirNode} // ✨ slot du menu ⋮ (lot beauté) — null = rien
+      studioNode={studioNode}
+      studioOpen={studioOpen}
+      onToggleStudio={() => setStudioOpen((o) => !o)}
       prompteurTiroirNode={prompteurTiroirNode}
       prompteurOuvert={prompteurSurVideo}
       // Aucun texte encore écrit ? Ouvrir le prompteur SANS ouvrir de quoi écrire serait

@@ -1113,6 +1113,21 @@ class CohostsBody(BaseModel):
 # --------------------------------------------------------------------------- #
 # Endpoints
 # --------------------------------------------------------------------------- #
+# --------------------------------------------------------------------------- #
+# MULTISTREAM — destinations sociales (agent 2) : routes /social/*, secrets chiffrés (Fernet existant),
+# jamais renvoyés. `resoudre_destination(user_id, platform)` est réservé au moteur de multistream (Python).
+# --------------------------------------------------------------------------- #
+try:
+    import social_destinations as _social  # noqa: WPS433 (module frère, même dossier)
+    _social.configurer(
+        encrypt=encrypt_secret, decrypt=decrypt_secret, get_user=get_user_from_token,
+        store=_social.StockageSupabase(SUPABASE_URL, _service_headers),
+    )
+    app.include_router(_social.router)
+except Exception as _social_err:  # module absent ou config incomplète : le reste de l'API n'est pas affecté
+    logger.warning("[SOCIAL] destinations sociales non chargées : %s", _social_err)
+
+
 @app.get("/health")
 async def health():
     return {"ok": True}

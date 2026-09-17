@@ -123,6 +123,12 @@ export class ProgramCompositor {
   }
 
   /** Nouvelle scène (boîtes) et/ou nouveaux médias. Sans arrêter la piste : la sortie reste continue. */
+  /** Phase 4 : changer la résolution À CHAUD (canvas redimensionné, piste `captureStream` conservée → un seul fichier continu). */
+  changerResolution(res: ResolutionProgramme): void {
+    this.res = res; this.sousSeuilDepuis = 0;
+    if (this.canvas) { this.canvas.width = res.largeur; this.canvas.height = res.hauteur; }
+  }
+
   mettreAJour(boxes: SceneBox[], resolve: ResolveMedia): void {
     this.boxes = boxes;
     this.resolve = resolve;

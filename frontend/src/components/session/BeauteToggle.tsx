@@ -27,7 +27,8 @@ const BeauteToggle: React.FC<BeauteToggleProps> = ({ beaute, compact = true, cla
   return (
     <div className={`${compact ? 'flex items-center gap-2' : 'space-y-2'} ${className}`} data-testid="beaute-toggle">
       <span className="flex items-center gap-1.5 text-[13px] text-white/80 min-w-0">
-        <Sparkles className={`w-4 h-4 flex-shrink-0 ${actif ? 'text-[var(--bt-accent)]' : 'text-white/60'}`} aria-hidden />
+        {/* QA intégration : en mode compact (item du menu ⋮), l'icône est déjà portée par l'item — ne pas la doubler. */}
+        {!compact && <Sparkles className={`w-4 h-4 flex-shrink-0 ${actif ? 'text-[var(--bt-accent)]' : 'text-white/60'}`} aria-hidden />}
         <span className="truncate">Embellir le visage</span>
       </span>
       <div className="flex items-center gap-1 ml-auto" role="radiogroup" aria-label="Embellir le visage">

@@ -105,3 +105,25 @@ test('réducteur : changer le coin du PiP met à jour la preview pip, programme 
   const s3 = studioReducer(s2, { type: 'clear_preview' });
   assert.equal(s3.preview, null); assert.equal(s3.program.type, 'coach_full');
 });
+
+// ── QA Phase 4 : scène de repli quand une source requise disparaît ───────────
+test('repli : écran arrêté pendant ÉCRAN+COACH → coach_full ; participant parti → coach_full ; cam2 débranchée → cam1 ; scène valide → null', async () => {
+  const { construireScene, sceneDeRepli } = await import('./.build/studioScenes.mjs');
+  const coach = { kind: 'coach', label: 'Coach' };
+  const part = { kind: 'participant', id: 'p1', label: 'Sara' };
+  const ecran = { kind: 'screen', label: 'Écran' };
+  const cam2 = { kind: 'coach2', id: 'c2', label: 'Sony' };
+  const tout = [coach, cam2, part, ecran];
+  const sc = construireScene('screen_coach', tout, {}); assert.ok(sc);
+  assert.equal(sceneDeRepli(sc, tout), null, 'scène encore valide → rien');
+  const r1 = sceneDeRepli(sc, [coach, cam2, part]); assert.equal(r1 && r1.type, 'coach_full', 'écran parti → coach plein écran');
+  const sp = construireScene('split_50', tout, { participantId: 'p1' });
+  const r2 = sceneDeRepli(sp, [coach, ecran]); assert.equal(r2 && r2.type, 'coach_full', 'participant parti → coach');
+  const pp = construireScene('participant_full', tout, { participantId: 'p1' });
+  const r3 = sceneDeRepli(pp, [coach]); assert.equal(r3 && r3.type, 'coach_full');
+  const c2 = construireScene('cam2', tout, { cam2Id: 'c2' });
+  const r4 = sceneDeRepli(c2, [coach, part]); assert.equal(r4 && r4.type, 'cam1', 'cam2 débranchée → caméra 1');
+  const r5 = sceneDeRepli(construireScene('coach_full', tout, {}), []); assert.equal(r5, null, 'plus aucune source → aucun repli possible (le programme s’arrête proprement ailleurs)');
+  // le participant sélectionné change d'identité : l'ancienne scène n'est plus valide → repli
+  const r6 = sceneDeRepli(sp, [coach, { kind: 'participant', id: 'p2', label: 'Léa' }]); assert.equal(r6 && r6.type, 'coach_full');
+});

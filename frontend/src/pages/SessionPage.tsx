@@ -2627,7 +2627,9 @@ export const SessionPage: React.FC = () => {
   //    sur l'appareil, jamais de vidéo envoyée au serveur. Même MediaStream que le multistream (mock).
   const recorder = useProgramRecorder({
     programStream: programme.stream,
-    demarrerProgramme: async () => { await programme.demarrer(); return programme.stream; },
+    // QA Phase 4 : `demarrer()` RENVOIE le flux ; relire `programme.stream` juste après lisait l'état
+    //    précédent (fermeture React) → « Programme indisponible » au 1er clic. On utilise la valeur rendue.
+    demarrerProgramme: async () => programme.demarrer(),
     resolutionProgramme: (q) => programme.changerResolution(q === '1080p' ? RESOLUTION_1080P : RESOLUTION_720P),
     fpsProgramme: programme.stats.fps,
   });

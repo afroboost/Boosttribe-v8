@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bitratePour, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, minutesMaxMemoire,
-  nomFichier, qualiteParDefaut, type EnvEnregistrement, type EtatRepli, type RecCapacite, type RecQualite,
+  nomFichier, qualiteParDefaut, type EnvEnregistrement, type EtatRepli, type RecCapacite, type RecQualite, type RecStrategie,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
 import { choisirResolution, type ResolutionProgramme } from '@/lib/programCompositor';
@@ -154,6 +154,13 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
   const ecrivainRef = useRef<Ecrivain | null>(null);
   const opfsRef = useRef<{ handle: any; dossier: any; nom: string } | null>(null);
   const fsaNomRef = useRef<string | null>(null);
+  // QA Phase 4 : la stratégie EFFECTIVE de l'enregistrement en cours. `capacite.strategie` dit ce que le
+  // navigateur SAIT faire ; mais `showSaveFilePicker` peut être refusé au moment du geste (iframe sans
+  // délégation — afroboost.com/live embarque BoostTribe —, contexte sans geste utilisateur, politique
+  // d'entreprise). Avant : l'appel échouait, `setEtat('inactif')`, et l'hôte ne voyait RIEN. Désormais :
+  // toute erreur autre qu'une annulation replie sur l'OPFS (fichier temporaire + « Enregistrer sur mon
+  // appareil ») ; une annulation volontaire est dite en une ligne.
+  const strategieRef = useRef<RecStrategie>(capacite.strategie);
   const debutRef = useRef<number>(0);
   const tailleRef = useRef<number>(0);
   const tickRef = useRef<number | null>(null);
@@ -211,13 +218,28 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
         setAvis(`Écriture progressive indisponible ici : limite d’environ ${minutesMaxMemoire(q, lireEnvironnement().memoireGo)} min en mémoire.`);
       }
       // 1. Destination — AVANT la première image, pour que rien ne soit perdu.
+      strategieRef.current = capacite.strategie;
       if (capacite.strategie === 'fsa') {
-        const handle = await (window as any).showSaveFilePicker({
-          suggestedName: nom,
-          types: [{ description: capacite.extension === 'mp4' ? 'Vidéo MP4' : 'Vidéo WebM', accept: { [capacite.extension === 'mp4' ? 'video/mp4' : 'video/webm']: [`.${capacite.extension}`] } }],
-        });
-        ecrivainRef.current = await ecrivainFsa(handle);
-        fsaNomRef.current = handle.name || nom;
+        try {
+          const handle = await (window as any).showSaveFilePicker({
+            suggestedName: nom,
+            types: [{ description: capacite.extension === 'mp4' ? 'Vidéo MP4' : 'Vidéo WebM', accept: { [capacite.extension === 'mp4' ? 'video/mp4' : 'video/webm']: [`.${capacite.extension}`] } }],
+          });
+          ecrivainRef.current = await ecrivainFsa(handle);
+          fsaNomRef.current = handle.name || nom;
+        } catch (e) {
+          if ((e as Error)?.name === 'AbortError') {
+            // Annulation volontaire du sélecteur : on le dit, on ne devine rien.
+            setAvis('Enregistrement annulé : aucun emplacement choisi.'); setEtat('inactif'); nettoyer(); return;
+          }
+          const opfsPossible = typeof (navigator as any).storage?.getDirectory === 'function';
+          if (!opfsPossible) throw e;
+          // Sélecteur refusé (iframe, sans geste, politique) → écriture progressive OPFS à la place.
+          strategieRef.current = 'opfs';
+          const { ecrivain, handle, dossier } = await ecrivainOpfs(nom);
+          ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom };
+          setAvis('Le choix du dossier n’est pas disponible ici : le fichier sera proposé au téléchargement à l’arrêt.');
+        }
       } else if (capacite.strategie === 'opfs') {
         const { ecrivain, handle, dossier } = await ecrivainOpfs(nom);
         ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom };
@@ -266,9 +288,9 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       const res = resolutionEffectiveRef.current;
       const nom = fsaNomRef.current || opfsRef.current?.nom || nomFichier(new Date(), capacite.extension);
       const base = { nom, dureeSec: dureeMs / 1000, tailleOctets: fini.taille, resolution: `${res.largeur}×${res.hauteur}`, format: capacite.codec };
-      if (capacite.strategie === 'fsa') {
+      if (strategieRef.current === 'fsa') {
         setResultat({ ...base, dejaEcrit: true, emplacement: nom, sauvegarderSurAppareil: async () => { /* déjà sur le disque */ } });
-      } else if (capacite.strategie === 'opfs') {
+      } else if (strategieRef.current === 'opfs') {
         const ref = opfsRef.current;
         setResultat({ ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => {
           if (!ref) return;

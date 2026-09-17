@@ -56,6 +56,8 @@ import { PromoEditor } from '@/components/session/PromoEditor';
 import type { ChatMessage } from '@/components/session/ChatPanel';
 import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
+import { useBeauteVisage } from '@/hooks/useBeauteVisage';
+import BeauteToggle from '@/components/session/BeauteToggle';
 import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -1997,6 +1999,10 @@ export const SessionPage: React.FC = () => {
   // 🐛 BUG 3 : cible de portail = élément plein écran courant (ou body). Permet d'afficher le chat
   //    PAR-DESSUS le plein écran Live Visio (comme le minuteur), sinon invisible (API Fullscreen).
   const fsChatPortalTarget = useFullscreenPortalTarget();
+  // ✨ Embellir le visage — point de branchement pour le lot beauté : un composant de réglage
+  //    (Off / Léger / Moyen) rendu dans le menu ⋮ du panneau visio. `null` tant que non branché.
+  const beaute = useBeauteVisage({ getCameraTrack: videoMesh.getCameraTrack, cameraOn: videoMesh.cameraOn });
+  const embellirNode: React.ReactNode = beaute.supporte ? <BeauteToggle beaute={beaute} compact /> : null;
   // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
   const [chatOpen, setChatOpen] = useState(false);
   const [chatTab, setChatTab] = useState<'assistant' | 'group' | 'private'>('assistant');
@@ -3730,11 +3736,10 @@ export const SessionPage: React.FC = () => {
       onToggleScreenShare={handleToggleScreenShare}
       screenSharing={screenSharing}
       screenSupported={screenSupported}
-      onOpenChat={sessionId && !isGuestRestricted ? () => setChatOpen(true) : undefined}
-      chatUnread={chatUnreadTotal}
       onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
       stageRequestCount={stageRequests.length}
       prompteurNode={prompteurOverlayNode}
+      embellirNode={embellirNode} // ✨ slot du menu ⋮ (lot beauté) — null = rien
       prompteurTiroirNode={prompteurTiroirNode}
       prompteurOuvert={prompteurSurVideo}
       // Aucun texte encore écrit ? Ouvrir le prompteur SANS ouvrir de quoi écrire serait
@@ -3762,8 +3767,6 @@ export const SessionPage: React.FC = () => {
       onRequestStage={handleRequestStage}
       stageRequestPending={stageRequestPending}
       onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}
-      onOpenChat={sessionId && !isGuestRestricted ? () => setChatOpen(true) : undefined}
-      chatUnread={chatUnreadTotal}
       onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
       stageRequestCount={stageRequests.length}
     />

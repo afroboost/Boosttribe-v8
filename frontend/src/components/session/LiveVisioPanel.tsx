@@ -1,8 +1,9 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
+import { MenuActions } from '@/components/session/MenuActions';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
@@ -57,9 +58,8 @@ interface LiveVisioPanelProps {
   onToggleScreenShare?: () => void;
   screenSharing?: boolean;
   screenSupported?: boolean;
-  // 💬 Chat accessible depuis le plein écran (BUG 3) : ouvre le panneau + badge non-lus.
-  onOpenChat?: () => void;
-  chatUnread?: number;
+  // ✨ Embellir le visage (agent beauté) : réglage rendu dans le menu ⋮ — optionnel.
+  embellirNode?: React.ReactNode;
   // 🙋 Demandes de scène (badge + toggle) accessibles depuis le plein écran.
   onToggleStageRequests?: () => void;
   stageRequestCount?: number;
@@ -86,6 +86,12 @@ interface LiveVisioPanelProps {
 
 type Layout = 'grid' | 'spotlight';
 
+// Boutons ronds de la barre du bas — mêmes classes que la colonne plein écran (VisioControlBar).
+const ROUND = 'w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors';
+const DARK = 'bg-black/50 text-white/90 hover:bg-black/70';
+const GREEN = 'bg-green-500/40 text-green-100 hover:bg-green-500/50';
+const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)]';
+
 // 📷 Caméra INTÉGRÉE avant/arrière du téléphone (déjà couverte par le bouton flip) → à masquer du
 //    menu sur mobile pour ne garder que les VRAIES caméras externes (GoPro, reflex, USB, carte de capture).
 function isBuiltInFacingCamera(label: string): boolean {
@@ -108,7 +114,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   sources, cameraNotice = null, onDismissCameraNotice,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
-  onOpenChat, chatUnread, onToggleStageRequests, stageRequestCount,
+  embellirNode, onToggleStageRequests, stageRequestCount,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene,
 }) => {
@@ -254,8 +260,6 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               onRequestStage={onRequestStage}
               stageRequestPending={stageRequestPending}
               onStartTimer={onStartTimer && canManageStage ? onStartTimer : undefined}
-              onOpenChat={onOpenChat}
-              chatUnread={chatUnread}
               onToggleStageRequests={onToggleStageRequests}
               stageRequestCount={stageRequestCount}
               onTogglePrompteur={onTogglePrompteur}
@@ -358,18 +362,21 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         <div className="px-3 pb-1" data-testid="visio-audio">{audioNode}</div>
       )}
 
-      {/* Barre de contrôle — accessible au pouce sur mobile */}
-      <div className="flex flex-wrap items-center justify-center gap-2 px-3 py-2.5 border-t border-white/10 bg-black/20">
+      {/* Barre de contrôle — UNE rangée d'icônes rondes, accessible au pouce sur mobile.
+          Épurée (17/09) : la vidéo domine ; ici seulement l'essentiel (micro si demandé, caméra,
+          bascule/partage) ; tout le secondaire vit dans le menu ⋮ (Sources, Prompteur, Interval,
+          Embellir, Quitter). « Plein écran » n'y est plus : la vignette porte déjà Agrandir. */}
+      <div className="flex items-center justify-center gap-3 px-3 py-2 border-t border-white/10 bg-black/20"
+        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
         {!hideMicButton && (
           <button
             onClick={onToggleMic}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-              micActive ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-white/10 text-white/70 hover:bg-white/20'
-            }`}
+            className={`${ROUND} ${micActive ? GREEN : DARK}`}
+            title={micActive ? 'Couper le micro' : 'Activer le micro'}
+            aria-label={micActive ? 'Couper le micro' : 'Activer le micro'}
             data-testid="visio-mic-toggle"
           >
-            {micActive ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-            <span className="hidden xs:inline">Micro</span>
+            {micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </button>
         )}
 
@@ -377,19 +384,18 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* Hôte / co-hôte : gère librement sa caméra */
           <button
             onClick={onToggleCamera}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-              cameraOn ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
-            }`}
+            className={`${ROUND} ${cameraOn ? ACCENT : DARK}`}
+            title={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
+            aria-label={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
             data-testid="visio-camera-toggle"
           >
-            {cameraOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-            {cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
+            {cameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
           </button>
         ) : cameraOn ? (
-          /* Spectateur à l'écran : peut quitter la scène lui-même */
+          /* Spectateur à l'écran : peut quitter la scène lui-même (reste VISIBLE, pas dans le menu) */
           <button
             onClick={onToggleCamera}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)] transition-colors"
             data-testid="visio-leave-stage"
           >
             <VideoOff className="w-4 h-4" /> Quitter la scène
@@ -398,7 +404,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* Spectateur : demande envoyée, en attente de validation */
           <button
             disabled
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.15)] text-[rgb(var(--bt-accent-rgb)/0.7)] cursor-default"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.15)] text-[rgb(var(--bt-accent-rgb)/0.7)] cursor-default"
             data-testid="visio-request-pending"
           >
             <Hand className="w-4 h-4" /> Demande envoyée…
@@ -407,39 +413,23 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* Spectateur : demander à monter en vidéo */
           <button
             onClick={onRequestStage}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
             data-testid="visio-request-stage"
           >
             <Hand className="w-4 h-4" /> Demander à monter en vidéo
           </button>
         )}
 
-        {/* 🎥 Choisir une caméra (externe) — hôte/co-hôte. Bouton TOUJOURS visible ; le clic demande
-            la permission puis liste les caméras (webcam externe incluse). Bascule sans reconnexion. */}
-        {canManageStage && onSelectCamera && (
-          <button
-            onClick={() => { onRefreshDevices?.(true); setCamMenuOpen((o) => !o); }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-              camMenuOpen ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]' : 'bg-white/10 text-white/70 hover:bg-white/20'
-            }`}
-            title={sources ? 'Sources : caméras et micros' : 'Choisir une caméra externe (USB / carte de capture)'}
-            aria-label={sources ? 'Sources : caméras et micros' : 'Choisir une caméra externe'}
-            aria-expanded={camMenuOpen}
-            data-testid={sources ? 'visio-sources' : 'visio-camera-menu'}
-          >
-            {sources ? <SlidersHorizontal className="w-4 h-4" /> : <SwitchCamera className="w-4 h-4" />} {sources ? 'Sources' : 'Caméra externe'}
-          </button>
-        )}
-
-        {/* Bascule rapide avant/arrière (mobile) quand ≥ 2 caméras. */}
+        {/* Bascule rapide avant/arrière (mobile) quand ≥ 2 caméras — icône seule, ronde. */}
         {canManageStage && onFlipCamera && videoDevices.length > 1 && (
           <button
             onClick={onFlipCamera}
-            className="sm:hidden flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-white/20 transition-colors"
+            className={`sm:hidden ${ROUND} ${DARK}`}
             title="Changer de caméra (avant/arrière)"
+            aria-label="Changer de caméra (avant/arrière)"
             data-testid="visio-camera-flip"
           >
-            <SwitchCamera className="w-4 h-4" />
+            <SwitchCamera className="w-5 h-5" />
           </button>
         )}
 
@@ -447,66 +437,61 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         {canManageStage && screenSupported && onToggleScreenShare && (
           <button
             onClick={onToggleScreenShare}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-              screenSharing
-                ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
-                : 'bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)]'
-            }`}
+            className={`${ROUND} ${screenSharing ? ACCENT : DARK}`}
             title={screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
+            aria-label={screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
+            aria-pressed={screenSharing}
             data-testid="visio-screen-share"
           >
-            {screenSharing ? <MonitorX className="w-4 h-4" /> : <MonitorUp className="w-4 h-4" />}
-            {screenSharing ? 'Arrêter le partage' : "Partager l'écran"}
+            {screenSharing ? <MonitorX className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
           </button>
         )}
 
-        {/* 📜 Prompteur — affiche/masque le texte SUR la vidéo. Réservé à qui présente
-            (le parent ne fournit le gestionnaire qu'à l'hôte / co-hôte). */}
-        {onTogglePrompteur && (
-          <button
-            onClick={onTogglePrompteur}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-              prompteurOuvert
-                ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)]'
-                : 'bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)]'
-            }`}
-            title={prompteurOuvert ? 'Masquer le prompteur' : 'Afficher le prompteur sur la vidéo'}
-            aria-pressed={prompteurOuvert}
-            data-testid="visio-prompteur-toggle"
-          >
-            <ScrollText className="w-4 h-4" /> Prompteur
-          </button>
-        )}
-
-        {/* 🔍 Chantier A : passer UNE caméra en vrai plein écran (celle épinglée, sinon la 1ʳᵉ). */}
-        {participants.length > 0 && (
-          <button
-            onClick={() => enlarge(spotlightId || fsBig?.id || myUserId)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
-            data-testid="visio-camera-fullscreen"
-          >
-            <Maximize2 className="w-4 h-4" /> Plein écran
-          </button>
-        )}
-
-        {/* ⏱️ Chantier C : l'hôte lance l'Interval training pendant la visio (fonctionne sans musique). */}
-        {onStartTimer && canManageStage && (
-          <button
-            onClick={onStartTimer}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
-            data-testid="visio-start-timer"
-          >
-            <Timer className="w-4 h-4" /> Interval training
-          </button>
-        )}
-
-        <button
-          onClick={onLeaveLive}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-white/10 text-white/70 hover:bg-red-500/20 hover:text-red-400 transition-colors"
-          data-testid="visio-leave"
-        >
-          <LogOut className="w-4 h-4" /> Quitter le live
-        </button>
+        {/* ⋮ Actions secondaires. Les data-testid des anciens boutons sont conservés sur les items. */}
+        <MenuActions
+          buttonClassName={`${ROUND} ${DARK}`}
+          items={[
+            ...(canManageStage && onSelectCamera ? [{
+              id: 'sources',
+              label: sources ? 'Sources' : 'Caméra externe',
+              icon: sources ? <SlidersHorizontal className="w-5 h-5" /> : <SwitchCamera className="w-5 h-5" />,
+              onSelect: () => { onRefreshDevices?.(true); setCamMenuOpen((o) => !o); },
+              active: camMenuOpen,
+              testId: sources ? 'visio-sources' : 'visio-camera-menu',
+            }] : []),
+            ...(onTogglePrompteur ? [{
+              id: 'prompteur',
+              label: 'Prompteur',
+              icon: <ScrollText className="w-5 h-5" />,
+              onSelect: onTogglePrompteur,
+              active: prompteurOuvert,
+              testId: 'visio-prompteur-toggle',
+            }] : []),
+            ...(onStartTimer && canManageStage ? [{
+              id: 'interval',
+              label: 'Interval training',
+              icon: <Timer className="w-5 h-5" />,
+              onSelect: onStartTimer,
+              testId: 'visio-start-timer',
+            }] : []),
+            ...(embellirNode && canManageStage ? [{
+              id: 'embellir',
+              label: 'Embellir le visage',
+              icon: <Sparkles className="w-5 h-5" />,
+              onSelect: () => {},
+              node: embellirNode,
+              testId: 'visio-embellir',
+            }] : []),
+            {
+              id: 'quitter',
+              label: 'Quitter le live',
+              icon: <LogOut className="w-5 h-5" />,
+              onSelect: onLeaveLive,
+              danger: true,
+              testId: 'visio-leave',
+            },
+          ]}
+        />
       </div>
 
       {/* 🎛️ Avis caméra discret — jamais bloquant, fermable. */}

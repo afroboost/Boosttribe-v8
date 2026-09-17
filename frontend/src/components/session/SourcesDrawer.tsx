@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, X, RefreshCw, Mic, MicOff } from 'lucide-react';
 import { VuMeterSegmented } from '@/components/audio/VuMeter';
-import { estMobile, familleCamera, libelleCamera, libelleMicro, estCameraDeLAppareil } from '@/lib/sourcesLogic';
+import { estMobile, libelleCamera, camerasAffichables, microsAffichables } from '@/lib/sourcesLogic';
 import type { CameraSecondaire } from '@/hooks/useSecondaryCameras';
 import type { UseSecondaryMicReturn } from '@/hooks/useSecondaryMic';
 
@@ -78,10 +78,18 @@ export const SourcesDrawer: React.FC<SourcesDrawerProps> = ({
   useEffect(() => { if (!ouvert) { setAjoutCam(false); setAjoutMic(false); } }, [ouvert]);
   if (!ouvert) return null; // tiroir fermé = AUCUNE liste visible
 
-  // Sur téléphone : avant / arrière d'abord, puis les externes ; sur ordinateur : tout, l'intégrée d'abord.
-  const cams = [...videoDevices].sort((a, b) => Number(estCameraDeLAppareil(b.label)) - Number(estCameraDeLAppareil(a.label)));
-  const candidatesSecondaires = videoDevices.filter((d) => d.deviceId !== videoDeviceId && !camerasSecondaires.some((c) => c.deviceId === d.deviceId));
-  const candidatsMic2 = micDevices.filter((d) => d.deviceId !== micDeviceId && d.deviceId !== micSecondaire?.deviceId);
+  // Listes SANS doublon (règle pure `camerasAffichables` / `microsAffichables`) : un iPhone expose plusieurs
+  // objectifs par face (grand angle, ultra, TrueDepth…) → une seule « Caméra avant », une seule « Caméra arrière » ;
+  // un boîtier USB qui expose plusieurs profils → une seule ligne ; « Default/Communications » Windows → un micro.
+  const cams = camerasAffichables(videoDevices, { mobile });
+  const camActive = (membres: string[]) => cameraOn && !!videoDeviceId && membres.includes(videoDeviceId);
+  const candidatesSecondaires = cams.filter((c) => !c.membres.includes(videoDeviceId || '') && !camerasSecondaires.some((s) => c.membres.includes(s.deviceId)));
+  const mics = microsAffichables(micDevices);
+  const micActif = (membres: string[], i: number) => (micDeviceId ? membres.includes(micDeviceId) : i === 0);
+  const candidatsMic2 = mics.filter((m) => !m.membres.includes(micDeviceId || '') && !m.membres.includes(micSecondaire?.deviceId || ''));
+  // « Ajouter … » n'apparaît que s'il y a réellement quelque chose à ajouter : sur téléphone, jamais.
+  const peutAjouterCamera = multiCamPossible && !mobile && candidatesSecondaires.length > 0;
+  const peutAjouterMicro = !!micSecondaire && !micSecondaire.actif && !mobile && candidatsMic2.length > 0;
 
   return (
     <div className="border-t border-white/10 bg-black/40 px-3 py-3 space-y-3" data-testid="sources-drawer" role="dialog" aria-label="Sources">
@@ -102,9 +110,9 @@ export const SourcesDrawer: React.FC<SourcesDrawerProps> = ({
         </div>
         {cams.length === 0 ? (
           <p className="text-xs text-white/45 px-2 py-1" data-testid="sources-camera-none">Aucune caméra disponible — le live continue en audio.</p>
-        ) : cams.map((d, i) => (
-          <Ligne key={d.deviceId} actif={cameraOn && d.deviceId === videoDeviceId} onClick={() => onSelectCamera(d.deviceId)} testid="sources-camera-option">
-            {libelleCamera(d, i)}
+        ) : cams.map((c) => (
+          <Ligne key={c.deviceId} actif={camActive(c.membres)} onClick={() => onSelectCamera(camActive(c.membres) ? (videoDeviceId as string) : c.deviceId)} testid="sources-camera-option">
+            {c.libelle}
           </Ligne>
         ))}
 
@@ -120,22 +128,20 @@ export const SourcesDrawer: React.FC<SourcesDrawerProps> = ({
                 </button>
               </div>
             ))}
-            {!ajoutCam ? (
+            {/* « Ajouter une caméra » n'existe que s'il y a un candidat ; sinon rien (pas de « Branche… » ni d'« Annuler »). */}
+            {peutAjouterCamera && (!ajoutCam ? (
               <button type="button" onClick={() => { onRefreshDevices?.(true); setAjoutCam(true); }} className="flex items-center gap-1.5 px-2 py-1.5 text-[13px] text-white/60 hover:text-white rounded-lg hover:bg-white/10" data-testid="sources-camera-add">
                 <Plus className="w-3.5 h-3.5" /> Ajouter une caméra
               </button>
             ) : (
               <div className="space-y-1 px-2">
-                {candidatesSecondaires.length === 0
-                  ? <p className="text-xs text-white/45">Branche une caméra (USB, capture HDMI) puis rafraîchis.</p>
-                  : candidatesSecondaires.map((d, i) => (
-                    <button key={d.deviceId} type="button" onClick={() => { onAjouterCamera(d.deviceId, d.label); setAjoutCam(false); }} className="block w-full text-left px-2 py-1 rounded text-[13px] text-white/70 hover:bg-white/10 hover:text-white" data-testid="sources-camera-add-option">
-                      {libelleCamera(d, i)}{familleCamera(d.label) === 'externe' ? '' : ' (intégrée)'}
-                    </button>
-                  ))}
-                <button type="button" onClick={() => setAjoutCam(false)} className="text-xs text-white/45 hover:text-white px-2 py-1">Annuler</button>
+                {candidatesSecondaires.map((c) => (
+                  <button key={c.deviceId} type="button" onClick={() => { onAjouterCamera(c.deviceId, c.libelle); setAjoutCam(false); }} className="block w-full text-left px-2 py-1 rounded text-[13px] text-white/70 hover:bg-white/10 hover:text-white" data-testid="sources-camera-add-option">
+                    {c.libelle}
+                  </button>
+                ))}
               </div>
-            )}
+            ))}
           </div>
         )}
       </section>
@@ -150,9 +156,9 @@ export const SourcesDrawer: React.FC<SourcesDrawerProps> = ({
         </div>
         {micDevices.length === 0 ? (
           <p className="text-xs text-white/45 px-2 py-1">Micro de l’appareil (active le micro pour voir la liste).</p>
-        ) : micDevices.map((d, i) => (
-          <Ligne key={d.deviceId} actif={d.deviceId === micDeviceId || (!micDeviceId && i === 0)} onClick={() => onSelectMic(d.deviceId)} testid="sources-mic-option">
-            {libelleMicro(d.label, i)}
+        ) : mics.map((m, i) => (
+          <Ligne key={m.deviceId} actif={micActif(m.membres, i)} onClick={() => onSelectMic(micActif(m.membres, i) && micDeviceId ? micDeviceId : m.deviceId)} testid="sources-mic-option">
+            {m.libelle}
           </Ligne>
         ))}
 
@@ -163,7 +169,7 @@ export const SourcesDrawer: React.FC<SourcesDrawerProps> = ({
               <div className="px-2 py-1 rounded-lg space-y-1" data-testid="sources-mic2-actif">
                 <div className="flex items-center gap-2 text-[13px] text-white/80">
                   <Puce actif />
-                  <span className="truncate flex-1">{libelleMicro(micSecondaire.label, 1)}</span>
+                  <span className="truncate flex-1">{micSecondaire.label || 'Micro secondaire'}</span>
                   <button type="button" onClick={() => micSecondaire.setMuted(!micSecondaire.muted)} aria-label={micSecondaire.muted ? 'Réactiver le micro secondaire' : 'Couper le micro secondaire'} className="p-1 rounded text-white/60 hover:text-white hover:bg-white/10" data-testid="sources-mic2-mute">
                     {micSecondaire.muted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
                   </button>
@@ -176,22 +182,19 @@ export const SourcesDrawer: React.FC<SourcesDrawerProps> = ({
                   <VuMeterSegmented level={Math.round(micSecondaire.niveau * 100)} />
                 </div>
               </div>
-            ) : !ajoutMic ? (
+            ) : peutAjouterMicro ? (!ajoutMic ? (
               <button type="button" onClick={() => { onRefreshMics?.(); setAjoutMic(true); }} className="flex items-center gap-1.5 px-2 py-1.5 text-[13px] text-white/60 hover:text-white rounded-lg hover:bg-white/10" data-testid="sources-mic-add">
                 <Plus className="w-3.5 h-3.5" /> Ajouter un micro
               </button>
             ) : (
               <div className="space-y-1 px-2">
-                {candidatsMic2.length === 0
-                  ? <p className="text-xs text-white/45">Branche un micro puis rafraîchis.</p>
-                  : candidatsMic2.map((d, i) => (
-                    <button key={d.deviceId} type="button" onClick={() => { micSecondaire.activer(d.deviceId, d.label); setAjoutMic(false); }} className="block w-full text-left px-2 py-1 rounded text-[13px] text-white/70 hover:bg-white/10 hover:text-white" data-testid="sources-mic-add-option">
-                      {libelleMicro(d.label, i + 1)}
-                    </button>
-                  ))}
-                <button type="button" onClick={() => setAjoutMic(false)} className="text-xs text-white/45 hover:text-white px-2 py-1">Annuler</button>
+                {candidatsMic2.map((m) => (
+                  <button key={m.deviceId} type="button" onClick={() => { micSecondaire.activer(m.deviceId, m.libelle); setAjoutMic(false); }} className="block w-full text-left px-2 py-1 rounded text-[13px] text-white/70 hover:bg-white/10 hover:text-white" data-testid="sources-mic-add-option">
+                    {m.libelle}
+                  </button>
+                ))}
               </div>
-            )}
+            )) : null}
             {micSecondaire.erreur && <p className="text-xs text-white/45 px-2">{micSecondaire.erreur}</p>}
           </div>
         )}

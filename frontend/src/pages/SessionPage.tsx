@@ -62,6 +62,9 @@ import { useStudio } from '@/hooks/useStudio';
 import { StudioPanel } from '@/components/session/StudioPanel';
 import SceneRenderer from '@/components/session/SceneRenderer';
 import BroadcastDrawer from '@/components/session/BroadcastDrawer';
+import RecordPanel from '@/components/session/RecordPanel';
+import { useProgramRecorder } from '@/hooks/useProgramRecorder';
+import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
 import { useProgramStream } from '@/hooks/useProgramStream';
 import { useBroadcast } from '@/hooks/useBroadcast';
 import { capacitePartageEcran, arreterPistesPartage } from '@/lib/screenShareLogic';
@@ -2620,6 +2623,20 @@ export const SessionPage: React.FC = () => {
   const broadcastNode: React.ReactNode = (
     <BroadcastDrawer broadcast={broadcast} open={broadcastOpen} onClose={() => setBroadcastOpen(false)} mobile={studioMobile} />
   );
+  // ⏺️ ENREGISTREMENT LOCAL du Programme (Phase 4) — source = programStream, écriture progressive
+  //    sur l'appareil, jamais de vidéo envoyée au serveur. Même MediaStream que le multistream (mock).
+  const recorder = useProgramRecorder({
+    programStream: programme.stream,
+    // QA Phase 4 : `demarrer()` RENVOIE le flux ; relire `programme.stream` juste après lisait l'état
+    //    précédent (fermeture React) → « Programme indisponible » au 1er clic. On utilise la valeur rendue.
+    demarrerProgramme: async () => programme.demarrer(),
+    resolutionProgramme: (q) => programme.changerResolution(q === '1080p' ? RESOLUTION_1080P : RESOLUTION_720P),
+    fpsProgramme: programme.stats.fps,
+  });
+  const [recordOpen, setRecordOpen] = useState(false);
+  const recordNode: React.ReactNode = (
+    <RecordPanel recorder={recorder} open={recordOpen} onClose={() => setRecordOpen(false)} mobile={studioMobile} />
+  );
 
   const studioNode: React.ReactNode = (
     <StudioPanel
@@ -3851,6 +3868,13 @@ export const SessionPage: React.FC = () => {
       embellirNode={embellirNode} // ✨ slot du menu ⋮ (lot beauté) — null = rien
       studioNode={studioNode}
       broadcastNode={broadcastNode}
+      recordNode={recordNode}
+      recordOpen={recordOpen}
+      recordEtat={recorder.etat}
+      recordDureeSec={recorder.dureeSec}
+      recordSupporte={recorder.capacite.supporte}
+      recordMotif={recorder.capacite.motif}
+      onToggleRecord={() => setRecordOpen((o) => !o)}
       broadcastOpen={broadcastOpen}
       broadcastLive={broadcast.live}
       onToggleBroadcast={() => setBroadcastOpen((o) => !o)}

@@ -11,9 +11,9 @@
  * Le PROGRAMME reste un état : les participants continuent de recevoir le flux LiveKit
  * existant. Phase 3 branchera `boxesProgram` sur un compositeur canvas → programStream.
  */
-import { useCallback, useMemo, useReducer } from 'react';
+import { useCallback, useEffect, useMemo, useReducer } from 'react';
 import {
-  construireScene, layoutBoxes, scenesDisponibles, studioReducer, STUDIO_INITIAL,
+  construireScene, layoutBoxes, sceneDeRepli, scenesDisponibles, studioReducer, STUDIO_INITIAL,
   type PipPosition, type SceneBox, type SceneTemplate, type SceneType, type StudioSourceRef, type StudioState,
 } from '@/lib/studioScenes';
 
@@ -120,6 +120,14 @@ export function useStudio(o: UseStudioOptions): UseStudioReturn {
       if (scene) dispatch({ type: 'preview', scene });
     }
   }, [sources, state.preview, state.pip]);
+
+  // Repli automatique (QA Phase 4) : une source de la scène à l'antenne disparaît (écran arrêté,
+  // participant parti, caméra 2 débranchée) → cut immédiat vers la scène de repli ; même chose
+  // pour la preview. Le programme ne s'interrompt jamais et ne montre jamais un cadre vide.
+  useEffect(() => {
+    if (state.program) { const r = sceneDeRepli(state.program, sources); if (r) dispatch({ type: 'cut', scene: r }); }
+    if (state.preview) { const r = sceneDeRepli(state.preview, sources); if (r) dispatch({ type: 'preview', scene: r }); }
+  }, [sources, state.program, state.preview]);
 
   const boxesPreview = useMemo(() => (state.preview ? layoutBoxes(state.preview) : []), [state.preview]);
   const boxesProgram = useMemo(() => (state.program ? layoutBoxes(state.program) : []), [state.program]);

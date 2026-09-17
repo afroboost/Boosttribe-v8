@@ -1,9 +1,11 @@
 import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles, Clapperboard, Radio } from 'lucide-react';
+import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles, Clapperboard, Radio, Disc, Square } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { MenuActions } from '@/components/session/MenuActions';
+import { libelleItemRecord, formatDureeRec, badgeVisible } from '@/lib/recordUi';
+import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
@@ -77,6 +79,16 @@ interface LiveVisioPanelProps {
   //    désactivé « Indisponible sur cet appareil » (desktop), masqué sur mobile — sans toucher
   //    à la caméra du téléphone.
   screenShareDisponible?: boolean;
+  // ⏺ Enregistrement local du Programme (Phase 4) : item ⋮ « Enregistrer » ; le panneau est
+  //    `recordNode` (rendu quand `recordOpen`). Sur la vidéo : seulement un badge « ● REC » en
+  //    enregistrement. Aucune donnée de fichier ici : états, durée, capacité, rappel.
+  recordNode?: React.ReactNode;
+  recordOpen?: boolean;
+  recordEtat?: RecEtat;
+  recordDureeSec?: number;
+  recordSupporte?: boolean;
+  recordMotif?: string;
+  onToggleRecord?: () => void;
   // 🙋 Demandes de scène (badge + toggle) accessibles depuis le plein écran.
   onToggleStageRequests?: () => void;
   stageRequestCount?: number;
@@ -133,6 +145,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
   broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
+  recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene,
 }) => {
@@ -372,6 +385,12 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         )}
         {/* Hors plein écran aussi : le texte se lit SUR l'aperçu, jamais à côté. */}
         {!camFullscreen && prompteurNode}
+        {/* ⏺ Badge discret « ● REC 00:12:34 » — seule trace de l'enregistrement sur la vidéo. */}
+        {badgeVisible(recordEtat) && (
+          <span className="pointer-events-none absolute top-4 left-4 z-20 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur text-[11px] font-semibold text-[var(--bt-accent)] tabular-nums" role="status" aria-live="off" data-testid="record-badge">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--bt-accent)] animate-pulse" aria-hidden="true" /> REC {formatDureeRec(recordDureeSec)}
+          </span>
+        )}
         {!camFullscreen && prompteurTiroirNode}
       </div>
 
@@ -544,6 +563,25 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               active: broadcastLive || broadcastOpen,
               testId: 'visio-broadcast-item',
             }] : []),
+            ...(onToggleRecord && canManageStage ? [{
+              id: 'record',
+              label: recordSupporte ? libelleItemRecord(recordEtat, recordDureeSec) : (recordMotif || 'Enregistrement indisponible'),
+              icon: recordEtat === 'enregistrement' ? <Square className="w-5 h-5" /> : <Disc className="w-5 h-5" />,
+              onSelect: recordSupporte ? onToggleRecord : () => {},
+              active: recordEtat === 'enregistrement' || recordOpen,
+              testId: 'visio-record',
+              fermeApres: true,
+              node: !recordSupporte ? (
+                <span className="flex-1 text-white/40 cursor-not-allowed" aria-disabled="true" data-testid="visio-record-indisponible">{recordMotif || 'Enregistrement indisponible'}</span>
+              ) : recordEtat === 'enregistrement' ? (
+                <span className="flex-1 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--bt-accent)] animate-pulse" aria-hidden="true" />
+                  <span>Enregistrement</span>
+                  <span className="tabular-nums text-white/70">{formatDureeRec(recordDureeSec)}</span>
+                  <span className="ml-auto text-xs text-white/50">Arrêter</span>
+                </span>
+              ) : undefined,
+            }] : []),
             ...(embellirNode && canManageStage ? [{
               id: 'embellir',
               label: 'Embellir le visage',
@@ -569,6 +607,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
 
       {/* 📡 Tiroir « Diffuser en direct » (fixed dans le nœud : panneau desktop ou plein écran mobile). Fermé = rien. */}
       {broadcastOpen && broadcastNode}
+
+      {/* ⏺ Panneau « Enregistrer le Programme » (fixed dans le nœud). Fermé = rien. */}
+      {recordOpen && recordNode}
 
       {/* 🎛️ Avis caméra discret — jamais bloquant, fermable. */}
       {cameraNotice && (

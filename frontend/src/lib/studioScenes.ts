@@ -185,3 +185,26 @@ function remplacerParticipant(scene: StudioScene, id: string): StudioScene {
   const ancien = [scene.primarySource, scene.secondarySource].find((r) => r?.kind === 'participant')?.id ?? '';
   return { ...scene, id: ancien ? scene.id.replace(ancien, id) : scene.id, primarySource: primary, secondarySource: secondary };
 }
+
+/**
+ * Scène de REPLI quand une source requise par une scène disparaît (partage d'écran arrêté,
+ * participant parti, caméra 2 débranchée) — QA Phase 4 : sans elle, le compositeur peignait du
+ * NOIR à la place de l'écran et le fichier/les participants recevaient un cadre vide.
+ * Règle unique, pure : on redescend vers la scène la plus simple encore satisfaite.
+ *   screen_coach → coach_full · participant_full / split_50 / pip → coach_full · cam2 → cam1 → coach_full.
+ * Renvoie `null` si la scène est encore valide (rien à faire) ou si aucun repli n'est possible.
+ */
+export function sceneDeRepli(scene: StudioScene, sources: StudioSourceRef[]): StudioScene | null {
+  const kinds = new Set(sources.map((s) => s.kind));
+  const ids = new Set(sources.map((s) => `${s.kind}:${s.id ?? ''}`));
+  const requis = SCENE_TEMPLATES.find((t) => t.type === scene.type)?.needs ?? [];
+  const sourceOk = (ref: StudioSourceRef | null) => !ref || (ref.id ? ids.has(`${ref.kind}:${ref.id}`) : kinds.has(ref.kind));
+  const valide = requis.every((k) => kinds.has(k)) && sourceOk(scene.primarySource) && sourceOk(scene.secondarySource);
+  if (valide) return null;
+  const ordre: SceneType[] = scene.type === 'cam2' ? ['cam1', 'coach_full'] : ['coach_full'];
+  for (const t of ordre) {
+    const r = construireScene(t, sources, { pip: scene.layout.pip });
+    if (r) return r;
+  }
+  return null;
+}

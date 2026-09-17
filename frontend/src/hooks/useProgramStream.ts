@@ -43,6 +43,8 @@ export interface UseProgramStreamReturn {
   audioTrack: MediaStreamTrack | null;
   demarrer: () => MediaStream | null;
   arreter: () => void;
+  /** Phase 4 : résolution à chaud, sans recréer la piste. */
+  changerResolution: (res: ResolutionProgramme) => void;
   stats: { fps: number; msParFrame: number; resolution: ResolutionProgramme };
   /** Dernier abandon de la garde de performance (message court), sinon null. */
   avis: string | null;
@@ -116,13 +118,15 @@ export function useProgramStream(o: UseProgramStreamOptions): UseProgramStreamRe
     return () => clearInterval(t);
   }, [actif, participantsDansScene]);
 
+  const changerResolution = useCallback((res: ResolutionProgramme) => { compRef.current?.changerResolution(res); }, []);
+
   useEffect(() => () => arreter(), [arreter]);
 
   return {
     actif, stream,
     videoTrack: stream?.getVideoTracks()[0] ?? null,
     audioTrack: stream?.getAudioTracks()[0] ?? null,
-    demarrer, arreter, stats, avis,
+    demarrer, arreter, changerResolution, stats, avis,
   };
 }
 

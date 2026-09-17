@@ -61,6 +61,7 @@ import BeauteToggle from '@/components/session/BeauteToggle';
 import { useStudio } from '@/hooks/useStudio';
 import { StudioPanel } from '@/components/session/StudioPanel';
 import SceneRenderer from '@/components/session/SceneRenderer';
+import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import { useProgramStream } from '@/hooks/useProgramStream';
 import { useBroadcast } from '@/hooks/useBroadcast';
 import { capacitePartageEcran, arreterPistesPartage } from '@/lib/screenShareLogic';
@@ -2613,7 +2614,12 @@ export const SessionPage: React.FC = () => {
       return a ? videoMesh.publishProgramAudio(a) : null;
     },
   });
-  void broadcast; void setProgrammeVersParticipants; // branchés par le panneau Broadcast / le menu Studio
+  void setProgrammeVersParticipants; // branché plus tard par le menu Studio (ON par défaut à l'antenne)
+  // Panneau « Diffuser en direct » : tout reste dans le tiroir, l'écran principal ne porte que l'icône.
+  const [broadcastOpen, setBroadcastOpen] = useState(false);
+  const broadcastNode: React.ReactNode = (
+    <BroadcastDrawer broadcast={broadcast} open={broadcastOpen} onClose={() => setBroadcastOpen(false)} mobile={studioMobile} />
+  );
 
   const studioNode: React.ReactNode = (
     <StudioPanel
@@ -3844,6 +3850,11 @@ export const SessionPage: React.FC = () => {
       prompteurNode={prompteurOverlayNode}
       embellirNode={embellirNode} // ✨ slot du menu ⋮ (lot beauté) — null = rien
       studioNode={studioNode}
+      broadcastNode={broadcastNode}
+      broadcastOpen={broadcastOpen}
+      broadcastLive={broadcast.live}
+      onToggleBroadcast={() => setBroadcastOpen((o) => !o)}
+      screenShareDisponible={screenSupported}
       studioOpen={studioOpen}
       onToggleStudio={() => setStudioOpen((o) => !o)}
       prompteurTiroirNode={prompteurTiroirNode}

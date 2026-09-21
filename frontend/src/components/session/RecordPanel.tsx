@@ -82,6 +82,11 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
           <dt className="text-white/45">Résolution</dt><dd>{resultat.resolution}</dd>
           <dt className="text-white/45">Format</dt><dd>{resultat.format}</dd>
         </dl>
+        {avis && (
+          <p className="text-xs text-amber-200/90 flex items-start gap-2" role="status" data-testid="record-avis">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{avis}</span>
+          </p>
+        )}
       </div>
     );
     principal = resultat.dejaEcrit ? (

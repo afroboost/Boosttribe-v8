@@ -154,3 +154,62 @@ export function formaterDuree(sec: number): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * FIX MP4/QuickTime (terrain, 17/09) — le fichier faisait 0 octet.
+ *
+ * Cause prouvée avec le vrai Chrome : « Enregistrer » sans scène à l'antenne →
+ * le recorder démarre le programme, puis l'effet de SessionPage (« rien à
+ * l'antenne → programme.arreter() ») coupe les pistes 1 s plus tard → le
+ * MediaRecorder s'arrête TOUT SEUL (0 octet reçu) sans que le hook l'écoute :
+ * le compteur continuait, « Arrêter » fermait un fichier vide et annonçait
+ * « Fichier enregistré ». QuickTime refusait un fichier de 0 octet.
+ *
+ * Deux règles PURES, testées :
+ *  - `antennePourEnregistrer` : ce qu'il faut faire AVANT de démarrer quand
+ *    rien n'est à l'antenne (mettre la caméra du coach à l'antenne, ou refuser
+ *    clairement) ;
+ *  - `verdictFinalisation` : un fichier de 0 octet n'est JAMAIS « prêt ».
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface AntenneVerdict {
+  action: 'rien' | 'mettre_coach' | 'refuser';
+  message?: string;
+}
+
+/**
+ * Rien à l'antenne au moment d'enregistrer : la caméra du coach y est mise
+ * (scène « Coach plein écran ») si elle existe ; sinon on refuse en le disant.
+ * `sources` = les sources du studio (`kind` suffit).
+ */
+export function antennePourEnregistrer(programmeALAntenne: boolean, sources: { kind: string }[]): AntenneVerdict {
+  if (programmeALAntenne) return { action: 'rien' };
+  if (sources.some((s) => s.kind === 'coach')) return { action: 'mettre_coach' };
+  return { action: 'refuser', message: 'Rien à enregistrer : allumez votre caméra ou mettez une scène à l’antenne dans le Studio.' };
+}
+
+export interface FinalisationEntree {
+  /** Octets réellement écrits dans le fichier. */
+  octets: number;
+  /** `true` si l'hôte a cliqué « Arrêter » ; `false` si l'enregistreur s'est arrêté seul (piste finie, erreur). */
+  arretDemande: boolean;
+  dureeSec: number;
+}
+
+export interface FinalisationVerdict {
+  etat: 'pret' | 'erreur';
+  /** Message affiché (erreur) ou avis (prêt mais écourté). `null` = rien à dire. */
+  message: string | null;
+}
+
+export function verdictFinalisation(e: FinalisationEntree): FinalisationVerdict {
+  if (e.octets <= 0) {
+    return { etat: 'erreur', message: e.arretDemande
+      ? 'Aucune image enregistrée : le Programme s’est arrêté avant la première image. Mettez une scène à l’antenne, puis réessayez.'
+      : 'Enregistrement interrompu avant la première image : le Programme s’est arrêté. Mettez une scène à l’antenne, puis réessayez.' };
+  }
+  if (!e.arretDemande) {
+    return { etat: 'pret', message: `Le Programme s’est arrêté : l’enregistrement a été finalisé à ${formaterDuree(e.dureeSec)}.` };
+  }
+  return { etat: 'pret', message: null };
+}

@@ -64,6 +64,7 @@ import SceneRenderer from '@/components/session/SceneRenderer';
 import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import RecordPanel from '@/components/session/RecordPanel';
 import { useProgramRecorder } from '@/hooks/useProgramRecorder';
+import { antennePourEnregistrer } from '@/lib/recordLogic';
 import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
 import { useProgramStream } from '@/hooks/useProgramStream';
 import { useBroadcast } from '@/hooks/useBroadcast';
@@ -2629,7 +2630,16 @@ export const SessionPage: React.FC = () => {
     programStream: programme.stream,
     // QA Phase 4 : `demarrer()` RENVOIE le flux ; relire `programme.stream` juste après lisait l'état
     //    précédent (fermeture React) → « Programme indisponible » au 1er clic. On utilise la valeur rendue.
-    demarrerProgramme: async () => programme.demarrer(),
+    // FIX 0 octet (terrain 17/09) : sans scène à l'antenne, l'effet ci-dessus (« rien à l'antenne →
+    //    programme.arreter() ») coupait les pistes 1 s après le démarrage → MediaRecorder arrêté seul,
+    //    fichier de 0 octet que QuickTime refusait. Désormais : rien à l'antenne → la caméra du coach
+    //    est mise à l'antenne (scène « Coach plein écran ») AVANT de démarrer ; sans caméra → refus dit.
+    demarrerProgramme: async () => {
+      const verdict = antennePourEnregistrer(programmeALAntenne, studio.sources);
+      if (verdict.action === 'refuser') throw new Error(verdict.message);
+      if (verdict.action === 'mettre_coach') studio.cut('coach_full');
+      return programme.demarrer();
+    },
     resolutionProgramme: (q) => programme.changerResolution(q === '1080p' ? RESOLUTION_1080P : RESOLUTION_720P),
     fpsProgramme: programme.stats.fps,
   });

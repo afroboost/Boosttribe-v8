@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bitratePour, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, minutesMaxMemoire,
-  nomFichier, qualiteParDefaut, type EnvEnregistrement, type EtatRepli, type RecCapacite, type RecQualite, type RecStrategie,
+  nomFichier, qualiteParDefaut, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type RecCapacite, type RecQualite, type RecStrategie,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
 import { choisirResolution, type ResolutionProgramme } from '@/lib/programCompositor';
@@ -87,6 +87,8 @@ interface Ecrivain {
   corriger(position: number, octets: Uint8Array): Promise<void>;
   terminer(): Promise<{ taille: number; fichier?: File; blob?: Blob }>;
   abandonner(): Promise<void>;
+  /** Retire le fichier (après `terminer()`), pour ne jamais laisser un fichier VIDE sur l'appareil. */
+  supprimer(): Promise<void>;
 }
 
 async function ecrivainFsa(handle: any): Promise<Ecrivain> {
@@ -97,6 +99,8 @@ async function ecrivainFsa(handle: any): Promise<Ecrivain> {
     async corriger(position, octets) { await w.write({ type: 'write', position, data: octets }); },
     async terminer() { await w.close(); const f = await handle.getFile(); return { taille: f.size, fichier: f }; },
     async abandonner() { try { await w.abort(); } catch { /* déjà fermé */ } },
+    // FileSystemFileHandle.remove() : Chrome ≥ 110 ; ailleurs le fichier vide reste, mais l'hôte est prévenu.
+    async supprimer() { try { if (typeof handle.remove === 'function') await handle.remove(); } catch { /* verrouillé : on laisse */ } },
   };
 }
 
@@ -113,6 +117,7 @@ async function ecrivainOpfs(nom: string): Promise<{ ecrivain: Ecrivain; handle: 
       async corriger(position, octets) { await w.write({ type: 'write', position, data: octets }); },
       async terminer() { await w.close(); const f = await handle.getFile(); return { taille: f.size, fichier: f }; },
       async abandonner() { try { await w.abort(); } catch { /* déjà fermé */ } },
+      async supprimer() { try { await dossier.removeEntry(nom); } catch { /* déjà retiré */ } },
     },
   };
 }
@@ -130,6 +135,7 @@ function ecrivainMemoire(mime: string): Ecrivain {
     },
     async terminer() { const blob = new Blob(morceaux, { type: mime }); void entete; return { taille: blob.size, blob }; },
     async abandonner() { morceaux.length = 0; },
+    async supprimer() { morceaux.length = 0; },
   };
 }
 
@@ -169,6 +175,14 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
   const repliRef = useRef<EtatRepli>({ sousSeuilDepuis: null, replie: false });
   const qualiteRef = useRef<RecQualite>(qualite); qualiteRef.current = qualite;
   const resolutionEffectiveRef = useRef<ResolutionProgramme>(choisirResolution(qualite));
+  // FIX 0 octet (terrain 17/09) : la finalisation est UNIQUE et déclenchée par l'événement `stop` du
+  // MediaRecorder, que l'arrêt soit demandé (« Arrêter »), spontané (pistes du Programme finies : rien
+  // à l'antenne, compositeur abandonné) ou dû au démontage. Avant, seul « Arrêter » écoutait `stop` :
+  // un recorder mort passait inaperçu, le compteur tournait, et « Arrêter » fermait un fichier VIDE
+  // annoncé « Fichier enregistré ». Un fichier de 0 octet n'est plus jamais « prêt ».
+  const arretDemandeRef = useRef(false);
+  const finalisationRef = useRef<Promise<void> | null>(null);
+  const demonteRef = useRef(false);
 
   const choisirQualite = useCallback((q: RecQualite) => { if (etat === 'inactif' || etat === 'pret') setQualite(q); }, [etat]);
 
@@ -251,11 +265,14 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       resolutionEffectiveRef.current = res;
       o.resolutionProgramme?.(q);
       const stream = o.programStream ?? (await o.demarrerProgramme());
-      if (!stream || !stream.getVideoTracks().length) throw new Error('Programme indisponible : mettez une scène à l’antenne.');
+      if (!stream || !stream.getVideoTracks().some((t) => t.readyState === 'live')) throw new Error('Programme indisponible : mettez une scène à l’antenne.');
       // 3. Un seul MediaRecorder, écriture par tranche d'une seconde.
       const rec = new MediaRecorder(stream, { mimeType: capacite.mime, videoBitsPerSecond: debit.video, audioBitsPerSecond: debit.audio });
       rec.ondataavailable = (ev: BlobEvent) => { if (ev.data && ev.data.size > 0) pousserEcriture(ev.data); };
       rec.onerror = () => { setAvis('L’enregistreur du navigateur a signalé une erreur.'); };
+      // Finalisation UNIQUE sur `stop`, quel qu'en soit le déclencheur (voir arretDemandeRef).
+      arretDemandeRef.current = false;
+      rec.onstop = () => { if (!finalisationRef.current) finalisationRef.current = finaliser(rec); };
       recRef.current = rec;
       rec.start(TIMESLICE_MS);
       debutRef.current = performance.now();
@@ -268,47 +285,81 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     }
   }, [capacite, etat, o, pousserEcriture, nettoyer]);
 
-  const arreter = useCallback(async () => {
-    const rec = recRef.current; if (!rec) return;
-    setEtat('finalisation');
-    const dureeMs = performance.now() - debutRef.current;
-    await new Promise<void>((resolve) => {
-      const fin = () => resolve();
-      rec.addEventListener('stop', fin, { once: true });
-      try { rec.state !== 'inactive' ? rec.stop() : fin(); } catch { fin(); }
-    });
+  /**
+   * Finalise l'enregistrement de `rec` : attend le dernier morceau, corrige la durée WebM, FERME le
+   * fichier (c'est `close()` qui écrit réellement un fichier File System Access sur le disque — avant,
+   * il pouvait rester à 0 octet), puis applique le verdict pur : 0 octet = erreur + fichier retiré.
+   */
+  async function finaliser(rec: MediaRecorder): Promise<void> {
+    if (recRef.current !== rec && !demonteRef.current) return;
+    const arretDemande = arretDemandeRef.current;
+    if (!demonteRef.current) setEtat('finalisation');
+    const dureeMs = Math.max(0, performance.now() - debutRef.current);
     await fileEcritureRef.current; // dernier morceau écrit
     const ecrivain = ecrivainRef.current;
     try {
       // Durée WebM : seuls les 8 octets réservés sont réécrits (même longueur, en place).
-      if (ecrivain && webmRef.current.offset != null) {
+      if (ecrivain && webmRef.current.offset != null && tailleRef.current > 0) {
         await ecrivain.corriger(webmRef.current.offset, encoderDuree(dureeEnUnites(dureeMs, webmRef.current.timecodeScale)));
       }
       const fini = ecrivain ? await ecrivain.terminer() : { taille: tailleRef.current };
+      const verdict = verdictFinalisation({ octets: fini.taille, arretDemande, dureeSec: dureeMs / 1000 });
+      if (verdict.etat === 'erreur') {
+        await ecrivain?.supprimer();
+        opfsRef.current = null;
+        if (!demonteRef.current) { setAvis(verdict.message); setEtat('erreur'); setResultat(null); }
+        return;
+      }
       const res = resolutionEffectiveRef.current;
       const nom = fsaNomRef.current || opfsRef.current?.nom || nomFichier(new Date(), capacite.extension);
       const base = { nom, dureeSec: dureeMs / 1000, tailleOctets: fini.taille, resolution: `${res.largeur}×${res.hauteur}`, format: capacite.codec };
+      let resultat: RecResultat;
       if (strategieRef.current === 'fsa') {
-        setResultat({ ...base, dejaEcrit: true, emplacement: nom, sauvegarderSurAppareil: async () => { /* déjà sur le disque */ } });
+        resultat = { ...base, dejaEcrit: true, emplacement: nom, sauvegarderSurAppareil: async () => { /* déjà sur le disque */ } };
       } else if (strategieRef.current === 'opfs') {
         const ref = opfsRef.current;
-        setResultat({ ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => {
+        resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => {
           if (!ref) return;
           const f: File = await ref.handle.getFile();
           telecharger(f, nom);
           // Le temporaire est retiré une fois le téléchargement lancé (le blob est déjà lu par le navigateur).
           setTimeout(() => { ref.dossier.removeEntry(ref.nom).catch(() => { /* déjà retiré */ }); }, 15_000);
-        } });
+        } };
       } else {
         const blob = fini.blob as Blob;
-        setResultat({ ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => { telecharger(blob, nom); } });
+        resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => { telecharger(blob, nom); } };
       }
-      setEtat('pret');
-      setAvis(null);
+      if (!demonteRef.current) { setResultat(resultat); setEtat('pret'); setAvis(verdict.message); }
     } catch (e) {
-      setAvis(`Finalisation impossible : ${(e as Error).message}`); setEtat('erreur');
-    } finally { nettoyer(); }
-  }, [capacite, nettoyer]);
+      if (!demonteRef.current) { setAvis(`Finalisation impossible : ${(e as Error).message}`); setEtat('erreur'); }
+    } finally { nettoyer(); finalisationRef.current = null; }
+  }
+
+  const arreter = useCallback(async () => {
+    const rec = recRef.current; if (!rec) return;
+    arretDemandeRef.current = true;
+    setEtat('finalisation');
+    if (rec.state !== 'inactive') {
+      try { rec.stop(); } catch { /* déjà arrêté */ }
+    } else if (!finalisationRef.current) {
+      // Le recorder s'était déjà arrêté seul et `stop` a été manqué : finaliser quand même.
+      finalisationRef.current = finaliser(rec);
+    }
+    // `stop` → finaliser() ; on attend sa fin (contrat Promise<void> pour l'UI). Si `stop` ne vient
+    // pas (navigateur muet), on finalise quand même après 10 s : le fichier est toujours fermé.
+    const limite = performance.now() + 10_000;
+    await new Promise<void>((resolve) => {
+      const attendre = () => {
+        const f = finalisationRef.current;
+        if (f) { f.finally(resolve); return; }
+        if (!recRef.current) { resolve(); return; }
+        if (performance.now() > limite) { finalisationRef.current = finaliser(rec); finalisationRef.current.finally(resolve); return; }
+        setTimeout(attendre, 50);
+      };
+      attendre();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Repli 1080p → 720p si le compositeur ne suit pas (à chaud, même piste, même fichier).
   useEffect(() => {
@@ -330,7 +381,20 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     return () => window.removeEventListener('beforeunload', h);
   }, [etat]);
 
-  useEffect(() => () => { try { recRef.current?.stop(); } catch { /* fini */ } nettoyer(); }, [nettoyer]);
+  // Démontage pendant un enregistrement (page quittée, live terminé) : on STOPPE le recorder et on laisse
+  //    `onstop` → finaliser() FERMER le fichier (dernier morceau + close()). Avant : `nettoyer()` jetait
+  //    l'écrivain sans `close()` → le fichier File System Access restait à 0 octet sur le disque.
+  useEffect(() => {
+    demonteRef.current = false; // StrictMode (dev) rejoue monter/démonter/monter : on repart propre.
+    return () => {
+      demonteRef.current = true;
+      const rec = recRef.current;
+      if (rec && rec.state !== 'inactive') { try { rec.stop(); } catch { /* fini */ } }
+      else if (rec && !finalisationRef.current) { finalisationRef.current = finaliser(rec); }
+      else if (!rec) nettoyer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fermerResultat = useCallback(() => { setResultat(null); setEtat('inactif'); setDureeSec(0); setTailleOctets(0); }, []);
 

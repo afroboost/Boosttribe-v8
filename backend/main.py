@@ -2867,6 +2867,14 @@ async def _cleanup_loop() -> None:
 @app.on_event("startup")
 async def _on_startup():
     asyncio.create_task(_cleanup_loop())
+    # Destinations sociales : la table est créée si elle manque (idempotent, via pg-meta avec la clé
+    # service-role du backend). Échec = simple avertissement, l'API reste servie.
+    try:
+        _st = getattr(_social, "_deps", None) and _social._deps.store
+        if _st is not None and hasattr(_st, "assurer_schema"):
+            asyncio.create_task(_st.assurer_schema())
+    except Exception as _e:  # module social non chargé
+        logger.warning("[SOCIAL] migration au démarrage non lancée : %s", _e)
 
 
 def _plan_from_price_id(price_id: Optional[str], settings: Dict[str, Any]) -> Optional[str]:

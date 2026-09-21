@@ -213,3 +213,55 @@ export function verdictFinalisation(e: FinalisationEntree): FinalisationVerdict 
   }
   return { etat: 'pret', message: null };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * RÉSOLUTION AFFICHÉE = RÉSOLUTION ENCODÉE (terrain 20/09).
+ *
+ * Le panneau « Enregistrement prêt » disait « 1920×1080 » quand ffprobe lisait
+ * 1280×720. Cause : l'affichage venait de la qualité DEMANDÉE (`choisirResolution`),
+ * alors que MediaRecorder encode ce que la piste lui fournit. Mesuré dans le vrai
+ * Chrome 153 (21/09) :
+ *  - `track.getSettings()` d'une piste canvas suit le canvas (~100 ms après un
+ *    redimensionnement) ;
+ *  - le conteneur (MP4/WebM) fige la résolution de la PREMIÈRE image encodée : un
+ *    fichier démarré en 720 puis passé en 1080 reste « 1280×720 » pour ffprobe (et
+ *    l'inverse) ; un redimensionnement juste avant `start()` peut même laisser une
+ *    image de l'ancienne taille en tête (conteneur 1080, piste mesurée 720).
+ * Ordre de vérité, du plus sûr au moins sûr :
+ *  1. `fichier`  : l'en-tête écrit dans la 1re tranche (`resolutionFichier`) — ce que
+ *                  ffprobe lit, par construction ;
+ *  2. `piste`    : `getSettings()` de la piste encodée (1re tranche, puis finalisation) ;
+ *  3. `demandee` : la valeur demandée, dernier recours, dite comme telle via `source`.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Largeur/hauteur telles que `MediaStreamTrack.getSettings()` ou l'en-tête du fichier les donnent (peuvent manquer). */
+export interface MesurePiste { width?: number; height?: number }
+
+export interface ResolutionEncodee {
+  largeur: number;
+  hauteur: number;
+  /** `fichier` = en-tête du fichier ; `piste` = piste réellement encodée ; `demandee` = aucune mesure valide. */
+  source: 'fichier' | 'piste' | 'demandee';
+}
+
+const mesureValide = (m: MesurePiste | null | undefined): m is Required<MesurePiste> =>
+  !!m && typeof m.width === 'number' && typeof m.height === 'number' && m.width > 0 && m.height > 0;
+
+/**
+ * En-tête du fichier d'abord, puis la première mesure VALIDE de `pistes` (1re tranche, puis
+ * finalisation), sinon `demandee`. Une mesure est valide si largeur et hauteur sont des nombres > 0.
+ */
+export function resolutionEncodee(
+  entete: MesurePiste | null | undefined,
+  pistes: (MesurePiste | null | undefined)[],
+  demandee: { largeur: number; hauteur: number },
+): ResolutionEncodee {
+  if (mesureValide(entete)) return { largeur: entete.width, hauteur: entete.height, source: 'fichier' };
+  for (const m of pistes) if (mesureValide(m)) return { largeur: m.width, hauteur: m.height, source: 'piste' };
+  return { largeur: demandee.largeur, hauteur: demandee.hauteur, source: 'demandee' };
+}
+
+/** « 1280 × 720 » — espaces autour du ×, valeurs entières. */
+export function libelleResolution(r: { largeur: number; hauteur: number }): string {
+  return `${Math.round(r.largeur)} × ${Math.round(r.hauteur)}`;
+}

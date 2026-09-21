@@ -23,7 +23,10 @@ export interface RecResultat {
   nom: string;
   dureeSec: number;
   tailleOctets: number;
+  /** « 1280 × 720 » — lue dans l'en-tête du fichier écrit, secours piste encodée (jamais la qualité demandée). */
   resolution: string;
+  /** `fichier` = lue dans l'en-tête écrit ; `piste` = mesurée sur la piste ; `demandee` = secours (aucune mesure). */
+  resolutionSource?: 'fichier' | 'piste' | 'demandee';
   format: string;
   /** `true` = déjà écrit sur le disque (File System Access) : rien à télécharger. */
   dejaEcrit: boolean;

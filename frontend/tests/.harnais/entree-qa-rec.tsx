@@ -4,6 +4,12 @@
  *  - `?antenne=0` : AUCUNE scène à l'antenne + l'effet exact de SessionPage qui appelle
  *    `programme.arreter()` dès que `boxesProgram` est vide (reproduction terrain) ;
  *  - `?fsa=1`      : garde `showSaveFilePicker` (Playwright l'injecte avec un handle OPFS) ;
+ *  - `?source=720` : sources vidéo synthétiques en 1280×720 (comme la caméra 720p du Mac ; défaut 640×360) ;
+ *  - `?resolution=720|1080|session` : résolution de DÉPART du compositeur. `session` = câblage EXACT de
+ *                    SessionPage (aucune option `resolution` → 720p par défaut) : c'est le cas terrain du
+ *                    20/09 « panneau 1920×1080, ffprobe 1280×720 » ; défaut = 1080 sur desktop, 720 sinon ;
+ *  - `?programme=1` : démarre le Programme dès qu'une scène est à l'antenne (effet de SessionPage) → le
+ *                    compositeur est DÉJÀ actif quand on enregistre (changerResolution à chaud avant start) ;
  *  - `window.__h`  : studio / programme / recorder / cut / demonter (unmount du hook).
  */
 import React from 'react';
@@ -18,15 +24,17 @@ import type { SceneType } from '@/lib/studioScenes';
 
 const params = new URLSearchParams(location.search);
 
+const SOURCE = params.get('source') === '720' ? { w: 1280, h: 720 } : { w: 640, h: 360 };
+
 function sourceCanvas(couleur: string, nom: string, flash = false): MediaStream {
-  const c = document.createElement('canvas'); c.width = 640; c.height = 360;
+  const c = document.createElement('canvas'); c.width = SOURCE.w; c.height = SOURCE.h;
   const ctx = c.getContext('2d')!;
   const t0 = performance.now();
   const peindre = () => {
     const t = (performance.now() - t0) / 1000;
     const enFlash = flash && (t % 5) < 0.25;
-    ctx.fillStyle = enFlash ? '#ffffff' : couleur; ctx.fillRect(0, 0, 640, 360);
-    ctx.fillStyle = enFlash ? '#000' : '#fff'; ctx.font = 'bold 48px sans-serif'; ctx.fillText(nom + ' ' + t.toFixed(1) + 's', 40, 200);
+    ctx.fillStyle = enFlash ? '#ffffff' : couleur; ctx.fillRect(0, 0, SOURCE.w, SOURCE.h);
+    ctx.fillStyle = enFlash ? '#000' : '#fff'; ctx.font = 'bold 48px sans-serif'; ctx.fillText(nom + ' ' + t.toFixed(1) + 's', 40, SOURCE.h / 2 + 20);
     requestAnimationFrame(peindre);
   };
   peindre();
@@ -64,12 +72,15 @@ function App() {
     participants: [{ identity: 'p1', name: 'Sara', stream: srcs.participant }],
     screenShareActive: true, localScreen: srcs.ecran,
   });
-  const programme = useProgramStream({ boxes: studio.boxesProgram, resolveMedia: studio.resolveMedia, audio: srcs.audio, resolution: desktop ? RESOLUTION_1080P : RESOLUTION_720P });
+  const resolutionDepart = params.get('resolution');
+  const resolution = resolutionDepart === 'session' ? undefined : resolutionDepart === '720' ? RESOLUTION_720P : resolutionDepart === '1080' ? RESOLUTION_1080P : desktop ? RESOLUTION_1080P : RESOLUTION_720P;
+  const programme = useProgramStream({ boxes: studio.boxesProgram, resolveMedia: studio.resolveMedia, audio: srcs.audio, resolution });
   // ── Effet EXACT de SessionPage (hôte) : rien à l'antenne → programme.arreter() ──
   const programmeALAntenne = studio.boxesProgram.length > 0;
   React.useEffect(() => {
     if (params.get('effetSession') === '0') return;
     if (!programmeALAntenne) programme.arreter();
+    else if (params.get('programme') === '1' && !programme.actif) programme.demarrer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programmeALAntenne, programme.actif]);
   const recorder = useProgramRecorder({

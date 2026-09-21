@@ -116,3 +116,27 @@ test('arrière-plan (structure) : repli 720p court-circuité onglet masqué, avi
   const page = readFileSync(new URL('../src/pages/SessionPage.tsx', import.meta.url), 'utf8');
   assert.match(page, /arrierePlanProgramme: programme\.stats\.arrierePlan/, 'SessionPage transmet la réalité du compositeur');
 });
+
+// ── RÉSOLUTION AFFICHÉE = RÉSOLUTION ENCODÉE (terrain 20/09 : panneau « 1920×1080 », ffprobe 1280×720) ──
+test('résolution du résultat : lue dans l’en-tête de la 1re tranche, secours = piste du MediaRecorder, jamais resolutionEffectiveRef seul', () => {
+  // Cause : `resolutionProgramme(q)` part AVANT que le compositeur existe (rien à l'antenne → changerResolution = no-op),
+  // le compositeur naît ensuite en 720p (SessionPage ne passe pas `resolution`), et le panneau affichait la valeur DEMANDÉE.
+  assert.match(hook, /mesurerPiste\(rec\.stream\)/, 'la piste du recorder est mesurée (getSettings)');
+  const ondata = hook.slice(hook.indexOf('rec.ondataavailable'), hook.indexOf('rec.ondataavailable') + 500);
+  assert.match(ondata, /if \(premiereTranche\) \{ premiereTranche = false;/, 'une seule lecture : la 1re tranche non vide (en-tête ftyp+moov / EBML+Tracks)');
+  assert.match(ondata, /resolutionFichier\(new Uint8Array\(b\), ext\)/, 'l’en-tête est LU (ce que ffprobe lit)');
+  assert.match(ondata, /resolutionPisteRef\.current = mesurerPiste\(rec\.stream\)/, 'secours : getSettings à la 1re tranche');
+  assert.match(ondata, /pousserEcriture\(ev\.data\)/, 'le morceau est écrit tel quel, jamais modifié par la lecture');
+  const fin = hook.slice(hook.indexOf('async function finaliser'), hook.indexOf('async function finaliser') + 3400);
+  assert.match(fin, /resolutionEncodee\(await enteteRef\.current, \[resolutionPisteRef\.current, mesurerPiste\(rec\.stream\)\], resolutionEffectiveRef\.current\)/, 'ordre : en-tête, piste 1re tranche, piste finalisation, demandée (secours)');
+  assert.match(fin, /resolution: libelleResolution\(/, 'libellé « 1280 × 720 »');
+  assert.match(fin, /resolutionSource: res\.source/, 'la provenance est dite');
+  assert.doesNotMatch(fin, /resolution: `\$\{res\.largeur\}×\$\{res\.hauteur\}`/, 'l’ancien libellé (qualité demandée) a disparu');
+});
+
+test('lecture de l’en-tête : module pur, sans DOM ni réseau, sans dépendance (esbuild le compile seul)', () => {
+  const lecteur = readFileSync(new URL('../src/lib/resolutionFichier.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(lecteur, /^import /m, 'aucun import');
+  for (const mot of ['document', 'window', 'fetch(', 'navigator']) assert.equal(lecteur.includes(mot), false, mot);
+  assert.match(lecteur, /export function resolutionFichier\(u8: Uint8Array, extension: 'mp4' \| 'webm'\)/);
+});

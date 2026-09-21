@@ -23,9 +23,10 @@ const CODE = codeSeul(DRAWER);
 // ── Contrat ──────────────────────────────────────────────────────────────────
 test('contrat : quatre plateformes, statuts nommés, rappels du hook — rien d’autre', () => {
   for (const p of ["'instagram'", "'facebook'", "'youtube'", "'tiktok'"]) assert.ok(TYPES.includes(p), p);
-  for (const s of ["'connected'", "'not_connected'", "'reauth'", "'unavailable'", "'starting'", "'live'", "'error'", "'off'"]) assert.ok(TYPES.includes(s), s);
-  for (const f of ['select:', 'start:', 'stopAll:', 'stop:', 'retry:', 'connectUrl:']) assert.ok(TYPES.includes(f), f);
-  assert.ok(!/streamKey|stream_key|rtmp|token|secret/i.test(codeSeul(TYPES)), 'le contrat ne transporte aucun secret');
+  for (const s of ["'connected'", "'not_connected'", "'reauth'", "'unavailable'", "'config_required'", "'not_configured'", "'configured'", "'starting'", "'live'", "'error'", "'off'"]) assert.ok(TYPES.includes(s), s);
+  for (const f of ['select:', 'start:', 'stopAll:', 'stop:', 'retry:', 'connect:', 'configure:', 'forget:', 'refresh:', 'directAutorise:']) assert.ok(TYPES.includes(f), f);
+  assert.ok(!/streamKey|stream_key|rtmp_url|token|secret/i.test(codeSeul(TYPES)), 'le contrat ne transporte aucun secret');
+  assert.ok(TYPES.includes('missing: string[]') && TYPES.includes('keyHint: string | null'), 'diagnostic (noms) et indice (4 car.) seulement');
 });
 
 // ── Barre / entrée ───────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ test('tiroir : fermé = rien ; titre et texte exacts ; quatre réseaux dans l’
   assert.ok(DRAWER.includes('Choisissez où diffuser votre Live Afroboost'), 'texte court');
   assert.ok(DRAWER.includes("const ORDRE: BroadcastPlatform[] = ['instagram', 'facebook', 'youtube', 'tiktok'];"), 'ordre');
   assert.ok(DRAWER.includes('Instagram, Facebook, Youtube, Radio') && DRAWER.includes('const TikTokIcon'), 'Lucide + glyphe TikTok en ligne');
+  assert.ok(DRAWER.includes('stroke="currentColor"'), 'glyphe SVG en ligne, stroke=currentColor');
   assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(CODE), 'aucun emoji dans le code rendu');
   assert.ok(DRAWER.includes('data-testid="broadcast-drawer"'));
 });
@@ -70,21 +72,36 @@ test('aucune présélection : l’état vient du hook, l’UI n’appelle jamais
 
 test('interrupteur : role=switch + aria-checked, seulement pour un compte relié', () => {
   assert.ok(DRAWER.includes('role="switch"') && DRAWER.includes('aria-checked={d.selected}'));
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree } from '@/lib/broadcastUi';"), 'helpers purs importés');
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig } from '@/lib/broadcastUi';"), 'helpers purs importés');
   assert.ok(DRAWER.includes('{!pendantLive && selectionnable(d.status) && ('), 'rendu conditionné à selectionnable');
 });
 
-test('Démarrer le direct : désactivé sans sélection, sinon start()', () => {
+test('Démarrer le direct : désactivé sans sélection, sinon start() ; « simulation » tant que le serveur ne débloque pas', () => {
   assert.ok(DRAWER.includes('disabled={nbSelection === 0}'));
   assert.ok(DRAWER.includes('onClick={() => broadcast.start()}'));
   assert.ok(DRAWER.includes('data-testid="broadcast-start"'));
+  assert.ok(DRAWER.includes("{broadcast.directAutorise ? 'Démarrer le direct' : 'Démarrer (simulation)'}"), 'libellé honnête');
+  assert.ok(DRAWER.includes('data-testid="broadcast-simulation"') && DRAWER.includes('aucun direct réel n’est envoyé aux réseaux'), 'bandeau mode test');
+  assert.ok(DRAWER.includes('data-broadcast-simulation={!broadcast.directAutorise}'));
 });
 
-test('Connecter / Reconnecter : lien discret vers connectUrl(), nouvel onglet', () => {
-  assert.ok(DRAWER.includes("d.status === 'not_connected' || d.status === 'reauth' ? b.connectUrl(d.platform) : null"));
-  assert.ok(DRAWER.includes('target="_blank"') && DRAWER.includes('rel="noopener noreferrer"'));
-  assert.ok(DRAWER.includes("{d.status === 'reauth' ? 'Reconnecter' : 'Connecter'}"));
+test('Connecter / Reconnecter : VRAI parcours OAuth via b.connect() — plus de lien mort sans jeton', () => {
+  assert.ok(!CODE.includes('connectUrl'), 'l’ancien lien <a href> sans jeton a disparu');
+  assert.ok(!CODE.includes('target="_blank"'), 'plus de lien vers un JSON 501 dans un nouvel onglet');
+  assert.ok(DRAWER.includes("{!pendantLive && action.kind === 'oauth' && ("), 'bouton OAuth seulement pour Facebook / YouTube');
+  assert.ok(DRAWER.includes('await b.connect(d.platform)'), 'clic → b.connect()');
+  assert.ok(DRAWER.includes('{action.libelle} <ExternalLink'), 'libellé = Connecter | Reconnecter (actionPour)');
   assert.ok(DRAWER.includes('data-testid={`broadcast-connect-${d.platform}`}'));
+});
+
+test('Configurer (Instagram / TikTok) : bouton → formulaire séparé ; Configuration requise : diagnostic, aucun bouton', () => {
+  assert.ok(DRAWER.includes("{!pendantLive && (action.kind === 'configure' || action.kind === 'configured') && ("), 'Configurer / Modifier');
+  assert.ok(DRAWER.includes('data-testid={`broadcast-configure-${d.platform}`}') && DRAWER.includes('aria-expanded={ouvert}'));
+  assert.ok(DRAWER.includes('<BroadcastConfigForm d={d} onSave={(s) => b.configure(d.platform, s)} onForget={() => b.forget(d.platform)}'), 'formulaire câblé sur configure()/forget()');
+  assert.ok(DRAWER.includes("{!pendantLive && action.kind === 'diagnostic' && ("), 'diagnostic');
+  assert.ok(DRAWER.includes('data-testid={`broadcast-diagnostic-${d.platform}`}') && DRAWER.includes('diagnosticConfig(action.missing)'), 'noms des variables serveur');
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig } from '@/lib/broadcastUi';"));
+  assert.ok(DRAWER.includes('data-testid="broadcast-avis"'), 'avis (retour OAuth, refus) affiché');
 });
 
 test('pendant le direct : ● EN DIRECT + durée, arrêt individuel, Réessayer isolé, Arrêter tout confirmé', () => {
@@ -98,8 +115,16 @@ test('pendant le direct : ● EN DIRECT + durée, arrêt individuel, Réessayer 
   assert.equal(CODE.split('broadcast.stopAll()').length - 1, 1, 'stopAll() appelé depuis la confirmation seulement');
 });
 
-test('aucun secret ni champ de clé dans le tiroir', () => {
-  assert.ok(!/stream ?key|streamKey|rtmp|token|secret|<input/i.test(CODE), 'ni clé, ni jeton, ni URL RTMP, ni champ de saisie');
+test('aucun secret ni champ de clé dans le tiroir (la saisie vit dans BroadcastConfigForm, jamais stockée)', () => {
+  assert.ok(!/stream ?key|streamKey|rtmp|token|secret|<input/i.test(CODE), 'ni clé, ni jeton, ni URL RTMP, ni champ de saisie dans le tiroir');
+  const FORM = codeSeul(lire('components', 'session', 'BroadcastConfigForm.tsx'));
+  assert.ok(FORM.includes("type={voir ? 'text' : 'password'}") && FORM.includes('autoComplete="new-password"'), 'clé masquée, sans autocomplétion');
+  assert.ok(FORM.includes('autoComplete="off"'), 'formulaire sans autocomplétion');
+  assert.ok(!/localStorage|sessionStorage|indexedDB|document\.cookie|console\.(log|info|debug)/.test(FORM), 'jamais de stockage navigateur ni de journal');
+  assert.ok(FORM.includes("setCle('')"), 'la clé est vidée de la mémoire après l’envoi');
+  assert.ok(FORM.includes('validerUrlServeur(url)') && FORM.includes('validerCle(cle)'), 'RTMPS + clé validés avant l’envoi');
+  assert.ok(FORM.includes('Supprimer la configuration') && FORM.includes('data-testid={`broadcast-config-forget-${d.platform}`}'));
+  assert.ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(FORM) && !/#[0-9a-fA-F]{6}\b/.test(FORM), 'ni emoji, ni hexa figé');
 });
 
 test('mobile : plein écran, réseaux en colonne, bouton principal en bas (zone sûre) ; desktop : panneau fixed borné', () => {
@@ -125,7 +150,13 @@ test('helpers : libellés de statut, durée, sélection', async () => {
   assert.equal(libelleStatut({ status: 'error', error: 'TikTok n’a pas pu démarrer', selected: true }, true), 'Échec — TikTok n’a pas pu démarrer');
   assert.equal(libelleStatut({ status: 'reauth', selected: false }, false), 'Reconnexion nécessaire');
   assert.equal(libelleStatut({ status: 'unavailable', selected: false }, false), 'Indisponible');
+  assert.equal(libelleStatut({ status: 'config_required', selected: false }, false), 'Configuration requise');
+  assert.equal(libelleStatut({ status: 'not_configured', selected: false }, false), 'Non configuré');
+  assert.equal(libelleStatut({ status: 'configured', selected: false }, false), 'Configuré');
+  assert.equal(libelleStatut({ status: 'configured', selected: false, keyHint: 'ab12' }, false), 'Configuré — clé enregistrée (…ab12)');
+  assert.equal(libelleStatut({ status: 'configured', selected: false }, true), 'Non diffusé');
   assert.equal(selectionnable('connected'), true); assert.equal(selectionnable('reauth'), false);
+  assert.equal(selectionnable('configured'), true); assert.equal(selectionnable('not_configured'), false); assert.equal(selectionnable('config_required'), false);
   // aucune présélection : un jeu « tout relié, rien coché » ne démarre rien
   assert.equal(nbSelectionnes([{ status: 'connected', selected: false }, { status: 'connected', selected: false }]), 0);
   // un réseau coché mais non relié ne compte pas

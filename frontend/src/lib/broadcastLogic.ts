@@ -10,8 +10,17 @@ export type Plateforme = 'instagram' | 'facebook' | 'youtube' | 'tiktok';
 export const PLATEFORMES: Plateforme[] = ['instagram', 'facebook', 'youtube', 'tiktok'];
 export const LIBELLES: Record<Plateforme, string> = { instagram: 'Instagram', facebook: 'Facebook', youtube: 'YouTube', tiktok: 'TikTok' };
 
-/** Compte : connected / not_connected / reauth / unavailable ; diffusion : starting / live / error / off. */
-export type StatutDestination = 'connected' | 'not_connected' | 'reauth' | 'unavailable' | 'starting' | 'live' | 'error' | 'off';
+/**
+ * État du COMPTE, par plateforme, tel que le serveur le calcule (`GET /social/destinations/status`) :
+ * - Facebook / YouTube (OAuth) : config_required → not_connected → connected | reauth ;
+ * - Instagram / TikTok (URL RTMPS + clé) : config_required → not_configured → configured.
+ * Diffusion : starting / live / error / off.
+ */
+export type StatutCompte = 'connected' | 'not_connected' | 'reauth' | 'unavailable' | 'config_required' | 'not_configured' | 'configured';
+export type StatutDestination = StatutCompte | 'starting' | 'live' | 'error' | 'off';
+
+/** Comment on relie la plateforme : parcours OAuth (FB/YT) ou saisie RTMPS + clé (IG/TikTok). */
+export type GenreDestination = 'oauth' | 'manual';
 
 export interface Destination {
   platform: Plateforme;
@@ -20,8 +29,16 @@ export interface Destination {
   selected: boolean;
   error?: string;
   /** État du COMPTE, conservé pendant la diffusion pour savoir où revenir à l'arrêt. */
-  compte: 'connected' | 'not_connected' | 'reauth' | 'unavailable';
+  compte: StatutCompte;
+  kind: GenreDestination;
+  /** `config_required` : NOMS des variables serveur manquantes (jamais des valeurs). */
+  missing: string[];
+  /** `configured` : la clé est enregistrée côté serveur ; seuls ses 4 derniers caractères reviennent. */
+  keyHint: string | null;
+  accountLabel: string | null;
 }
+
+export const GENRE_PAR_PLATEFORME: Record<Plateforme, GenreDestination> = { instagram: 'manual', facebook: 'oauth', youtube: 'oauth', tiktok: 'manual' };
 
 export interface EtatBroadcast {
   destinations: Destination[];
@@ -30,13 +47,57 @@ export interface EtatBroadcast {
 }
 
 export const BROADCAST_INITIAL: EtatBroadcast = {
-  destinations: PLATEFORMES.map((p) => ({ platform: p, label: LIBELLES[p], status: 'unavailable', selected: false, compte: 'unavailable' })),
+  destinations: PLATEFORMES.map((p) => ({
+    platform: p, label: LIBELLES[p], status: 'unavailable', selected: false, compte: 'unavailable',
+    kind: GENRE_PAR_PLATEFORME[p], missing: [], keyHint: null, accountLabel: null,
+  })),
   live: false,
   demarreLe: null,
 };
 
-/** Statuts de compte renvoyés par le serveur (jamais de secret dedans). */
-export type ComptesServeur = Partial<Record<Plateforme, 'connected' | 'not_connected' | 'reauth' | 'unavailable'>>;
+/** Ce que le serveur dit d'un compte (jamais de secret dedans) : un simple statut, ou le détail. */
+export interface InfoCompteServeur {
+  status: StatutCompte;
+  kind?: GenreDestination;
+  missing?: string[];
+  key_hint?: string | null;
+  key_saved?: boolean;
+  account_label?: string | null;
+}
+export type ComptesServeur = Partial<Record<Plateforme, StatutCompte | InfoCompteServeur>>;
+
+const STATUTS_COMPTE: StatutCompte[] = ['connected', 'not_connected', 'reauth', 'unavailable', 'config_required', 'not_configured', 'configured'];
+
+/** Normalise une réponse serveur (`/social/destinations/status` OU `/live/broadcast/accounts`) en ComptesServeur. */
+export function comptesDepuisServeur(json: unknown): ComptesServeur {
+  const out: ComptesServeur = {};
+  if (!json || typeof json !== 'object') return out;
+  const j = json as { destinations?: unknown; accounts?: unknown };
+  if (Array.isArray(j.destinations)) {
+    for (const d of j.destinations as Array<Record<string, unknown>>) {
+      const p = d.platform as Plateforme; const st = d.status as StatutCompte;
+      if (!PLATEFORMES.includes(p) || !STATUTS_COMPTE.includes(st)) continue;
+      out[p] = {
+        status: st, kind: (d.kind as GenreDestination) || GENRE_PAR_PLATEFORME[p],
+        missing: Array.isArray(d.missing) ? (d.missing as unknown[]).filter((x): x is string => typeof x === 'string') : [],
+        key_hint: typeof d.key_hint === 'string' ? d.key_hint : null, key_saved: d.key_saved === true,
+        account_label: typeof d.account_label === 'string' ? d.account_label : null,
+      };
+    }
+    return out;
+  }
+  if (j.accounts && typeof j.accounts === 'object') {
+    for (const [p, st] of Object.entries(j.accounts as Record<string, unknown>)) {
+      if (PLATEFORMES.includes(p as Plateforme) && STATUTS_COMPTE.includes(st as StatutCompte)) out[p as Plateforme] = st as StatutCompte;
+    }
+  }
+  return out;
+}
+
+/** Le direct réel est-il autorisé côté serveur ? (false = simulation, rien ne sort du serveur). */
+export function directAutoriseDepuisServeur(json: unknown): boolean {
+  return !!json && typeof json === 'object' && (json as { direct_reel_autorise?: unknown }).direct_reel_autorise === true;
+}
 
 /** Statuts de diffusion renvoyés par le serveur pendant un direct. */
 export interface StatutServeur {
@@ -57,8 +118,8 @@ export type ActionBroadcast =
 
 const enDiffusion = (s: StatutDestination) => s === 'starting' || s === 'live' || s === 'error';
 
-/** Une destination peut être cochée seulement si son compte est connecté. */
-export function selectionnable(d: Destination): boolean { return d.compte === 'connected'; }
+/** Une destination peut être cochée seulement si son compte est relié (OAuth) ou configuré (RTMPS + clé). */
+export function selectionnable(d: Destination): boolean { return d.compte === 'connected' || d.compte === 'configured'; }
 
 /** Celles qui partiront au clic « Démarrer le direct ». */
 export function destinationsADemarrer(e: EtatBroadcast): Plateforme[] {
@@ -71,11 +132,20 @@ export function broadcastReducer(e: EtatBroadcast, a: ActionBroadcast): EtatBroa
       return {
         ...e,
         destinations: e.destinations.map((d) => {
-          const c = a.comptes[d.platform] ?? d.compte;
+          const brut = a.comptes[d.platform];
+          const info: InfoCompteServeur | undefined = brut === undefined ? undefined : (typeof brut === 'string' ? { status: brut } : brut);
+          const c = info?.status ?? d.compte;
           // En diffusion, le statut affiché reste celui de la diffusion ; sinon il suit le compte.
           const status = enDiffusion(d.status) ? d.status : c;
-          // Un compte qui n'est plus connecté ne peut pas rester coché.
-          return { ...d, compte: c, status, selected: c === 'connected' ? d.selected : false };
+          const relie = c === 'connected' || c === 'configured';
+          // Un compte qui n'est plus relié ne peut pas rester coché.
+          return {
+            ...d, compte: c, status, selected: relie ? d.selected : false,
+            kind: info?.kind ?? d.kind,
+            missing: info ? (info.missing ?? []) : d.missing,
+            keyHint: info ? (info.key_hint ?? null) : d.keyHint,
+            accountLabel: info ? (info.account_label ?? null) : d.accountLabel,
+          };
         }),
       };
     case 'select':
@@ -109,7 +179,7 @@ export function broadcastReducer(e: EtatBroadcast, a: ActionBroadcast): EtatBroa
     case 'stop_all':
       return { ...e, live: false, demarreLe: null, destinations: e.destinations.map((d) => ({ ...d, status: d.compte, error: undefined })) };
     case 'retry':
-      return { ...e, live: true, demarreLe: e.demarreLe ?? Date.now(), destinations: e.destinations.map((d) => d.platform === a.platform && d.compte === 'connected' ? { ...d, status: 'starting', error: undefined, selected: true } : d) };
+      return { ...e, live: true, demarreLe: e.demarreLe ?? Date.now(), destinations: e.destinations.map((d) => d.platform === a.platform && selectionnable(d) ? { ...d, status: 'starting', error: undefined, selected: true } : d) };
     default:
       return e;
   }

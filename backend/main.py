@@ -1120,8 +1120,15 @@ class CohostsBody(BaseModel):
 try:
     import social_destinations as _social  # noqa: WPS433 (module frère, même dossier)
     _social.configurer(
-        encrypt=encrypt_secret, decrypt=decrypt_secret, get_user=get_user_from_token,
+        # Chiffrement de REPLI : le Fernet Stripe seulement s'il existe (sinon None → le module exige
+        # SOCIAL_SECRETS_KEY et répond « Configuration requise », jamais un stockage en clair).
+        encrypt=encrypt_secret if _fernet else None, decrypt=decrypt_secret if _fernet else None,
+        get_user=get_user_from_token,
         store=_social.StockageSupabase(SUPABASE_URL, _service_headers),
+        # Liste blanche : le compte Afroboost (ADMIN_EMAILS) — surcharge possible par SOCIAL_ALLOWED_EMAILS.
+        emails_autorises=ADMIN_EMAILS,
+        # Retour OAuth : uniquement vers les origines déjà autorisées par CORS (boosttribe.pro / afroboost.com).
+        origines_retour=CORS_ORIGINS,
     )
     app.include_router(_social.router)
 except Exception as _social_err:  # module absent ou config incomplète : le reste de l'API n'est pas affecté
@@ -1348,7 +1355,11 @@ async def broadcast_start(body: BroadcastStartBody, authorization: Optional[str]
     plateformes = [p for p in plateformes if p in _ms.PLATEFORMES]
     if not plateformes:
         raise HTTPException(status_code=400, detail="Choisissez au moins un réseau")
-    return await _ms.demarrer(body.room, uid, plateformes, body.video_track_sid, body.audio_track_sid)
+    try:
+        return await _ms.demarrer(body.room, uid, plateformes, body.video_track_sid, body.audio_track_sid)
+    except _ms.DirectVerrouille as verrou:
+        # 🔒 Hors mode mock sans le GO de Bassi : rien ne part, réponse explicite (423 Locked).
+        raise HTTPException(status_code=423, detail=str(verrou))
 
 
 @app.post("/live/broadcast/stop")

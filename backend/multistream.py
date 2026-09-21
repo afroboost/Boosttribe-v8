@@ -39,9 +39,10 @@ def mode_multistream() -> str:
 
 # ─── Résolution des destinations (agent « connexions sociales ») ───────────────────────────
 # Contrat : resoudre_destination(user_id, platform) -> {"rtmp_url": str, "stream_key": str} | None
-try:  # pragma: no cover - dépend du module de l'autre lot
+try:  # pragma: no cover - dépend du module « connexions sociales »
     from social_destinations import resoudre_destination as _resoudre_destination  # type: ignore
     from social_destinations import statut_compte as _statut_compte  # type: ignore
+    from social_destinations import verrou_direct_reel as _verrou_direct_reel  # type: ignore
 except Exception:  # noqa: BLE001
     async def _resoudre_destination(user_id: str, platform: str) -> Optional[Dict[str, str]]:  # type: ignore[misc]
         return None
@@ -49,6 +50,28 @@ except Exception:  # noqa: BLE001
     async def _statut_compte(user_id: str, platform: str) -> str:  # type: ignore[misc]
         # Sans module social : rien n'est connecté. Jamais « connected » par défaut.
         return "not_connected"
+
+    def _verrou_direct_reel() -> Dict[str, Any]:  # type: ignore[misc]
+        # Sans module social : le direct réel est TOUJOURS verrouillé.
+        return {"autorise": False, "manque": ["social_destinations absent"], "live_mode": "mock", "multistream_mode": mode_multistream()}
+
+
+# États de compte connus de l'UI (social_destinations.etat_plateforme) — tout autre → « unavailable ».
+STATUTS_COMPTE = ("connected", "not_connected", "reauth", "unavailable", "config_required", "not_configured", "configured")
+
+
+def verrou_direct_reel() -> Dict[str, Any]:
+    """Diagnostic du verrou « direct social réel » (aucune valeur secrète)."""
+    return _verrou_direct_reel()
+
+
+def direct_reel_autorise() -> bool:
+    """Un direct qui SORT du serveur (Egress → réseaux) n'est possible que verrou levé. En mode mock, rien ne sort."""
+    return bool(verrou_direct_reel().get("autorise"))
+
+
+class DirectVerrouille(RuntimeError):
+    """Levée quand on tente un démarrage NON mock sans le GO de Bassi."""
 
 
 def masquer(s: Optional[str]) -> str:
@@ -95,6 +118,7 @@ class DiffusionRoom:
             "live": self.live,
             "elapsedSec": int(now - self.demarre_le) if (self.live and self.demarre_le) else 0,
             "mode": mode_multistream(),
+            "direct_reel_autorise": direct_reel_autorise(),
             "destinations": [
                 {"platform": p, "status": d.status, **({"error": d.error} if d.error else {})}
                 for p, d in self.destinations.items()
@@ -232,11 +256,17 @@ async def comptes(user_id: str) -> Dict[str, str]:
             st = await _statut_compte(user_id, p)
         except Exception:  # noqa: BLE001
             st = "unavailable"
-        out[p] = st if st in ("connected", "not_connected", "reauth", "unavailable") else "unavailable"
+        out[p] = st if st in STATUTS_COMPTE else "unavailable"
     return out
 
 
 async def demarrer(room: str, user_id: str, plateformes: List[str], video_sid: Optional[str] = None, audio_sid: Optional[str] = None) -> Dict[str, Any]:
+    # 🔒 VERROU : hors mode mock, un démarrage ferait SORTIR le programme du serveur (Egress → réseaux).
+    #    Il exige le GO explicite (SOCIAL_LIVE_MODE=real + MULTISTREAM_MODE=egress + SOCIAL_LIVE_GO). Sinon : refus,
+    #    aucun moteur appelé, aucune destination résolue. En mode mock, MoteurMock simule sans réseau.
+    if mode_multistream() != "mock" and not direct_reel_autorise():
+        logger.warning("[MULTISTREAM] démarrage refusé : direct réel verrouillé (%s)", ", ".join(verrou_direct_reel().get("manque") or []))
+        raise DirectVerrouille("Direct social réel verrouillé — en attente du GO de Bassi")
     d = _diffusion(room, user_id)
     if video_sid:
         d.video_track_sid = video_sid
@@ -275,6 +305,11 @@ async def demarrer(room: str, user_id: str, plateformes: List[str], video_sid: O
                 if dest.url in urls_ajout:
                     dest.status, dest.error = "error", "Le serveur de diffusion n'a pas pu démarrer"
     return await statut(room, user_id)
+
+
+def statut_sync(room: str, user_id: str) -> Dict[str, Any]:
+    """Statut instantané sans interroger le moteur (bancs, diagnostics)."""
+    return _diffusion(room, user_id).statut()
 
 
 async def statut(room: str, user_id: str) -> Dict[str, Any]:

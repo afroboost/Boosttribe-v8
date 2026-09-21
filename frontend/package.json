@@ -76,7 +76,7 @@
     "preview": "vite preview",
     "cap:sync": "yarn build && npx cap sync",
     "cap:android": "npx cap open android",
-    "test": "esbuild src/lib/studioLogic.ts src/lib/playlistNav.ts src/lib/sourcesLogic.ts src/lib/beauteLogic.ts src/lib/studioScenes.ts src/lib/programCompositor.ts src/lib/programAudio.ts src/lib/screenShareLogic.ts src/lib/broadcastLogic.ts src/lib/broadcastUi.ts src/lib/recordLogic.ts src/lib/webmDuree.ts src/lib/recordUi.ts --format=esm --outdir=tests/.build --out-extension:.js=.mjs --log-level=error && node --test tests/"
+    "test": "esbuild src/lib/studioLogic.ts src/lib/playlistNav.ts src/lib/sourcesLogic.ts src/lib/beauteLogic.ts src/lib/studioScenes.ts src/lib/programCompositor.ts src/lib/programAudio.ts src/lib/screenShareLogic.ts src/lib/broadcastLogic.ts src/lib/broadcastUi.ts src/lib/socialConfigClient.ts src/lib/recordLogic.ts src/lib/webmDuree.ts src/lib/recordUi.ts --format=esm --outdir=tests/.build --out-extension:.js=.mjs --log-level=error && node --test tests/"
   },
   "browserslist": {
     "production": [

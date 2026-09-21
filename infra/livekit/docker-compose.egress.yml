@@ -1,59 +1,68 @@
-# 📡 LiveKit EGRESS (multistream RTMP/RTMPS) — INACTIF tant que ce fichier n'est pas déployé.
+# 📡 LiveKit EGRESS (multistream RTMP/RTMPS) — DÉPLOYÉ le 21/09/2026 DANS LE SERVICE COOLIFY `livekit`
+# (o7itj8knw8zg2mo2jirp55uy, projet boosttribe), pas comme second service : voir « Pourquoi » ci-dessous.
 #
-# Pourquoi un fichier SÉPARÉ : le service `livekit` existant (docker-compose.yml) reste intact.
-# L'Egress est un second service Coolify (type docker-compose) qui a besoin :
-#   1. d'un Redis partagé avec livekit-server (le SFU et l'Egress se parlent par Redis) ;
-#   2. de la clé API existante (`APIboosttribe`) et de son secret (variable Coolify `LK_SECRET`) ;
-#   3. de l'URL WebSocket du SFU (`wss://livekit.boosttribe.pro`).
+# Pourquoi le MÊME service Coolify que le SFU (et non un service séparé comme prévu au départ) :
+#   1. les secrets `${LK_SECRET}` / `${LK_SECRET_AFRO}` existent déjà dans ce service → aucun secret
+#      à recopier ailleurs (personne ne le manipule) ;
+#   2. `redis:6379` et `ws://livekit:7880` se résolvent dans le réseau du compose, sans passer par
+#      Traefik/TLS ni par le réseau `coolify` ;
+#   3. un seul Redeploy applique à la fois le bloc `redis:` du SFU et l'Egress.
 #
-# ⚠️ livekit-server doit AUSSI connaître Redis : ajouter dans /etc/livekit/livekit.yaml (ou le
-#    `printf` de l'entrypoint Coolify) :
-#        redis:
-#          address: redis:6379
-#    puis Redeploy du service `livekit`. Sans cela, l'Egress démarre mais ne reçoit aucune requête.
+# Ce fichier est la COPIE DE RÉFÉRENCE du compose collé dans Coolify (le SFU y est inclus). Il n'y a
+# qu'un SFU réel : livekit.boosttribe.pro ET livekit.afroboost.com pointent sur ce même conteneur
+# (deux clés : APIafroboost / APIboosttribe).
 #
-# Mode de fonctionnement retenu (backend/multistream.py) : Track Composite sur les pistes PROGRAMME
-# (vidéo composée + audio programme) → StreamOutput RTMP multi-URLs, ajout/retrait à chaud (UpdateStream).
-# 1 encodage serveur → N destinations ; une URL en échec n'arrête pas les autres.
+# Mode de fonctionnement (backend/multistream.py) : Track Composite sur les pistes PROGRAMME
+# (vidéo composée + audio programme) → StreamOutput RTMP multi-URLs, ajout/retrait à chaud.
+# Pas de Chrome headless (room composite) : `cap_add: SYS_ADMIN` inutile, RAM contenue.
+# Dimensionnement : ~1 vCPU + 1 Go RAM par egress 720p ; limite mémoire posée (1,5 Go) : priorité stabilité.
 #
-# Déploiement (action humaine, Coolify) :
-#   - Projet boosttribe → + New → Docker Compose → coller CE fichier ;
-#   - variables : LK_SECRET (le même que le service livekit), LK_WS_URL=wss://livekit.boosttribe.pro ;
-#   - Redeploy `livekit` après l'ajout du bloc `redis:` dans sa config ;
-#   - backend Coolify : MULTISTREAM_MODE=egress (sinon le backend reste en mock).
-# Dimensionnement : ~1 vCPU + 1 Go RAM par egress 720p ; 1080p ≈ 2 vCPU. Un seul egress par live.
+# Le backend reste en MULTISTREAM_MODE=mock tant que Bassi n'a pas donné le GO : l'Egress est prêt,
+# aucun direct social ne peut partir (verrou_direct_reel : 3 variables).
 
 services:
+  livekit:
+    image: 'livekit/livekit-server:latest'
+    container_name: livekit
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - '-c'
+      - 'printf ''port: 7880\nrtc:\n  tcp_port: 7881\n  udp_port: 7882\n  use_external_ip: true\nredis:\n  address: redis:6379\nkeys:\n  APIafroboost: %s\n  APIboosttribe: %s\n'' "${LK_SECRET_AFRO}" "${LK_SECRET}" > /etc/lk.yaml && exec /livekit-server --config /etc/lk.yaml'
+    environment:
+      - 'LK_SECRET=${LK_SECRET}'
+      - 'LK_SECRET_AFRO=${LK_SECRET_AFRO}'
+    ports:
+      - '7881:7881'
+      - '7882:7882/udp'
+    depends_on:
+      - redis
+
   redis:
-    image: redis:7-alpine
+    image: 'redis:7-alpine'
     container_name: livekit-redis
     restart: unless-stopped
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
-    expose:
-      - "6379"
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    mem_limit: 128m
 
   egress:
-    image: livekit/egress:v1.8
+    image: 'livekit/egress:v1.14.1'
     container_name: livekit-egress
     restart: unless-stopped
     depends_on:
       - redis
-    # Le fichier de config est écrit au démarrage à partir des variables Coolify (jamais de
-    # secret dans ce dépôt) — même méthode que le service livekit.
+      - livekit
+    # Config écrite au démarrage depuis la variable Coolify (jamais de secret dans ce dépôt).
     entrypoint:
       - /bin/sh
-      - -c
-      - >-
-        printf 'api_key: APIboosttribe\napi_secret: %s\nws_url: %s\nredis:\n  address: redis:6379\nlog_level: info\n'
-        "${LK_SECRET}" "${LK_WS_URL}" > /tmp/egress.yaml && EGRESS_CONFIG_FILE=/tmp/egress.yaml exec /entrypoint.sh
+      - '-c'
+      - 'printf ''api_key: APIboosttribe\napi_secret: %s\nws_url: ws://livekit:7880\nredis:\n  address: redis:6379\nlog_level: info\n'' "${LK_SECRET}" > /tmp/egress.yaml && EGRESS_CONFIG_FILE=/tmp/egress.yaml exec /entrypoint.sh'
     environment:
-      LK_SECRET: '${LK_SECRET}'
-      LK_WS_URL: '${LK_WS_URL}'
-    cap_add:
-      - SYS_ADMIN          # requis par le Chrome headless de l'Egress (room composite)
-    shm_size: '1gb'
+      - 'LK_SECRET=${LK_SECRET}'
+    shm_size: '512m'
+    mem_limit: 1500m
     volumes:
-      - egress-tmp:/tmp
+      - 'egress-tmp:/tmp'
 
 volumes:
   egress-tmp:

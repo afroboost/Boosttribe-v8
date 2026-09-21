@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import {
-  broadcastReducer, BROADCAST_INITIAL, comptesAccesReserve, comptesDepuisServeur, destinationsADemarrer, directAutoriseDepuisServeur, dureeSec, LIBELLES,
+  broadcastReducer, BROADCAST_INITIAL, comptesAccesReserve, comptesDepuisServeur, destinationsADemarrer, directAutoriseDepuisServeur, dureeSec, fenetreOAuth, LIBELLES,
   type Destination, type Plateforme, type StatutServeur,
 } from '@/lib/broadcastLogic';
 import { messageRetourOAuth } from '@/lib/broadcastUi';
@@ -219,13 +219,14 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
     sidsRef.current = null;
   }, []);
 
-  // « Connecter » / « Reconnecter » : le VRAI parcours OAuth, dans cet onglet ; retour sur cette page.
+  // « Connecter » / « Reconnecter » : le VRAI parcours OAuth, dans la fenêtre PRINCIPALE (Google refuse sa page
+  // d'autorisation dans une iframe : 403 « vous n'avez pas accès à cette page ») ; retour sur cette page.
   const connect = useCallback(async (platform: Plateforme): Promise<ResultatBroadcast> => {
     if (!API_URL) return { ok: false, message: 'Serveur non configuré.' };
     const retour = typeof window !== 'undefined' ? window.location.href.split('#')[0] : '';
     const r = await urlOAuth(appel, platform, retour);
     if (!r.ok || !r.url) { setAvis(r.message); await refresh(); return { ok: false, message: r.message, missing: r.missing }; }
-    if (typeof window !== 'undefined') window.location.assign(r.url);
+    if (typeof window !== 'undefined') fenetreOAuth(window).location.assign(r.url);
     return { ok: true, message: 'Redirection vers la connexion…' };
   }, [refresh]);
 

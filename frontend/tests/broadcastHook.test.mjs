@@ -83,7 +83,7 @@ test('contrat useBroadcast : signature et zéro secret côté front', () => {
   }
   assert.ok(src.includes('platform })') || src.includes('map((platform) => ({ platform }))'), 'le front n’envoie que des NOMS de plateformes');
   assert.ok(!src.includes('connectUrl'), 'plus de lien OAuth sans jeton');
-  assert.ok(src.includes('window.location.assign(r.url)'), 'Connecter = redirection vers le VRAI parcours OAuth renvoyé par le serveur');
+  assert.ok(src.includes('fenetreOAuth(window).location.assign(r.url)'), 'Connecter = redirection (fenêtre principale) vers le VRAI parcours OAuth renvoyé par le serveur');
   assert.ok(src.includes('setDirectAutorise(directAutoriseDepuisServeur(r.json))'), 'directAutorise vient du serveur, jamais du front');
 });
 
@@ -119,4 +119,20 @@ test('comptes serveur : la route « status » (état + diagnostic) et l’ancien
   // après suppression de la config (état serveur non configuré), la coche tombe
   e = broadcastReducer(e, { type: 'comptes', comptes: { instagram: 'not_configured' } });
   assert.equal(par(e).instagram.selected, false);
+});
+
+test('Connecter : la page OAuth (Google/Facebook) est TOUJOURS ouverte dans la fenêtre PRINCIPALE, jamais dans l’iframe', async () => {
+  // Google renvoie « 403. Vous n’avez pas accès à cette page » dès que sa page OAuth est chargée dans
+  // une iframe (afroboost.com/live embarqué dans l’overlay Afroboost). Il faut naviguer window.top.
+  const { fenetreOAuth } = await import('./.build/broadcastLogic.mjs');
+  const seule = { top: null, self: null }; seule.top = seule; seule.self = seule;
+  assert.equal(fenetreOAuth(seule), seule, 'hors iframe : l’onglet courant');
+  const parent = { location: { assign() {} } };
+  const cadre = { top: parent, self: null }; cadre.self = cadre;
+  assert.equal(fenetreOAuth(cadre), parent, 'dans une iframe : la fenêtre principale');
+  const opaque = { get top() { throw new Error('SecurityError'); }, self: null }; opaque.self = opaque;
+  assert.equal(fenetreOAuth(opaque), opaque, 'window.top inaccessible → repli sur l’onglet courant');
+  const src = codeSeul(lire('hooks', 'useBroadcast.ts'));
+  assert.ok(src.includes('fenetreOAuth(window).location.assign(r.url)'), 'le hook passe par fenetreOAuth');
+  assert.ok(!src.includes('window.location.assign(r.url)'), 'plus de navigation de l’iframe elle-même');
 });

@@ -202,3 +202,16 @@ export function formatDuree(sec: number): string {
   const p = (n: number) => String(n).padStart(2, '0');
   return `${p(h)}:${p(m)}:${p(s)}`;
 }
+
+/** Fenêtre dans laquelle ouvrir la page OAuth (Google / Facebook).
+ *  Google renvoie « 403. Vous n’avez pas accès à cette page » dès que sa page d’autorisation est chargée
+ *  dans une iframe (afroboost.com/live est embarqué dans l’overlay Afroboost) : il faut naviguer la
+ *  fenêtre PRINCIPALE, pas le cadre. Hors iframe, ou si `window.top` est inaccessible, l’onglet courant. */
+export function fenetreOAuth(win: Window): Window {
+  try {
+    const top = win.top;
+    return top && top !== win.self ? top : win;
+  } catch {
+    return win;
+  }
+}

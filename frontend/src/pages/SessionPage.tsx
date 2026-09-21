@@ -2642,6 +2642,7 @@ export const SessionPage: React.FC = () => {
     },
     resolutionProgramme: (q) => programme.changerResolution(q === '1080p' ? RESOLUTION_1080P : RESOLUTION_720P),
     fpsProgramme: programme.stats.fps,
+    arrierePlanProgramme: programme.stats.arrierePlan,
   });
   const [recordOpen, setRecordOpen] = useState(false);
   const recordNode: React.ReactNode = (

@@ -53,12 +53,17 @@ export interface UseProgramRecorderReturn {
   fermerResultat: () => void;
 }
 
+export const AVIS_ARRIERE_PLAN = 'Live Visio en arrière-plan : vidéo réduite à 1 image/s (le son continue). Gardez Live Visio visible pendant l’enregistrement pour conserver une vidéo fluide.';
+
 export interface UseProgramRecorderOptions {
   programStream: MediaStream | null;
   demarrerProgramme: () => Promise<MediaStream | null>;
   resolutionProgramme?: (q: RecQualite) => void;
   /** i/s courants du compositeur (pour le repli 720p) — optionnel. */
   fpsProgramme?: number;
+  /** true quand l'onglet est masqué : le Programme tourne à 1 i/s (Worker, seule cadence que Chrome horodate), la garde de performance
+   *  est suspendue — le repli 720p (basé sur `fpsProgramme`) ne doit alors PAS se déclencher. */
+  arrierePlanProgramme?: boolean;
 }
 
 const OPFS_DOSSIER = 'afroboost-enregistrements';
@@ -364,6 +369,7 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
   // Repli 1080p → 720p si le compositeur ne suit pas (à chaud, même piste, même fichier).
   useEffect(() => {
     if (etat !== 'enregistrement' || typeof o.fpsProgramme !== 'number') return;
+    if (o.arrierePlanProgramme) { repliRef.current = { sousSeuilDepuis: null, replie: repliRef.current.replie }; return; } // 1 i/s voulu en arrière-plan, pas une machine sollicitée
     const r = doitReplier720(repliRef.current, o.fpsProgramme, performance.now(), qualiteRef.current);
     repliRef.current = r;
     if (r.replier) {
@@ -371,7 +377,14 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       o.resolutionProgramme?.('720p');
       setAvis('Machine sollicitée : l’enregistrement continue en 720p.');
     }
-  }, [o.fpsProgramme, etat, o]);
+  }, [o.fpsProgramme, o.arrierePlanProgramme, etat, o]);
+
+  // Onglet masqué pendant l'enregistrement : l'interface dit la réalité mesurée (15 i/s), sans rien arrêter.
+  useEffect(() => {
+    if (etat !== 'enregistrement') return;
+    if (o.arrierePlanProgramme) setAvis(AVIS_ARRIERE_PLAN);
+    else setAvis((a) => (a === AVIS_ARRIERE_PLAN ? null : a));
+  }, [o.arrierePlanProgramme, etat]);
 
   // Onglet fermé pendant un enregistrement : on prévient (FSA/OPFS gardent ce qui est écrit).
   useEffect(() => {

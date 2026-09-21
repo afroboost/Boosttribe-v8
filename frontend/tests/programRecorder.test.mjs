@@ -106,3 +106,13 @@ test('SessionPage : rien à l’antenne → caméra du coach mise à l’antenne
 test('la vidéo ne part toujours pas au serveur après le correctif', () => {
   for (const mot of ['fetch(', 'upload', 'supabase', 'FormData']) assert.equal(hook.toLowerCase().includes(mot.toLowerCase()), false, mot);
 });
+
+// ── ARRIÈRE-PLAN (21/09) : le repli 720p ne se déclenche pas sur la cadence voulue de 15 i/s ; avis discret ──
+test('arrière-plan (structure) : repli 720p court-circuité onglet masqué, avis « Gardez Live Visio visible », câblé dans SessionPage', () => {
+  assert.match(hook, /arrierePlanProgramme\?: boolean/, 'option déclarée');
+  assert.match(hook, /if \(o\.arrierePlanProgramme\) \{ repliRef\.current = \{ sousSeuilDepuis: null, replie: repliRef\.current\.replie \}; return; \}/, 'le repli 720p ne juge pas en arrière-plan');
+  assert.match(hook, /AVIS_ARRIERE_PLAN = 'Live Visio en arrière-plan : vidéo réduite à 1 image\/s \(le son continue\)\. Gardez Live Visio visible/, 'avis discret, réalité mesurée');
+  assert.match(hook, /setAvis\(\(a\) => \(a === AVIS_ARRIERE_PLAN \? null : a\)\)/, 'l’avis disparaît au retour visible');
+  const page = readFileSync(new URL('../src/pages/SessionPage.tsx', import.meta.url), 'utf8');
+  assert.match(page, /arrierePlanProgramme: programme\.stats\.arrierePlan/, 'SessionPage transmet la réalité du compositeur');
+});

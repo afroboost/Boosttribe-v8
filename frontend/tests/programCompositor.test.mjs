@@ -82,3 +82,43 @@ test('structurel : programme null → aucun compositing (le hook arrête tout)',
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   assert.ok(page.includes('programmeALAntenne') && page.includes('programme.arreter()'), 'sans scène à l’antenne, SessionPage arrête le programme');
 });
+
+// ── ARRIÈRE-PLAN (21/09) : onglet masqué → cadence Worker 1 i/s, garde suspendue, sursis au retour ──
+// PREUVE RÉELLE (non automatisable : Playwright maintient tout onglet « visible » par émulation CDP, même
+// fenêtre minimisée) — protocole rejoué dans le Chrome de l'utilisateur, harnais tests/.harnais/qa-rec.html :
+//   1. `yarn dev --port 5181`, ouvrir le harnais, Démarrer l'enregistrement (visible, 30 i/s) ;
+//   2. rendre un AUTRE onglet de la même fenêtre actif (AppleScript Chrome `set active tab index`) → hidden ;
+//   3. relever toutes les 5-10 s (DevTools/extension) : visibilityState, recorder.state, pistes, stats ;
+//   4. revenir, attendre 1 s, Arrêter, analyser le fichier (`ffprobe -show_entries frame=pts_time`).
+// Mesuré AVANT : 0 image pendant 92 s masqué (boucle suspendue sur un rAF gelé), garde « abandonner » en prod.
+// Mesuré APRÈS : 1 image/s masqué, horodatages distincts, audio continu, 30 i/s dès le retour, QuickTime OK
+// y compris pour un enregistrement DÉMARRÉ onglet masqué (à 15 dessins/s, QuickTime le refusait : doublons).
+import { gardePeutJuger, pasDessinMs, FPS_ARRIERE_PLAN, SURSIS_RETOUR_MS, FPS_PROGRAMME } from './.build/programCompositor.mjs';
+
+test('arrière-plan : la garde ne juge jamais onglet masqué, et attend le sursis au retour', () => {
+  assert.equal(gardePeutJuger(true, 0, 10_000), false, 'masqué → jamais');
+  assert.equal(gardePeutJuger(false, 5_000, 4_999), false, 'retour : sursis pas écoulé');
+  assert.equal(gardePeutJuger(false, 5_000, 5_000), true, 'retour : sursis écoulé');
+  assert.equal(gardePeutJuger(false, 0, 1), true, 'visible sans retour → juge');
+  assert.equal(SURSIS_RETOUR_MS, 1000);
+});
+
+test('arrière-plan : pas de dessin = 1 i/s masqué (seule cadence que Chrome horodate), fps demandés visible', () => {
+  assert.equal(FPS_ARRIERE_PLAN, 1);
+  assert.equal(Math.round(pasDessinMs(true, FPS_PROGRAMME)), 1000);
+  assert.equal(Math.round(pasDessinMs(false, FPS_PROGRAMME)), 33);
+  assert.equal(pasDessinMs(false, 60), 1000 / 60);
+});
+
+test('arrière-plan (structure) : visibilitychange écouté, cadence Worker, rAF jamais armé masqué, garde court-circuitée', () => {
+  const src = codeSeul(lire('lib', 'programCompositor.ts'));
+  assert.match(src, /addEventListener\('visibilitychange', this\.onVisibilite\)/, 'le compositeur écoute la visibilité');
+  assert.match(src, /removeEventListener\('visibilitychange', this\.onVisibilite\)/, '… et cesse à l’arrêt');
+  assert.match(src, /new Worker\(URL\.createObjectURL\(new Blob\(/, 'cadence arrière-plan = Worker (non bridé)');
+  assert.match(src, /if \(!this\.actif \|\| this\.arrierePlan\) return;\s*this\.tick\(\);/, 'la boucle rAF ne tourne pas en arrière-plan');
+  assert.match(src, /if \(!gardePeutJuger\(this\.arrierePlan, this\.gardeReprendA, maintenant\)\)/, 'la garde passe par gardePeutJuger');
+  assert.match(src, /this\.gardeReprendA = performance\.now\(\) \+ SURSIS_RETOUR_MS/, 'sursis armé au retour visible');
+  assert.match(src, /this\.basculerCadence\(\); \/\/ démarre la boucle selon la visibilité ACTUELLE/, 'un démarrage onglet masqué part directement en cadence Worker');
+  assert.doesNotMatch(src, /this\.minuteur = setTimeout\(this\.boucle, pas\)/, 'l’ancien repli setTimeout depuis la boucle (jamais atteint, rAF gelé) a disparu');
+  assert.match(src, /arrierePlan: this\.arrierePlan/, 'les stats disent la réalité (arrierePlan)');
+});

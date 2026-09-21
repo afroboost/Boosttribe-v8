@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Instagram, Facebook, Youtube, Radio, RotateCw, Square, ExternalLink, X, Settings2, AlertTriangle, FlaskConical } from 'lucide-react';
 import type { BroadcastDestination, BroadcastLike, BroadcastPlatform, BroadcastStatus } from '@/components/session/BroadcastTypes';
 import { BroadcastConfigForm } from '@/components/session/BroadcastConfigForm';
-import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig } from '@/lib/broadcastUi';
+import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig, EXPLICATION_ACCES_RESERVE } from '@/lib/broadcastUi';
 
 /**
  * 📡 « Diffuser en direct » — le tiroir des RÉSEAUX.
@@ -50,6 +50,7 @@ const TON: Record<BroadcastStatus, string> = {
   error: 'text-red-300',
   reauth: 'text-amber-300',
   unavailable: 'text-white/35',
+  restricted: 'text-amber-300',
   not_connected: 'text-white/45',
   config_required: 'text-amber-300',
   not_configured: 'text-white/45',
@@ -142,6 +143,13 @@ const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boole
         <p className="mt-1.5 ml-8 flex items-start gap-1.5 text-[11px] leading-snug text-amber-200/80" data-testid={`broadcast-diagnostic-${d.platform}`}>
           <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" aria-hidden="true" />
           <span>{diagnosticConfig(action.missing)}</span>
+        </p>
+      )}
+      {/* Accès réservé (403 liste blanche) : la vraie raison, sur la ligne, aucun bouton mort. */}
+      {!pendantLive && action.kind === 'reserve' && (
+        <p className="mt-1.5 ml-8 flex items-start gap-1.5 text-[11px] leading-snug text-amber-200/80" data-testid={`broadcast-reserve-${d.platform}`}>
+          <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" aria-hidden="true" />
+          <span>{EXPLICATION_ACCES_RESERVE}</span>
         </p>
       )}
       {!pendantLive && ouvert && (action.kind === 'configure' || action.kind === 'configured') && (

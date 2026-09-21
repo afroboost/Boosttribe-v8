@@ -16,6 +16,7 @@ export type BroadcastStatus =
   | 'not_connected'    // OAuth possible (serveur configuré) → action « Connecter »
   | 'reauth'           // jeton expiré / révoqué → « Reconnecter »
   | 'unavailable'      // plateforme non prise en charge sur ce compte / cet appareil
+  | 'restricted'       // 403 serveur : identité hors liste blanche Afroboost (SOCIAL_ALLOWED_EMAILS) — la vraie raison, pas « Indisponible »
   | 'config_required'  // variables serveur manquantes → diagnostic (NOMS), aucun bouton
   | 'not_configured'   // Instagram / TikTok : URL RTMPS + clé à saisir → « Configurer »
   | 'configured'       // Instagram / TikTok : clé enregistrée (chiffrée) → prêt à être sélectionné

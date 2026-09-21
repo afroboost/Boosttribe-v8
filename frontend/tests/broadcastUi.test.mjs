@@ -72,7 +72,7 @@ test('aucune présélection : l’état vient du hook, l’UI n’appelle jamais
 
 test('interrupteur : role=switch + aria-checked, seulement pour un compte relié', () => {
   assert.ok(DRAWER.includes('role="switch"') && DRAWER.includes('aria-checked={d.selected}'));
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig } from '@/lib/broadcastUi';"), 'helpers purs importés');
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig, EXPLICATION_ACCES_RESERVE } from '@/lib/broadcastUi';"), 'helpers purs importés');
   assert.ok(DRAWER.includes('{!pendantLive && selectionnable(d.status) && ('), 'rendu conditionné à selectionnable');
 });
 
@@ -100,7 +100,7 @@ test('Configurer (Instagram / TikTok) : bouton → formulaire séparé ; Configu
   assert.ok(DRAWER.includes('<BroadcastConfigForm d={d} onSave={(s) => b.configure(d.platform, s)} onForget={() => b.forget(d.platform)}'), 'formulaire câblé sur configure()/forget()');
   assert.ok(DRAWER.includes("{!pendantLive && action.kind === 'diagnostic' && ("), 'diagnostic');
   assert.ok(DRAWER.includes('data-testid={`broadcast-diagnostic-${d.platform}`}') && DRAWER.includes('diagnosticConfig(action.missing)'), 'noms des variables serveur');
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig } from '@/lib/broadcastUi';"));
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig, EXPLICATION_ACCES_RESERVE } from '@/lib/broadcastUi';"));
   assert.ok(DRAWER.includes('data-testid="broadcast-avis"'), 'avis (retour OAuth, refus) affiché');
 });
 
@@ -161,4 +161,21 @@ test('helpers : libellés de statut, durée, sélection', async () => {
   assert.equal(nbSelectionnes([{ status: 'connected', selected: false }, { status: 'connected', selected: false }]), 0);
   // un réseau coché mais non relié ne compte pas
   assert.equal(nbSelectionnes([{ status: 'connected', selected: true }, { status: 'not_connected', selected: true }, { status: 'connected', selected: true }]), 2);
+});
+
+// ── ACCÈS RÉSERVÉ (21/09) : un 403 de liste blanche n'est plus « Indisponible », c'est la vraie raison ──
+test('accès réservé : libellé, action « reserve » sans bouton, explication nommant SOCIAL_ALLOWED_EMAILS', async () => {
+  const { libelleStatut, actionPour, selectionnable, EXPLICATION_ACCES_RESERVE } = await import('./.build/broadcastUi.mjs');
+  const { comptesAccesReserve } = await import('./.build/broadcastLogic.mjs');
+  assert.ok(TYPES.includes("'restricted'"), 'statut déclaré dans BroadcastTypes');
+  assert.ok(CODE.includes("action.kind === 'reserve'"), 'le tiroir rend l’explication de l’accès réservé');
+  assert.equal(libelleStatut({ status: 'restricted', selected: false }, false), 'Accès réservé');
+  assert.deepEqual(actionPour({ status: 'restricted', selected: false, kind: 'oauth' }), { kind: 'reserve', libelle: 'Accès réservé' });
+  assert.deepEqual(actionPour({ status: 'restricted', selected: false, kind: 'manual' }), { kind: 'reserve', libelle: 'Accès réservé' });
+  assert.equal(selectionnable('restricted'), false);
+  assert.match(EXPLICATION_ACCES_RESERVE, /SOCIAL_ALLOWED_EMAILS/);
+  const c = comptesAccesReserve();
+  assert.deepEqual(Object.keys(c).sort(), ['facebook', 'instagram', 'tiktok', 'youtube']);
+  for (const p of Object.keys(c)) assert.equal(c[p].status, 'restricted', p);
+  assert.equal(c.instagram.kind, 'manual'); assert.equal(c.facebook.kind, 'oauth');
 });

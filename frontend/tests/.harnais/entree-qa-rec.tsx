@@ -85,6 +85,7 @@ function App() {
     },
     resolutionProgramme: (q) => programme.changerResolution(q === '1080p' ? RESOLUTION_1080P : RESOLUTION_720P),
     fpsProgramme: programme.stats.fps,
+    arrierePlanProgramme: programme.stats.arrierePlan,
   });
   React.useEffect(() => {
     if (params.get('antenne') !== '0') studio.cut('coach_full', { participantId: 'p1', cam2Id: 'cam2' });

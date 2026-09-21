@@ -45,7 +45,7 @@ export interface UseProgramStreamReturn {
   arreter: () => void;
   /** Phase 4 : résolution à chaud, sans recréer la piste. */
   changerResolution: (res: ResolutionProgramme) => void;
-  stats: { fps: number; msParFrame: number; resolution: ResolutionProgramme };
+  stats: { fps: number; msParFrame: number; resolution: ResolutionProgramme; /** onglet masqué : cadence 15 i/s, garde suspendue */ arrierePlan: boolean };
   /** Dernier abandon de la garde de performance (message court), sinon null. */
   avis: string | null;
 }
@@ -55,7 +55,7 @@ export function useProgramStream(o: UseProgramStreamOptions): UseProgramStreamRe
   const busRef = useRef<ProgramAudioBus | null>(null);
   const [actif, setActif] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const [stats, setStats] = useState<{ fps: number; msParFrame: number; resolution: ResolutionProgramme }>({ fps: 0, msParFrame: 0, resolution: o.resolution ?? RESOLUTION_720P });
+  const [stats, setStats] = useState<{ fps: number; msParFrame: number; resolution: ResolutionProgramme; arrierePlan: boolean }>({ fps: 0, msParFrame: 0, resolution: o.resolution ?? RESOLUTION_720P, arrierePlan: false });
   const [avis, setAvis] = useState<string | null>(null);
   const audioRef = useRef(o.audio); audioRef.current = o.audio;
   const modeRef = useRef(o.participantsAudio ?? 'scene'); modeRef.current = o.participantsAudio ?? 'scene';
@@ -70,7 +70,7 @@ export function useProgramStream(o: UseProgramStreamOptions): UseProgramStreamRe
     if (compRef.current?.estActif && stream) return stream;
     const comp = new ProgramCompositor({
       resolution: o.resolution,
-      onStats: (s: StatsCompositeur) => setStats({ fps: Math.round(s.fps), msParFrame: Math.round(s.msParFrame * 10) / 10, resolution: s.resolution }),
+      onStats: (s: StatsCompositeur) => setStats((prev) => { const n = { fps: Math.round(s.fps), msParFrame: Math.round(s.msParFrame * 10) / 10, resolution: s.resolution, arrierePlan: s.arrierePlan }; return prev.fps === n.fps && prev.msParFrame === n.msParFrame && prev.resolution === n.resolution && prev.arrierePlan === n.arrierePlan ? prev : n; }),
       onAbandon: (raison) => { setAvis(raison); arreter(); },
     });
     comp.mettreAJour(o.boxes, o.resolveMedia);

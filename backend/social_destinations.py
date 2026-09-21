@@ -71,6 +71,7 @@ VALEUR_GO = "GO_BASSI_TEST_LIVE_SOCIAL"
 ENV_SECRETS_KEY = "SOCIAL_SECRETS_KEY"         # clé Fernet dédiée (base64 urlsafe 32 octets)
 ENV_ALLOWED = "SOCIAL_ALLOWED_EMAILS"          # liste blanche (défaut : ADMIN_EMAILS injecté par main.py)
 ENV_REDIRECT_BASE = "SOCIAL_OAUTH_REDIRECT_BASE"  # URL publique du backend (ex. https://api-live.afroboost.com)
+ENV_FB_LOGIN_CONFIG = "FACEBOOK_LOGIN_CONFIG_ID"  # FACULTATIF : « Facebook Login for Business » (config_id) — l'app Afroboost en ligne en dépend
 ENV_FB_APP_ID = "FACEBOOK_APP_ID"
 ENV_FB_APP_SECRET = "FACEBOOK_APP_SECRET"
 ENV_FB_PAGE = "AFROBOOST_FB_PAGE_ID"           # identifiant de la Page Facebook Afroboost autorisée
@@ -85,7 +86,8 @@ VARIABLES_OAUTH: Dict[str, Tuple[str, ...]] = {
     "youtube": (ENV_GOOGLE_ID, ENV_GOOGLE_SECRET, ENV_YT_CHANNEL, ENV_REDIRECT_BASE),
 }
 
-FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
+# `publish_video` : exigé par Meta pour créer un `live_videos` sur une Page (sans lui, l'OAuth « réussit » et le direct échoue).
+FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement,publish_video"
 YT_SCOPES = "https://www.googleapis.com/auth/youtube"
 FB_GRAPH = "https://graph.facebook.com/v25.0"
 DUREE_ETAT_OAUTH_S = 600  # un `state` OAuth vaut 10 minutes
@@ -641,9 +643,15 @@ def _lire_etat(state: str, platform: str) -> Optional[Dict[str, Any]]:
 
 def url_autorisation(platform: str, state: str) -> str:
     if platform == "facebook":
-        return "https://www.facebook.com/v25.0/dialog/oauth?" + urlencode({
-            "client_id": _env(ENV_FB_APP_ID), "redirect_uri": _url_callback("facebook"),
-            "scope": FB_SCOPES, "response_type": "code", "state": state})
+        params = {"client_id": _env(ENV_FB_APP_ID), "redirect_uri": _url_callback("facebook"), "response_type": "code", "state": state}
+        config_id = _env(ENV_FB_LOGIN_CONFIG)
+        if config_id:
+            # Facebook Login for Business : les permissions vivent dans la CONFIGURATION (config_id), pas dans `scope` ;
+            # `override_default_response_type` force le `code` (sinon le dialogue peut renvoyer un token dans le fragment).
+            params.update({"config_id": config_id, "override_default_response_type": "true"})
+        else:
+            params["scope"] = FB_SCOPES
+        return "https://www.facebook.com/v25.0/dialog/oauth?" + urlencode(params)
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
         "client_id": _env(ENV_GOOGLE_ID), "redirect_uri": _url_callback("youtube"),
         "scope": YT_SCOPES, "response_type": "code", "access_type": "offline", "prompt": "consent",

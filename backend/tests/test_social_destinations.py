@@ -604,3 +604,17 @@ def test_n3_sans_chiffrement_pas_de_repli_et_youtube_inchange(contexte_nu, monke
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "x"); monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "y"); monkeypatch.setenv("AFROBOOST_YT_CHANNEL_ID", "UC1")
     yt = _etat(client2, AFRO, "youtube")
     assert yt["status"] == "not_connected" and yt["missing"] == []
+
+
+def test_n4_facebook_oauth_url_scopes_live_et_config_id_business(contexte, monkeypatch):
+    """Meta : créer un `live_videos` sur une Page exige `publish_video` ; l'app Afroboost en ligne utilise
+    « Facebook Login for Business », qui veut `config_id` (jamais `scope`) dans l'URL du dialogue."""
+    mod, store, client, h = contexte
+    url = client.get("/social/oauth/facebook/start", params={"return_to": "https://afroboost.com/live/s"}, headers=h).json()["url"]
+    assert "publish_video" in unquote(url) and "pages_manage_posts" in unquote(url) and "config_id=" not in url
+    monkeypatch.setenv("FACEBOOK_LOGIN_CONFIG_ID", "1342881384674039")
+    url2 = client.get("/social/oauth/facebook/start", params={"return_to": "https://afroboost.com/live/s"}, headers=h).json()["url"]
+    assert "config_id=1342881384674039" in url2 and "scope=" not in url2 and "response_type=code" in url2
+    assert "override_default_response_type=true" in url2
+    # la variable est FACULTATIVE : jamais dans les « manquantes »
+    assert "FACEBOOK_LOGIN_CONFIG_ID" not in mod.variables_manquantes("facebook")

@@ -143,29 +143,104 @@ class Stockage:
         self._rows.pop((user_id, platform), None)
 
 
+# Schéma de `social_destinations` — IDENTIQUE au bloc « Table à créer » de docs/multistream_plateformes.md.
+# Idempotent (`if not exists`) : ne touche à aucune autre table, ne détruit aucune donnée. RLS activée sans
+# politique = seul le service-role (le backend) lit/écrit ; isolation par `user_id` ; secrets chiffrés
+# (`stream_key_enc`, `oauth_token_enc`), jamais en clair.
+SQL_SCHEMA = """
+create table if not exists public.social_destinations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  platform text not null check (platform in ('instagram','facebook','youtube','tiktok')),
+  mode text not null check (mode in ('oauth','api','manual')),
+  rtmp_url text,
+  stream_key_enc text,
+  key_hint text,
+  oauth_token_enc text,
+  account_label text,
+  account_id text,
+  external_id text,
+  expires_at timestamptz,
+  status text not null default 'connected',
+  updated_at timestamptz default now(),
+  unique (user_id, platform)
+);
+alter table public.social_destinations enable row level security;
+"""
+MANQUE_SCHEMA = "TABLE social_destinations (migration Supabase)"
+
+
+class SchemaAbsent(Exception):
+    """PostgREST ne connaît pas `social_destinations` (PGRST205) : la migration n'a pas été appliquée."""
+
+
+def _schema_absent(r: Any) -> bool:
+    if getattr(r, "status_code", None) != 404:
+        return False
+    try:
+        return (r.json() or {}).get("code") == "PGRST205"
+    except Exception:
+        return False
+
+
 class StockageSupabase(Stockage):
     """Table `social_destinations` (REST, service role). Colonnes : user_id, platform, mode, rtmp_url,
     stream_key_enc, key_hint, oauth_token_enc, account_label, account_id, external_id, expires_at, status,
-    updated_at. UNIQUE(user_id, platform). SQL dans docs/multistream_plateformes.md."""
+    updated_at. UNIQUE(user_id, platform). SQL dans docs/multistream_plateformes.md (= SQL_SCHEMA).
+
+    Migration : `assurer_schema()` exécute SQL_SCHEMA via pg-meta (`/pg/query`, route Kong réservée au
+    service-role) — appelée au démarrage par main.py et, en secours, à la première lecture qui tombe sur
+    PGRST205. Aucun accès shell, aucun secret hors du backend."""
 
     def __init__(self, base_url: str, headers_fn: Callable[..., Dict[str, str]]) -> None:
         super().__init__()
-        self._url = base_url.rstrip("/") + "/rest/v1/social_destinations"
+        self._base = base_url.rstrip("/")
+        self._url = self._base + "/rest/v1/social_destinations"
         self._headers = headers_fn
+        self.schema_ok: Optional[bool] = None
+
+    async def assurer_schema(self) -> bool:
+        """Crée la table si elle manque (idempotent). True si pg-meta a accepté, False sinon (loggé, sans secret)."""
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.post(self._base + "/pg/query", headers=self._headers(), json={"query": SQL_SCHEMA})
+            self.schema_ok = r.status_code < 300
+            if not self.schema_ok:
+                logger.warning("[SOCIAL] migration social_destinations refusée par pg-meta : HTTP %s", r.status_code)
+            else:
+                logger.info("[SOCIAL] schéma social_destinations vérifié (create table if not exists + RLS)")
+        except Exception as e:  # réseau, DNS… : on ne fait pas tomber l'application
+            self.schema_ok = False
+            logger.warning("[SOCIAL] migration social_destinations impossible : %s", type(e).__name__)
+        return bool(self.schema_ok)
+
+    async def _reparer_puis(self, r: Any) -> bool:
+        """Sur PGRST205 : une tentative de migration ; True si elle a réussi (l'appelant rejoue la requête)."""
+        if not _schema_absent(r):
+            return False
+        if await self.assurer_schema():
+            return True
+        raise SchemaAbsent()
 
     async def lire(self, user_id: str, platform: str) -> Optional[Dict[str, Any]]:
         import httpx  # import local : le module reste importable sans réseau
+        params = {"user_id": f"eq.{user_id}", "platform": f"eq.{platform}", "select": "*"}
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(self._url, headers=self._headers(),
-                            params={"user_id": f"eq.{user_id}", "platform": f"eq.{platform}", "select": "*"})
+            r = await c.get(self._url, headers=self._headers(), params=params)
+            if await self._reparer_puis(r):
+                r = await c.get(self._url, headers=self._headers(), params=params)
         r.raise_for_status()
         rows = r.json() or []
         return rows[0] if rows else None
 
     async def lire_toutes(self, user_id: str) -> List[Dict[str, Any]]:
         import httpx
+        params = {"user_id": f"eq.{user_id}", "select": "*"}
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(self._url, headers=self._headers(), params={"user_id": f"eq.{user_id}", "select": "*"})
+            r = await c.get(self._url, headers=self._headers(), params=params)
+            if await self._reparer_puis(r):
+                r = await c.get(self._url, headers=self._headers(), params=params)
         r.raise_for_status()
         return r.json() or []
 
@@ -649,11 +724,21 @@ async def _utilisateur(authorization: Optional[str]) -> Dict[str, Any]:
 
 
 async def _etats(user_id: str) -> Dict[str, Any]:
-    rows = {r["platform"]: r for r in await _store().lire_toutes(user_id)}
     verrou = verrou_direct_reel()
-    return {"mode_live": _mode_live(), "multistream_mode": verrou["multistream_mode"],
-            "direct_reel_autorise": verrou["autorise"], "verrou": verrou["manque"],
-            "destinations": [etat_plateforme(rows.get(p), p) for p in PLATFORMS]}
+    base = {"mode_live": _mode_live(), "multistream_mode": verrou["multistream_mode"],
+            "direct_reel_autorise": verrou["autorise"], "verrou": verrou["manque"]}
+    try:
+        rows = {r["platform"]: r for r in await _store().lire_toutes(user_id)}
+    except SchemaAbsent:
+        # Table absente et migration automatique impossible : on le DIT (config_required + nom exact),
+        # jamais un 500 (qui sort sans en-têtes CORS et se lit « Indisponible » dans le navigateur).
+        dests = []
+        for p in PLATFORMS:
+            e = etat_plateforme(None, p)
+            e.update(status="config_required", missing=[MANQUE_SCHEMA] + list(e.get("missing") or []))
+            dests.append(e)
+        return dict(base, destinations=dests, schema="absent")
+    return dict(base, destinations=[etat_plateforme(rows.get(p), p) for p in PLATFORMS])
 
 
 @router.get("/destinations")

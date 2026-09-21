@@ -470,3 +470,76 @@ def test_l_verrou_direct_reel_ferme_par_defaut(contexte, monkeypatch):
     monkeypatch.setenv("SOCIAL_LIVE_GO", "GO_BASSI_TEST_LIVE_SOCIAL")
     assert mod.direct_reel_autorise() is True
     assert client.get("/social/destinations/status", headers=h).json()["direct_reel_autorise"] is True
+
+
+# ── MIGRATION AUTOMATIQUE (21/09) : la table est créée par le backend (pg-meta), et son absence n'est jamais un 500 ──
+def test_m1_sql_schema_identique_a_la_doc_et_minimal(contexte_nu):
+    mod, _store, _client, _afro = contexte_nu
+    sql = mod.SQL_SCHEMA
+    assert "create table if not exists public.social_destinations" in sql, "idempotent, une seule table"
+    for col in ("user_id uuid not null references auth.users(id) on delete cascade", "platform text not null",
+                "mode text not null", "rtmp_url text", "stream_key_enc text", "key_hint text", "oauth_token_enc text",
+                "account_label text", "account_id text", "external_id text", "expires_at timestamptz",
+                "status text not null default 'connected'", "updated_at timestamptz default now()",
+                "unique (user_id, platform)"):
+        assert col in sql, col
+    assert "enable row level security" in sql, "RLS : service-role seul (aucune politique)"
+    assert sql.count("create table") == 1 and "drop " not in sql.lower() and "alter table" in sql.lower(), "rien de destructif"
+    # La doc et le code disent la même chose (colonnes du bloc « Table à créer »).
+    doc = open(os.path.join(ICI, "..", "..", "docs", "multistream_plateformes.md"), encoding="utf-8").read()
+    for col in ("stream_key_enc text", "oauth_token_enc text", "key_hint text", "unique (user_id, platform)"):
+        assert col in doc, col
+
+
+def test_m2_pgrst205_detecte_uniquement_sur_404_code_precis(contexte_nu):
+    mod, _s, _c, _a = contexte_nu
+
+    class R:
+        def __init__(self, code, body): self.status_code, self._b = code, body
+        def json(self): return self._b
+    assert mod._schema_absent(R(404, {"code": "PGRST205", "message": "…"})) is True
+    assert mod._schema_absent(R(404, {"code": "PGRST116"})) is False
+    assert mod._schema_absent(R(200, [])) is False
+    assert mod._schema_absent(R(500, {"code": "PGRST205"})) is False
+
+
+def test_m3_table_absente_sans_migration_possible_dit_config_required_jamais_500(contexte_nu):
+    mod, _store, client, afro = contexte_nu
+
+    class StoreSansTable(mod.Stockage):
+        async def lire_toutes(self, user_id):
+            raise mod.SchemaAbsent()
+    mod._deps.store = StoreSansTable()
+    r = client.get("/social/destinations/status", headers=afro)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["schema"] == "absent"
+    for d in j["destinations"]:
+        assert d["status"] == "config_required"
+        assert d["missing"][0] == mod.MANQUE_SCHEMA and "social_destinations" in d["missing"][0]
+        assert "stream_key_enc" not in d and "oauth_token_enc" not in d
+    assert j["direct_reel_autorise"] is False and j["multistream_mode"] == "mock"
+
+
+def test_m4_assurer_schema_appelle_pg_query_avec_les_en_tetes_service_role(contexte_nu, monkeypatch):
+    mod, _s, _c, _a = contexte_nu
+    appels = []
+
+    class FauxClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, headers=None, json=None):
+            appels.append((url, headers, json))
+            class R: status_code = 201
+            return R()
+    import types, sys as _sys
+    faux_httpx = types.SimpleNamespace(AsyncClient=FauxClient)
+    monkeypatch.setitem(_sys.modules, "httpx", faux_httpx)
+    st = mod.StockageSupabase("https://kong.test", lambda extra=None: {"apikey": "service-role-banc", **(extra or {})})
+    import asyncio
+    ok = asyncio.run(st.assurer_schema())
+    assert ok is True and st.schema_ok is True
+    url, headers, body = appels[0]
+    assert url == "https://kong.test/pg/query" and headers["apikey"] == "service-role-banc"
+    assert body["query"] == mod.SQL_SCHEMA

@@ -5,6 +5,7 @@
  *
  * 21/09 — état par plateforme, plus jamais un « Non connecté » générique :
  *  - Facebook / YouTube (`kind: 'oauth'`)  : config_required → not_connected → connected | reauth ;
+ *    Facebook accepte AUSSI le repli RTMPS manuel (Live Producer) → configured, même sans variables Meta ;
  *  - Instagram / TikTok (`kind: 'manual'`) : config_required → not_configured → configured.
  */
 export type BroadcastPlatform = 'instagram' | 'facebook' | 'youtube' | 'tiktok';
@@ -37,6 +38,10 @@ export interface BroadcastDestination {
   /** `configured` : 4 derniers caractères de la clé enregistrée, ou null. Jamais la clé. */
   keyHint: string | null;
   accountLabel: string | null;
+  /** Voies possibles côté serveur : `manualOk` = URL RTMPS + clé acceptées (chiffrement posé) ;
+   *  `oauthOk` = parcours OAuth possible (variables Meta / Google posées). Facebook peut avoir les deux. */
+  manualOk: boolean;
+  oauthOk: boolean;
 }
 
 /** Saisie du formulaire « Configurer » (IG / TikTok) : vit en mémoire le temps de l'envoi, jamais stockée. */

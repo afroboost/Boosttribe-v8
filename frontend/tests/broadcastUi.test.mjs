@@ -72,7 +72,7 @@ test('aucune présélection : l’état vient du hook, l’UI n’appelle jamais
 
 test('interrupteur : role=switch + aria-checked, seulement pour un compte relié', () => {
   assert.ok(DRAWER.includes('role="switch"') && DRAWER.includes('aria-checked={d.selected}'));
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig, EXPLICATION_ACCES_RESERVE } from '@/lib/broadcastUi';"), 'helpers purs importés');
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR } from '@/lib/broadcastUi';"), 'helpers purs importés');
   assert.ok(DRAWER.includes('{!pendantLive && selectionnable(d.status) && ('), 'rendu conditionné à selectionnable');
 });
 
@@ -100,7 +100,7 @@ test('Configurer (Instagram / TikTok) : bouton → formulaire séparé ; Configu
   assert.ok(DRAWER.includes('<BroadcastConfigForm d={d} onSave={(s) => b.configure(d.platform, s)} onForget={() => b.forget(d.platform)}'), 'formulaire câblé sur configure()/forget()');
   assert.ok(DRAWER.includes("{!pendantLive && action.kind === 'diagnostic' && ("), 'diagnostic');
   assert.ok(DRAWER.includes('data-testid={`broadcast-diagnostic-${d.platform}`}') && DRAWER.includes('diagnosticConfig(action.missing)'), 'noms des variables serveur');
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig, EXPLICATION_ACCES_RESERVE } from '@/lib/broadcastUi';"));
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR } from '@/lib/broadcastUi';"));
   assert.ok(DRAWER.includes('data-testid="broadcast-avis"'), 'avis (retour OAuth, refus) affiché');
 });
 
@@ -190,4 +190,70 @@ test('test interne egress : contrôle présent hors direct, caché en « Accès 
   assert.ok(HOOK.includes("if (!(await assurerProgramme())) return { ok: false, message: 'Programme indisponible.' };"), 'le Programme (vidéo + audio) est publié AVANT, comme un vrai démarrage');
   assert.ok(!/qa-fichier[^\n]*rtmp/i.test(HOOK), 'aucune URL RTMP dans le chemin QA');
   assert.ok(TYPES.includes('qaFichierStart?:') && TYPES.includes('interface QaFichierEtat'));
+});
+
+// ── FACEBOOK deux voies + TIKTOK cause exacte (21/09, mission « plus jamais bloqué par Meta App Review ») ──
+test('Facebook : OAuth Meta OU repli RTMPS manuel — deux actions, jamais un « Configuration requise » muet', async () => {
+  const { actionPour, actionSecondaire, libelleStatut, aideConnexion } = await import('./.build/broadcastUi.mjs');
+  // Sans variables Meta mais chiffrement OK : diagnostic « Configuration Meta requise » + « Configurer manuellement »
+  const sansMeta = { platform: 'facebook', status: 'config_required', selected: false, kind: 'oauth', missing: ['FACEBOOK_APP_ID', 'FACEBOOK_APP_SECRET', 'AFROBOOST_FB_PAGE_ID'], manualOk: true, oauthOk: false };
+  assert.equal(libelleStatut(sansMeta, false), 'Configuration Meta requise');
+  assert.deepEqual(actionPour(sansMeta), { kind: 'diagnostic', libelle: 'Configuration Meta requise', missing: sansMeta.missing });
+  assert.deepEqual(actionSecondaire(sansMeta), { kind: 'configure', libelle: 'Configurer manuellement' });
+  // Avec Meta : « Connecter avec Meta » + « Configurer manuellement »
+  const avecMeta = { ...sansMeta, status: 'not_connected', missing: [], oauthOk: true };
+  assert.deepEqual(actionPour(avecMeta), { kind: 'oauth', libelle: 'Connecter avec Meta' });
+  assert.deepEqual(actionSecondaire(avecMeta), { kind: 'configure', libelle: 'Configurer manuellement' });
+  assert.deepEqual(actionSecondaire({ ...avecMeta, status: 'reauth' }), { kind: 'configure', libelle: 'Configurer manuellement' });
+  // Sans clé de chiffrement : aucun repli possible → pas de bouton mort
+  assert.equal(actionSecondaire({ ...sansMeta, manualOk: false, missing: ['SOCIAL_SECRETS_KEY', ...sansMeta.missing] }), null);
+  assert.equal(libelleStatut({ ...sansMeta, manualOk: false }, false), 'Configuration requise', 'sans chiffrement : diagnostic serveur générique');
+  // Configuré (RTMPS manuel) : « Configuré — clé enregistrée (…) », Modifier, cochable
+  const configure = { ...avecMeta, status: 'configured', keyHint: 'piJP' };
+  assert.equal(libelleStatut(configure, false), 'Configuré — clé enregistrée (…piJP)');
+  assert.deepEqual(actionPour(configure), { kind: 'configured', libelle: 'Modifier' });
+  assert.equal(actionSecondaire(configure), null);
+  // Connecté (OAuth) : rien de plus
+  assert.equal(actionSecondaire({ ...avecMeta, status: 'connected' }), null);
+  // YouTube : INCHANGÉ (mission) — « Connecter », jamais de repli manuel proposé
+  assert.deepEqual(actionPour({ platform: 'youtube', status: 'not_connected', selected: false, kind: 'oauth', manualOk: true, oauthOk: true }), { kind: 'oauth', libelle: 'Connecter' });
+  assert.equal(actionSecondaire({ platform: 'youtube', status: 'not_connected', selected: false, kind: 'oauth', manualOk: true, oauthOk: true }), null);
+  // Aide du formulaire Facebook = Live Producer (pas « Connexion Facebook »)
+  assert.match(aideConnexion('facebook', 'manual'), /Live Producer/);
+  assert.ok(!/Connexion Facebook/.test(aideConnexion('facebook', 'manual')));
+});
+
+test('TikTok : « Accès RTMP TikTok non activé sur ce compte » + « Comment l’activer » — jamais un Configurer en impasse', async () => {
+  const { actionPour, actionSecondaire, libelleStatut, AIDE_TIKTOK_ENCODEUR } = await import('./.build/broadcastUi.mjs');
+  const tiktok = { platform: 'tiktok', status: 'not_configured', selected: false, kind: 'manual', manualOk: true };
+  assert.equal(libelleStatut(tiktok, false), 'Accès RTMP TikTok non activé sur ce compte');
+  assert.deepEqual(actionPour(tiktok), { kind: 'aide_encodeur', libelle: 'Comment l’activer' });
+  assert.deepEqual(actionSecondaire(tiktok), { kind: 'configure', libelle: 'J’ai une clé' });
+  assert.match(AIDE_TIKTOK_ENCODEUR, /logiciel externe/i);
+  assert.match(AIDE_TIKTOK_ENCODEUR, /LIVE Studio/);
+  // Instagram : inchangé
+  assert.equal(libelleStatut({ platform: 'instagram', status: 'not_configured', selected: false, kind: 'manual' }, false), 'Non configuré');
+  assert.deepEqual(actionPour({ platform: 'instagram', status: 'not_configured', selected: false, kind: 'manual' }), { kind: 'configure', libelle: 'Configurer' });
+  // Une vraie clé enregistrée → Configuré, Modifier, cochable
+  assert.deepEqual(actionPour({ ...tiktok, status: 'configured', keyHint: 'ab12' }), { kind: 'configured', libelle: 'Modifier' });
+  // Tiroir : bloc d’aide TikTok + bouton secondaire câblés
+  assert.ok(DRAWER.includes("action.kind === 'aide_encodeur'"), 'bloc « Comment l’activer » rendu');
+  assert.ok(DRAWER.includes('data-testid={`broadcast-aide-${d.platform}`}'));
+  assert.ok(DRAWER.includes("secondaire?.kind === 'configure'"), 'bouton secondaire → formulaire');
+  assert.ok(DRAWER.includes('data-testid={`broadcast-configure-secondaire-${d.platform}`}'));
+});
+
+test('état serveur : manual_ok / oauth_ok remontent jusqu’au tiroir (jamais un secret de plus)', async () => {
+  const { comptesDepuisServeur, broadcastReducer, BROADCAST_INITIAL } = await import('./.build/broadcastLogic.mjs');
+  const c = comptesDepuisServeur({ destinations: [
+    { platform: 'facebook', status: 'config_required', kind: 'oauth', missing: ['FACEBOOK_APP_ID'], manual_ok: true, oauth_ok: false },
+    { platform: 'youtube', status: 'connected', kind: 'oauth', manual_ok: true, oauth_ok: true },
+    { platform: 'tiktok', status: 'not_configured', kind: 'manual' },
+  ] });
+  assert.equal(c.facebook.manual_ok, true); assert.equal(c.facebook.oauth_ok, false);
+  assert.equal(c.tiktok.manual_ok, false, 'absent → false (jamais deviné)');
+  const e = broadcastReducer(BROADCAST_INITIAL, { type: 'comptes', comptes: c });
+  const fb = e.destinations.find((d) => d.platform === 'facebook');
+  assert.equal(fb.manualOk, true); assert.equal(fb.oauthOk, false);
+  assert.ok(!JSON.stringify(e).includes('stream_key'));
 });

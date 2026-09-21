@@ -96,7 +96,7 @@ test('comptes serveur : la route « status » (état + diagnostic) et l’ancien
     { platform: 'tiktok', status: 'not_configured', kind: 'manual' },
     { platform: 'pinterest', status: 'connected' }, { platform: 'facebook', status: 'nimporte' },
   ] });
-  assert.deepEqual(riche.facebook, { status: 'config_required', kind: 'oauth', missing: ['FACEBOOK_APP_ID', 'SOCIAL_OAUTH_REDIRECT_BASE'], key_hint: null, key_saved: false, account_label: null });
+  assert.deepEqual(riche.facebook, { status: 'config_required', kind: 'oauth', missing: ['FACEBOOK_APP_ID', 'SOCIAL_OAUTH_REDIRECT_BASE'], key_hint: null, key_saved: false, account_label: null, manual_ok: false, oauth_ok: false });
   assert.equal(riche.instagram.status, 'configured'); assert.equal(riche.instagram.key_hint, 'ab12');
   assert.equal(riche.youtube.account_label, 'Af…t');
   assert.ok(!('pinterest' in riche));

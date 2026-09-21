@@ -543,3 +543,64 @@ def test_m4_assurer_schema_appelle_pg_query_avec_les_en_tetes_service_role(conte
     url, headers, body = appels[0]
     assert url == "https://kong.test/pg/query" and headers["apikey"] == "service-role-banc"
     assert body["query"] == mod.SQL_SCHEMA
+
+
+# ─── N. Facebook : repli RTMPS manuel (Live Producer) — jamais bloqué par Meta App Review ────
+def _contexte_chiffre_sans_meta(monkeypatch):
+    """Prod du 21/09 : clé de chiffrement posée, AUCUNE variable Meta (FACEBOOK_*, AFROBOOST_FB_PAGE_ID)."""
+    for v in TOUTES_VARS:
+        monkeypatch.delenv(v, raising=False)
+    monkeypatch.setenv("SOCIAL_SECRETS_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("SOCIAL_OAUTH_REDIRECT_BASE", "https://api-live.afroboost.com")
+    mod = charger()
+    store, client = _monter(mod)
+    return mod, store, client
+
+
+def test_n1_facebook_manuel_sans_variables_meta(monkeypatch, caplog):
+    mod, store, client = _contexte_chiffre_sans_meta(monkeypatch)
+    fb = _etat(client, AFRO, "facebook")
+    # Sans Meta : « Configuration Meta requise » (noms exacts) MAIS le repli manuel est possible et le dit
+    assert fb["status"] == "config_required"
+    assert fb["missing"] == ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID"]
+    assert fb["manual_ok"] is True and fb["oauth_ok"] is False
+    # OAuth reste refusé proprement (409), le manuel passe
+    assert client.get("/social/oauth/facebook/start", headers=AFRO).status_code == 409
+    with caplog.at_level(logging.INFO):
+        r = client.post("/social/destinations/facebook/manual",
+                        json={"rtmp_url": "rtmps://live-api-s.facebook.com:443/rtmp/", "stream_key": SECRET_TEST, "account_label": "Page Afroboost"}, headers=AFRO)
+    assert r.status_code == 200 and r.json()["status"] == "configured" and r.json()["mode"] == "manual"
+    fb = _etat(client, AFRO, "facebook")
+    assert fb["status"] == "configured" and fb["key_saved"] is True and fb["key_hint"] == SECRET_TEST[-4:]
+    assert fb["kind"] == "oauth" and fb["manual_ok"] is True, "la plateforme reste OAuth-capable, le repli est un MODE"
+    # jamais la clé : ni dans l'état, ni dans les journaux
+    texte = client.get("/social/destinations/status", headers=AFRO).text + caplog.text
+    assert SECRET_TEST not in texte
+    # le moteur multistream la résout intacte, et l'état textuel est « configured » (cochable)
+    assert asyncio.run(mod.resoudre_destination("user-afroboost-0001", "facebook")) == {"rtmp_url": "rtmps://live-api-s.facebook.com:443/rtmp/", "stream_key": SECRET_TEST}
+    assert asyncio.run(mod.statut_compte("user-afroboost-0001", "facebook")) == "configured"
+    # Supprimer → retour à l'état « Configuration Meta requise » (repli toujours possible)
+    assert client.delete("/social/destinations/facebook", headers=AFRO).json()["status"] == "config_required"
+    assert asyncio.run(store.lire("user-afroboost-0001", "facebook")) is None
+
+
+def test_n2_facebook_avec_meta_deux_voies_oauth_intact(contexte):
+    mod, store, client, h = contexte
+    fb = _etat(client, h, "facebook")
+    assert fb["status"] == "not_connected" and fb["manual_ok"] is True and fb["oauth_ok"] is True
+    ok = client.post("/social/destinations/facebook/manual", json={"rtmp_url": "rtmps://live-api-s.facebook.com:443/rtmp/", "stream_key": SECRET_TEST}, headers=h)
+    assert ok.status_code == 200 and ok.json()["status"] == "configured"
+    assert _etat(client, h, "facebook")["status"] == "configured"
+    # le parcours OAuth n'est pas cassé par le repli : l'URL est toujours fournie
+    assert client.get("/social/oauth/facebook/start", params={"return_to": "https://afroboost.com/live/s"}, headers=h).status_code == 200
+
+
+def test_n3_sans_chiffrement_pas_de_repli_et_youtube_inchange(contexte_nu, monkeypatch):
+    mod, store, client, h = contexte_nu
+    fb = _etat(client, h, "facebook")
+    assert fb["status"] == "config_required" and fb["manual_ok"] is False and fb["missing"][0] == "SOCIAL_SECRETS_KEY"
+    # YouTube : AUCUN changement de comportement (mission : ne pas toucher YouTube)
+    mod2, store2, client2 = _contexte_chiffre_sans_meta(monkeypatch)
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "x"); monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "y"); monkeypatch.setenv("AFROBOOST_YT_CHANNEL_ID", "UC1")
+    yt = _etat(client2, AFRO, "youtube")
+    assert yt["status"] == "not_connected" and yt["missing"] == []

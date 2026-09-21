@@ -56,7 +56,9 @@ test('Instagram / TikTok (RTMPS + clé) : Configurer, Configuré (Modifier), Con
     assert.equal(a.kind, 'diagnostic'); assert.deepEqual(a.missing, ['SOCIAL_SECRETS_KEY']);
     // même un ancien statut « not_connected » sur une plateforme manuelle ne produit jamais « Connecter »
     assert.deepEqual(actionPour(manual('not_connected')), { kind: 'configure', libelle: 'Configurer' });
-    assert.ok(aideConnexion(platform, 'manual').includes(platform === 'tiktok' ? 'TikTok LIVE Studio' : 'Instagram Live Producer'));
+    // TikTok : LIVE Studio ne fournit AUCUNE clé (prouvé 21/09) — la clé vient de l’application TikTok (PC/Mac → Logiciel de streaming)
+    assert.ok(aideConnexion(platform, 'manual').includes(platform === 'tiktok' ? 'application TikTok' : 'Instagram Live Producer'));
+    assert.ok(!aideConnexion('tiktok', 'manual').includes('LIVE Studio'), 'plus jamais « copiez depuis LIVE Studio »');
     assert.ok(aideConnexion(platform, 'manual').includes('nouvelle clé à chaque direct'));
   }
 });

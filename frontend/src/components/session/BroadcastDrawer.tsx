@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Instagram, Facebook, Youtube, Radio, RotateCw, Square, ExternalLink, X, Settings2, AlertTriangle, FlaskConical } from 'lucide-react';
+import { Instagram, Facebook, Youtube, Radio, RotateCw, Square, ExternalLink, X, Settings2, AlertTriangle, FlaskConical, HelpCircle } from 'lucide-react';
 import type { BroadcastDestination, BroadcastLike, BroadcastPlatform, BroadcastStatus } from '@/components/session/BroadcastTypes';
 import { BroadcastConfigForm } from '@/components/session/BroadcastConfigForm';
-import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, diagnosticConfig, EXPLICATION_ACCES_RESERVE } from '@/lib/broadcastUi';
+import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR } from '@/lib/broadcastUi';
 
 /**
  * 📡 « Diffuser en direct » — le tiroir des RÉSEAUX.
@@ -14,6 +14,10 @@ import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour,
  * - PLUS JAMAIS un « Non connecté » générique derrière un bouton mort : chaque plateforme affiche SON état
  *   et SA seule action possible (Connecter / Reconnecter = vrai OAuth ; Configurer = URL RTMPS + clé ;
  *   Configuration requise = diagnostic avec les NOMS des variables serveur) ;
+ * - 21/09 (suite) : Facebook a DEUX voies — « Connecter avec Meta » (OAuth) et « Configurer manuellement »
+ *   (URL RTMPS + clé de Live Producer), pour ne plus jamais être bloqué par une App Review ; TikTok dit la
+ *   cause exacte (« Accès RTMP non activé sur ce compte » + « Comment l’activer ») au lieu d'un « Configurer »
+ *   qui mène à une impasse ;
  * - une panne isolée (TikTok) n'arrête pas les autres : « Réessayer » ne touche qu'elle ;
  * - « Arrêter tout » demande confirmation ; l'arrêt d'une seule destination, non ;
  * - tant que le serveur simule (`directAutorise` faux), un bandeau le dit et le bouton principal parle de simulation ;
@@ -63,7 +67,10 @@ const TON: Record<BroadcastStatus, string> = {
 const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boolean; onOuvrir: (on: boolean) => void }> = ({ d, b, ouvert, onOuvrir }) => {
   const pendantLive = b.live;
   const action = actionPour(d);
+  const secondaire = actionSecondaire(d);
   const [occupe, setOccupe] = useState(false);
+  const [aide, setAide] = useState(false);
+  const formulairePossible = action.kind === 'configure' || action.kind === 'configured' || secondaire?.kind === 'configure';
   const connecter = async () => { setOccupe(true); try { await b.connect(d.platform); } finally { setOccupe(false); } };
   return (
     <li className="py-2.5" data-testid={`broadcast-${d.platform}`} data-broadcast-status={d.status} data-broadcast-kind={d.kind}>
@@ -111,6 +118,30 @@ const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boole
             <Settings2 className="w-3 h-3" /> {action.libelle}
           </button>
         )}
+        {/* TikTok hors direct : « Comment l’activer » = l'explication (la clé externe n'est pas prouvée disponible). */}
+        {!pendantLive && action.kind === 'aide_encodeur' && (
+          <button
+            type="button"
+            onClick={() => setAide((v) => !v)}
+            aria-expanded={aide}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-[var(--bt-accent)] shrink-0"
+            data-testid={`broadcast-aide-${d.platform}`}
+          >
+            <HelpCircle className="w-3 h-3" /> {action.libelle}
+          </button>
+        )}
+        {/* Seconde voie (Facebook : Configurer manuellement ; TikTok : J’ai une clé) → même formulaire sécurisé. */}
+        {!pendantLive && secondaire?.kind === 'configure' && (
+          <button
+            type="button"
+            onClick={() => onOuvrir(!ouvert)}
+            aria-expanded={ouvert}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full bg-white/10 text-white/80 hover:bg-white/20 hover:text-[var(--bt-accent)] shrink-0"
+            data-testid={`broadcast-configure-secondaire-${d.platform}`}
+          >
+            <Settings2 className="w-3 h-3" /> {secondaire.libelle}
+          </button>
+        )}
         {!pendantLive && d.status === 'unavailable' && <span className="text-[11px] text-white/30 shrink-0">—</span>}
         {/* Pendant le direct : arrêt individuel, ou réessai isolé. */}
         {pendantLive && d.status === 'error' && (
@@ -152,7 +183,14 @@ const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boole
           <span>{EXPLICATION_ACCES_RESERVE}</span>
         </p>
       )}
-      {!pendantLive && ouvert && (action.kind === 'configure' || action.kind === 'configured') && (
+      {/* TikTok : la cause exacte, dépliée à la demande — jamais une promesse. */}
+      {!pendantLive && aide && action.kind === 'aide_encodeur' && (
+        <p className="mt-1.5 ml-8 flex items-start gap-1.5 text-[11px] leading-snug text-white/65" data-testid={`broadcast-aide-texte-${d.platform}`}>
+          <HelpCircle className="w-3.5 h-3.5 mt-px shrink-0" aria-hidden="true" />
+          <span>{AIDE_TIKTOK_ENCODEUR}</span>
+        </p>
+      )}
+      {!pendantLive && ouvert && formulairePossible && (
         <BroadcastConfigForm d={d} onSave={(s) => b.configure(d.platform, s)} onForget={() => b.forget(d.platform)} onClose={() => onOuvrir(false)} />
       )}
     </li>

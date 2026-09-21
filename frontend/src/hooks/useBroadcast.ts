@@ -3,7 +3,7 @@
  *
  * CONTRAT (l'UI code contre lui) :
  *   useBroadcast({ room, enabled }) → {
- *     destinations: { platform, label, status, selected, error?, kind, missing, keyHint, accountLabel }[],
+ *     destinations: { platform, label, status, selected, error?, kind, missing, keyHint, accountLabel, manualOk, oauthOk }[],
  *     live, elapsedSec, directAutorise, avis,
  *     select(platform, on), start(), stopAll(), stop(platform), retry(platform),
  *     connect(platform), configure(platform, saisie), forget(platform), refresh(),
@@ -55,7 +55,7 @@ export interface UseBroadcastOptions {
 export interface ResultatBroadcast { ok: boolean; message: string; missing?: string[] }
 
 export interface UseBroadcastReturn {
-  destinations: Pick<Destination, 'platform' | 'label' | 'status' | 'selected' | 'error' | 'kind' | 'missing' | 'keyHint' | 'accountLabel'>[];
+  destinations: Pick<Destination, 'platform' | 'label' | 'status' | 'selected' | 'error' | 'kind' | 'missing' | 'keyHint' | 'accountLabel' | 'manualOk' | 'oauthOk'>[];
   live: boolean;
   elapsedSec: number;
   /** false = simulation côté serveur (mode mock / verrou fermé) : aucun direct réel ne part. */
@@ -271,8 +271,8 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
   }, [refresh]);
 
   return {
-    destinations: etat.destinations.map(({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel }) =>
-      ({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel })),
+    destinations: etat.destinations.map(({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel, manualOk, oauthOk }) =>
+      ({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel, manualOk, oauthOk })),
     live: etat.live, elapsedSec, directAutorise, select, start, stopAll, stop, retry, connect, configure, forget, refresh, avis,
     qaFichier, qaFichierStart, qaFichierStop, qaFichierStatus,
   };

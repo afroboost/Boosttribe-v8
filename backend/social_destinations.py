@@ -406,13 +406,25 @@ def etat_plateforme(row: Optional[Dict[str, Any]], platform: str) -> Dict[str, A
         "account_label": None, "expires_at": row.get("expires_at") if row else None,
         "key_saved": False, "key_hint": None, "missing": [],
     }
-    manque = variables_manquantes(platform)
-    if manque:
-        base.update(status="config_required", missing=manque)
-        return base
+    manque_chiffrement = list(chiffrement_manquant())
+    manque_oauth = [n for n in VARIABLES_OAUTH.get(platform, ()) if not _env(n)]
+    # Deux voies distinctes, dites explicitement au tiroir (jamais un « Configuration requise » muet) :
+    #  - `manual_ok` : la saisie RTMPS + clé est possible (il ne faut QUE la clé de chiffrement) ;
+    #  - `oauth_ok`  : le parcours OAuth est possible (toutes les variables Meta / Google posées).
+    base.update(manual_ok=not manque_chiffrement, oauth_ok=(platform in PLATEFORMES_OAUTH and not manque_chiffrement and not manque_oauth))
     if row:
         label = row.get("account_label") or ""
         base["account_label"] = ((label[:2] + "…" + label[-1:]) if len(label) > 3 else label) or None
+    # Facebook : repli RTMPS manuel (Live Producer → « Logiciel de streaming »). Il ne dépend PAS des variables
+    # Meta : une App Review en attente ne doit plus bloquer un direct. État « configured » (comme IG / TikTok).
+    if platform == "facebook" and not manque_chiffrement and row and row.get("mode") == "manual":
+        ok = bool(row.get("stream_key_enc") and row.get("rtmp_url")) and not _expire(row)
+        base.update(status="configured" if ok else "reauth", key_saved=bool(row.get("stream_key_enc")), key_hint=_indice_cle(row), missing=manque_oauth)
+        return base
+    manque = manque_chiffrement + manque_oauth
+    if manque:
+        base.update(status="config_required", missing=manque, account_label=None)
+        return base
     if platform in PLATEFORMES_MANUELLES:
         if row and row.get("stream_key_enc") and row.get("rtmp_url"):
             base.update(status="configured", key_saved=True, key_hint=_indice_cle(row))

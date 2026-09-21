@@ -36,6 +36,9 @@ export interface Destination {
   /** `configured` : la clé est enregistrée côté serveur ; seuls ses 4 derniers caractères reviennent. */
   keyHint: string | null;
   accountLabel: string | null;
+  /** Voies possibles côté serveur (21/09) : saisie RTMPS + clé / parcours OAuth. Jamais devinées : false par défaut. */
+  manualOk: boolean;
+  oauthOk: boolean;
 }
 
 export const GENRE_PAR_PLATEFORME: Record<Plateforme, GenreDestination> = { instagram: 'manual', facebook: 'oauth', youtube: 'oauth', tiktok: 'manual' };
@@ -49,7 +52,7 @@ export interface EtatBroadcast {
 export const BROADCAST_INITIAL: EtatBroadcast = {
   destinations: PLATEFORMES.map((p) => ({
     platform: p, label: LIBELLES[p], status: 'unavailable', selected: false, compte: 'unavailable',
-    kind: GENRE_PAR_PLATEFORME[p], missing: [], keyHint: null, accountLabel: null,
+    kind: GENRE_PAR_PLATEFORME[p], missing: [], keyHint: null, accountLabel: null, manualOk: false, oauthOk: false,
   })),
   live: false,
   demarreLe: null,
@@ -63,6 +66,8 @@ export interface InfoCompteServeur {
   key_hint?: string | null;
   key_saved?: boolean;
   account_label?: string | null;
+  manual_ok?: boolean;
+  oauth_ok?: boolean;
 }
 export type ComptesServeur = Partial<Record<Plateforme, StatutCompte | InfoCompteServeur>>;
 
@@ -90,6 +95,7 @@ export function comptesDepuisServeur(json: unknown): ComptesServeur {
         missing: Array.isArray(d.missing) ? (d.missing as unknown[]).filter((x): x is string => typeof x === 'string') : [],
         key_hint: typeof d.key_hint === 'string' ? d.key_hint : null, key_saved: d.key_saved === true,
         account_label: typeof d.account_label === 'string' ? d.account_label : null,
+        manual_ok: d.manual_ok === true, oauth_ok: d.oauth_ok === true,
       };
     }
     return out;
@@ -153,6 +159,8 @@ export function broadcastReducer(e: EtatBroadcast, a: ActionBroadcast): EtatBroa
             missing: info ? (info.missing ?? []) : d.missing,
             keyHint: info ? (info.key_hint ?? null) : d.keyHint,
             accountLabel: info ? (info.account_label ?? null) : d.accountLabel,
+            manualOk: info ? info.manual_ok === true : d.manualOk,
+            oauthOk: info ? info.oauth_ok === true : d.oauthOk,
           };
         }),
       };

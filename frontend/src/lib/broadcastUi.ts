@@ -14,7 +14,12 @@ export type BroadcastStatus =
 
 export type BroadcastKind = 'oauth' | 'manual';
 
-export interface StatutSource { status: BroadcastStatus; selected: boolean; error?: string; kind?: BroadcastKind; missing?: string[]; keyHint?: string | null }
+export interface StatutSource {
+  status: BroadcastStatus; selected: boolean; error?: string; kind?: BroadcastKind; missing?: string[]; keyHint?: string | null;
+  platform?: string;
+  /** Voies possibles côté serveur (21/09) : saisie RTMPS + clé (`manualOk`) et/ou parcours OAuth (`oauthOk`). */
+  manualOk?: boolean; oauthOk?: boolean;
+}
 
 /** Libellé lisible d'un statut — jamais de jargon, jamais de secret. */
 export function libelleStatut(d: StatutSource, live: boolean): string {
@@ -26,8 +31,8 @@ export function libelleStatut(d: StatutSource, live: boolean): string {
     case 'unavailable': return 'Indisponible';
     case 'restricted': return 'Accès réservé';
     case 'not_connected': return 'Non connecté';
-    case 'config_required': return 'Configuration requise';
-    case 'not_configured': return 'Non configuré';
+    case 'config_required': return d.platform === 'facebook' && d.manualOk ? 'Configuration Meta requise' : 'Configuration requise';
+    case 'not_configured': return d.platform === 'tiktok' ? 'Accès RTMP TikTok non activé sur ce compte' : 'Non configuré';
     case 'configured': return live && !d.selected ? 'Non diffusé' : (d.keyHint ? `Configuré — clé enregistrée (…${d.keyHint})` : 'Configuré');
     case 'off': return 'Non diffusé';
     case 'connected': return live && !d.selected ? 'Non diffusé' : 'Connecté';
@@ -50,25 +55,48 @@ export function formatDuree(sec: number): string {
 
 /** La seule action pertinente d'une ligne, hors direct. `none` = rien à cliquer (jamais un bouton mort). */
 export type ActionLigne =
-  | { kind: 'oauth'; libelle: 'Connecter' | 'Reconnecter' }
-  | { kind: 'configure'; libelle: 'Configurer' }
+  | { kind: 'oauth'; libelle: 'Connecter' | 'Reconnecter' | 'Connecter avec Meta' }
+  | { kind: 'configure'; libelle: 'Configurer' | 'Configurer manuellement' | 'J’ai une clé' }
   | { kind: 'configured'; libelle: 'Modifier' }
-  | { kind: 'diagnostic'; libelle: 'Configuration requise'; missing: string[] }
+  | { kind: 'diagnostic'; libelle: 'Configuration requise' | 'Configuration Meta requise'; missing: string[] }
+  | { kind: 'aide_encodeur'; libelle: 'Comment l’activer' }
   | { kind: 'reserve'; libelle: 'Accès réservé' }
   | { kind: 'none' };
 
 export function actionPour(d: StatutSource): ActionLigne {
   const kind: BroadcastKind = d.kind ?? 'oauth';
+  const facebook = d.platform === 'facebook';
   switch (d.status) {
-    case 'config_required': return { kind: 'diagnostic', libelle: 'Configuration requise', missing: d.missing ?? [] };
+    case 'config_required': return facebook && d.manualOk
+      ? { kind: 'diagnostic', libelle: 'Configuration Meta requise', missing: d.missing ?? [] }
+      : { kind: 'diagnostic', libelle: 'Configuration requise', missing: d.missing ?? [] };
     case 'restricted': return { kind: 'reserve', libelle: 'Accès réservé' };
-    case 'not_connected': return kind === 'oauth' ? { kind: 'oauth', libelle: 'Connecter' } : { kind: 'configure', libelle: 'Configurer' };
+    case 'not_connected': return kind === 'oauth' ? { kind: 'oauth', libelle: facebook ? 'Connecter avec Meta' : 'Connecter' } : { kind: 'configure', libelle: 'Configurer' };
     case 'reauth': return kind === 'oauth' ? { kind: 'oauth', libelle: 'Reconnecter' } : { kind: 'configure', libelle: 'Configurer' };
-    case 'not_configured': return { kind: 'configure', libelle: 'Configurer' };
+    // TikTok : la clé RTMP externe n'est pas prouvée disponible sur ce compte (LIVE Studio n'en fournit pas) →
+    // la première action est l'EXPLICATION, jamais un « Configurer » qui mène à une impasse.
+    case 'not_configured': return d.platform === 'tiktok' ? { kind: 'aide_encodeur', libelle: 'Comment l’activer' } : { kind: 'configure', libelle: 'Configurer' };
     case 'configured': return { kind: 'configured', libelle: 'Modifier' };
     default: return { kind: 'none' };
   }
 }
+
+/** Seconde voie, quand elle existe (21/09) :
+ *  - Facebook : « Configurer manuellement » (URL RTMPS + clé de Live Producer) à côté de l'OAuth Meta — ou à sa
+ *    place quand les variables Meta manquent — dès que le serveur sait chiffrer (`manualOk`) ;
+ *  - TikTok : « J’ai une clé » derrière l'explication, pour celui qui a obtenu une vraie clé externe.
+ *  YouTube : rien (mission : inchangé). */
+export function actionSecondaire(d: StatutSource): ActionLigne | null {
+  if (d.platform === 'facebook' && d.manualOk && (d.status === 'config_required' || d.status === 'not_connected' || d.status === 'reauth')) {
+    return { kind: 'configure', libelle: 'Configurer manuellement' };
+  }
+  if (d.platform === 'tiktok' && d.status === 'not_configured') return { kind: 'configure', libelle: 'J’ai une clé' };
+  return null;
+}
+
+/** TikTok : la cause exacte, prouvée le 21/09 sur le compte Afroboost (LIVE Center accessible, LIVE Studio
+ *  téléchargeable, AUCUNE entrée « logiciel de streaming » sur le web). Ni promesse, ni bouton mort. */
+export const AIDE_TIKTOK_ENCODEUR = 'TikTok doit d’abord autoriser la diffusion par logiciel externe pour ce compte. LIVE Studio (l’application TikTok) diffuse lui-même et ne fournit pas de clé. Quand TikTok l’active, l’URL du serveur et la clé apparaissent dans l’application TikTok : LIVE → PC/Mac → Logiciel de streaming. Vous les avez ? Utilisez « J’ai une clé ».';
 
 /** Texte du diagnostic : les NOMS des variables serveur à poser (jamais leurs valeurs). */
 export function diagnosticConfig(missing: string[]): string {
@@ -84,8 +112,9 @@ export function aideConnexion(platform: string, kind: BroadcastKind): string {
   if (kind === 'oauth') return platform === 'youtube'
     ? 'Connexion Google vers la chaîne YouTube Afroboost.'
     : 'Connexion Facebook vers la Page Afroboost.';
+  if (platform === 'facebook') return 'Copiez l’URL du serveur et la clé de diffusion depuis Facebook Live Producer (Page Afroboost → Lancer un direct → Logiciel de streaming) ; nouvelle clé à chaque direct, sauf clé persistante.';
   return platform === 'tiktok'
-    ? 'Copiez l’URL du serveur et la clé de diffusion depuis TikTok LIVE Studio (nouvelle clé à chaque direct).'
+    ? 'Copiez l’URL du serveur et la clé de diffusion fournies par TikTok (application TikTok → LIVE → PC/Mac → Logiciel de streaming) ; nouvelle clé à chaque direct.'
     : 'Copiez l’URL du serveur et la clé de diffusion depuis Instagram Live Producer (nouvelle clé à chaque direct).';
 }
 

@@ -51,7 +51,7 @@ export const BroadcastConfigForm: React.FC<BroadcastConfigFormProps> = ({ d, onS
 
   return (
     <form onSubmit={soumettre} className="mt-2 mb-3 rounded-xl border border-white/10 bg-white/5 p-3 space-y-2" data-testid={`broadcast-config-${d.platform}`} autoComplete="off">
-      <p className="text-[11px] text-white/60 leading-snug">{aideConnexion(d.platform, d.kind)}</p>
+      <p className="text-[11px] text-white/60 leading-snug">{aideConnexion(d.platform, 'manual')}</p>
       <label htmlFor={idUrl} className="block text-[11px] text-white/70">URL du serveur (rtmps://)</label>
       <input
         id={idUrl}

@@ -245,12 +245,38 @@ export const BroadcastDrawer: React.FC<BroadcastDrawerProps> = ({ broadcast, ope
     </button>
   );
 
+  // 🧪 Test interne (compte Afroboost) : Programme → LiveKit → Egress → FICHIER dans le conteneur,
+  //    sans aucun réseau. Visible seulement quand le serveur a répondu au compte (pas « Accès réservé »),
+  //    hors direct. Il publie les mêmes pistes qu'un vrai démarrage (vidéo + audio programme).
+  const qa = broadcast.qaFichier;
+  const qaVisible = !broadcast.live && !!broadcast.qaFichierStart && !broadcast.destinations.some((d) => d.status === 'restricted');
+  const qaFichierInfo = qa?.fichiers?.[0];
+  const testInterne = qaVisible ? (
+    <div className="mt-2 rounded-lg border border-white/10 bg-white/5 px-2.5 py-2 text-[11px] leading-snug text-white/65" data-testid="broadcast-qa">
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5"><FlaskConical className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Test interne : Programme → fichier serveur (aucun réseau)</span>
+        {qa?.actif ? (
+          <button type="button" onClick={() => broadcast.qaFichierStop?.()} className="h-7 px-2.5 rounded-full bg-white/10 hover:bg-white/15 text-white text-[11px] font-semibold" data-testid="broadcast-qa-stop">Arrêter</button>
+        ) : (
+          <button type="button" onClick={() => broadcast.qaFichierStart?.()} className="h-7 px-2.5 rounded-full bg-white/10 hover:bg-white/15 text-white text-[11px] font-semibold" data-testid="broadcast-qa-start">Démarrer</button>
+        )}
+      </div>
+      {(qa?.actif || qa?.dernier) && (
+        <p className="mt-1 text-white/50" data-testid="broadcast-qa-etat">
+          {qa.actif ? 'En cours' : 'Terminé'}{qa.statut ? ` · ${qa.statut}` : ''}{qa.actif ? ` · audio ${qa.audioPublie ? 'publié' : 'absent'}` : ''}
+          {qaFichierInfo ? ` · ${qaFichierInfo.fichier} · ${(qaFichierInfo.taille / 1_048_576).toFixed(1)} Mo · ${Math.round(qaFichierInfo.duree_ms / 1000)} s` : ''}
+          {qa.erreur ? ` · erreur : ${qa.erreur}` : ''}
+        </p>
+      )}
+    </div>
+  ) : null;
+
   if (mobile) {
     return (
       <div className="fixed inset-0 z-[135] flex flex-col bg-[#0b0b10] text-white" role="dialog" aria-modal="true" aria-label="Diffuser en direct" data-testid="broadcast-drawer" data-broadcast-mode="mobile">
         <div className="px-4 pt-4 pb-3 border-b border-white/10">{entete}{bandeau}{avis}</div>
         <div className="flex-1 overflow-y-auto px-4">{liste}</div>
-        <div className="px-4 py-3 border-t border-white/10 bg-black/30" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>{principal}</div>
+        <div className="px-4 py-3 border-t border-white/10 bg-black/30" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>{principal}{testInterne}</div>
       </div>
     );
   }
@@ -268,7 +294,7 @@ export const BroadcastDrawer: React.FC<BroadcastDrawerProps> = ({ broadcast, ope
     >
       <div className="px-4 pt-4 pb-3 border-b border-white/10">{entete}{bandeau}{avis}</div>
       <div className="px-4">{liste}</div>
-      <div className="px-4 py-3 border-t border-white/10">{principal}</div>
+      <div className="px-4 py-3 border-t border-white/10">{principal}{testInterne}</div>
     </div>
   );
 };

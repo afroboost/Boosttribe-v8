@@ -179,3 +179,15 @@ test('accès réservé : libellé, action « reserve » sans bouton, explication
   for (const p of Object.keys(c)) assert.equal(c[p].status, 'restricted', p);
   assert.equal(c.instagram.kind, 'manual'); assert.equal(c.facebook.kind, 'oauth');
 });
+
+// ── 🧪 TEST INTERNE EGRESS (21/09) : un bouton « Test interne » → fichier serveur, jamais RTMP, jamais pendant le direct ──
+test('test interne egress : contrôle présent hors direct, caché en « Accès réservé », publie vidéo+audio programme avant la route QA', () => {
+  assert.ok(CODE.includes("data-testid=\"broadcast-qa\""), 'bloc test interne rendu');
+  assert.ok(CODE.includes("data-testid=\"broadcast-qa-start\"") && CODE.includes("data-testid=\"broadcast-qa-stop\""));
+  assert.ok(CODE.includes("!broadcast.live && !!broadcast.qaFichierStart && !broadcast.destinations.some((d) => d.status === 'restricted')"), 'jamais pendant un direct, jamais pour un compte non autorisé');
+  const HOOK = codeSeul(lire('hooks', 'useBroadcast.ts'));
+  assert.ok(HOOK.includes("await appel('/live/broadcast/qa-fichier/start', { room: oRef.current.room })"), 'route QA fichier');
+  assert.ok(HOOK.includes("if (!(await assurerProgramme())) return { ok: false, message: 'Programme indisponible.' };"), 'le Programme (vidéo + audio) est publié AVANT, comme un vrai démarrage');
+  assert.ok(!/qa-fichier[^\n]*rtmp/i.test(HOOK), 'aucune URL RTMP dans le chemin QA');
+  assert.ok(TYPES.includes('qaFichierStart?:') && TYPES.includes('interface QaFichierEtat'));
+});

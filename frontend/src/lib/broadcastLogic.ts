@@ -16,7 +16,7 @@ export const LIBELLES: Record<Plateforme, string> = { instagram: 'Instagram', fa
  * - Instagram / TikTok (URL RTMPS + clé) : config_required → not_configured → configured.
  * Diffusion : starting / live / error / off.
  */
-export type StatutCompte = 'connected' | 'not_connected' | 'reauth' | 'unavailable' | 'config_required' | 'not_configured' | 'configured';
+export type StatutCompte = 'connected' | 'not_connected' | 'reauth' | 'unavailable' | 'restricted' | 'config_required' | 'not_configured' | 'configured';
 export type StatutDestination = StatutCompte | 'starting' | 'live' | 'error' | 'off';
 
 /** Comment on relie la plateforme : parcours OAuth (FB/YT) ou saisie RTMPS + clé (IG/TikTok). */
@@ -66,7 +66,15 @@ export interface InfoCompteServeur {
 }
 export type ComptesServeur = Partial<Record<Plateforme, StatutCompte | InfoCompteServeur>>;
 
-const STATUTS_COMPTE: StatutCompte[] = ['connected', 'not_connected', 'reauth', 'unavailable', 'config_required', 'not_configured', 'configured'];
+const STATUTS_COMPTE: StatutCompte[] = ['connected', 'not_connected', 'reauth', 'unavailable', 'restricted', 'config_required', 'not_configured', 'configured'];
+
+/** Le serveur a répondu 403 (identité hors liste blanche Afroboost) : ce n'est PAS « Indisponible », c'est
+ *  « Accès réservé » — la vraie raison, sur chaque ligne, sans bouton mort. */
+export function comptesAccesReserve(): ComptesServeur {
+  const out: ComptesServeur = {};
+  for (const p of PLATEFORMES) out[p] = { status: 'restricted', kind: GENRE_PAR_PLATEFORME[p] };
+  return out;
+}
 
 /** Normalise une réponse serveur (`/social/destinations/status` OU `/live/broadcast/accounts`) en ComptesServeur. */
 export function comptesDepuisServeur(json: unknown): ComptesServeur {

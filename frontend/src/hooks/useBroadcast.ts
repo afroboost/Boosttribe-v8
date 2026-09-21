@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import {
-  broadcastReducer, BROADCAST_INITIAL, comptesDepuisServeur, destinationsADemarrer, directAutoriseDepuisServeur, dureeSec, LIBELLES,
+  broadcastReducer, BROADCAST_INITIAL, comptesAccesReserve, comptesDepuisServeur, destinationsADemarrer, directAutoriseDepuisServeur, dureeSec, LIBELLES,
   type Destination, type Plateforme, type StatutServeur,
 } from '@/lib/broadcastLogic';
 import { messageRetourOAuth } from '@/lib/broadcastUi';
@@ -121,7 +121,13 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
       setDirectAutorise(directAutoriseDepuisServeur(r.json));
       return;
     }
-    if (r.status === 403) { setAvis('Diffusion sociale réservée au compte Afroboost.'); return; }
+    if (r.status === 403) {
+      // Liste blanche serveur : chaque ligne dit « Accès réservé » avec la raison — plus jamais 4 × « Indisponible ».
+      dispatch({ type: 'comptes', comptes: comptesAccesReserve() });
+      setDirectAutorise(false);
+      setAvis('Diffusion sociale réservée au compte Afroboost : cette identité n’est pas dans la liste blanche (SOCIAL_ALLOWED_EMAILS).');
+      return;
+    }
     // Repli : l'ancienne route ne connaît que des statuts simples.
     const room = oRef.current.room;
     const r2 = room ? await appel(`/live/broadcast/accounts?room=${encodeURIComponent(room)}`) : r;

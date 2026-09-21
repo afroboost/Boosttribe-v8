@@ -8,7 +8,7 @@
  *  - Instagram / TikTok (RTMPS + clé)     : Configurer · Configuré (Modifier / Supprimer) · Configuration requise.
  */
 export type BroadcastStatus =
-  | 'connected' | 'not_connected' | 'reauth' | 'unavailable'
+  | 'connected' | 'not_connected' | 'reauth' | 'unavailable' | 'restricted'
   | 'config_required' | 'not_configured' | 'configured'
   | 'starting' | 'live' | 'error' | 'off';
 
@@ -24,6 +24,7 @@ export function libelleStatut(d: StatutSource, live: boolean): string {
     case 'error': return d.error ? `Échec — ${d.error}` : 'Échec';
     case 'reauth': return 'Reconnexion nécessaire';
     case 'unavailable': return 'Indisponible';
+    case 'restricted': return 'Accès réservé';
     case 'not_connected': return 'Non connecté';
     case 'config_required': return 'Configuration requise';
     case 'not_configured': return 'Non configuré';
@@ -53,12 +54,14 @@ export type ActionLigne =
   | { kind: 'configure'; libelle: 'Configurer' }
   | { kind: 'configured'; libelle: 'Modifier' }
   | { kind: 'diagnostic'; libelle: 'Configuration requise'; missing: string[] }
+  | { kind: 'reserve'; libelle: 'Accès réservé' }
   | { kind: 'none' };
 
 export function actionPour(d: StatutSource): ActionLigne {
   const kind: BroadcastKind = d.kind ?? 'oauth';
   switch (d.status) {
     case 'config_required': return { kind: 'diagnostic', libelle: 'Configuration requise', missing: d.missing ?? [] };
+    case 'restricted': return { kind: 'reserve', libelle: 'Accès réservé' };
     case 'not_connected': return kind === 'oauth' ? { kind: 'oauth', libelle: 'Connecter' } : { kind: 'configure', libelle: 'Configurer' };
     case 'reauth': return kind === 'oauth' ? { kind: 'oauth', libelle: 'Reconnecter' } : { kind: 'configure', libelle: 'Configurer' };
     case 'not_configured': return { kind: 'configure', libelle: 'Configurer' };
@@ -72,6 +75,9 @@ export function diagnosticConfig(missing: string[]): string {
   if (!missing.length) return 'Configuration serveur incomplète.';
   return `Variables serveur à poser (Coolify) : ${missing.join(', ')}`;
 }
+
+/** Explication de l'accès réservé : la vraie raison (liste blanche serveur), jamais un « Indisponible » muet. */
+export const EXPLICATION_ACCES_RESERVE = 'Ce compte n’est pas dans la liste blanche Afroboost du serveur (SOCIAL_ALLOWED_EMAILS). Aucun réseau ne peut être connecté avec cette identité.';
 
 /** Explication courte, par plateforme, de la méthode de connexion — pas de promesse impossible. */
 export function aideConnexion(platform: string, kind: BroadcastKind): string {

@@ -44,6 +44,21 @@ export interface BroadcastSaisie { url: string; cle: string; libelle?: string }
 
 export interface BroadcastResultat { ok: boolean; message: string; missing?: string[] }
 
+/** 🧪 État du test interne « Programme → Egress → fichier » (jamais RTMP). Jamais de secret dedans. */
+export interface QaFichierEtat {
+  actif: boolean;
+  egress_id?: string;
+  fichier?: string;
+  statut?: string;
+  erreur?: string | null;
+  video_sid?: string | null;
+  audio_sid?: string | null;
+  fichiers?: { fichier: string; taille: number; duree_ms: number }[];
+  dernier?: boolean;
+  debutLocal?: number;
+  audioPublie?: boolean;
+}
+
 export interface BroadcastLike {
   destinations: BroadcastDestination[];
   live: boolean;
@@ -65,4 +80,9 @@ export interface BroadcastLike {
   refresh: () => Promise<void>;
   /** Message court (retour OAuth, refus, panne réseau), sinon null. */
   avis: string | null;
+  /** 🧪 Test interne (compte Afroboost) : Programme → LiveKit → Egress → fichier dans le conteneur, aucun réseau. */
+  qaFichier?: QaFichierEtat;
+  qaFichierStart?: () => Promise<BroadcastResultat>;
+  qaFichierStop?: () => Promise<BroadcastResultat>;
+  qaFichierStatus?: () => Promise<QaFichierEtat>;
 }

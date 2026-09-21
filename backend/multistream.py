@@ -211,7 +211,7 @@ class EgressFichierQA:
     social, quel que soit MULTISTREAM_MODE — le verrou `verrou_direct_reel` (RTMP) reste intact et
     n'est pas consulté ici parce qu'aucune diffusion externe n'est possible par construction."""
 
-    DOSSIER = "/tmp"
+    DOSSIER = "/home/egress/tmp"  # éphémère : vidé par l'entrypoint de l'image à chaque redémarrage du conteneur (= nettoyage)
 
     def _api(self):
         from livekit import api as lk  # import tardif

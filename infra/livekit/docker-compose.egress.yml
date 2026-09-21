@@ -14,6 +14,7 @@
 #
 # Mode de fonctionnement (backend/multistream.py) : Track Composite sur les pistes PROGRAMME
 # (vidéo composée + audio programme) → StreamOutput RTMP multi-URLs, ajout/retrait à chaud.
+# Test interne (backend `EgressFichierQA`) : même moteur, sortie FICHIER MP4 éphémère, jamais RTMP.
 # Pas de Chrome headless (room composite) : `cap_add: SYS_ADMIN` inutile, RAM contenue.
 # Dimensionnement : ~1 vCPU + 1 Go RAM par egress 720p ; limite mémoire posée (1,5 Go) : priorité stabilité.
 #
@@ -61,8 +62,5 @@ services:
       - 'LK_SECRET=${LK_SECRET}'
     shm_size: '512m'
     mem_limit: 1500m
-    volumes:
-      - 'egress-tmp:/tmp'
-
-volumes:
-  egress-tmp:
+    # Pas de volume : les fichiers du test interne vivent dans /home/egress/tmp, vidé à chaque
+    # redémarrage du conteneur (entrypoint de l'image) — rien ne s'accumule sur le serveur.

@@ -29,6 +29,7 @@ import {
 } from '@/lib/broadcastLogic';
 import { messageRetourOAuth } from '@/lib/broadcastUi';
 import { enregistrerDestination, supprimerDestination, urlOAuth, type Appel } from '@/lib/socialConfigClient';
+import type { QaFichierEtat } from '@/components/session/BroadcastTypes';
 
 const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 
@@ -59,6 +60,11 @@ export interface UseBroadcastReturn {
   elapsedSec: number;
   /** false = simulation côté serveur (mode mock / verrou fermé) : aucun direct réel ne part. */
   directAutorise: boolean;
+  /** 🧪 Test interne : Programme → Egress → fichier dans le conteneur (aucun réseau). */
+  qaFichier: QaFichierEtat;
+  qaFichierStart: () => Promise<ResultatBroadcast>;
+  qaFichierStop: () => Promise<ResultatBroadcast>;
+  qaFichierStatus: () => Promise<QaFichierEtat>;
   select: (platform: Plateforme, on: boolean) => void;
   start: () => Promise<void>;
   stopAll: () => Promise<void>;
@@ -230,6 +236,33 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
     return { ok: r.ok, message: r.message, missing: r.missing };
   }, [refresh]);
 
+  // 🧪 QA interne : Programme → LiveKit → Egress → FICHIER dans le conteneur (jamais RTMP). Publie
+  //    d'abord les pistes `program` + `program-audio` (exactement comme un vrai démarrage), puis
+  //    demande au serveur un egress à sortie fichier. Réservé au compte Afroboost côté serveur.
+  const [qaFichier, setQaFichier] = useState<QaFichierEtat>({ actif: false });
+  const qaFichierStart = useCallback(async (): Promise<ResultatBroadcast> => {
+    if (!(await assurerProgramme())) return { ok: false, message: 'Programme indisponible.' };
+    const r = await appel('/live/broadcast/qa-fichier/start', { room: oRef.current.room });
+    const j = (r.json ?? {}) as QaFichierEtat & { detail?: string };
+    if (!r.ok) { const msg = j.detail || 'Test interne refusé.'; setAvis(msg); return { ok: false, message: msg }; }
+    setQaFichier({ ...j, actif: true, debutLocal: Date.now(), audioPublie: !!sidsRef.current?.audioSid });
+    setAvis(null);
+    return { ok: true, message: `Test interne démarré (fichier ${j.fichier ?? ''}).` };
+  }, [assurerProgramme]);
+  const qaFichierStop = useCallback(async (): Promise<ResultatBroadcast> => {
+    const r = await appel('/live/broadcast/qa-fichier/stop', { room: oRef.current.room });
+    const j = (r.json ?? {}) as QaFichierEtat;
+    setQaFichier({ ...j, actif: false, dernier: true });
+    return { ok: r.ok, message: r.ok ? 'Test interne arrêté.' : 'Arrêt impossible.' };
+  }, []);
+  const qaFichierStatus = useCallback(async (): Promise<QaFichierEtat> => {
+    const id = qaFichier.egress_id;
+    const r = await appel(`/live/broadcast/qa-fichier/status?room=${encodeURIComponent(oRef.current.room)}${id ? `&egress_id=${encodeURIComponent(id)}` : ''}`);
+    const j = (r.json ?? { actif: false }) as QaFichierEtat;
+    setQaFichier((prev) => ({ ...prev, ...j }));
+    return j;
+  }, [qaFichier.egress_id]);
+
   const forget = useCallback(async (platform: Plateforme): Promise<ResultatBroadcast> => {
     const r = await supprimerDestination(appel, platform);
     await refresh();
@@ -240,6 +273,7 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
     destinations: etat.destinations.map(({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel }) =>
       ({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel })),
     live: etat.live, elapsedSec, directAutorise, select, start, stopAll, stop, retry, connect, configure, forget, refresh, avis,
+    qaFichier, qaFichierStart, qaFichierStop, qaFichierStatus,
   };
 }
 

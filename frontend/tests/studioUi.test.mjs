@@ -4,9 +4,13 @@
  * ne lit que les sources de l'UI et on vérifie ce que Bassi a exigé.
  *
  *  - fermé → RIEN de rendu (la vidéo reste l'élément principal) ;
- *  - desktop → 3 zones Sources | PREVIEW · PROGRAMME | Scènes ; mobile → tiroir plein écran,
- *    jamais Preview et Programme côte à côte ;
- *  - Passer au programme / Cut = icônes + tooltip, jamais de texte ;
+ *  - UNE SEULE COLONNE, desktop comme mobile (correctif terrain 21/09 : l'ancienne grille à trois
+ *    colonnes chevauchait tout dans les ~380 px de la colonne droite) : onglets PREVIEW / PROGRAMME,
+ *    une zone 16:9, Take / Cut dessous, puis SOURCES et SCÈNES en sections REPLIÉES ;
+ *    mobile → même colonne dans un tiroir plein écran ;
+ *  - Passer au programme / Cut = icônes rondes + tooltip, libellé DESSOUS (jamais superposé) ;
+ *  La géométrie RÉELLE (0 chevauchement, 0 texte coupé, 0 débordement, clics) est mesurée dans
+ *  Chromium par tests/studio.ui.cjs (harnais tests/harness/studio.html, composants réels).
  *  - scènes = celles fournies par le studio (aucune liste en dur), clic = preview ;
  *  - PiP visible seulement pour les scènes qui en ont ;
  *  - aucun prompteur / chat / minuteur dans le studio ;
@@ -14,7 +18,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lire } from './lireSource.mjs';
+import { lire, codeSeul } from './lireSource.mjs';
 
 const PANEL = lire('components', 'session', 'StudioPanel.tsx');
 const TYPES = lire('components', 'session', 'StudioTypes.ts');
@@ -25,30 +29,50 @@ test('fermé, le studio ne rend rien : la vidéo reste dominante', () => {
   assert.ok(VISIO.includes('{studioOpen && studioNode}'), 'LiveVisioPanel ne monte le panneau que si `studioOpen`');
 });
 
-test('desktop : trois zones Sources | Preview · Programme | Scènes, étiquettes discrètes', () => {
-  const desktop = PANEL.slice(PANEL.indexOf('// 🖥️ Desktop'));
-  assert.ok(desktop.includes('<Sources studio={studio}') && desktop.includes('<Scenes studio={studio}'), 'zones Sources et Scènes');
-  assert.ok(desktop.includes('zone="preview"') && desktop.includes('zone="program"'), 'PREVIEW et PROGRAMME côte à côte');
-  assert.ok(desktop.includes('grid-cols-[minmax(150px,1fr)_minmax(0,4fr)_minmax(170px,1fr)]'), 'grille à trois colonnes, vidéo au centre');
-  assert.ok(PANEL.includes("zone === 'preview' ? 'Preview' : 'Programme'"), 'étiquettes PREVIEW / PROGRAMME');
+test('une seule colonne : onglets PREVIEW / PROGRAMME, une zone à la fois, Take / Cut dessous, Sources puis Scènes', () => {
+  const code = codeSeul(PANEL);
+  assert.ok(!code.includes('grid-cols-[minmax('), 'plus AUCUNE grille à colonnes minimales (la cause des chevauchements)');
+  assert.ok(!/grid-cols-3|lg:grid-cols|md:grid-cols/.test(code), 'aucune grille multi-colonnes, quel que soit le point de rupture');
+  // La colonne est construite UNE fois et rendue telle quelle sur desktop et mobile.
+  const colonne = code.slice(code.indexOf('const colonne = ('), code.indexOf('if (mobile) {'));
+  const ordre = ['{onglets}', '<Zone zone={onglet}', '<Antenne studio={studio}', '<Sources studio={studio}', '<Scenes studio={studio}'].map((k) => colonne.indexOf(k));
+  assert.ok(ordre.every((i) => i >= 0) && ordre.every((v, i) => i === 0 || v > ordre[i - 1]), 'ordre : onglets → zone → Take/Cut → Sources → Scènes');
+  // `codeSeul` a retiré les commentaires : le bloc mobile va de `if (mobile) {` au dernier `return (` (desktop).
+  const mobile = code.slice(code.indexOf('if (mobile) {'), code.lastIndexOf('return ('));
+  const desktop = code.slice(code.lastIndexOf('return ('));
+  assert.ok(mobile.includes('{colonne}') && desktop.includes('{colonne}'), 'la MÊME colonne sur mobile et desktop');
+  assert.ok(mobile.includes('fixed inset-0') && mobile.includes('env(safe-area-inset-bottom)'), 'mobile : tiroir plein écran, zone sûre iPhone');
+  assert.ok(desktop.includes('overflow-x-hidden') && mobile.includes('overflow-x-hidden'), 'aucun débordement horizontal possible');
+  // Onglets : deux segments de même largeur, une zone rendue à la fois.
+  assert.ok(code.includes("(['preview', 'program'] as StudioZone[])") && code.includes('role="tablist"'), 'onglets PREVIEW / PROGRAMME');
+  assert.ok(code.includes('grid grid-cols-2 gap-1'), 'deux segments de même largeur (jamais superposés)');
+  assert.ok((code.match(/<Zone zone=/g) || []).length === 1 && code.includes('<Zone zone={onglet}'), "UNE seule zone rendue (celle de l'onglet)");
+  assert.ok(!code.includes('zone="preview"') && !code.includes('zone="program"'), 'jamais Preview et Programme côte à côte');
   assert.ok(PANEL.includes('uppercase tracking-wider'), 'étiquettes en petites capitales discrètes');
-  assert.ok(PANEL.includes('Flux live actuel'), 'Programme vide = flux live existant, dit tel quel');
+  assert.ok(PANEL.includes('Flux live actuel'), 'Programme vide = flux live existant, dit DANS la zone');
   assert.ok(PANEL.includes('data-testid="studio-close"') && PANEL.includes("e.key === 'Escape'"), 'fermeture ✕ + Échap');
+  // Choisir une scène → l'onglet passe sur PREVIEW ; Take / Cut → PROGRAMME.
+  assert.ok(code.includes("onChoisir={() => setOnglet('preview')}"), 'scène choisie → onglet Preview');
+  assert.ok(code.includes("onPasse={() => setOnglet('program')}"), 'Take / Cut → onglet Programme');
 });
 
-test('mobile : tiroir plein écran, une zone à la fois, antenne au pouce', () => {
-  const mobile = PANEL.slice(PANEL.indexOf('if (mobile) {'), PANEL.indexOf('// 🖥️ Desktop'));
-  assert.ok(mobile.includes('fixed inset-0'), 'tiroir plein écran');
-  assert.ok(mobile.includes('role="tablist"') && mobile.includes("(['program', 'preview'] as StudioZone[])"), 'PROGRAMME / PREVIEW en onglets');
-  assert.ok(mobile.includes('<Zone zone={onglet}'), 'UNE zone rendue à la fois (jamais côte à côte)');
-  assert.ok(mobile.includes('<Antenne studio={studio} vertical={false} />'), 'Passer au programme / Cut en bas');
-  assert.ok(mobile.includes('env(safe-area-inset-bottom)'), 'zone sûre iPhone');
+test('Sources et Scènes : sections repliées par défaut, un bouton pleine largeur avec compteur', () => {
+  const code = codeSeul(PANEL);
+  assert.ok(code.includes('React.useState(false)') && code.includes('sourcesOuvertes') && code.includes('scenesOuvertes'), 'repliées au départ');
+  assert.ok(code.includes('data-testid={`studio-${id}-toggle`}') && code.includes('aria-expanded={ouvert}'), 'en-tête = bouton aria-expanded');
+  assert.ok(code.includes('data-testid={`studio-${id}-liste`}') && code.includes('{ouvert && ('), "la liste n'existe dans le DOM qu'ouverte (pas de grande zone vide)");
+  assert.ok(code.includes("studio.sources.filter((s) => s.kind !== 'participant')"), 'Sources = les sources disponibles du studio (participants via le sélecteur)');
+  assert.ok(code.includes('Aucune source : active ta caméra'), 'sans source : une phrase, pas un vide');
+  assert.ok(code.includes('<ChevronRight'), 'chevron = icône Lucide, pas un caractère');
 });
 
-test('Passer au programme et Cut : icônes Lucide + tooltip, branchés sur take() / cut()', () => {
+test('Passer au programme et Cut : icônes Lucide + tooltip + libellé dessous, branchés sur take() / cut()', () => {
   assert.ok(PANEL.includes('ArrowRightToLine') && PANEL.includes('Scissors'), 'icônes Lucide');
   assert.ok(PANEL.includes('title="Passer au programme"') && PANEL.includes('title="Cut (immédiat)"'), 'tooltips');
-  assert.ok(PANEL.includes('onClick={() => studio.take()}'), 'take()');
+  assert.ok(PANEL.includes('onClick={() => { studio.take(); onPasse(); }}'), 'take() puis bascule sur PROGRAMME');
+  const antenne = PANEL.slice(PANEL.indexOf('const Antenne'), PANEL.indexOf('export const StudioPanel'));
+  assert.ok(antenne.includes('>Take</span>') && antenne.includes('>Cut</span>') && antenne.includes('flex flex-col items-center'), "libellé SOUS l'icône, dans un flux vertical (jamais superposé)");
+  assert.ok(!antenne.includes('absolute'), 'Antenne : aucun libellé flottant (position absolue)');
   assert.ok(PANEL.includes('studio.cut(preview.type, opts)'), 'cut(type de la preview)');
   assert.ok(PANEL.includes('data-testid="studio-take"') && PANEL.includes('data-testid="studio-cut"'));
   assert.ok(PANEL.includes('disabled={!preview}'), 'désactivés sans preview');
@@ -58,7 +82,7 @@ test('scènes : uniquement celles du studio, icône + nom court, clic = preview'
   assert.ok(PANEL.includes('studio.scenes.map((t) =>'), 'liste = `studio.scenes` (aucune scène en dur)');
   assert.ok(!/coach_full'|participant_full'|split_50'/.test(PANEL.replace(/SCENES_AVEC_PIP[^\n]*/g, '')), 'aucune scène codée en dur dans le panneau');
   assert.ok(PANEL.includes('data-testid={`studio-scene-${t.type}`}'));
-  assert.ok(PANEL.includes('onClick={() => studio.preview(t.type'), 'clic scène → preview');
+  assert.ok(PANEL.includes('onClick={() => { studio.preview(t.type'), 'clic scène → preview');
   const icones = ['user', 'users', "'columns-2'", "'picture-in-picture-2'", 'monitor', 'camera', 'video'];
   for (const i of icones) assert.ok(PANEL.includes(i), `icône ${i} mappée`);
   assert.ok(TYPES.includes("'user' | 'users' | 'columns-2' | 'picture-in-picture-2' | 'monitor' | 'camera' | 'video'"), 'contrat des icônes');

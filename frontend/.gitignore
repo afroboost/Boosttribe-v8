@@ -30,3 +30,4 @@ android/local.properties
 android/app/release/
 android/capacitor-cordova-android-plugins/
 tests/.build/
+tests/.captures/

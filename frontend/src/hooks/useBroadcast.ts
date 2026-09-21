@@ -3,23 +3,32 @@
  *
  * CONTRAT (l'UI code contre lui) :
  *   useBroadcast({ room, enabled }) → {
- *     destinations: { platform, label, status, selected, error? }[],
- *     live, elapsedSec,
+ *     destinations: { platform, label, status, selected, error?, kind, missing, keyHint, accountLabel }[],
+ *     live, elapsedSec, directAutorise, avis,
  *     select(platform, on), start(), stopAll(), stop(platform), retry(platform),
- *     connectUrl(platform): string | null,
+ *     connect(platform), configure(platform, saisie), forget(platform), refresh(),
  *   }
  *
  * Rien n'est présélectionné. `start()` exige le programStream (sinon le démarre) : ce sont les
  * pistes du PROGRAMME (scène choisie par le coach) qui partent aux réseaux — jamais la caméra
  * brute. Les clés/URLs RTMP ne quittent jamais le serveur : le front n'envoie que des NOMS
  * de plateformes et ne reçoit que des STATUTS.
+ *
+ * 21/09 — l'état des comptes vient de `GET /social/destinations/status` (état par plateforme +
+ * diagnostic = NOMS des variables serveur manquantes). « Connecter » = vrai parcours OAuth
+ * (`/social/oauth/{p}/start` → redirection → retour `#social=<p>:<résultat>`). « Configurer »
+ * (IG/TikTok) passe par `lib/socialConfigClient` : la saisie vit en mémoire le temps de l'envoi,
+ * jamais dans un stockage navigateur. Tant que `directAutorise` est faux, le serveur SIMULE :
+ * rien ne part vers un réseau.
  */
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import {
-  broadcastReducer, BROADCAST_INITIAL, destinationsADemarrer, dureeSec,
-  type ComptesServeur, type Destination, type Plateforme, type StatutServeur,
+  broadcastReducer, BROADCAST_INITIAL, comptesDepuisServeur, destinationsADemarrer, directAutoriseDepuisServeur, dureeSec, LIBELLES,
+  type Destination, type Plateforme, type StatutServeur,
 } from '@/lib/broadcastLogic';
+import { messageRetourOAuth } from '@/lib/broadcastUi';
+import { enregistrerDestination, supprimerDestination, urlOAuth, type Appel } from '@/lib/socialConfigClient';
 
 const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 
@@ -42,17 +51,24 @@ export interface UseBroadcastOptions {
   publierProgramme?: (stream: MediaStream) => Promise<{ videoSid?: string; audioSid?: string } | null>;
 }
 
+export interface ResultatBroadcast { ok: boolean; message: string; missing?: string[] }
+
 export interface UseBroadcastReturn {
-  destinations: Pick<Destination, 'platform' | 'label' | 'status' | 'selected' | 'error'>[];
+  destinations: Pick<Destination, 'platform' | 'label' | 'status' | 'selected' | 'error' | 'kind' | 'missing' | 'keyHint' | 'accountLabel'>[];
   live: boolean;
   elapsedSec: number;
+  /** false = simulation côté serveur (mode mock / verrou fermé) : aucun direct réel ne part. */
+  directAutorise: boolean;
   select: (platform: Plateforme, on: boolean) => void;
   start: () => Promise<void>;
   stopAll: () => Promise<void>;
   stop: (platform: Plateforme) => Promise<void>;
   retry: (platform: Plateforme) => Promise<void>;
-  connectUrl: (platform: Plateforme) => string | null;
-  /** Message court à afficher (refus, panne réseau), sinon null. */
+  connect: (platform: Plateforme) => Promise<ResultatBroadcast>;
+  configure: (platform: Plateforme, saisie: { url: string; cle: string; libelle?: string }) => Promise<ResultatBroadcast>;
+  forget: (platform: Plateforme) => Promise<ResultatBroadcast>;
+  refresh: () => Promise<void>;
+  /** Message court à afficher (refus, panne réseau, retour OAuth), sinon null. */
   avis: string | null;
 }
 
@@ -65,11 +81,12 @@ async function authHeader(): Promise<Record<string, string>> {
   } catch { return {}; }
 }
 
-async function appel(path: string, body?: unknown): Promise<{ ok: boolean; status: number; json: unknown }> {
+const appel: Appel = async (path, body, method) => {
   if (!API_URL) return { ok: false, status: 0, json: null };
+  const verbe = method ?? (body === undefined ? 'GET' : 'POST');
   try {
     const res = await fetch(`${API_URL}${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: verbe,
       headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -77,27 +94,51 @@ async function appel(path: string, body?: unknown): Promise<{ ok: boolean; statu
     try { json = await res.json(); } catch { /* corps vide */ }
     return { ok: res.ok, status: res.status, json };
   } catch { return { ok: false, status: 0, json: null }; }
+};
+
+/** Retour d'un parcours OAuth : lit `#social=<p>:<résultat>`, nettoie l'URL, renvoie le message. */
+function consommerRetourOAuth(): { platform: string; texte: string; ok: boolean } | null {
+  if (typeof window === 'undefined') return null;
+  const m = messageRetourOAuth(window.location.hash, LIBELLES);
+  if (!m) return null;
+  try { window.history.replaceState(null, '', window.location.pathname + window.location.search); } catch { /* ignore */ }
+  return m;
 }
 
 export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
   const [etat, dispatch] = useReducer(broadcastReducer, BROADCAST_INITIAL);
   const [elapsedSec, setElapsed] = useState(0);
   const [avis, setAvis] = useState<string | null>(null);
+  const [directAutorise, setDirectAutorise] = useState(false);
   const sidsRef = useRef<{ videoSid?: string; audioSid?: string } | null>(null);
   const oRef = useRef(o); oRef.current = o;
 
-  // Comptes : lus au montage / à l'activation. Jamais de secret : statuts seulement.
+  // Comptes : état par plateforme, lu au montage / à l'activation. Jamais de secret : statuts + noms de variables.
+  const refresh = useCallback(async () => {
+    const r = await appel('/social/destinations/status');
+    if (r.ok) {
+      dispatch({ type: 'comptes', comptes: comptesDepuisServeur(r.json) });
+      setDirectAutorise(directAutoriseDepuisServeur(r.json));
+      return;
+    }
+    if (r.status === 403) { setAvis('Diffusion sociale réservée au compte Afroboost.'); return; }
+    // Repli : l'ancienne route ne connaît que des statuts simples.
+    const room = oRef.current.room;
+    const r2 = room ? await appel(`/live/broadcast/accounts?room=${encodeURIComponent(room)}`) : r;
+    dispatch({ type: 'comptes', comptes: comptesDepuisServeur(r2.json) });
+    setDirectAutorise(false);
+  }, []);
+
   useEffect(() => {
     if (!o.enabled || !o.room) return;
     let annule = false;
     (async () => {
-      const r = await appel(`/live/broadcast/accounts?room=${encodeURIComponent(o.room)}`);
-      if (annule) return;
-      const comptes = (r.ok && r.json && typeof r.json === 'object' ? (r.json as { accounts?: ComptesServeur }).accounts : null) ?? {};
-      dispatch({ type: 'comptes', comptes });
+      const retour = consommerRetourOAuth();
+      if (retour && !annule) setAvis(retour.texte);
+      if (!annule) await refresh();
     })();
     return () => { annule = true; };
-  }, [o.enabled, o.room]);
+  }, [o.enabled, o.room, refresh]);
 
   // Statuts : sondage 3 s pendant le direct.
   useEffect(() => {
@@ -134,7 +175,7 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
   }, []);
 
   const lancer = useCallback(async (cibles: Plateforme[]) => {
-    if (!cibles.length) { setAvis('Choisissez au moins un réseau connecté.'); return; }
+    if (!cibles.length) { setAvis('Choisissez au moins un réseau connecté ou configuré.'); return; }
     if (!(await assurerProgramme())) return;
     dispatch({ type: 'start', maintenant: Date.now() });
     const r = await appel('/live/broadcast/start', {
@@ -166,14 +207,33 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
     sidsRef.current = null;
   }, []);
 
-  const connectUrl = useCallback((platform: Plateforme): string | null => {
-    if (!API_URL) return null;
-    return `${API_URL}/social/connect?platform=${platform}`;
-  }, []);
+  // « Connecter » / « Reconnecter » : le VRAI parcours OAuth, dans cet onglet ; retour sur cette page.
+  const connect = useCallback(async (platform: Plateforme): Promise<ResultatBroadcast> => {
+    if (!API_URL) return { ok: false, message: 'Serveur non configuré.' };
+    const retour = typeof window !== 'undefined' ? window.location.href.split('#')[0] : '';
+    const r = await urlOAuth(appel, platform, retour);
+    if (!r.ok || !r.url) { setAvis(r.message); await refresh(); return { ok: false, message: r.message, missing: r.missing }; }
+    if (typeof window !== 'undefined') window.location.assign(r.url);
+    return { ok: true, message: 'Redirection vers la connexion…' };
+  }, [refresh]);
+
+  // « Configurer » (IG / TikTok) : la saisie ne vit qu'en mémoire, le serveur ne renvoie que l'ÉTAT.
+  const configure = useCallback(async (platform: Plateforme, saisie: { url: string; cle: string; libelle?: string }): Promise<ResultatBroadcast> => {
+    const r = await enregistrerDestination(appel, platform, saisie);
+    if (r.ok) { setAvis(null); await refresh(); } else { setAvis(r.message); }
+    return { ok: r.ok, message: r.message, missing: r.missing };
+  }, [refresh]);
+
+  const forget = useCallback(async (platform: Plateforme): Promise<ResultatBroadcast> => {
+    const r = await supprimerDestination(appel, platform);
+    await refresh();
+    return r;
+  }, [refresh]);
 
   return {
-    destinations: etat.destinations.map(({ platform, label, status, selected, error }) => ({ platform, label, status, selected, error })),
-    live: etat.live, elapsedSec, select, start, stopAll, stop, retry, connectUrl, avis,
+    destinations: etat.destinations.map(({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel }) =>
+      ({ platform, label, status, selected, error, kind, missing, keyHint, accountLabel })),
+    live: etat.live, elapsedSec, directAutorise, select, start, stopAll, stop, retry, connect, configure, forget, refresh, avis,
   };
 }
 

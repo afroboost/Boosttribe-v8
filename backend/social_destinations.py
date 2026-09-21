@@ -1,94 +1,131 @@
 """
-Destinations de diffusion sociale (Instagram / Facebook / YouTube / TikTok) — MULTISTREAM, agent 2.
+Destinations de diffusion sociale (Instagram / Facebook / YouTube / TikTok) — MULTISTREAM.
 
 CE QUE FAIT CE MODULE
-- Stocke, PAR UTILISATEUR BoostTribe et PAR PLATEFORME, la destination RTMP(S) d'un direct :
-  `{platform, mode: 'api'|'manual', rtmp_url, stream_key (CHIFFRÉ), account_label, expires_at, status}`.
-- Expose des routes qui ne renvoient JAMAIS un secret (ni clé de flux, ni jeton).
-- Fournit au moteur de multistream (agent 1) la fonction `resoudre_destination(user_id, platform)`
-  → `{rtmp_url, stream_key}` en clair, UNIQUEMENT côté serveur (jamais via HTTP).
+- Stocke, PAR UTILISATEUR et PAR PLATEFORME, la destination d'un direct :
+  `{platform, mode: 'oauth'|'manual'|'api', rtmp_url, stream_key_enc, oauth_token_enc, account_id,
+    account_label, external_id, expires_at, status}` — les secrets sont CHIFFRÉS au repos.
+- Expose des routes qui ne renvoient JAMAIS un secret (ni clé de flux, ni jeton OAuth).
+- Expose un ÉTAT PAR PLATEFORME honnête (`GET /social/destinations/status`) : plus jamais un
+  « Non connecté » générique derrière un bouton mort.
+- Fournit au moteur de multistream `resoudre_destination(user_id, platform)` → `{rtmp_url, stream_key}`
+  en clair, UNIQUEMENT côté serveur (jamais via HTTP).
 
-CE QUE DISENT LES PLATEFORMES (docs officielles vérifiées le 17/09/2026, voir docs/multistream_plateformes.md)
-- Facebook  : Live Video API → `POST /{page-id}/live_videos?status=LIVE_NOW` → `secure_stream_url` (RTMPS) ;
-              fin par `POST /{id}?end_live_video=true`. Page : `pages_manage_posts` + `pages_read_engagement`
-              (+ App Review « Live Video API »). Compte ≥ 60 jours, Page ≥ 100 abonnés.        → mode 'api' ou 'manual'.
-- YouTube   : Live Streaming API → `liveStreams.insert` (cdn.ingestionInfo.ingestionAddress + streamName,
-              `rtmpsIngestionAddress`), `liveBroadcasts.insert` + `bind` + `transition(live|complete)` ;
-              scopes `youtube` ou `youtube.force-ssl`. Chaîne vérifiée, 0 restriction 90 j.       → mode 'api' ou 'manual'.
-- Instagram : AUCUNE API tierce de création de live (« There are no plans to build one at this time » ;
-              `live_media` = lecture seule). Seule voie : Live Producer sur instagram.com → URL + clé,
-              clé RENOUVELÉE à chaque live, à coller par l'hôte.                                  → mode 'manual' seulement.
-- TikTok    : AUCUNE Live API chez TikTok for Developers. Clé via TikTok LIVE Studio / LIVE Producer
-              (livecenter.tiktok.com), accès LIVE requis (≥ 1 000 abonnés ou réseau créateur),
-              nouvelle clé à chaque live.                                                          → mode 'manual' seulement.
+ÉTATS PAR PLATEFORME (ce que voit le navigateur)
+- Facebook / YouTube (OAuth réel) : `config_required` (+ NOMS des variables serveur manquantes) →
+  `not_connected` (bouton « Connecter » = vrai parcours OAuth vers le compte Afroboost) → `connected`
+  ou `reauth` (jeton expiré / révoqué → « Reconnecter »).
+- Instagram / TikTok (aucune API de live tierce, docs vérifiées le 17/09/2026) : `config_required`
+  (clé de chiffrement absente) → `not_configured` (bouton « Configurer » = URL RTMPS + clé de diffusion
+  copiées depuis Live Producer / LIVE Studio) → `configured`.
 
 SÉCURITÉ
-- Chiffrement au repos : le Fernet DÉJÀ utilisé pour la clé Stripe (`APP_ENCRYPTION_KEY`), injecté par
-  `configurer(...)` — ce module ne lit aucune variable de chiffrement lui-même.
-- Garde « compte Afroboost uniquement » : en mode 'api', l'identifiant de Page / de chaîne autorisé est FIGÉ
-  côté serveur (`AFROBOOST_FB_PAGE_ID`, `AFROBOOST_YT_CHANNEL_ID`) ; tout autre identifiant → 403.
-  Aucune destination ne peut donc viser un compte Spordateur.
-- Appels réels aux API sociales derrière `SOCIAL_LIVE_MODE` (`mock` par défaut) : en mock, rien ne sort du serveur.
-- Journalisation : jamais de clé (fonction `_masquer` + test qui lit les logs).
+- Chiffrement au repos : Fernet dérivé de `SOCIAL_SECRETS_KEY` (dédiée) ; à défaut, le Fernet déjà
+  injecté par main.py (`APP_ENCRYPTION_KEY`, celui de Stripe). Aucun des deux → `config_required`,
+  JAMAIS de stockage en clair.
+- Clé de diffusion : jamais renvoyée (le GET dit au plus « clé enregistrée : oui, 4 derniers caractères »),
+  jamais journalisée (seule la longueur l'est), URL `rtmps://` UNIQUEMENT (le `rtmp://` en clair est refusé).
+- Liste blanche : seules les identités Afroboost (`SOCIAL_ALLOWED_EMAILS`, défaut = ADMIN_EMAILS injecté)
+  peuvent lire ou écrire une destination → toute identité Spordateur reçoit 403, et chaque ligne est de
+  toute façon isolée par `user_id`.
+- Garde « compte Afroboost uniquement » côté OAuth : la Page / la chaîne obtenue par le parcours OAuth
+  DOIT être `AFROBOOST_FB_PAGE_ID` / `AFROBOOST_YT_CHANNEL_ID` (figés côté serveur) ; sinon 403, rien n'est
+  stocké — impossible de relier une Page ou une chaîne Spordateur.
+- Direct réel : VERROUILLÉ tant que `verrou_direct_reel()` n'est pas levé (SOCIAL_LIVE_MODE=real
+  + MULTISTREAM_MODE=egress + SOCIAL_LIVE_GO=GO_BASSI_TEST_LIVE_SOCIAL). En mode mock, rien ne sort du serveur.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
+import secrets
+import time
 from datetime import datetime, timezone, timedelta
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("boosttribe-social")
 
 PLATFORMS = ("instagram", "facebook", "youtube", "tiktok")
+PLATEFORMES_OAUTH = ("facebook", "youtube")
+PLATEFORMES_MANUELLES = ("instagram", "tiktok")
 MODES_PAR_PLATEFORME: Dict[str, tuple] = {
-    "facebook": ("api", "manual"),
-    "youtube": ("api", "manual"),
+    "facebook": ("oauth", "api", "manual"),
+    "youtube": ("oauth", "api", "manual"),
     "instagram": ("manual",),
     "tiktok": ("manual",),
 }
 LIBELLES = {"instagram": "Instagram", "facebook": "Facebook", "youtube": "YouTube", "tiktok": "TikTok"}
 
-# Variables d'environnement (NOMS seulement — valeurs posées par Bassi dans Coolify)
-ENV_MODE = "SOCIAL_LIVE_MODE"            # mock | real (défaut mock)
-ENV_FB_PAGE = "AFROBOOST_FB_PAGE_ID"     # identifiant de la Page Facebook Afroboost autorisée
-ENV_YT_CHANNEL = "AFROBOOST_YT_CHANNEL_ID"
-ENV_FB_TOKEN = "AFROBOOST_FB_PAGE_TOKEN"  # jeton de Page (mode real) — jamais renvoyé
-ENV_YT_TOKEN = "AFROBOOST_YT_ACCESS_TOKEN"  # jeton OAuth YouTube (mode real) — jamais renvoyé
+# ─── Variables d'environnement (NOMS seulement — valeurs posées par Bassi dans Coolify) ─────────
+ENV_MODE = "SOCIAL_LIVE_MODE"                  # mock | real (défaut mock)
+ENV_MULTISTREAM = "MULTISTREAM_MODE"           # mock | egress (défaut mock) — lu aussi par multistream.py
+ENV_GO = "SOCIAL_LIVE_GO"                      # doit valoir GO_BASSI_TEST_LIVE_SOCIAL pour un direct réel
+VALEUR_GO = "GO_BASSI_TEST_LIVE_SOCIAL"
+ENV_SECRETS_KEY = "SOCIAL_SECRETS_KEY"         # clé Fernet dédiée (base64 urlsafe 32 octets)
+ENV_ALLOWED = "SOCIAL_ALLOWED_EMAILS"          # liste blanche (défaut : ADMIN_EMAILS injecté par main.py)
+ENV_REDIRECT_BASE = "SOCIAL_OAUTH_REDIRECT_BASE"  # URL publique du backend (ex. https://api-live.afroboost.com)
+ENV_FB_APP_ID = "FACEBOOK_APP_ID"
+ENV_FB_APP_SECRET = "FACEBOOK_APP_SECRET"
+ENV_FB_PAGE = "AFROBOOST_FB_PAGE_ID"           # identifiant de la Page Facebook Afroboost autorisée
+ENV_FB_TOKEN = "AFROBOOST_FB_PAGE_TOKEN"       # (héritage) jeton de Page posé à la main — jamais renvoyé
+ENV_GOOGLE_ID = "GOOGLE_CLIENT_ID"
+ENV_GOOGLE_SECRET = "GOOGLE_CLIENT_SECRET"
+ENV_YT_CHANNEL = "AFROBOOST_YT_CHANNEL_ID"     # identifiant de la chaîne YouTube Afroboost autorisée
+ENV_YT_TOKEN = "AFROBOOST_YT_ACCESS_TOKEN"     # (héritage) jeton OAuth posé à la main — jamais renvoyé
 
-_RTMP_RE = re.compile(r"^rtmps?://[^\s/]+/\S*$", re.I)
+VARIABLES_OAUTH: Dict[str, Tuple[str, ...]] = {
+    "facebook": (ENV_FB_APP_ID, ENV_FB_APP_SECRET, ENV_FB_PAGE, ENV_REDIRECT_BASE),
+    "youtube": (ENV_GOOGLE_ID, ENV_GOOGLE_SECRET, ENV_YT_CHANNEL, ENV_REDIRECT_BASE),
+}
+
+FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
+YT_SCOPES = "https://www.googleapis.com/auth/youtube"
+FB_GRAPH = "https://graph.facebook.com/v25.0"
+DUREE_ETAT_OAUTH_S = 600  # un `state` OAuth vaut 10 minutes
+
+# URL d'ingestion : RTMPS UNIQUEMENT (le RTMP en clair transporte la clé sans chiffrement → refusé).
+_RTMPS_RE = re.compile(r"^rtmps://[^\s/:]+(:\d{1,5})?/\S*$", re.I)
 
 
 def _masquer(valeur: Optional[str]) -> str:
-    """Forme journalisable d'un secret : longueur + 2 derniers caractères, jamais le contenu."""
+    """Forme journalisable d'un secret : SEULEMENT sa longueur — jamais un caractère du contenu."""
     if not valeur:
         return "(vide)"
-    return f"…{valeur[-2:]} ({len(valeur)} car.)"
+    return f"({len(valeur)} car.)"
 
 
 def _maintenant() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _env(nom: str) -> str:
+    return (os.environ.get(nom) or "").strip()
+
+
 # --------------------------------------------------------------------------- #
-# Dépendances injectées (chiffrement, auth, stockage) — testables sans réseau
+# Dépendances injectées (chiffrement de repli, auth, stockage, liste blanche)
 # --------------------------------------------------------------------------- #
 class _Deps:
     encrypt: Optional[Callable[[str], str]] = None
     decrypt: Optional[Callable[[Optional[str]], Optional[str]]] = None
     get_user: Optional[Callable[[Optional[str]], Awaitable[Dict[str, Any]]]] = None
     store: Optional["Stockage"] = None
+    emails_autorises: Tuple[str, ...] = ()
+    origines_retour: Tuple[str, ...] = ()
 
 
 _deps = _Deps()
 
 
 class Stockage:
-    """Stockage en mémoire (tests) ; le stockage Supabase le remplace en production (même interface)."""
+    """Stockage en mémoire (tests, harnais) ; le stockage Supabase le remplace en production (même interface)."""
 
     def __init__(self) -> None:
         self._rows: Dict[tuple, Dict[str, Any]] = {}
@@ -108,10 +145,10 @@ class Stockage:
 
 class StockageSupabase(Stockage):
     """Table `social_destinations` (REST, service role). Colonnes : user_id, platform, mode, rtmp_url,
-    stream_key_enc, account_label, account_id, external_id, expires_at, status, updated_at.
-    UNIQUE(user_id, platform). Créée par le SQL fourni dans docs/multistream_plateformes.md."""
+    stream_key_enc, key_hint, oauth_token_enc, account_label, account_id, external_id, expires_at, status,
+    updated_at. UNIQUE(user_id, platform). SQL dans docs/multistream_plateformes.md."""
 
-    def __init__(self, base_url: str, headers_fn: Callable[[], Dict[str, str]]) -> None:
+    def __init__(self, base_url: str, headers_fn: Callable[..., Dict[str, str]]) -> None:
         super().__init__()
         self._url = base_url.rstrip("/") + "/rest/v1/social_destinations"
         self._headers = headers_fn
@@ -148,10 +185,14 @@ class StockageSupabase(Stockage):
         r.raise_for_status()
 
 
-def configurer(*, encrypt: Callable[[str], str], decrypt: Callable[[Optional[str]], Optional[str]],
-               get_user: Callable[[Optional[str]], Awaitable[Dict[str, Any]]], store: Stockage) -> None:
-    """Branchement par main.py : chiffrement Fernet existant, validation du jeton Supabase, stockage."""
+def configurer(*, encrypt: Optional[Callable[[str], str]], decrypt: Optional[Callable[[Optional[str]], Optional[str]]],
+               get_user: Callable[[Optional[str]], Awaitable[Dict[str, Any]]], store: Stockage,
+               emails_autorises: Iterable[str] = (), origines_retour: Iterable[str] = ()) -> None:
+    """Branchement par main.py : chiffrement de repli (Fernet Stripe, None s'il n'est pas configuré),
+    validation du jeton Supabase, stockage, liste blanche Afroboost, origines de retour OAuth autorisées."""
     _deps.encrypt, _deps.decrypt, _deps.get_user, _deps.store = encrypt, decrypt, get_user, store
+    _deps.emails_autorises = tuple(e.strip().lower() for e in emails_autorises if e and e.strip())
+    _deps.origines_retour = tuple(o.strip().rstrip("/").lower() for o in origines_retour if o and o.strip())
 
 
 def _store() -> Stockage:
@@ -161,7 +202,25 @@ def _store() -> Stockage:
 
 
 def _mode_live() -> str:
-    return (os.environ.get(ENV_MODE) or "mock").strip().lower()
+    return (_env(ENV_MODE) or "mock").lower()
+
+
+def verrou_direct_reel() -> Dict[str, Any]:
+    """Le direct social RÉEL est verrouillé tant que les TROIS conditions ne sont pas réunies.
+    Renvoie un diagnostic sans valeur secrète. Importé par multistream.py (repli : toujours verrouillé)."""
+    manque: List[str] = []
+    if _mode_live() != "real":
+        manque.append(f"{ENV_MODE}=real")
+    if (_env(ENV_MULTISTREAM) or "mock").lower() != "egress":
+        manque.append(f"{ENV_MULTISTREAM}=egress")
+    if _env(ENV_GO) != VALEUR_GO:
+        manque.append(f"{ENV_GO}={VALEUR_GO}")
+    return {"autorise": not manque, "manque": manque, "live_mode": _mode_live(),
+            "multistream_mode": (_env(ENV_MULTISTREAM) or "mock").lower()}
+
+
+def direct_reel_autorise() -> bool:
+    return bool(verrou_direct_reel()["autorise"])
 
 
 def _valider_platform(platform: str) -> str:
@@ -172,42 +231,177 @@ def _valider_platform(platform: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Statut (sans secret)
+# Chiffrement : SOCIAL_SECRETS_KEY (dédiée) → sinon Fernet injecté (APP_ENCRYPTION_KEY) → sinon rien
 # --------------------------------------------------------------------------- #
-def statut_public(row: Optional[Dict[str, Any]], platform: str) -> Dict[str, Any]:
-    """Ce que le navigateur a le droit de voir : jamais `stream_key_enc`, jamais de jeton."""
-    modes = MODES_PAR_PLATEFORME[platform]
-    if row is None:
-        return {"platform": platform, "label": LIBELLES[platform], "status": "not_connected",
-                "mode": None, "modes": list(modes), "account_label": None, "expires_at": None}
-    status = "connected"
+_fernet_cache: Dict[str, Any] = {}
+
+
+def _fernet_dedie():
+    cle = _env(ENV_SECRETS_KEY)
+    if not cle:
+        return None
+    if _fernet_cache.get("cle") == cle:
+        return _fernet_cache["fernet"]
+    try:
+        from cryptography.fernet import Fernet
+        f = Fernet(cle.encode())
+    except Exception:  # clé mal formée → considérée absente (jamais de clair)
+        logger.warning("[SOCIAL] %s est posée mais invalide (attendu : clé Fernet base64 urlsafe 32 octets)", ENV_SECRETS_KEY)
+        return None
+    _fernet_cache.update(cle=cle, fernet=f)
+    return f
+
+
+def _chiffreur() -> Optional[Tuple[Callable[[str], str], Callable[[Optional[str]], Optional[str]]]]:
+    f = _fernet_dedie()
+    if f is not None:
+        def dec(t: Optional[str]) -> Optional[str]:
+            if not t:
+                return None
+            try:
+                return f.decrypt(t.encode()).decode()
+            except Exception:
+                return None
+        return (lambda s: f.encrypt(s.encode()).decode(), dec)
+    if _deps.encrypt is not None and _deps.decrypt is not None:
+        return (_deps.encrypt, _deps.decrypt)
+    return None
+
+
+def chiffrement_manquant() -> List[str]:
+    """Noms des variables à poser si AUCUN chiffrement n'est disponible (jamais de stockage en clair)."""
+    return [] if _chiffreur() else [ENV_SECRETS_KEY]
+
+
+def _chiffrer(clair: str) -> str:
+    c = _chiffreur()
+    if not c:
+        raise HTTPException(status_code=409, detail={"code": "config_required", "missing": [ENV_SECRETS_KEY],
+                                                     "message": f"Configuration requise : poser {ENV_SECRETS_KEY} côté serveur"})
+    return c[0](clair)
+
+
+def _dechiffrer(token: Optional[str]) -> Optional[str]:
+    """None si pas de chiffreur, jeton absent, altéré ou chiffré avec une autre clé — jamais d'exception."""
+    c = _chiffreur()
+    if not c or not token:
+        return None
+    try:
+        return c[1](token)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Variables manquantes par plateforme (NOMS seulement)
+# --------------------------------------------------------------------------- #
+def variables_manquantes(platform: str) -> List[str]:
+    manque = list(chiffrement_manquant())
+    for nom in VARIABLES_OAUTH.get(platform, ()):
+        if not _env(nom):
+            manque.append(nom)
+    return manque
+
+
+# --------------------------------------------------------------------------- #
+# État public (sans secret) — c'est CE que le tiroir affiche
+# --------------------------------------------------------------------------- #
+def _expire(row: Dict[str, Any]) -> bool:
     exp = row.get("expires_at")
+    if not exp:
+        return False
+    try:
+        return datetime.fromisoformat(str(exp).replace("Z", "+00:00")) <= _maintenant()
+    except ValueError:
+        return True
+
+
+def _indice_cle(row: Dict[str, Any]) -> Optional[str]:
+    """« clé enregistrée : 4 derniers caractères » — calculé au moment de la saisie, jamais la clé."""
+    return row.get("key_hint") or None
+
+
+def etat_plateforme(row: Optional[Dict[str, Any]], platform: str) -> Dict[str, Any]:
+    """Ce que le navigateur a le droit de voir : jamais `stream_key_enc`, jamais `oauth_token_enc`."""
+    base: Dict[str, Any] = {
+        "platform": platform, "label": LIBELLES[platform],
+        "kind": "oauth" if platform in PLATEFORMES_OAUTH else "manual",
+        "modes": list(MODES_PAR_PLATEFORME[platform]),
+        "mode": row.get("mode") if row else None,
+        "account_label": None, "expires_at": row.get("expires_at") if row else None,
+        "key_saved": False, "key_hint": None, "missing": [],
+    }
+    manque = variables_manquantes(platform)
+    if manque:
+        base.update(status="config_required", missing=manque)
+        return base
+    if row:
+        label = row.get("account_label") or ""
+        base["account_label"] = ((label[:2] + "…" + label[-1:]) if len(label) > 3 else label) or None
+    if platform in PLATEFORMES_MANUELLES:
+        if row and row.get("stream_key_enc") and row.get("rtmp_url"):
+            base.update(status="configured", key_saved=True, key_hint=_indice_cle(row))
+        else:
+            base.update(status="not_configured")
+        return base
+    # Facebook / YouTube
+    if not row:
+        base.update(status="not_connected")
+        return base
     if row.get("status") == "unavailable":
-        status = "unavailable"
-    elif exp:
-        try:
-            if datetime.fromisoformat(str(exp).replace("Z", "+00:00")) <= _maintenant():
-                status = "reauth"
-        except ValueError:
-            status = "reauth"
-    if not row.get("stream_key_enc") or not row.get("rtmp_url"):
-        status = "reauth"
-    label = row.get("account_label") or ""
-    masque = (label[:2] + "…" + label[-1:]) if len(label) > 3 else label
-    return {"platform": platform, "label": LIBELLES[platform], "status": status, "mode": row.get("mode"),
-            "modes": list(modes), "account_label": masque or None, "expires_at": exp}
+        base.update(status="unavailable")
+        return base
+    if row.get("mode") == "manual":
+        ok = bool(row.get("stream_key_enc") and row.get("rtmp_url")) and not _expire(row)
+        base.update(status="connected" if ok else "reauth", key_saved=bool(row.get("stream_key_enc")), key_hint=_indice_cle(row))
+        return base
+    if row.get("mode") == "oauth":
+        ok = bool(row.get("oauth_token_enc")) and row.get("status") != "reauth" and not _expire(row)
+        base.update(status="connected" if ok else "reauth")
+        return base
+    # mode 'api' (héritage : ingest déjà préparé par prepare)
+    ok = bool(row.get("stream_key_enc") and row.get("rtmp_url")) and not _expire(row)
+    base.update(status="connected" if ok else "reauth")
+    return base
+
+
+def statut_public(row: Optional[Dict[str, Any]], platform: str) -> Dict[str, Any]:
+    """Nom historique conservé (tests, multistream) : même contenu que `etat_plateforme`."""
+    return etat_plateforme(row, platform)
+
+
+async def statut_compte(user_id: str, platform: str) -> str:
+    """Contrat lu par multistream.comptes() : l'état textuel d'une plateforme pour cet utilisateur."""
+    p = _valider_platform(platform)
+    return etat_plateforme(await _store().lire(user_id, p), p)["status"]
 
 
 # --------------------------------------------------------------------------- #
-# Contrat pour le moteur de multistream (agent 1) — JAMAIS exposé par HTTP
+# Contrat pour le moteur de multistream — JAMAIS exposé par HTTP
 # --------------------------------------------------------------------------- #
 async def resoudre_destination(user_id: str, platform: str) -> Optional[Dict[str, str]]:
-    """`{rtmp_url, stream_key}` en clair pour l'Egress/relais, ou None si rien d'utilisable."""
+    """`{rtmp_url, stream_key}` en clair pour l'Egress/relais, ou None si rien d'utilisable.
+    Mode 'oauth' : l'ingest est créé côté plateforme à cet instant (mock sans SOCIAL_LIVE_MODE=real)."""
     p = _valider_platform(platform)
     row = await _store().lire(user_id, p)
-    if not row or statut_public(row, p)["status"] != "connected":
+    if not row:
         return None
-    cle = _deps.decrypt(row.get("stream_key_enc")) if _deps.decrypt else None
+    etat = etat_plateforme(row, p)["status"]
+    if etat not in ("connected", "configured"):
+        return None
+    if row.get("mode") == "oauth":
+        jeton = _dechiffrer(row.get("oauth_token_enc"))
+        if not jeton:
+            return None
+        try:
+            info = await (_preparer_facebook if p == "facebook" else _preparer_youtube)(
+                row.get("account_id") or "", "Afroboost — Live", jeton)
+        except HTTPException:
+            return None
+        await _store().ecrire(user_id, p, dict(row, external_id=info.get("external_id")))
+        logger.info("[SOCIAL] ingest %s créé (mode=%s) key=%s", p, _mode_live(), _masquer(info["stream_key"]))
+        return {"rtmp_url": info["rtmp_url"], "stream_key": info["stream_key"]}
+    cle = _dechiffrer(row.get("stream_key_enc"))
     if not cle:
         return None
     logger.info("[SOCIAL] destination résolue user=%s platform=%s key=%s", user_id[:8], p, _masquer(cle))
@@ -218,25 +412,25 @@ async def resoudre_destination(user_id: str, platform: str) -> Optional[Dict[str
 # Garde « compte Afroboost uniquement »
 # --------------------------------------------------------------------------- #
 def compte_autorise(platform: str, account_id: Optional[str]) -> bool:
-    """En mode 'api', seul l'identifiant figé côté serveur est accepté. Sans variable posée → rien n'est autorisé."""
-    attendu = os.environ.get(ENV_FB_PAGE if platform == "facebook" else ENV_YT_CHANNEL, "").strip()
+    """Seul l'identifiant figé côté serveur est accepté. Sans variable posée → rien n'est autorisé."""
+    attendu = _env(ENV_FB_PAGE if platform == "facebook" else ENV_YT_CHANNEL)
     return bool(attendu) and (account_id or "").strip() == attendu
 
 
 # --------------------------------------------------------------------------- #
-# Clients plateformes (mode 'api') — mock par défaut, réel derrière SOCIAL_LIVE_MODE=real
+# Clients plateformes — mock par défaut, réel derrière SOCIAL_LIVE_MODE=real
 # --------------------------------------------------------------------------- #
-async def _preparer_facebook(account_id: str, titre: str) -> Dict[str, Any]:
+async def _preparer_facebook(account_id: str, titre: str, jeton: Optional[str] = None) -> Dict[str, Any]:
     """Facebook Live Video API : POST /{page-id}/live_videos?status=LIVE_NOW → secure_stream_url."""
     if _mode_live() != "real":
         return {"external_id": f"fbmock{account_id[-4:]}", "rtmp_url": "rtmps://live-api-s.facebook.com:443/rtmp/",
                 "stream_key": f"MOCK-FB-{os.urandom(6).hex()}", "expires_at": (_maintenant() + timedelta(hours=8)).isoformat()}
     import httpx
-    token = os.environ.get(ENV_FB_TOKEN, "")
+    token = jeton or _env(ENV_FB_TOKEN)
     if not token:
-        raise HTTPException(status_code=503, detail="Jeton de Page Facebook non configuré côté serveur")
+        raise HTTPException(status_code=503, detail="Jeton de Page Facebook absent — reconnectez Facebook")
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.post(f"https://graph.facebook.com/v25.0/{account_id}/live_videos",
+        r = await c.post(f"{FB_GRAPH}/{account_id}/live_videos",
                          data={"status": "LIVE_NOW", "title": titre[:254], "access_token": token})
     if r.status_code != 200:
         logger.warning("[SOCIAL] facebook live_videos HTTP %s", r.status_code)
@@ -248,24 +442,37 @@ async def _preparer_facebook(account_id: str, titre: str) -> Dict[str, Any]:
             "expires_at": (_maintenant() + timedelta(hours=8)).isoformat()}
 
 
-async def _terminer_facebook(external_id: str) -> None:
+async def _terminer_facebook(external_id: str, jeton: Optional[str] = None) -> None:
     if _mode_live() != "real":
         return
     import httpx
-    token = os.environ.get(ENV_FB_TOKEN, "")
+    token = jeton or _env(ENV_FB_TOKEN)
     async with httpx.AsyncClient(timeout=15) as c:
-        await c.post(f"https://graph.facebook.com/v25.0/{external_id}", data={"end_live_video": "true", "access_token": token})
+        await c.post(f"{FB_GRAPH}/{external_id}", data={"end_live_video": "true", "access_token": token})
 
 
-async def _preparer_youtube(account_id: str, titre: str) -> Dict[str, Any]:
+async def _jeton_acces_youtube(jeton_stocke: str) -> str:
+    """Le jeton stocké est le REFRESH token Google : on en tire un access token court (jamais stocké)."""
+    import httpx
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post("https://oauth2.googleapis.com/token", data={
+            "client_id": _env(ENV_GOOGLE_ID), "client_secret": _env(ENV_GOOGLE_SECRET),
+            "refresh_token": jeton_stocke, "grant_type": "refresh_token"})
+    if r.status_code != 200:
+        logger.warning("[SOCIAL] youtube refresh HTTP %s", r.status_code)
+        raise HTTPException(status_code=503, detail="YouTube : reconnexion nécessaire")
+    return r.json().get("access_token") or ""
+
+
+async def _preparer_youtube(account_id: str, titre: str, jeton: Optional[str] = None) -> Dict[str, Any]:
     """YouTube Live Streaming API : liveStreams.insert (ingestion) + liveBroadcasts.insert + bind."""
     if _mode_live() != "real":
         return {"external_id": f"ytmock{account_id[-4:]}", "rtmp_url": "rtmps://a.rtmps.youtube.com:443/live2/",
                 "stream_key": f"mock-yt-{os.urandom(6).hex()}", "expires_at": None}
     import httpx
-    token = os.environ.get(ENV_YT_TOKEN, "")
+    token = (await _jeton_acces_youtube(jeton)) if jeton else _env(ENV_YT_TOKEN)
     if not token:
-        raise HTTPException(status_code=503, detail="Jeton YouTube non configuré côté serveur")
+        raise HTTPException(status_code=503, detail="Jeton YouTube absent — reconnectez YouTube")
     h = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=15) as c:
         s = await c.post("https://www.googleapis.com/youtube/v3/liveStreams", headers=h, params={"part": "snippet,cdn,contentDetails"},
@@ -289,14 +496,121 @@ async def _preparer_youtube(account_id: str, titre: str) -> Dict[str, Any]:
             "stream_key": info["streamName"], "expires_at": None}
 
 
-async def _terminer_youtube(external_id: str) -> None:
+async def _terminer_youtube(external_id: str, jeton: Optional[str] = None) -> None:
     if _mode_live() != "real":
         return
     import httpx
-    token = os.environ.get(ENV_YT_TOKEN, "")
+    token = (await _jeton_acces_youtube(jeton)) if jeton else _env(ENV_YT_TOKEN)
     async with httpx.AsyncClient(timeout=15) as c:
         await c.post("https://www.googleapis.com/youtube/v3/liveBroadcasts/transition", headers={"Authorization": f"Bearer {token}"},
                      params={"id": external_id, "broadcastStatus": "complete", "part": "status"})
+
+
+# --------------------------------------------------------------------------- #
+# OAuth réel (Facebook / YouTube) — le `state` est un jeton Fernet (intégrité + horodatage)
+# --------------------------------------------------------------------------- #
+def _url_callback(platform: str) -> str:
+    return _env(ENV_REDIRECT_BASE).rstrip("/") + f"/social/oauth/{platform}/callback"
+
+
+def _retour_autorise(return_to: Optional[str]) -> Optional[str]:
+    """L'URL de retour doit être HTTPS (ou localhost) ET appartenir à une origine autorisée (CORS de main.py)."""
+    if not return_to:
+        return None
+    try:
+        u = urlsplit(return_to)
+    except ValueError:
+        return None
+    if u.scheme not in ("https", "http") or not u.netloc:
+        return None
+    if u.scheme == "http" and u.hostname not in ("localhost", "127.0.0.1"):
+        return None
+    origine = f"{u.scheme}://{u.netloc}".lower()
+    if _deps.origines_retour and origine not in _deps.origines_retour:
+        return None
+    return return_to
+
+
+def _signer_etat(user_id: str, platform: str, return_to: Optional[str]) -> str:
+    charge = json.dumps({"u": user_id, "p": platform, "r": return_to, "t": int(time.time()), "n": secrets.token_hex(8)},
+                        separators=(",", ":"))
+    return _chiffrer(charge)
+
+
+def _lire_etat(state: str, platform: str) -> Optional[Dict[str, Any]]:
+    clair = _dechiffrer(state)
+    if not clair:
+        return None
+    try:
+        d = json.loads(clair)
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or d.get("p") != platform or not d.get("u"):
+        return None
+    if int(time.time()) - int(d.get("t") or 0) > DUREE_ETAT_OAUTH_S:
+        return None
+    return d
+
+
+def url_autorisation(platform: str, state: str) -> str:
+    if platform == "facebook":
+        return "https://www.facebook.com/v25.0/dialog/oauth?" + urlencode({
+            "client_id": _env(ENV_FB_APP_ID), "redirect_uri": _url_callback("facebook"),
+            "scope": FB_SCOPES, "response_type": "code", "state": state})
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
+        "client_id": _env(ENV_GOOGLE_ID), "redirect_uri": _url_callback("youtube"),
+        "scope": YT_SCOPES, "response_type": "code", "access_type": "offline", "prompt": "consent",
+        "include_granted_scopes": "true", "state": state})
+
+
+async def _echanger_code_facebook(code: str) -> Dict[str, Any]:
+    """code → jeton utilisateur → Pages gérées ; renvoie la Page AFROBOOST (ou 403) avec son jeton de Page."""
+    import httpx
+    async with httpx.AsyncClient(timeout=15) as c:
+        t = await c.get(f"{FB_GRAPH}/oauth/access_token", params={
+            "client_id": _env(ENV_FB_APP_ID), "client_secret": _env(ENV_FB_APP_SECRET),
+            "redirect_uri": _url_callback("facebook"), "code": code})
+        if t.status_code != 200:
+            logger.warning("[SOCIAL] facebook oauth/access_token HTTP %s", t.status_code)
+            raise HTTPException(status_code=502, detail="Facebook a refusé l'échange du code")
+        jeton_user = t.json().get("access_token") or ""
+        pages = await c.get(f"{FB_GRAPH}/me/accounts", params={"access_token": jeton_user, "fields": "id,name,access_token"})
+    if pages.status_code != 200:
+        raise HTTPException(status_code=502, detail="Facebook n'a pas renvoyé les Pages du compte")
+    attendu = _env(ENV_FB_PAGE)
+    for page in pages.json().get("data") or []:
+        if str(page.get("id")) == attendu and page.get("access_token"):
+            return {"account_id": attendu, "account_label": page.get("name") or "Facebook Afroboost",
+                    "jeton": page["access_token"], "expires_at": None}
+    logger.warning("[SOCIAL] facebook : la Page Afroboost n'est pas parmi les Pages du compte connecté → refus")
+    raise HTTPException(status_code=403, detail="Ce compte Facebook ne gère pas la Page Afroboost — connexion refusée")
+
+
+async def _echanger_code_youtube(code: str) -> Dict[str, Any]:
+    """code → refresh token → chaîne « mine » ; renvoie la chaîne AFROBOOST (ou 403) avec le refresh token."""
+    import httpx
+    async with httpx.AsyncClient(timeout=15) as c:
+        t = await c.post("https://oauth2.googleapis.com/token", data={
+            "client_id": _env(ENV_GOOGLE_ID), "client_secret": _env(ENV_GOOGLE_SECRET),
+            "redirect_uri": _url_callback("youtube"), "code": code, "grant_type": "authorization_code"})
+        if t.status_code != 200:
+            logger.warning("[SOCIAL] google token HTTP %s", t.status_code)
+            raise HTTPException(status_code=502, detail="Google a refusé l'échange du code")
+        tj = t.json()
+        acces, refresh = tj.get("access_token") or "", tj.get("refresh_token") or ""
+        ch = await c.get("https://www.googleapis.com/youtube/v3/channels", headers={"Authorization": f"Bearer {acces}"},
+                         params={"part": "id,snippet", "mine": "true"})
+    if ch.status_code != 200:
+        raise HTTPException(status_code=502, detail="YouTube n'a pas renvoyé la chaîne du compte")
+    attendu = _env(ENV_YT_CHANNEL)
+    for item in ch.json().get("items") or []:
+        if str(item.get("id")) == attendu:
+            if not refresh:
+                raise HTTPException(status_code=502, detail="Google n'a pas fourni de jeton de rafraîchissement — réessayez")
+            return {"account_id": attendu, "account_label": (item.get("snippet") or {}).get("title") or "YouTube Afroboost",
+                    "jeton": refresh, "expires_at": None}
+    logger.warning("[SOCIAL] youtube : la chaîne connectée n'est pas la chaîne Afroboost → refus")
+    raise HTTPException(status_code=403, detail="Ce compte Google n'est pas la chaîne Afroboost — connexion refusée")
 
 
 # --------------------------------------------------------------------------- #
@@ -316,39 +630,70 @@ class PrepareIn(BaseModel):
     title: Optional[str] = "Afroboost — Live"
 
 
+def _emails_autorises() -> Tuple[str, ...]:
+    env = tuple(e.strip().lower() for e in _env(ENV_ALLOWED).split(",") if e.strip())
+    return env or _deps.emails_autorises
+
+
 async def _utilisateur(authorization: Optional[str]) -> Dict[str, Any]:
+    """Identité serveur (jeton Supabase) PUIS liste blanche Afroboost : une identité Spordateur ne passe pas."""
     if _deps.get_user is None:
         raise HTTPException(status_code=500, detail="Authentification non configurée")
-    return await _deps.get_user(authorization)
+    user = await _deps.get_user(authorization)
+    email = (user.get("email") or "").strip().lower()
+    autorises = _emails_autorises()
+    if not autorises or email not in autorises:
+        logger.warning("[SOCIAL] accès refusé : identité hors liste blanche Afroboost (@%s)", email.split("@")[-1] or "?")
+        raise HTTPException(status_code=403, detail="Diffusion sociale réservée au compte Afroboost")
+    return user
+
+
+async def _etats(user_id: str) -> Dict[str, Any]:
+    rows = {r["platform"]: r for r in await _store().lire_toutes(user_id)}
+    verrou = verrou_direct_reel()
+    return {"mode_live": _mode_live(), "multistream_mode": verrou["multistream_mode"],
+            "direct_reel_autorise": verrou["autorise"], "verrou": verrou["manque"],
+            "destinations": [etat_plateforme(rows.get(p), p) for p in PLATFORMS]}
 
 
 @router.get("/destinations")
 async def lister_destinations(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     user = await _utilisateur(authorization)
-    rows = {r["platform"]: r for r in await _store().lire_toutes(user["id"])}
-    return {"mode_live": _mode_live(), "destinations": [statut_public(rows.get(p), p) for p in PLATFORMS]}
+    return await _etats(user["id"])
+
+
+@router.get("/destinations/status")
+async def statut_destinations(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """État par plateforme + diagnostic exact (NOMS des variables serveur manquantes). Jamais une valeur."""
+    user = await _utilisateur(authorization)
+    return await _etats(user["id"])
 
 
 @router.post("/destinations/{platform}/manual")
 async def saisir_manuel(platform: str, body: ManuelIn, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    """Saisie par l'hôte de l'URL + clé fournies par la plateforme (Live Producer IG, LIVE Studio TikTok, ou FB/YT).
-    La clé est chiffrée immédiatement et n'est plus jamais renvoyée."""
+    """Saisie par l'hôte de l'URL RTMPS + clé fournies par la plateforme (Live Producer IG, LIVE Studio TikTok ;
+    repli possible FB/YT). La clé est chiffrée immédiatement et n'est plus jamais renvoyée."""
     p = _valider_platform(platform)
     user = await _utilisateur(authorization)
     url = body.rtmp_url.strip()
-    if not _RTMP_RE.match(url):
-        raise HTTPException(status_code=400, detail="URL RTMP/RTMPS invalide")
-    if not body.stream_key.strip() or len(body.stream_key) > 512:
-        raise HTTPException(status_code=400, detail="Clé de flux invalide")
-    if _deps.encrypt is None:
-        raise HTTPException(status_code=500, detail="Chiffrement non configuré")
+    if url.lower().startswith("rtmp://"):
+        raise HTTPException(status_code=400, detail="URL en clair refusée : l'adresse doit commencer par rtmps://")
+    if not _RTMPS_RE.match(url):
+        raise HTTPException(status_code=400, detail="URL RTMPS invalide (attendu : rtmps://serveur/application/)")
+    cle = body.stream_key.strip()
+    if not cle or len(cle) > 512:
+        raise HTTPException(status_code=400, detail="Clé de diffusion vide ou trop longue")
+    manque = chiffrement_manquant()
+    if manque:
+        raise HTTPException(status_code=409, detail={"code": "config_required", "missing": manque,
+                                                     "message": f"Configuration requise : poser {', '.join(manque)} côté serveur"})
     await _store().ecrire(user["id"], p, {
-        "mode": "manual", "rtmp_url": url, "stream_key_enc": _deps.encrypt(body.stream_key.strip()),
-        "account_label": (body.account_label or "").strip()[:80] or None, "account_id": None, "external_id": None,
-        "expires_at": None, "status": "connected",
+        "mode": "manual", "rtmp_url": url, "stream_key_enc": _chiffrer(cle), "key_hint": cle[-4:],
+        "oauth_token_enc": None, "account_label": (body.account_label or "").strip()[:80] or None,
+        "account_id": None, "external_id": None, "expires_at": None, "status": "connected",
     })
-    logger.info("[SOCIAL] destination manuelle enregistrée user=%s platform=%s key=%s", user["id"][:8], p, _masquer(body.stream_key))
-    return statut_public(await _store().lire(user["id"], p), p)
+    logger.info("[SOCIAL] configuration manuelle enregistrée user=%s platform=%s key=%s", user["id"][:8], p, _masquer(cle))
+    return etat_plateforme(await _store().lire(user["id"], p), p)
 
 
 @router.delete("/destinations/{platform}")
@@ -356,49 +701,108 @@ async def oublier(platform: str, authorization: Optional[str] = Header(None)) ->
     p = _valider_platform(platform)
     user = await _utilisateur(authorization)
     await _store().supprimer(user["id"], p)
-    return statut_public(None, p)
+    return etat_plateforme(None, p)
+
+
+@router.get("/oauth/{platform}/start")
+async def oauth_debut(platform: str, return_to: Optional[str] = None, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """Renvoie l'URL du VRAI parcours OAuth (Facebook / Google) — ou 409 avec les NOMS des variables manquantes."""
+    p = _valider_platform(platform)
+    if p not in PLATEFORMES_OAUTH:
+        raise HTTPException(status_code=501, detail=f"{LIBELLES[p]} : aucun OAuth de direct — configurez l'URL RTMPS et la clé")
+    user = await _utilisateur(authorization)
+    manque = variables_manquantes(p)
+    if manque:
+        raise HTTPException(status_code=409, detail={"code": "config_required", "missing": manque,
+                                                     "message": f"Configuration requise : {', '.join(manque)}"})
+    retour = _retour_autorise(return_to)
+    state = _signer_etat(user["id"], p, retour)
+    return {"platform": p, "url": url_autorisation(p, state)}
+
+
+@router.get("/oauth/{platform}/callback")
+async def oauth_retour(platform: str, code: Optional[str] = None, state: Optional[str] = None,
+                       error: Optional[str] = None):
+    """Retour de Facebook / Google : vérifie le `state`, échange le code CÔTÉ SERVEUR, exige la Page / la chaîne
+    Afroboost, stocke le jeton chiffré, puis renvoie l'hôte vers la page d'où il vient (#social=<p>:<résultat>)."""
+    p = _valider_platform(platform)
+    if p not in PLATEFORMES_OAUTH:
+        raise HTTPException(status_code=501, detail="Plateforme sans OAuth")
+    etat = _lire_etat(state or "", p)
+    if not etat:
+        raise HTTPException(status_code=400, detail="Parcours OAuth expiré ou altéré — recommencez depuis le tiroir")
+    retour = etat.get("r")
+
+    def _fin(resultat: str):
+        if retour:
+            return RedirectResponse(url=f"{retour.split('#')[0]}#social={p}:{resultat}", status_code=302)
+        return {"platform": p, "result": resultat}
+
+    if error or not code:
+        return _fin("cancelled")
+    if variables_manquantes(p):
+        return _fin("config_required")
+    try:
+        info = await (_echanger_code_facebook if p == "facebook" else _echanger_code_youtube)(code)
+    except HTTPException as e:
+        return _fin("refused" if e.status_code == 403 else "error")
+    if not compte_autorise(p, info["account_id"]):
+        return _fin("refused")
+    await _store().ecrire(etat["u"], p, {
+        "mode": "oauth", "rtmp_url": None, "stream_key_enc": None, "key_hint": None,
+        "oauth_token_enc": _chiffrer(info["jeton"]), "account_label": info["account_label"],
+        "account_id": info["account_id"], "external_id": None, "expires_at": info.get("expires_at"), "status": "connected",
+    })
+    logger.info("[SOCIAL] OAuth %s relié pour user=%s (jeton %s)", p, str(etat["u"])[:8], _masquer(info["jeton"]))
+    return _fin("connected")
 
 
 @router.post("/destinations/{platform}/prepare")
 async def preparer(platform: str, body: PrepareIn, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    """Mode 'api' (Facebook / YouTube) : crée le direct côté plateforme et stocke l'ingest chiffré.
+    """Mode 'api' (héritage, jeton posé à la main) : crée le direct côté plateforme et stocke l'ingest chiffré.
     Refus 403 si l'identifiant n'est pas celui du compte Afroboost figé côté serveur."""
     p = _valider_platform(platform)
-    if "api" not in MODES_PAR_PLATEFORME[p]:
+    if p not in PLATEFORMES_OAUTH:
         raise HTTPException(status_code=501, detail=f"{LIBELLES[p]} : pas d'API de direct — saisie manuelle de la clé")
     user = await _utilisateur(authorization)
     if not compte_autorise(p, body.account_id):
-        logger.warning("[SOCIAL] compte refusé platform=%s account=%s (seul le compte Afroboost est autorisé)", p, (body.account_id or "")[-4:])
+        logger.warning("[SOCIAL] compte refusé platform=%s (seul le compte Afroboost est autorisé)", p)
         raise HTTPException(status_code=403, detail="Seul le compte Afroboost est autorisé pour la diffusion")
-    if _deps.encrypt is None:
-        raise HTTPException(status_code=500, detail="Chiffrement non configuré")
-    info = await (_preparer_facebook if p == "facebook" else _preparer_youtube)(body.account_id, body.title or "Afroboost — Live")
+    if chiffrement_manquant():
+        raise HTTPException(status_code=409, detail={"code": "config_required", "missing": chiffrement_manquant()})
+    row = await _store().lire(user["id"], p)
+    jeton = _dechiffrer(row.get("oauth_token_enc")) if row and row.get("mode") == "oauth" else None
+    info = await (_preparer_facebook if p == "facebook" else _preparer_youtube)(body.account_id, body.title or "Afroboost — Live", jeton)
     await _store().ecrire(user["id"], p, {
-        "mode": "api", "rtmp_url": info["rtmp_url"], "stream_key_enc": _deps.encrypt(info["stream_key"]),
+        "mode": "api", "rtmp_url": info["rtmp_url"], "stream_key_enc": _chiffrer(info["stream_key"]), "key_hint": None,
+        "oauth_token_enc": (row or {}).get("oauth_token_enc"),
         "account_label": LIBELLES[p] + " Afroboost", "account_id": body.account_id, "external_id": info.get("external_id"),
         "expires_at": info.get("expires_at"), "status": "connected",
     })
     logger.info("[SOCIAL] direct préparé platform=%s mode=%s external=%s key=%s", p, _mode_live(), info.get("external_id"), _masquer(info["stream_key"]))
-    return statut_public(await _store().lire(user["id"], p), p)
+    return etat_plateforme(await _store().lire(user["id"], p), p)
 
 
 @router.post("/destinations/{platform}/finish")
 async def terminer(platform: str, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    """Fin du direct côté plateforme (mode 'api') ; la destination repasse à « non connectée » (clé à usage unique)."""
+    """Fin du direct côté plateforme ; l'ingest à usage unique est oublié (le lien OAuth, lui, reste)."""
     p = _valider_platform(platform)
     user = await _utilisateur(authorization)
     row = await _store().lire(user["id"], p)
-    if row and row.get("mode") == "api" and row.get("external_id"):
-        await (_terminer_facebook if p == "facebook" else _terminer_youtube)(row["external_id"])
-    if row:
+    if row and row.get("mode") in ("api", "oauth") and row.get("external_id"):
+        jeton = _dechiffrer(row.get("oauth_token_enc"))
+        await (_terminer_facebook if p == "facebook" else _terminer_youtube)(row["external_id"], jeton)
+    if row and row.get("mode") == "oauth":
+        await _store().ecrire(user["id"], p, dict(row, external_id=None))
+    elif row:
         await _store().supprimer(user["id"], p)
-    return statut_public(None, p)
+    return etat_plateforme(await _store().lire(user["id"], p), p)
 
 
 @router.get("/connect/{platform}")
 async def url_connexion(platform: str, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    """Point d'entrée OAuth (option B). Non ouvert dans ce lot : 501 explicite, jamais un faux bouton.
-    Le OAuth complet (app Meta avec revue « Live Video API », client Google avec scope `youtube`) est une action Bassi."""
+    """Ancienne entrée (lien sans jeton, donc inutilisable) : conservée en 501 explicite.
+    Le vrai parcours est `GET /social/oauth/{platform}/start` (authentifié) → URL → callback."""
     p = _valider_platform(platform)
     await _utilisateur(authorization)
-    raise HTTPException(status_code=501, detail=f"Connexion OAuth {LIBELLES[p]} non encore ouverte — utilisez la saisie manuelle de la clé")
+    raise HTTPException(status_code=501, detail=f"Utilisez /social/oauth/{p}/start (parcours OAuth authentifié)")

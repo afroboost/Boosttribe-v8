@@ -75,10 +75,48 @@ test('un compte qui se déconnecte pendant la sélection est décoché', () => {
 
 test('contrat useBroadcast : signature et zéro secret côté front', () => {
   const src = codeSeul(lire('hooks', 'useBroadcast.ts'));
-  for (const m of ['destinations', 'live', 'elapsedSec', 'select', 'start', 'stopAll', 'stop', 'retry', 'connectUrl']) assert.ok(src.includes(m), `contrat : ${m}`);
+  for (const m of ['destinations', 'live', 'elapsedSec', 'directAutorise', 'select', 'start', 'stopAll', 'stop', 'retry', 'connect', 'configure', 'forget', 'refresh', 'avis']) assert.ok(src.includes(m), `contrat : ${m}`);
   assert.ok(src.includes("'/live/broadcast/start'") && src.includes("'/live/broadcast/stop'") && src.includes('/live/broadcast/status'));
-  for (const interdit of ['stream_key', 'streamKey', 'rtmp', 'localStorage', 'access_token:', 'refresh_token']) {
+  assert.ok(src.includes("'/social/destinations/status'"), 'l’état des comptes vient de la route « status » (diagnostic par plateforme)');
+  for (const interdit of ['stream_key', 'streamKey', 'rtmp', 'localStorage', 'sessionStorage', 'access_token:', 'refresh_token']) {
     assert.ok(!src.toLowerCase().includes(interdit.toLowerCase()), `aucun « ${interdit} » dans le hook`);
   }
   assert.ok(src.includes('platform })') || src.includes('map((platform) => ({ platform }))'), 'le front n’envoie que des NOMS de plateformes');
+  assert.ok(!src.includes('connectUrl'), 'plus de lien OAuth sans jeton');
+  assert.ok(src.includes('window.location.assign(r.url)'), 'Connecter = redirection vers le VRAI parcours OAuth renvoyé par le serveur');
+  assert.ok(src.includes('setDirectAutorise(directAutoriseDepuisServeur(r.json))'), 'directAutorise vient du serveur, jamais du front');
+});
+
+test('comptes serveur : la route « status » (état + diagnostic) et l’ancienne route « accounts » sont normalisées', async () => {
+  const { comptesDepuisServeur, directAutoriseDepuisServeur } = await import('./.build/broadcastLogic.mjs');
+  const riche = comptesDepuisServeur({ direct_reel_autorise: false, destinations: [
+    { platform: 'facebook', status: 'config_required', kind: 'oauth', missing: ['FACEBOOK_APP_ID', 'SOCIAL_OAUTH_REDIRECT_BASE'] },
+    { platform: 'instagram', status: 'configured', kind: 'manual', key_saved: true, key_hint: 'ab12', missing: [] },
+    { platform: 'youtube', status: 'reauth', kind: 'oauth', account_label: 'Af…t' },
+    { platform: 'tiktok', status: 'not_configured', kind: 'manual' },
+    { platform: 'pinterest', status: 'connected' }, { platform: 'facebook', status: 'nimporte' },
+  ] });
+  assert.deepEqual(riche.facebook, { status: 'config_required', kind: 'oauth', missing: ['FACEBOOK_APP_ID', 'SOCIAL_OAUTH_REDIRECT_BASE'], key_hint: null, key_saved: false, account_label: null });
+  assert.equal(riche.instagram.status, 'configured'); assert.equal(riche.instagram.key_hint, 'ab12');
+  assert.equal(riche.youtube.account_label, 'Af…t');
+  assert.ok(!('pinterest' in riche));
+  assert.equal(directAutoriseDepuisServeur({ direct_reel_autorise: false }), false);
+  assert.equal(directAutoriseDepuisServeur({ direct_reel_autorise: true }), true);
+  assert.equal(directAutoriseDepuisServeur(null), false);
+  const simple = comptesDepuisServeur({ accounts: { facebook: 'connected', instagram: 'bidon' } });
+  assert.deepEqual(simple, { facebook: 'connected' });
+  // le réducteur accepte les deux formes et n’autorise la coche que pour connected / configured
+  let e = broadcastReducer(BROADCAST_INITIAL, { type: 'comptes', comptes: riche });
+  assert.equal(par(e).facebook.status, 'config_required'); assert.deepEqual(par(e).facebook.missing, ['FACEBOOK_APP_ID', 'SOCIAL_OAUTH_REDIRECT_BASE']);
+  assert.equal(par(e).instagram.keyHint, 'ab12');
+  e = broadcastReducer(e, { type: 'select', platform: 'instagram', on: true });
+  assert.equal(par(e).instagram.selected, true, 'configuré → cochable');
+  e = broadcastReducer(e, { type: 'select', platform: 'tiktok', on: true });
+  assert.equal(par(e).tiktok.selected, false, 'non configuré → pas cochable');
+  e = broadcastReducer(e, { type: 'select', platform: 'youtube', on: true });
+  assert.equal(par(e).youtube.selected, false, 'reconnexion nécessaire → pas cochable');
+  assert.deepEqual(destinationsADemarrer(e), ['instagram']);
+  // après suppression de la config (état serveur non configuré), la coche tombe
+  e = broadcastReducer(e, { type: 'comptes', comptes: { instagram: 'not_configured' } });
+  assert.equal(par(e).instagram.selected, false);
 });

@@ -37,7 +37,8 @@ def _destinations_test(monkeypatch=None):
 
 
 def setup_function(_fn=None):
-    os.environ.pop("MULTISTREAM_MODE", None)
+    for v in ("MULTISTREAM_MODE", "SOCIAL_LIVE_MODE", "SOCIAL_LIVE_GO"):
+        os.environ.pop(v, None)
     ms.reinitialiser_pour_tests()
     ms.definir_moteur(None)
     _destinations_test()
@@ -92,10 +93,60 @@ def test_start_idempotent_sur_destination_deja_live():
     assert len(ms.moteur().appels) == n  # déjà live → aucun nouvel appel
 
 
-def test_mode_egress_client_mocke(monkeypatch):
+def test_verrou_egress_sans_go_refuse_sans_toucher_au_moteur(monkeypatch):
+    """🔒 Hors mock, SANS le GO de Bassi : `demarrer` lève DirectVerrouille, le moteur n'est JAMAIS appelé,
+    aucune destination n'est résolue (aucune clé déchiffrée)."""
+    import pytest
     monkeypatch.setenv("MULTISTREAM_MODE", "egress")
     ms.definir_moteur(None)
-    assert ms.mode_multistream() == "egress"
+    assert ms.mode_multistream() == "egress" and ms.direct_reel_autorise() is False
+
+    class MoteurInterdit(ms.MoteurEgress):
+        async def demarrer(self, *a, **k):
+            raise AssertionError("le moteur Egress ne doit pas être appelé sans GO")
+
+    resolutions = []
+
+    async def resoudre_espion(user_id, platform):
+        resolutions.append(platform)
+        return {"rtmp_url": "rtmps://push.test/live", "stream_key": "SECRET"}
+
+    ms._resoudre_destination = resoudre_espion
+    ms.definir_moteur(MoteurInterdit())
+    with pytest.raises(ms.DirectVerrouille):
+        _run(ms.demarrer("room-verrou", "u1", ["facebook"], "TR_v", "TR_a"))
+    assert resolutions == [], "aucune clé n'est résolue tant que le verrou est fermé"
+    # deux conditions sur trois : toujours verrouillé
+    monkeypatch.setenv("SOCIAL_LIVE_MODE", "real")
+    with pytest.raises(ms.DirectVerrouille):
+        _run(ms.demarrer("room-verrou", "u1", ["facebook"], "TR_v", "TR_a"))
+    assert ms.statut_sync("room-verrou", "u1")["direct_reel_autorise"] is False
+
+
+def test_mode_mock_par_defaut_ne_sort_jamais_du_serveur(monkeypatch):
+    """Mode mock (défaut prod) : le moteur est MoteurMock, aucun import livekit, aucun réseau, même « live » simulé."""
+    import builtins
+    vrai_import = builtins.__import__
+
+    def import_espion(name, *a, **k):
+        if name.startswith("livekit"):
+            raise AssertionError("livekit ne doit pas être importé en mode mock")
+        return vrai_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", import_espion)
+    assert ms.mode_multistream() == "mock" and isinstance(ms.moteur(), ms.MoteurMock)
+    r = _run(ms.demarrer("room-mock", "u1", ["facebook"], "TR_v", "TR_a"))
+    assert r["mode"] == "mock" and r["direct_reel_autorise"] is False
+    assert ms.reponse_sans_secret(r)
+
+
+def test_mode_egress_client_mocke(monkeypatch):
+    monkeypatch.setenv("MULTISTREAM_MODE", "egress")
+    # le GO complet est requis pour qu'un démarrage egress soit accepté
+    monkeypatch.setenv("SOCIAL_LIVE_MODE", "real")
+    monkeypatch.setenv("SOCIAL_LIVE_GO", "GO_BASSI_TEST_LIVE_SOCIAL")
+    ms.definir_moteur(None)
+    assert ms.mode_multistream() == "egress" and ms.direct_reel_autorise() is True
 
     class FauxEgress(ms.MoteurEgress):
         def __init__(self):

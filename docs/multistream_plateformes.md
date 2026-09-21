@@ -54,9 +54,11 @@ create table if not exists social_destinations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   platform text not null check (platform in ('instagram','facebook','youtube','tiktok')),
-  mode text not null check (mode in ('api','manual')),
-  rtmp_url text not null,
-  stream_key_enc text not null,          -- Fernet (APP_ENCRYPTION_KEY), jamais en clair
+  mode text not null check (mode in ('oauth','api','manual')),
+  rtmp_url text,                         -- null en mode oauth (l'ingest est créé au démarrage du direct)
+  stream_key_enc text,                   -- Fernet (SOCIAL_SECRETS_KEY, sinon APP_ENCRYPTION_KEY), jamais en clair ; null en mode oauth
+  key_hint text,                         -- 4 derniers caractères de la clé (indice UI « clé enregistrée »), jamais la clé
+  oauth_token_enc text,                  -- jeton de Page Facebook / refresh token Google, chiffré (mode oauth)
   account_label text,
   account_id text,
   external_id text,                      -- id du live côté plateforme (mode api)
@@ -66,18 +68,46 @@ create table if not exists social_destinations (
   unique (user_id, platform)
 );
 alter table social_destinations enable row level security;  -- accès service-role uniquement (backend)
+
+-- Table déjà créée avant le 21/09 ? Migration :
+alter table social_destinations alter column stream_key_enc drop not null;
+alter table social_destinations alter column rtmp_url drop not null;
+alter table social_destinations drop constraint if exists social_destinations_mode_check;
+alter table social_destinations add constraint social_destinations_mode_check check (mode in ('oauth','api','manual'));
+alter table social_destinations add column if not exists key_hint text;
+alter table social_destinations add column if not exists oauth_token_enc text;
 ```
 
 ## Variables d'environnement (NOMS — valeurs à poser par Bassi dans Coolify `boosttribe` backend)
 
-| Variable | Rôle |
-|---|---|
-| `SOCIAL_LIVE_MODE` | `mock` (défaut, aucun appel sortant) → `real` quand les comptes sont prêts |
-| `AFROBOOST_FB_PAGE_ID` | identifiant de la Page Facebook Afroboost (seule Page autorisée) |
-| `AFROBOOST_FB_PAGE_TOKEN` | jeton de Page (mode real) — jamais renvoyé |
-| `AFROBOOST_YT_CHANNEL_ID` | identifiant de la chaîne YouTube Afroboost (seule chaîne autorisée) |
-| `AFROBOOST_YT_ACCESS_TOKEN` | jeton OAuth YouTube (mode real) — jamais renvoyé |
-| `APP_ENCRYPTION_KEY` | déjà en place (Stripe) — réutilisée |
+> Le tiroir « Diffuser en direct » lit `GET /social/destinations/status` : chaque plateforme affiche
+> **« Configuration requise »** avec les **NOMS** des variables ci-dessous qui manquent (jamais leurs valeurs).
+> Tant qu'elles ne sont pas posées, aucun bouton « Connecter » / « Configurer » n'est proposé : pas de bouton mort.
+
+| Variable | Rôle | Effet si absente |
+|---|---|---|
+| `SOCIAL_SECRETS_KEY` | clé Fernet dédiée (base64 urlsafe 32 octets : `python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"`) qui chiffre clés de diffusion et jetons OAuth ; à défaut le module retombe sur `APP_ENCRYPTION_KEY` (Stripe) | sans AUCUNE des deux : les 4 plateformes sont en « Configuration requise » ; un POST Instagram/TikTok répond 409 `config_required` — **jamais** de stockage en clair |
+| `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | app Meta (revue « Live Video API », permissions `pages_show_list`, `pages_manage_posts`, `pages_read_engagement`) | Facebook = « Configuration requise » |
+| `AFROBOOST_FB_PAGE_ID` | identifiant de la Page Facebook Afroboost — la SEULE Page acceptée au retour OAuth (une Page Spordateur → `refused`, rien n'est stocké) | Facebook = « Configuration requise » |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | client OAuth Google (YouTube Data API v3 activée, scope `https://www.googleapis.com/auth/youtube`) | YouTube = « Configuration requise » |
+| `AFROBOOST_YT_CHANNEL_ID` | identifiant de la chaîne YouTube Afroboost — la SEULE chaîne acceptée au retour OAuth | YouTube = « Configuration requise » |
+| `SOCIAL_OAUTH_REDIRECT_BASE` | URL publique du backend Live, ex. `https://api-live.afroboost.com` ; les URI de redirection à déclarer chez Meta et Google sont `<base>/social/oauth/facebook/callback` et `<base>/social/oauth/youtube/callback` | Facebook ET YouTube = « Configuration requise » |
+| `SOCIAL_ALLOWED_EMAILS` | liste blanche (virgules) des comptes autorisés à lire/écrire une destination ; défaut = `ADMIN_EMAILS` (le compte Afroboost) | défaut sûr : seul le compte Afroboost passe, toute autre identité (Spordateur) reçoit 403 |
+| `SOCIAL_LIVE_MODE` | `mock` (défaut, aucun appel sortant) → `real` pour appeler Facebook / YouTube | mock : ingest factice, rien ne sort du serveur |
+| `MULTISTREAM_MODE` | `mock` (défaut) → `egress` pour l'Egress LiveKit | mock : MoteurMock, aucun import livekit |
+| `SOCIAL_LIVE_GO` | doit valoir exactement `GO_BASSI_TEST_LIVE_SOCIAL` — troisième verrou du direct réel | hors mock sans GO : `/live/broadcast/start` répond **423 Locked**, moteur jamais appelé |
+| `AFROBOOST_FB_PAGE_TOKEN` / `AFROBOOST_YT_ACCESS_TOKEN` | (héritage) jetons posés à la main pour la route `prepare` — remplacés par le parcours OAuth | rien : le parcours OAuth stocke ses propres jetons chiffrés |
+| `APP_ENCRYPTION_KEY` | déjà en place (Stripe) — chiffrement de repli | voir `SOCIAL_SECRETS_KEY` |
+
+### Parcours OAuth réel (21/09) — `GET /social/oauth/{facebook|youtube}/start` → `callback`
+1. Le tiroir demande (avec le jeton Supabase) `GET /social/oauth/<p>/start?return_to=<page courante>` ; le serveur
+   répond `{url}` (Facebook `dialog/oauth` ou Google `o/oauth2/v2/auth`, `state` = jeton Fernet horodaté 10 min) — ou
+   **409** `{code: config_required, missing: [...]}`.
+2. Le navigateur est redirigé ; au retour, `GET /social/oauth/<p>/callback?code=&state=` échange le code **côté
+   serveur**, lit les Pages (`/me/accounts`) ou la chaîne (`channels?mine=true`), exige `AFROBOOST_FB_PAGE_ID` /
+   `AFROBOOST_YT_CHANNEL_ID`, stocke le jeton de Page / refresh token **chiffré**, puis redirige vers
+   `return_to#social=<p>:<connected|refused|cancelled|error|config_required>` (origine limitée à `CORS_ORIGINS`).
+3. Au démarrage d'un direct (verrou levé), `resoudre_destination` crée l'ingest via l'API avec ce jeton.
 
 ## Actions Bassi avant un vrai live social
 
@@ -90,7 +120,9 @@ alter table social_destinations enable row level security;  -- accès service-ro
    0 restriction live sur 90 jours.
 3. **Instagram** : compte pro Afroboost (afroboosteur) → instagram.com → Ajouter → Live → copier URL + clé au moment du live.
 4. **TikTok** : accès LIVE Studio (≥ 1 000 abonnés ou réseau créateur) → copier URL + clé au moment du live.
-5. Puis `SOCIAL_LIVE_MODE=real` et **GO BASSI — TEST LIVE SOCIAL** (plateforme, compte, durée, visibilité, contenu).
+5. Puis `SOCIAL_LIVE_MODE=real`, `MULTISTREAM_MODE=egress`, `SOCIAL_LIVE_GO=GO_BASSI_TEST_LIVE_SOCIAL` et
+   **GO BASSI — TEST LIVE SOCIAL** (plateforme, compte, durée, visibilité, contenu). Sans les trois variables,
+   `/live/broadcast/start` refuse (423) : le bouton « Démarrer (simulation) » du tiroir ne fait rien sortir.
 
 ## Sources (consultées le 17/09/2026)
 

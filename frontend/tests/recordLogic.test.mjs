@@ -165,3 +165,42 @@ test('arrêt spontané avec des octets → prêt, mais l’hôte est prévenu (d
 test('arrêt demandé avec des octets → prêt, sans avis', () => {
   assert.deepEqual(verdictFinalisation({ octets: 10, arretDemande: true, dureeSec: 3 }), { etat: 'pret', message: null });
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * RÉSOLUTION AFFICHÉE = RÉSOLUTION ENCODÉE (terrain 20/09 : panneau « 1920×1080 », ffprobe 1280×720).
+ * Mesuré dans le vrai Chrome 153 (21/09) :
+ *  - `track.getSettings()` d'une piste canvas suit le canvas (≈100 ms après un redimensionnement) ;
+ *  - le conteneur fige la résolution de la PREMIÈRE image encodée : un fichier démarré en 720 puis
+ *    redimensionné en 1080 reste « 1280×720 » pour ffprobe (et inversement) ; un redimensionnement juste
+ *    avant start() peut laisser une image de l'ancienne taille en tête (conteneur 1080, piste 720).
+ * Donc : l'en-tête écrit fait foi, puis la piste (1re tranche), jamais la qualité demandée en premier.
+ * ──────────────────────────────────────────────────────────────────────────── */
+import { resolutionEncodee, libelleResolution } from './.build/recordLogic.mjs';
+
+test('résolution encodée : la piste à la 1re tranche fait foi, pas la qualité demandée (cas terrain 20/09)', () => {
+  const r = resolutionEncodee(null, [{ width: 1280, height: 720 }], { largeur: 1920, hauteur: 1080 });
+  assert.deepEqual(r, { largeur: 1280, hauteur: 720, source: 'piste' });
+});
+
+test('résolution encodée : l’en-tête du fichier gagne sur la piste (cas D mesuré : conteneur 1080, piste 720)', () => {
+  const r = resolutionEncodee({ width: 1920, height: 1080 }, [{ width: 1280, height: 720 }], { largeur: 1280, hauteur: 720 });
+  assert.deepEqual(r, { largeur: 1920, hauteur: 1080, source: 'fichier' });
+});
+
+test('résolution encodée : la 1re mesure de piste valide gagne sur les suivantes (repli à chaud ≠ conteneur)', () => {
+  // Démarré en 1080, replié en 720 en cours : le conteneur dit 1080 (mesuré ffprobe) → on affiche 1080.
+  const r = resolutionEncodee(null, [{ width: 1920, height: 1080 }, { width: 1280, height: 720 }], { largeur: 1280, hauteur: 720 });
+  assert.deepEqual(r, { largeur: 1920, hauteur: 1080, source: 'piste' });
+});
+
+test('résolution encodée : mesures absentes ou vides → secours = la mesure suivante, puis la demandée (dite comme telle)', () => {
+  assert.deepEqual(resolutionEncodee({ width: 0, height: 0 }, [null, undefined, { width: 0, height: 0 }, { width: 1280, height: 720 }], { largeur: 1920, hauteur: 1080 }), { largeur: 1280, hauteur: 720, source: 'piste' });
+  assert.deepEqual(resolutionEncodee(undefined, [null, {}], { largeur: 1920, hauteur: 1080 }), { largeur: 1920, hauteur: 1080, source: 'demandee' });
+  assert.deepEqual(resolutionEncodee(null, [], { largeur: 1280, hauteur: 720 }), { largeur: 1280, hauteur: 720, source: 'demandee' });
+});
+
+test('libellé : « 1280 × 720 » (espaces autour du ×, valeurs entières)', () => {
+  assert.equal(libelleResolution({ largeur: 1280, hauteur: 720 }), '1280 × 720');
+  assert.equal(libelleResolution({ largeur: 1920, hauteur: 1080 }), '1920 × 1080');
+  assert.equal(libelleResolution({ largeur: 1279.6, hauteur: 719.5 }), '1280 × 720');
+});

@@ -108,5 +108,16 @@ test('helpers : durée, taille, format, qualité par défaut (1080p desktop / 72
   assert.equal(motifIndisponible({ supporte: false, mobile: true }), 'Enregistrement haute qualité disponible sur ordinateur');
   assert.equal(motifIndisponible({ supporte: false, mobile: false, motif: 'X' }), 'X');
   assert.equal(badgeVisible('enregistrement'), true);
+  // Résolution + codec sur une seule ligne : « 1280 × 720 · H.264 + AAC » (ce qui est produit, jamais promis).
+  const { libelleVideoResultat } = await import('./.build/recordUi.mjs');
+  assert.equal(libelleVideoResultat('1280 × 720', 'H.264 + AAC'), '1280 × 720 · H.264 + AAC');
+  assert.equal(libelleVideoResultat('1920 × 1080', ''), '1920 × 1080');
   for (const e of ['inactif', 'preparation', 'finalisation', 'pret', 'erreur']) assert.equal(badgeVisible(e), false, e);
+});
+
+// ── RÉSOLUTION AFFICHÉE (terrain 20/09) : le panneau montre resultat.resolution, mesuré sur la piste encodée ──
+test('panneau prêt : la résolution vient de resultat.resolution (piste encodée), avec le codec, sous data-testid=record-resolution', () => {
+  assert.ok(CODE.includes('data-testid="record-resolution"'), 'testid de preuve');
+  assert.ok(CODE.includes('libelleVideoResultat(resultat.resolution, resultat.format)'), 'une ligne « résolution · codec »');
+  assert.ok(!CODE.includes('recorder.qualite}</dd>') && !CODE.includes("qualite === '1080p' ? '1920"), 'jamais déduite de la qualité choisie');
 });

@@ -14,6 +14,12 @@
  *   fsa           File System Access : le sélecteur (geste requis, non automatisable) est remplacé par un
  *                 handle OPFS injecté — même API createWritable()/close() ; le fichier est ramené sur le Bureau ;
  *   unmount       démontage du hook pendant l'enregistrement → le fichier doit être FERMÉ (non vide).
+ *   resolution    PREUVE résolution affichée = résolution encodée (terrain 20/09 : panneau « 1920×1080 »,
+ *                 ffprobe 1280×720). Query libre via QS (ex. QS='?antenne=0&resolution=session&source=720'
+ *                 = câblage EXACT de SessionPage), qualité via QUALITE=720p|1080p. Le script imprime
+ *                 `getSettings()` de la piste encodée à la finalisation, le texte du panneau
+ *                 (`data-testid=record-resolution`) et le fichier à passer à ffprobe.
+ * Serveur : URL_BASE (défaut http://localhost:5181 ; les ports 5181-5183 peuvent être réservés → 5184).
  * Sortie : ~/Desktop/<NOM_SORTIE | qa-<scénario>.mp4>. Puis QuickTime :
  *   osascript -e 'tell application "QuickTime Player" to open POSIX file "…"' -e 'tell application "QuickTime Player" to tell document 1 to return {duration, natural dimensions, data size}'
  *
@@ -25,14 +31,14 @@
 const path = require('path'); const fs = require('fs'); const os = require('os');
 const { chromium } = require(process.env.PW_PATH || 'playwright');
 const scenario = process.argv[2] || 'opfs'; const DUREE = Number(process.argv[3] || 25);
-const URL_BASE = 'http://localhost:5181/tests/.harnais/qa-rec.html';
+const URL_BASE = (process.env.URL_BASE || 'http://localhost:5181') + '/tests/.harnais/qa-rec.html';
 (async () => {
   const b = await chromium.launch({ channel: 'chrome', headless: false, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
   const ctx = await b.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
   const p = await ctx.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console', m.type(), m.text()); });
-  const q = scenario === 'terrain' ? '?antenne=0' : scenario === 'terrain-hook' ? '?antenne=0&fixAntenne=0' : scenario === 'fsa' ? '?fsa=1' : '';
+  const q = scenario === 'terrain' ? '?antenne=0' : scenario === 'terrain-hook' ? '?antenne=0&fixAntenne=0' : scenario === 'fsa' ? '?fsa=1' : scenario === 'resolution' ? (process.env.QS || '') : '';
   if (scenario === 'fsa') {
     // Le sélecteur FSA exige un geste : on le remplace par un handle OPFS injecté (même API createWritable).
     await p.addInitScript(() => {
@@ -45,7 +51,7 @@ const URL_BASE = 'http://localhost:5181/tests/.harnais/qa-rec.html';
   }
   await p.addInitScript(() => {
     const MR = window.MediaRecorder; window.__recs = [];
-    const W = function (stream, opts) { const r = new MR(stream, opts); window.__recs.push(r); r.addEventListener('stop', () => { r.__stoppedAt = performance.now(); }); r.addEventListener('dataavailable', (e) => { r.__chunks = (r.__chunks || 0) + 1; r.__bytes = (r.__bytes || 0) + e.data.size; }); return r; };
+    const W = function (stream, opts) { const r = new MR(stream, opts); window.__recs.push(r); try { const s = stream.getVideoTracks()[0].getSettings(); r.__settingsAuStart = { width: s.width, height: s.height }; } catch { r.__settingsAuStart = null; } r.addEventListener('stop', () => { r.__stoppedAt = performance.now(); }); r.addEventListener('dataavailable', (e) => { r.__chunks = (r.__chunks || 0) + 1; r.__bytes = (r.__bytes || 0) + e.data.size; }); return r; };
     W.isTypeSupported = MR.isTypeSupported.bind(MR); W.prototype = MR.prototype; window.MediaRecorder = W;
   });
   await p.goto(URL_BASE + q);
@@ -53,6 +59,10 @@ const URL_BASE = 'http://localhost:5181/tests/.harnais/qa-rec.html';
   await p.waitForTimeout(800);
   console.log('capacite', JSON.stringify(await p.evaluate(() => window.__h.recorder.capacite)));
   console.log('userAgent', await p.evaluate(() => navigator.userAgent));
+  if (scenario === 'resolution' && process.env.QUALITE) {
+    await p.click(`[data-testid=record-qualite-${process.env.QUALITE}]`);
+    console.log('qualité choisie', await p.evaluate(() => window.__h.recorder.qualite), '| compositeur au départ', JSON.stringify(await p.evaluate(() => window.__h.programme.stats.resolution)), '| programme actif', await p.evaluate(() => window.__h.programme.actif));
+  }
   await p.click('[data-testid=record-start]');
   await p.waitForFunction(() => ['enregistrement', 'erreur'].includes(window.__h.recorder.etat), null, { timeout: 10000 });
   await p.waitForTimeout(1500);
@@ -79,8 +89,16 @@ const URL_BASE = 'http://localhost:5181/tests/.harnais/qa-rec.html';
   }
   await p.click('[data-testid=record-stop]');
   await p.waitForFunction(() => ['pret', 'erreur'].includes(window.__h.recorder.etat), null, { timeout: 30000 });
-  const res = await p.evaluate(() => { const r = window.__h.recorder; return { etat: r.etat, avis: r.avis, resultat: r.resultat && { nom: r.resultat.nom, dureeSec: r.resultat.dureeSec, taille: r.resultat.tailleOctets, dejaEcrit: r.resultat.dejaEcrit, format: r.resultat.format, resolution: r.resultat.resolution } }; });
+  const res = await p.evaluate(() => { const r = window.__h.recorder; return { etat: r.etat, avis: r.avis, resultat: r.resultat && { nom: r.resultat.nom, dureeSec: r.resultat.dureeSec, taille: r.resultat.tailleOctets, dejaEcrit: r.resultat.dejaEcrit, format: r.resultat.format, resolution: r.resultat.resolution, resolutionSource: r.resultat.resolutionSource } }; });
   console.log('résultat', JSON.stringify(res));
+  if (scenario === 'resolution') {
+    // Source de vérité imposée : la piste RÉELLEMENT encodée par le MediaRecorder, lue à la finalisation.
+    console.log('track.getSettings() à new MediaRecorder (start)', JSON.stringify(await p.evaluate(() => window.__recs[0].__settingsAuStart)));
+    console.log('track.getSettings() à la finalisation', JSON.stringify(await p.evaluate(() => { const t = window.__recs[0].stream.getVideoTracks()[0]; const s = t.getSettings(); return { width: s.width, height: s.height, frameRate: s.frameRate, readyState: t.readyState }; })));
+    console.log('compositeur (stats.resolution) à la finalisation', JSON.stringify(await p.evaluate(() => window.__h.programme.stats.resolution)));
+    console.log('panneau [record-resolution]', JSON.stringify(await p.evaluate(() => (document.querySelector('[data-testid=record-resolution]') || {}).textContent || null)));
+    if (process.env.CAPTURE) await p.locator('[data-testid=record-panel]').screenshot({ path: process.env.CAPTURE });
+  }
   console.log('MediaRecorder final', JSON.stringify(await p.evaluate(() => { const r = window.__recs[0]; return { state: r.state, chunks: r.__chunks || 0, bytes: r.__bytes || 0, stoppedAt: r.__stoppedAt }; })));
   const dest = path.join(os.homedir(), 'Desktop', process.env.NOM_SORTIE || `qa-${scenario}.mp4`);
   if (scenario === 'fsa') {

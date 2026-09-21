@@ -54,3 +54,9 @@ export function motifIndisponible(c: Pick<RecCapacite, 'supporte' | 'mobile' | '
 
 /** Le badge « ● REC » n'existe qu'en enregistrement effectif. */
 export const badgeVisible = (etat: RecEtat): boolean => etat === 'enregistrement';
+
+/** Panneau « prêt » : « 1280 × 720 · H.264 + AAC » — résolution MESURÉE sur la piste encodée + codec réel ; sans codec, la résolution seule. */
+export function libelleVideoResultat(resolution: string, format: string): string {
+  const codec = (format || '').trim();
+  return codec ? `${resolution} · ${codec}` : resolution;
+}

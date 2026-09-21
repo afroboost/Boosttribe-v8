@@ -19,11 +19,12 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  bitratePour, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, minutesMaxMemoire,
-  nomFichier, qualiteParDefaut, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type RecCapacite, type RecQualite, type RecStrategie,
+  bitratePour, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
+  nomFichier, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
 import { choisirResolution, type ResolutionProgramme } from '@/lib/programCompositor';
+import { resolutionFichier } from '@/lib/resolutionFichier';
 
 export type { RecQualite, RecStrategie, RecCapacite } from '@/lib/recordLogic';
 export type RecEtat = 'inactif' | 'preparation' | 'enregistrement' | 'finalisation' | 'pret' | 'erreur';
@@ -32,7 +33,10 @@ export interface RecResultat {
   nom: string;
   dureeSec: number;
   tailleOctets: number;
+  /** « 1280 × 720 » — LUE dans l'en-tête écrit (1re tranche, = ffprobe), secours getSettings de la piste ; jamais la qualité demandée. */
   resolution: string;
+  /** `fichier` = lue dans l'en-tête écrit ; `piste` = getSettings ; `demandee` = aucune mesure possible (secours). */
+  resolutionSource: 'fichier' | 'piste' | 'demandee';
   format: string;
   dejaEcrit: boolean;
   emplacement?: string;
@@ -144,6 +148,20 @@ function ecrivainMemoire(mime: string): Ecrivain {
   };
 }
 
+/**
+ * Largeur × hauteur RÉELLES de la piste vidéo que le MediaRecorder encode (`getSettings()`), ou null.
+ * Mesuré (Chrome 153, 21/09) : pour une piste canvas, `getSettings()` reflète le canvas ~100 ms après un
+ * redimensionnement — d'où la lecture à la 1re tranche (1 s), jamais à `start()`.
+ */
+function mesurerPiste(stream: MediaStream | null | undefined): MesurePiste | null {
+  try {
+    const t = stream?.getVideoTracks()[0];
+    if (!t || typeof t.getSettings !== 'function') return null;
+    const s = t.getSettings();
+    return { width: s.width, height: s.height };
+  } catch { return null; }
+}
+
 function telecharger(blobOuFichier: Blob, nom: string): void {
   const url = URL.createObjectURL(blobOuFichier);
   const a = document.createElement('a');
@@ -180,6 +198,11 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
   const repliRef = useRef<EtatRepli>({ sousSeuilDepuis: null, replie: false });
   const qualiteRef = useRef<RecQualite>(qualite); qualiteRef.current = qualite;
   const resolutionEffectiveRef = useRef<ResolutionProgramme>(choisirResolution(qualite));
+  // Terrain 20/09 : le panneau disait « 1920×1080 » (qualité demandée) pour un fichier 1280×720. La résolution
+  // AFFICHÉE est désormais LUE dans l'en-tête écrit par la 1re tranche (ce que ffprobe lit), avec en secours
+  // `getSettings()` de la piste encodée ; `resolutionEffectiveRef` ne sert plus qu'au repli 720p et de dernier recours.
+  const enteteRef = useRef<Promise<MesurePiste | null>>(Promise.resolve(null));
+  const resolutionPisteRef = useRef<MesurePiste | null>(null);
   // FIX 0 octet (terrain 17/09) : la finalisation est UNIQUE et déclenchée par l'événement `stop` du
   // MediaRecorder, que l'arrêt soit demandé (« Arrêter »), spontané (pistes du Programme finies : rien
   // à l'antenne, compositeur abandonné) ou dû au démontage. Avant, seul « Arrêter » écoutait `stop` :
@@ -223,6 +246,7 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     setDureeSec(0); setTailleOctets(0); tailleRef.current = 0;
     webmRef.current = { offset: null, timecodeScale: 1_000_000, premier: true };
     repliRef.current = { sousSeuilDepuis: null, replie: false };
+    resolutionPisteRef.current = null; enteteRef.current = Promise.resolve(null);
     const q = qualiteRef.current;
     const debit = bitratePour(q);
     const nom = nomFichier(new Date(), capacite.extension);
@@ -273,7 +297,10 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       if (!stream || !stream.getVideoTracks().some((t) => t.readyState === 'live')) throw new Error('Programme indisponible : mettez une scène à l’antenne.');
       // 3. Un seul MediaRecorder, écriture par tranche d'une seconde.
       const rec = new MediaRecorder(stream, { mimeType: capacite.mime, videoBitsPerSecond: debit.video, audioBitsPerSecond: debit.audio });
-      rec.ondataavailable = (ev: BlobEvent) => { if (ev.data && ev.data.size > 0) pousserEcriture(ev.data); };
+      // 1re tranche non vide = l'en-tête du fichier (ftyp+moov / EBML+Tracks) : on y LIT la résolution que ffprobe lira,
+      // et on mesure la piste en secours. Lecture seule (arrayBuffer d'une copie), le morceau est écrit tel quel.
+      const ext = capacite.extension; let premiereTranche = true;
+      rec.ondataavailable = (ev: BlobEvent) => { if (!ev.data || ev.data.size <= 0) return; if (premiereTranche) { premiereTranche = false; resolutionPisteRef.current = mesurerPiste(rec.stream); enteteRef.current = ev.data.arrayBuffer().then((b) => resolutionFichier(new Uint8Array(b), ext)).catch(() => null); } pousserEcriture(ev.data); };
       rec.onerror = () => { setAvis('L’enregistreur du navigateur a signalé une erreur.'); };
       // Finalisation UNIQUE sur `stop`, quel qu'en soit le déclencheur (voir arretDemandeRef).
       arretDemandeRef.current = false;
@@ -315,9 +342,11 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
         if (!demonteRef.current) { setAvis(verdict.message); setEtat('erreur'); setResultat(null); }
         return;
       }
-      const res = resolutionEffectiveRef.current;
+      // Résolution AFFICHÉE = l'en-tête écrit (ce que ffprobe lit), secours = la piste (1re tranche, puis
+      // finalisation), dernier recours = la valeur demandée (dite comme telle par `resolutionSource`).
+      const res = resolutionEncodee(await enteteRef.current, [resolutionPisteRef.current, mesurerPiste(rec.stream)], resolutionEffectiveRef.current);
       const nom = fsaNomRef.current || opfsRef.current?.nom || nomFichier(new Date(), capacite.extension);
-      const base = { nom, dureeSec: dureeMs / 1000, tailleOctets: fini.taille, resolution: `${res.largeur}×${res.hauteur}`, format: capacite.codec };
+      const base = { nom, dureeSec: dureeMs / 1000, tailleOctets: fini.taille, resolution: libelleResolution(res), resolutionSource: res.source, format: capacite.codec };
       let resultat: RecResultat;
       if (strategieRef.current === 'fsa') {
         resultat = { ...base, dejaEcrit: true, emplacement: nom, sauvegarderSurAppareil: async () => { /* déjà sur le disque */ } };

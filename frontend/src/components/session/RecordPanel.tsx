@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Disc, Square, Download, Check, X, AlertTriangle, RotateCw, Loader2 } from 'lucide-react';
 import type { RecorderLike, RecQualite } from '@/components/session/RecordTypes';
-import { formatDureeRec, formatTaille, libelleFormat, motifIndisponible } from '@/lib/recordUi';
+import { formatDureeRec, formatTaille, libelleFormat, libelleVideoResultat, motifIndisponible } from '@/lib/recordUi';
 
 /**
  * ⏺ « Enregistrer le Programme » — mini panneau (desktop) / tiroir plein écran (mobile).
@@ -79,8 +79,8 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
           <dt className="text-white/45">Nom</dt><dd className="truncate" data-testid="record-nom">{resultat.dejaEcrit && resultat.emplacement ? resultat.emplacement : resultat.nom}</dd>
           <dt className="text-white/45">Durée</dt><dd className="tabular-nums">{formatDureeRec(resultat.dureeSec)}</dd>
           <dt className="text-white/45">Taille</dt><dd>{formatTaille(resultat.tailleOctets)}</dd>
-          <dt className="text-white/45">Résolution</dt><dd>{resultat.resolution}</dd>
-          <dt className="text-white/45">Format</dt><dd>{resultat.format}</dd>
+          {/* Terrain 20/09 : « 1280 × 720 · H.264 + AAC » — résolution LUE dans l'en-tête du fichier écrit (= ffprobe), jamais la qualité demandée. */}
+          <dt className="text-white/45">Vidéo</dt><dd data-testid="record-resolution">{libelleVideoResultat(resultat.resolution, resultat.format)}</dd>
         </dl>
         {avis && (
           <p className="text-xs text-amber-200/90 flex items-start gap-2" role="status" data-testid="record-avis">

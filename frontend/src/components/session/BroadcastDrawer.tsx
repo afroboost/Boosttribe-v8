@@ -80,6 +80,8 @@ const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boole
           <span className="block text-sm text-white/90 leading-tight">{d.label}{d.accountLabel ? <span className="text-white/45"> · {d.accountLabel}</span> : null}</span>
           <span className={`block text-[11px] leading-tight ${TON[d.status]}`} data-testid={`broadcast-status-${d.platform}`}>{libelleStatut(d, pendantLive)}</span>
         </span>
+        {/* Les actions (1 ou 2) passent à la ligne entre elles plutôt que d'écraser le statut (TikTok, Facebook). */}
+        <span className="flex flex-wrap items-center justify-end gap-1 shrink-0 max-w-[52%]">
         {/* Hors direct : interrupteur (compte relié / configuré). */}
         {!pendantLive && selectionnable(d.status) && (
           <button
@@ -168,6 +170,7 @@ const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boole
             <Square className="w-3 h-3" /> Arrêter
           </button>
         )}
+        </span>
       </div>
       {/* Configuration requise : diagnostic EXACT (noms des variables serveur), aucun bouton mort. */}
       {!pendantLive && action.kind === 'diagnostic' && (

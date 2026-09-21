@@ -269,8 +269,10 @@ class EgressFichierQA:
             await lkapi.aclose()
 
 
-# Un seul egress QA par room, en mémoire (le fichier reste dans le conteneur Egress).
+# Un seul egress QA par room, en mémoire (le fichier reste dans le conteneur Egress) ; on garde
+# aussi le DERNIER egress arrêté par room, pour lire son résultat final (taille, durée, erreur).
 _qa_fichier: Dict[str, Dict[str, Any]] = {}
+_qa_dernier: Dict[str, Dict[str, Any]] = {}
 _moteur_qa: Optional[EgressFichierQA] = None
 
 
@@ -296,9 +298,17 @@ async def qa_fichier_demarrer(room: str, user_id: str) -> Dict[str, Any]:
     return dict(_qa_fichier[room])
 
 
-async def qa_fichier_statut(room: str) -> Dict[str, Any]:
+async def qa_fichier_statut(room: str, egress_id: Optional[str] = None) -> Dict[str, Any]:
     e = _qa_fichier.get(room)
+    if egress_id:
+        # Lecture explicite d'un egress (le dernier arrêté, typiquement) : résultat final du fichier.
+        st = await moteur_qa().statut(egress_id)
+        return dict(_qa_dernier.get(room) or {}, actif=bool(e and e["egress_id"] == egress_id), **st)
     if not e:
+        d = _qa_dernier.get(room)
+        if d:
+            st = await moteur_qa().statut(d["egress_id"])
+            return dict(d, actif=False, dernier=True, **{k: v for k, v in st.items() if k != "egress_id"})
         return {"actif": False}
     st = await moteur_qa().statut(e["egress_id"])
     return dict(e, actif=True, **{k: v for k, v in st.items() if k != "egress_id"})
@@ -308,6 +318,7 @@ async def qa_fichier_arreter(room: str) -> Dict[str, Any]:
     e = _qa_fichier.pop(room, None)
     if not e:
         return {"actif": False}
+    _qa_dernier[room] = dict(e, fin_demandee=time.time())
     await moteur_qa().arreter(e["egress_id"])
     logger.info("[QA-EGRESS] arrêté room=%s egress=%s", room, e["egress_id"])
     st = await moteur_qa().statut(e["egress_id"])

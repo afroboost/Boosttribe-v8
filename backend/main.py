@@ -1407,9 +1407,11 @@ async def qa_egress_stop(body: QaEgressBody, authorization: Optional[str] = Head
 
 
 @app.get("/live/broadcast/qa-fichier/status")
-async def qa_egress_status(room: str, authorization: Optional[str] = Header(default=None)):
+async def qa_egress_status(room: str, egress_id: Optional[str] = None, authorization: Optional[str] = Header(default=None)):
     await _qa_egress_user(room, authorization)
-    return await _ms.qa_fichier_statut(room)
+    if egress_id and not re.fullmatch(r"EG_[A-Za-z0-9]{6,40}", egress_id):
+        raise HTTPException(status_code=400, detail="egress_id invalide")
+    return await _ms.qa_fichier_statut(room, egress_id)
 
 
 @app.post("/livekit/promote")

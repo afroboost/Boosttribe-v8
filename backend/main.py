@@ -1374,6 +1374,44 @@ async def broadcast_status(room: str, authorization: Optional[str] = Header(defa
     return await _ms.statut(room, uid)
 
 
+# ── 🧪 QA EGRESS INTERNE (sortie FICHIER dans le conteneur Egress, jamais RTMP) ─────────────────
+async def _qa_egress_user(room: str, authorization: Optional[str]) -> str:
+    """Hôte de la room ET identité de la liste blanche Afroboost (comme les destinations sociales)."""
+    uid = await _broadcast_user_hote(room, authorization)
+    user = await get_user_from_token(authorization)
+    email = (user.get("email") or "").strip().lower()
+    autorises = _social._emails_autorises() if "_social" in globals() else tuple(ADMIN_EMAILS)
+    if email not in autorises:
+        raise HTTPException(status_code=403, detail="QA Egress réservée au compte Afroboost")
+    return uid
+
+
+class QaEgressBody(BaseModel):
+    room: str
+
+
+@app.post("/live/broadcast/qa-fichier/start")
+async def qa_egress_start(body: QaEgressBody, authorization: Optional[str] = Header(default=None)):
+    uid = await _qa_egress_user(body.room, authorization)
+    _require_livekit_ready()
+    try:
+        return await _ms.qa_fichier_demarrer(body.room, uid)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/live/broadcast/qa-fichier/stop")
+async def qa_egress_stop(body: QaEgressBody, authorization: Optional[str] = Header(default=None)):
+    await _qa_egress_user(body.room, authorization)
+    return await _ms.qa_fichier_arreter(body.room)
+
+
+@app.get("/live/broadcast/qa-fichier/status")
+async def qa_egress_status(room: str, authorization: Optional[str] = Header(default=None)):
+    await _qa_egress_user(room, authorization)
+    return await _ms.qa_fichier_statut(room)
+
+
 @app.post("/livekit/promote")
 async def livekit_promote(body: LiveKitParticipantBody, authorization: Optional[str] = Header(default=None)):
     """(Hôte/co-hôte) promeut un viewer en stage — accorde le droit de publier (cap 10)."""

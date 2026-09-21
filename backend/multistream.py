@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -201,6 +202,116 @@ class MoteurEgress:
             return out
         finally:
             await lkapi.aclose()
+
+
+class EgressFichierQA:
+    """🧪 QA INTERNE — même moteur Egress (Track Composite sur les pistes PROGRAMME), mais la seule
+    sortie est un FICHIER MP4 dans le conteneur Egress (`EncodedFileOutput`, volume egress-tmp).
+    Jamais de `StreamOutput`, jamais d'URL RTMP/RTMPS : ce chemin ne peut rien envoyer à un réseau
+    social, quel que soit MULTISTREAM_MODE — le verrou `verrou_direct_reel` (RTMP) reste intact et
+    n'est pas consulté ici parce qu'aucune diffusion externe n'est possible par construction."""
+
+    DOSSIER = "/tmp"
+
+    def _api(self):
+        from livekit import api as lk  # import tardif
+
+        return lk, lk.LiveKitAPI(os.environ["LIVEKIT_URL"], os.environ["LIVEKIT_API_KEY"], os.environ["LIVEKIT_API_SECRET"])
+
+    async def pistes_programme(self, room: str) -> Dict[str, Optional[str]]:
+        """Retrouve dans la room les pistes publiées sous les noms `program` (vidéo) et `program-audio`
+        (audio) — celles du ProgramStream composé, jamais une caméra brute."""
+        lk, lkapi = self._api()
+        try:
+            resp = await lkapi.room.list_participants(lk.ListParticipantsRequest(room=room))
+            video: Optional[str] = None
+            audio: Optional[str] = None
+            for p in getattr(resp, "participants", []):
+                for t in getattr(p, "tracks", []):
+                    if t.name == "program" and not video:
+                        video = t.sid
+                    elif t.name == "program-audio" and not audio:
+                        audio = t.sid
+            return {"video_sid": video, "audio_sid": audio}
+        finally:
+            await lkapi.aclose()
+
+    async def demarrer(self, room: str, video_sid: str, audio_sid: Optional[str]) -> Dict[str, Any]:
+        lk, lkapi = self._api()
+        try:
+            nom = f"qa-{re.sub(r'[^A-Za-z0-9_-]', '', room)}-{int(time.time())}.mp4"
+            sortie = lk.EncodedFileOutput(file_type=lk.EncodedFileType.MP4, filepath=f"{self.DOSSIER}/{nom}", disable_manifest=True)
+            req = lk.TrackCompositeEgressRequest(room_name=room, video_track_id=video_sid, audio_track_id=audio_sid or "", file_outputs=[sortie])
+            info = await lkapi.egress.start_track_composite_egress(req)
+            return {"egress_id": info.egress_id, "fichier": nom}
+        finally:
+            await lkapi.aclose()
+
+    async def arreter(self, egress_id: str) -> None:
+        lk, lkapi = self._api()
+        try:
+            await lkapi.egress.stop_egress(lk.StopEgressRequest(egress_id=egress_id))
+        finally:
+            await lkapi.aclose()
+
+    async def statut(self, egress_id: str) -> Dict[str, Any]:
+        """Statut symbolique + résultats fichier (nom, taille, durée) — aucun secret, aucune URL."""
+        lk, lkapi = self._api()
+        try:
+            res = await lkapi.egress.list_egress(lk.ListEgressRequest(egress_id=egress_id))
+            for item in getattr(res, "items", []):
+                fichiers = [{"fichier": f.filename.rsplit("/", 1)[-1], "taille": int(f.size), "duree_ms": int(f.duration) // 1_000_000 if f.duration > 10_000_000 else int(f.duration),
+                             "debut": int(f.started_at), "fin": int(f.ended_at)} for f in getattr(item, "file_results", None) or []]
+                return {"egress_id": item.egress_id, "statut": lk.EgressStatus.Name(item.status) if hasattr(lk.EgressStatus, "Name") else str(item.status),
+                        "erreur": item.error or None, "debut": int(item.started_at), "fin": int(item.ended_at), "fichiers": fichiers}
+            return {"egress_id": egress_id, "statut": "INCONNU", "erreur": None, "fichiers": []}
+        finally:
+            await lkapi.aclose()
+
+
+# Un seul egress QA par room, en mémoire (le fichier reste dans le conteneur Egress).
+_qa_fichier: Dict[str, Dict[str, Any]] = {}
+_moteur_qa: Optional[EgressFichierQA] = None
+
+
+def definir_moteur_qa(m: Optional[EgressFichierQA]) -> None:
+    global _moteur_qa
+    _moteur_qa = m
+
+
+def moteur_qa() -> EgressFichierQA:
+    return _moteur_qa or EgressFichierQA()
+
+
+async def qa_fichier_demarrer(room: str, user_id: str) -> Dict[str, Any]:
+    if room in _qa_fichier:
+        return dict(_qa_fichier[room], deja_en_cours=True)
+    pistes = await moteur_qa().pistes_programme(room)
+    if not pistes.get("video_sid"):
+        raise ValueError("Aucune piste « program » publiée dans la room : mettez une scène à l'antenne (Programme vers les participants).")
+    res = await moteur_qa().demarrer(room, pistes["video_sid"], pistes.get("audio_sid"))
+    _qa_fichier[room] = {"egress_id": res["egress_id"], "fichier": res["fichier"], "user_id": user_id,
+                         "video_sid": pistes["video_sid"], "audio_sid": pistes.get("audio_sid"), "debut": time.time()}
+    logger.info("[QA-EGRESS] démarré room=%s egress=%s fichier=%s", room, res["egress_id"], res["fichier"])
+    return dict(_qa_fichier[room])
+
+
+async def qa_fichier_statut(room: str) -> Dict[str, Any]:
+    e = _qa_fichier.get(room)
+    if not e:
+        return {"actif": False}
+    st = await moteur_qa().statut(e["egress_id"])
+    return dict(e, actif=True, **{k: v for k, v in st.items() if k != "egress_id"})
+
+
+async def qa_fichier_arreter(room: str) -> Dict[str, Any]:
+    e = _qa_fichier.pop(room, None)
+    if not e:
+        return {"actif": False}
+    await moteur_qa().arreter(e["egress_id"])
+    logger.info("[QA-EGRESS] arrêté room=%s egress=%s", room, e["egress_id"])
+    st = await moteur_qa().statut(e["egress_id"])
+    return dict(e, actif=False, **{k: v for k, v in st.items() if k != "egress_id"})
 
 
 class MoteurMock(MoteurEgress):

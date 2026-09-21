@@ -118,3 +118,81 @@ def test_spordateur_403_a_travers_l_application(appli):
     assert client.post("/social/destinations/instagram/manual", json={"rtmp_url": "rtmps://a.b/c/", "stream_key": "k"},
                        headers={"Authorization": "Bearer spordateur"}).status_code == 403
     assert client.get("/social/destinations/status").status_code == 401
+
+
+# ── 🧪 QA EGRESS INTERNE (21/09) : sortie FICHIER seulement, réservée hôte + liste blanche Afroboost ──
+class _FauxMoteurQA:
+    def __init__(self):
+        self.journal = []
+        self.pistes = {"video_sid": "TR_prog", "audio_sid": "TR_progaudio"}
+
+    async def pistes_programme(self, room):
+        self.journal.append(("pistes", room))
+        return dict(self.pistes)
+
+    async def demarrer(self, room, video_sid, audio_sid):
+        self.journal.append(("demarrer", room, video_sid, audio_sid))
+        return {"egress_id": "EG_qa", "fichier": "qa-test.mp4"}
+
+    async def arreter(self, egress_id):
+        self.journal.append(("arreter", egress_id))
+
+    async def statut(self, egress_id):
+        return {"egress_id": egress_id, "statut": "EGRESS_ACTIVE", "erreur": None, "fichiers": [{"fichier": "qa-test.mp4", "taille": 12345, "duree_ms": 4000}]}
+
+
+def test_qa_egress_fichier_hote_afroboost_demarre_sur_les_pistes_program_et_jamais_rtmp(appli, monkeypatch):
+    m, ms, client = appli
+    monkeypatch.setattr(m, "_require_livekit_ready", lambda: None)
+    faux = _FauxMoteurQA()
+    ms.definir_moteur_qa(faux)
+    ms._qa_fichier.clear()
+    r = client.post("/live/broadcast/qa-fichier/start", json={"room": "ROOM1"}, headers={"Authorization": "Bearer afroboost"})
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["egress_id"] == "EG_qa" and j["fichier"] == "qa-test.mp4" and j["video_sid"] == "TR_prog" and j["audio_sid"] == "TR_progaudio"
+    assert ("demarrer", "ROOM1", "TR_prog", "TR_progaudio") in faux.journal, "Track Composite sur les pistes « program »"
+    # Idempotent : un second start ne relance rien.
+    r2 = client.post("/live/broadcast/qa-fichier/start", json={"room": "ROOM1"}, headers={"Authorization": "Bearer afroboost"})
+    assert r2.status_code == 200 and r2.json().get("deja_en_cours") is True
+    assert sum(1 for e in faux.journal if e[0] == "demarrer") == 1
+    st = client.get("/live/broadcast/qa-fichier/status", params={"room": "ROOM1"}, headers={"Authorization": "Bearer afroboost"}).json()
+    assert st["actif"] is True and st["fichiers"][0]["taille"] == 12345
+    fin = client.post("/live/broadcast/qa-fichier/stop", json={"room": "ROOM1"}, headers={"Authorization": "Bearer afroboost"}).json()
+    assert fin["actif"] is False and ("arreter", "EG_qa") in faux.journal
+    # Aucune trace RTMP/StreamOutput dans la réponse ni dans le moteur QA.
+    assert "rtmp" not in r.text.lower() and "rtmp" not in fin.get("fichier", "").lower()
+    ms.definir_moteur_qa(None)
+
+
+def test_qa_egress_fichier_refuse_sans_piste_program_et_hors_liste_blanche(appli, monkeypatch):
+    m, ms, client = appli
+    monkeypatch.setattr(m, "_require_livekit_ready", lambda: None)
+    faux = _FauxMoteurQA()
+    faux.pistes = {"video_sid": None, "audio_sid": None}
+    ms.definir_moteur_qa(faux)
+    ms._qa_fichier.clear()
+    r = client.post("/live/broadcast/qa-fichier/start", json={"room": "ROOM2"}, headers={"Authorization": "Bearer afroboost"})
+    assert r.status_code == 409 and "program" in r.json()["detail"], "rien à l'antenne → refus explicite, pas une caméra brute"
+    assert not any(e[0] == "demarrer" for e in faux.journal)
+    # Identité Spordateur : hôte de sa room, mais hors liste blanche → 403 avant toute lecture LiveKit.
+    r = client.post("/live/broadcast/qa-fichier/start", json={"room": "ROOM2"}, headers={"Authorization": "Bearer spordateur"})
+    assert r.status_code == 403
+    assert client.get("/live/broadcast/qa-fichier/status", params={"room": "ROOM2"}, headers={"Authorization": "Bearer spordateur"}).status_code == 403
+    assert client.post("/live/broadcast/qa-fichier/start", json={"room": "ROOM2"}).status_code == 401
+    ms.definir_moteur_qa(None)
+
+
+def test_qa_egress_fichier_structure_jamais_streamoutput_ni_verrou_touche():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "multistream.py"), encoding="utf-8").read()
+    debut = src.index("class EgressFichierQA")
+    fin = src.index("class MoteurMock")
+    bloc = src[debut:fin]
+    assert "EncodedFileOutput" in bloc and "file_outputs=[sortie]" in bloc
+    code = "\n".join(l for l in bloc.split("\n") if not l.strip().startswith(("#", '"""', "Jamais", "social,")) and "docstring" not in l)
+    # On ne juge que le CODE (les docstrings expliquent justement qu'il n'y a pas de RTMP).
+    code_sans_doc = "\n".join(l for l in code.split("\n") if "rtmp" not in l.lower() or "=" in l or "(" in l)
+    assert "StreamOutput" not in code_sans_doc and "rtmp" not in code_sans_doc.lower(), "le chemin QA n'a aucune sortie réseau"
+    assert 'name == "program"' in bloc and 'name == "program-audio"' in bloc, "pistes PROGRAMME, pas la caméra"
+    # Le verrou du direct réel est inchangé.
+    assert "def verrou_direct_reel" in src and "SOCIAL_LIVE_GO" in src

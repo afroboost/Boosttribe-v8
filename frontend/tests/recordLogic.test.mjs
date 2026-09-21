@@ -134,3 +134,34 @@ test('durée : float64 big-endian, unités = TimecodeScale', () => {
   assert.equal(new DataView(b.buffer).getFloat64(0, false), 1234.5);
   assert.equal(dureeEnUnites(5000, 1_000_000), 5000); assert.equal(dureeEnUnites(5000, 500_000), 10000);
 });
+
+// ── FIX MP4/QuickTime : fichier de 0 octet (terrain 17/09) ─────────────────
+import { antennePourEnregistrer, verdictFinalisation } from './.build/recordLogic.mjs';
+
+test('rien à l’antenne + caméra coach → on met le coach à l’antenne avant d’enregistrer', () => {
+  assert.deepEqual(antennePourEnregistrer(false, [{ kind: 'coach' }, { kind: 'participant' }]), { action: 'mettre_coach' });
+});
+
+test('rien à l’antenne et pas de caméra → refus explicite (jamais un fichier vide)', () => {
+  const v = antennePourEnregistrer(false, [{ kind: 'participant' }]);
+  assert.equal(v.action, 'refuser'); assert.match(v.message, /caméra|antenne/);
+});
+
+test('déjà une scène à l’antenne → rien à faire', () => {
+  assert.deepEqual(antennePourEnregistrer(true, []), { action: 'rien' });
+});
+
+test('0 octet n’est JAMAIS « prêt » — arrêt demandé ou non', () => {
+  assert.equal(verdictFinalisation({ octets: 0, arretDemande: true, dureeSec: 60 }).etat, 'erreur');
+  assert.equal(verdictFinalisation({ octets: 0, arretDemande: false, dureeSec: 1 }).etat, 'erreur');
+  assert.match(verdictFinalisation({ octets: 0, arretDemande: true, dureeSec: 60 }).message, /antenne/);
+});
+
+test('arrêt spontané avec des octets → prêt, mais l’hôte est prévenu (durée finalisée)', () => {
+  const v = verdictFinalisation({ octets: 1_276_030, arretDemande: false, dureeSec: 26.5 });
+  assert.equal(v.etat, 'pret'); assert.match(v.message, /00:00:26/);
+});
+
+test('arrêt demandé avec des octets → prêt, sans avis', () => {
+  assert.deepEqual(verdictFinalisation({ octets: 10, arretDemande: true, dureeSec: 3 }), { etat: 'pret', message: null });
+});

@@ -57,6 +57,26 @@ logger = logging.getLogger("boosttribe-social")
 for _nom_bavard in ("httpx", "httpcore"):
     logging.getLogger(_nom_bavard).setLevel(logging.WARNING)
 
+
+class _MasqueCallbackOAuth(logging.Filter):
+    """Le journal d'accès uvicorn imprime le chemin complet de chaque requête : sur `/social/oauth/*/callback`
+    il contenait `code=` (code OAuth à usage unique) et `state=` (jeton chiffré). On masque ces deux valeurs,
+    et rien d'autre (les autres chemins et paramètres restent lisibles)."""
+    _motif = re.compile(r"(?<![a-z_])(code|state)=[^&\s\"]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.args and any("/social/oauth/" in str(a) for a in record.args):
+                record.args = tuple(self._motif.sub(r"\1=<masqué>", a) if isinstance(a, str) else a for a in record.args)
+            elif "/social/oauth/" in str(record.msg):
+                record.msg = self._motif.sub(r"\1=<masqué>", str(record.msg))
+        except Exception:  # noqa: BLE001 — un filtre de journal ne doit jamais faire tomber une requête
+            pass
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_MasqueCallbackOAuth())
+
 PLATFORMS = ("instagram", "facebook", "youtube", "tiktok")
 PLATEFORMES_OAUTH = ("facebook", "youtube")
 PLATEFORMES_MANUELLES = ("instagram", "tiktok")
@@ -682,7 +702,8 @@ async def _echanger_code_facebook(code: str) -> Dict[str, Any]:
         permissions = None
         if pages.status_code == 200 and not any(str(p.get("id")) == attendu for p in (pages.json().get("data") or [])):
             permissions = await c.get(f"{FB_GRAPH}/me/permissions", params={"access_token": jeton_user})
-            directe = await c.get(f"{FB_GRAPH}/{attendu}", params={"access_token": jeton_user, "fields": "id,name,access_token,tasks"})
+            # `tasks` n'existe que sur l'arête /me/accounts — sur le nœud Page, Meta répond (#100) « nonexisting field ».
+            directe = await c.get(f"{FB_GRAPH}/{attendu}", params={"access_token": jeton_user, "fields": "id,name,access_token"})
     if pages.status_code != 200:
         # Erreur Graph STRUCTURÉE (type / code / subcode / message) — jamais le jeton, jamais le code OAuth.
         try:
@@ -716,8 +737,8 @@ async def _echanger_code_facebook(code: str) -> Dict[str, Any]:
     if directe is not None:
         if directe.status_code == 200:
             j = directe.json() or {}
-            logger.info("[SOCIAL] facebook DIRECT_PAGE HTTP=200 PAGE_ID=%s PAGE_NAME=%s HAS_ACCESS_TOKEN=%s TASKS=%s",
-                        j.get("id"), j.get("name"), str(bool(j.get("access_token"))).lower(), ",".join(j.get("tasks") or []) or "-")
+            logger.info("[SOCIAL] facebook DIRECT_PAGE HTTP=200 PAGE_ID=%s PAGE_NAME=%s HAS_ACCESS_TOKEN=%s",
+                        j.get("id"), j.get("name"), str(bool(j.get("access_token"))).lower())
             # Garde inchangée : SEULE la Page attendue, AVEC un jeton de Page. Jamais « la première Page ».
             if str(j.get("id")) == attendu and j.get("access_token"):
                 return {"account_id": attendu, "account_label": j.get("name") or "Facebook Afroboost",

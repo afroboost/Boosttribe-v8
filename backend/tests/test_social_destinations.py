@@ -369,6 +369,9 @@ class _FauxHttpx:
         if "/me/permissions" in url:
             return _Reponse(200, {"data": [{"permission": "pages_show_list", "status": "granted"}, {"permission": "publish_video", "status": "declined"}]})
         if url.endswith("/100000000000001"):  # consultation DIRECTE de la Page attendue (assets Business)
+            # Prod 22/09 : « (#100) Tried accessing nonexisting field (tasks) » — `tasks` n'existe que sur /me/accounts
+            if "tasks" in (params or {}).get("fields", ""):
+                return _Reponse(400, {"error": {"message": "(#100) Tried accessing nonexisting field (tasks)", "type": "OAuthException", "code": 100}})
             if _FauxHttpx.page_directe is not None:
                 return _FauxHttpx.page_directe
             return _Reponse(400, {"error": {"message": "Unsupported get request", "type": "GraphMethodException", "code": 100, "error_subcode": 33}})
@@ -751,7 +754,7 @@ def test_o5_me_accounts_vide_mais_page_accordee_via_business_consultation_direct
     t = caplog.text
     assert "ACCOUNTS_COUNT=0" in t and "MATCH_FOUND=false" in t
     assert "PERMISSIONS granted=pages_show_list declined=publish_video" in t
-    assert "DIRECT_PAGE HTTP=200 PAGE_ID=100000000000001 PAGE_NAME=Afroboost HAS_ACCESS_TOKEN=true TASKS=MANAGE,CREATE_CONTENT" in t
+    assert "DIRECT_PAGE HTTP=200 PAGE_ID=100000000000001 PAGE_NAME=Afroboost HAS_ACCESS_TOKEN=true" in t
     assert "PAGE-TOKEN" not in t and "USER-TOKEN-FB" not in t and "CODE-FB" not in t
     row = asyncio.run(store.lire("user-afroboost-0001", "facebook"))
     assert row["account_id"] == "100000000000001" and row["mode"] == "oauth" and "PAGE-TOKEN" not in str(row)
@@ -781,3 +784,17 @@ def test_o6_consultation_directe_refuse_autre_id_ou_sans_jeton_ou_erreur(oauth, 
     assert client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False).headers["location"].endswith(":refused")
     assert "DIRECT_PAGE GRAPH_ERROR HTTP=400 type=GraphMethodException code=100 subcode=33 message=Unsupported get request" in caplog.text
     assert "PAGE-TOKEN" not in caplog.text and "USER-TOKEN-FB" not in caplog.text
+
+
+def test_o7_journal_acces_uvicorn_masque_code_et_state_du_callback(contexte, caplog):
+    """Le journal d'accès uvicorn imprime le chemin complet : le callback OAuth y apparaissait avec `code=` (code
+    OAuth à usage unique) et `state=` (jeton chiffré). Un filtre les masque ; les autres chemins sont intacts."""
+    mod, store, client, h = contexte
+    acces = logging.getLogger("uvicorn.access")
+    with caplog.at_level(logging.INFO):
+        acces.info('%s - "%s %s HTTP/1.1" %d', "10.0.1.2:1", "GET", "/social/oauth/facebook/callback?code=CODE-SECRET-XYZ&state=STATE-SECRET-ABC", 302)
+        acces.info('%s - "%s %s HTTP/1.1" %d', "10.0.1.2:1", "GET", "/social/oauth/facebook/start?return_to=https%3A%2F%2Fafroboost.com%2Flive", 200)
+    t = caplog.text
+    assert "CODE-SECRET-XYZ" not in t and "STATE-SECRET-ABC" not in t
+    assert "code=<masqué>" in t and "state=<masqué>" in t
+    assert "return_to=https%3A%2F%2Fafroboost.com%2Flive" in t, "les autres chemins ne sont pas touchés"

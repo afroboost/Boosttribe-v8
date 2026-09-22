@@ -38,7 +38,7 @@ AFRO = {"Authorization": "Bearer jeton-banc"}
 SPORDATEUR = {"Authorization": "Bearer jeton-spordateur"}
 AUTRE_AFRO = {"Authorization": "Bearer jeton-afroboost-2"}
 VARS_FB = {"FACEBOOK_APP_ID": "123456", "FACEBOOK_APP_SECRET": "secret-app-fb", "AFROBOOST_FB_PAGE_ID": "100000000000001",
-           "SOCIAL_OAUTH_REDIRECT_BASE": "https://api-live.afroboost.com"}
+           "FACEBOOK_LOGIN_CONFIG_ID": "424242424242424", "SOCIAL_OAUTH_REDIRECT_BASE": "https://api-live.afroboost.com"}
 VARS_YT = {"GOOGLE_CLIENT_ID": "abc.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET": "secret-google",
            "AFROBOOST_YT_CHANNEL_ID": "UCafroboost0000000000", "SOCIAL_OAUTH_REDIRECT_BASE": "https://api-live.afroboost.com"}
 TOUTES_VARS = ("SOCIAL_LIVE_MODE", "MULTISTREAM_MODE", "SOCIAL_LIVE_GO", "SOCIAL_SECRETS_KEY", "SOCIAL_ALLOWED_EMAILS",
@@ -232,7 +232,7 @@ def test_g_config_required_sans_variables_noms_exacts(contexte_nu):
     assert r.status_code == 200
     par = {d["platform"]: d for d in r.json()["destinations"]}
     assert all(par[p]["status"] == "config_required" for p in ("instagram", "facebook", "youtube", "tiktok"))
-    assert par["facebook"]["missing"] == ["SOCIAL_SECRETS_KEY", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID", "SOCIAL_OAUTH_REDIRECT_BASE"]
+    assert par["facebook"]["missing"] == ["SOCIAL_SECRETS_KEY", "FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID", "FACEBOOK_LOGIN_CONFIG_ID", "SOCIAL_OAUTH_REDIRECT_BASE"]
     assert par["youtube"]["missing"] == ["SOCIAL_SECRETS_KEY", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "AFROBOOST_YT_CHANNEL_ID", "SOCIAL_OAUTH_REDIRECT_BASE"]
     assert par["instagram"]["missing"] == ["SOCIAL_SECRETS_KEY"] and par["tiktok"]["missing"] == ["SOCIAL_SECRETS_KEY"]
     # jamais une VALEUR : les noms seulement
@@ -256,7 +256,7 @@ def test_g2_config_partielle_liste_seulement_ce_qui_manque(monkeypatch):
     mod = charger()
     store, client = _monter(mod)
     par = {d["platform"]: d for d in client.get("/social/destinations/status", headers=AFRO).json()["destinations"]}
-    assert par["facebook"]["status"] == "config_required" and par["facebook"]["missing"] == ["FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID"]
+    assert par["facebook"]["status"] == "config_required" and par["facebook"]["missing"] == ["FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID", "FACEBOOK_LOGIN_CONFIG_ID"]
     assert par["youtube"]["status"] == "not_connected" and par["youtube"]["missing"] == []
     assert par["instagram"]["status"] == "not_configured" and par["tiktok"]["status"] == "not_configured"
     assert mod.variables_manquantes("youtube") == []
@@ -389,7 +389,7 @@ def test_k_oauth_start_url_reelle_et_state_signe(oauth):
     url = r.json()["url"]
     assert url.startswith("https://www.facebook.com/v25.0/dialog/oauth?") and "client_id=123456" in url
     assert "redirect_uri=https%3A%2F%2Fapi-live.afroboost.com%2Fsocial%2Foauth%2Ffacebook%2Fcallback" in url
-    assert "pages_manage_posts" in url and "secret-app-fb" not in url, "le secret d'app ne sort jamais"
+    assert "config_id=424242424242424" in url and "secret-app-fb" not in url, "le secret d'app ne sort jamais"
     y = client.get("/social/oauth/youtube/start", headers=h).json()["url"]
     assert y.startswith("https://accounts.google.com/o/oauth2/v2/auth?") and "access_type=offline" in y and "secret-google" not in y
     # state altéré / plateforme croisée
@@ -562,7 +562,7 @@ def test_n1_facebook_manuel_sans_variables_meta(monkeypatch, caplog):
     fb = _etat(client, AFRO, "facebook")
     # Sans Meta : « Configuration Meta requise » (noms exacts) MAIS le repli manuel est possible et le dit
     assert fb["status"] == "config_required"
-    assert fb["missing"] == ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID"]
+    assert fb["missing"] == ["FACEBOOK_APP_ID", "FACEBOOK_APP_SECRET", "AFROBOOST_FB_PAGE_ID", "FACEBOOK_LOGIN_CONFIG_ID"]
     assert fb["manual_ok"] is True and fb["oauth_ok"] is False
     # OAuth reste refusé proprement (409), le manuel passe
     assert client.get("/social/oauth/facebook/start", headers=AFRO).status_code == 409
@@ -606,15 +606,56 @@ def test_n3_sans_chiffrement_pas_de_repli_et_youtube_inchange(contexte_nu, monke
     assert yt["status"] == "not_connected" and yt["missing"] == []
 
 
-def test_n4_facebook_oauth_url_scopes_live_et_config_id_business(contexte, monkeypatch):
-    """Meta : créer un `live_videos` sur une Page exige `publish_video` ; l'app Afroboost en ligne utilise
-    « Facebook Login for Business », qui veut `config_id` (jamais `scope`) dans l'URL du dialogue."""
+def test_n4_facebook_login_for_business_config_id_obligatoire(contexte, monkeypatch):
+    """L'app Afroboost EN LIGNE (1656270458951182) utilise « Facebook Login for Business » : le dialogue exige
+    `config_id` (les permissions vivent dans la configuration). Sans FACEBOOK_LOGIN_CONFIG_ID → config_required
+    propre (nom exact), jamais une URL `scope=` vouée à l'échec."""
+    mod, store, client, h = contexte
+    monkeypatch.delenv("FACEBOOK_LOGIN_CONFIG_ID")
+    fb = _etat(client, h, "facebook")
+    assert fb["status"] == "config_required" and fb["missing"] == ["FACEBOOK_LOGIN_CONFIG_ID"]
+    assert fb["manual_ok"] is True and fb["oauth_ok"] is False, "le repli RTMPS manuel reste possible"
+    o = client.get("/social/oauth/facebook/start", params={"return_to": "https://afroboost.com/live/s"}, headers=h)
+    assert o.status_code == 409 and o.json()["detail"]["missing"] == ["FACEBOOK_LOGIN_CONFIG_ID"]
+    # YouTube : rien ne change
+    assert _etat(client, h, "youtube")["status"] == "not_connected"
+
+
+def test_n5_facebook_url_flb_complete_et_config_studiio_jamais_utilisee(contexte):
     mod, store, client, h = contexte
     url = client.get("/social/oauth/facebook/start", params={"return_to": "https://afroboost.com/live/s"}, headers=h).json()["url"]
-    assert "publish_video" in unquote(url) and "pages_manage_posts" in unquote(url) and "config_id=" not in url
-    monkeypatch.setenv("FACEBOOK_LOGIN_CONFIG_ID", "1342881384674039")
-    url2 = client.get("/social/oauth/facebook/start", params={"return_to": "https://afroboost.com/live/s"}, headers=h).json()["url"]
-    assert "config_id=1342881384674039" in url2 and "scope=" not in url2 and "response_type=code" in url2
-    assert "override_default_response_type=true" in url2
-    # la variable est FACULTATIVE : jamais dans les « manquantes »
-    assert "FACEBOOK_LOGIN_CONFIG_ID" not in mod.variables_manquantes("facebook")
+    q = unquote(url)
+    assert url.startswith("https://www.facebook.com/v25.0/dialog/oauth?")
+    assert "client_id=123456" in q and "config_id=424242424242424" in q
+    assert "redirect_uri=https://api-live.afroboost.com/social/oauth/facebook/callback" in q
+    assert "response_type=code" in q and "override_default_response_type=true" in q and "state=" in q
+    assert "scope=" not in q, "FLB : les permissions vivent dans la configuration, pas dans scope"
+    # la valeur vient de l'ENVIRONNEMENT : aucun identifiant de configuration (Afroboost Live OU Studiio) codé en dur
+    src = open(MODULE, encoding="utf-8").read()
+    assert "1342881384674039" not in src and "2979197062472428" not in src and "424242424242424" not in src
+    assert "1342881384674039" not in url, "la configuration Studiio n'est jamais utilisée"
+    assert "secret-app-fb" not in url
+
+
+def test_n6_callback_flb_page_afroboost_seule_acceptee_jamais_la_premiere(oauth, caplog):
+    """/me/accounts renvoie la Page Studiio EN PREMIER puis Afroboost : seule 100000000000001 est retenue ;
+    sans elle → refus propre, rien de stocké ; le jeton de Page n'apparaît ni en clair ni dans les journaux."""
+    mod, store, client, h = oauth
+    caplog.set_level(logging.INFO)
+    _FauxHttpx.pages = [{"id": "555555555555555", "name": "Studiio", "access_token": "PAGE-TOKEN-STUDIIO"},
+                        {"id": "100000000000001", "name": "Afroboost", "access_token": "PAGE-TOKEN-AFROBOOST-SECRET"}]
+    state = _state_depuis(client, h, "facebook", "https://afroboost.com/live/session/abc")
+    r = client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "https://afroboost.com/live/session/abc#social=facebook:connected"
+    row = asyncio.run(store.lire("user-afroboost-0001", "facebook"))
+    assert row["account_id"] == "100000000000001" and row["mode"] == "oauth"
+    assert row["oauth_token_enc"] and "PAGE-TOKEN" not in str(row), "jeton de Page stocké CHIFFRÉ"
+    assert mod._dechiffrer(row["oauth_token_enc"]) == "PAGE-TOKEN-AFROBOOST-SECRET", "et déchiffrable côté serveur seulement"
+    assert "PAGE-TOKEN" not in caplog.text and "PAGE-TOKEN" not in client.get("/social/destinations/status", headers=h).text
+    # sans la Page Afroboost (même si d'autres Pages existent) → refus, aucune écriture
+    asyncio.run(store.supprimer("user-afroboost-0001", "facebook"))
+    _FauxHttpx.pages = [{"id": "555555555555555", "name": "Studiio", "access_token": "PAGE-TOKEN-STUDIIO"}]
+    state = _state_depuis(client, h, "facebook")
+    r = client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
+    assert r.headers["location"].endswith("#social=facebook:refused")
+    assert asyncio.run(store.lire("user-afroboost-0001", "facebook")) is None

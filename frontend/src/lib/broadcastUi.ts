@@ -32,7 +32,7 @@ export function libelleStatut(d: StatutSource, live: boolean): string {
     case 'restricted': return 'Accès réservé';
     case 'not_connected': return 'Non connecté';
     case 'config_required': return d.platform === 'facebook' && d.manualOk ? 'Configuration Meta requise' : 'Configuration requise';
-    case 'not_configured': return d.platform === 'tiktok' ? 'Accès RTMP TikTok non activé sur ce compte' : 'Non configuré';
+    case 'not_configured': return d.platform === 'tiktok' ? 'Aucune clé de diffusion externe fournie par TikTok' : 'Non configuré';
     case 'configured': return live && !d.selected ? 'Non diffusé' : (d.keyHint ? `Configuré — clé enregistrée (…${d.keyHint})` : 'Configuré');
     case 'off': return 'Non diffusé';
     case 'connected': return live && !d.selected ? 'Non diffusé' : 'Connecté';
@@ -59,7 +59,7 @@ export type ActionLigne =
   | { kind: 'configure'; libelle: 'Configurer' | 'Configurer manuellement' | 'J’ai une clé' }
   | { kind: 'configured'; libelle: 'Modifier' }
   | { kind: 'diagnostic'; libelle: 'Configuration requise' | 'Configuration Meta requise'; missing: string[] }
-  | { kind: 'aide_encodeur'; libelle: 'Comment l’activer' }
+  | { kind: 'aide_encodeur'; libelle: 'Comment faire' }
   | { kind: 'reserve'; libelle: 'Accès réservé' }
   | { kind: 'none' };
 
@@ -75,7 +75,7 @@ export function actionPour(d: StatutSource): ActionLigne {
     case 'reauth': return kind === 'oauth' ? { kind: 'oauth', libelle: 'Reconnecter' } : { kind: 'configure', libelle: 'Configurer' };
     // TikTok : la clé RTMP externe n'est pas prouvée disponible sur ce compte (LIVE Studio n'en fournit pas) →
     // la première action est l'EXPLICATION, jamais un « Configurer » qui mène à une impasse.
-    case 'not_configured': return d.platform === 'tiktok' ? { kind: 'aide_encodeur', libelle: 'Comment l’activer' } : { kind: 'configure', libelle: 'Configurer' };
+    case 'not_configured': return d.platform === 'tiktok' ? { kind: 'aide_encodeur', libelle: 'Comment faire' } : { kind: 'configure', libelle: 'Configurer' };
     case 'configured': return { kind: 'configured', libelle: 'Modifier' };
     default: return { kind: 'none' };
   }
@@ -94,9 +94,23 @@ export function actionSecondaire(d: StatutSource): ActionLigne | null {
   return null;
 }
 
-/** TikTok : la cause exacte, prouvée le 21/09 sur le compte Afroboost (LIVE Center accessible, LIVE Studio
- *  téléchargeable, AUCUNE entrée « logiciel de streaming » sur le web). Ni promesse, ni bouton mort. */
-export const AIDE_TIKTOK_ENCODEUR = 'TikTok doit d’abord autoriser la diffusion par logiciel externe pour ce compte. LIVE Studio (l’application TikTok) diffuse lui-même et ne fournit pas de clé. Quand TikTok l’active, l’URL du serveur et la clé apparaissent dans l’application TikTok : LIVE → PC/Mac → Logiciel de streaming. Vous les avez ? Utilisez « J’ai une clé ».';
+/** TikTok — ce qui est PROUVÉ sur le compte (22/09) : ni URL de serveur, ni clé de diffusion externe ne sont
+ *  proposées par TikTok. La cause exacte appartient à TikTok (éligibilité) : on ne la devine pas, on ne cite
+ *  aucun seuil chiffré, et on n'affiche aucun bouton « Demander l'accès » qui n'existe pas côté TikTok. */
+export const AIDE_TIKTOK_ENCODEUR = 'TikTok ne fournit pas encore d’URL de serveur ni de clé de diffusion externe pour ce compte. L’accès aux outils de diffusion externe est contrôlé par TikTok et peut dépendre de l’éligibilité du compte. Afroboost Live pourra diffuser vers TikTok dès que TikTok affichera ces deux informations dans les outils LIVE de votre compte.';
+
+/** Où chercher, quoi chercher, quoi faire ensuite — les étapes réellement suivies le 22/09 sur le compte. */
+export const GUIDE_TIKTOK_ENCODEUR: string[] = [
+  'Ouvrez TikTok sur ordinateur, avec le compte qui diffusera.',
+  'Allez dans « Plus » (…) → « Outils LIVE » → « Centre LIVE » (LIVE Center).',
+  'Cherchez une entrée « Logiciel de streaming » / « Streaming software », ou « Server URL » et « Stream Key ».',
+  'Si TikTok affiche une URL de serveur et une clé de diffusion : revenez ici et utilisez « J’ai une clé ».',
+  'Si ces informations n’apparaissent nulle part : ce compte ne dispose pas aujourd’hui de la diffusion externe ; rien à configurer pour l’instant.',
+];
+
+/** LIVE Studio existe sur ce compte, mais c'est un encodeur TikTok : il diffuse LUI-MÊME. Aucun pont n'est
+ *  promis — Afroboost n'envoie rien dans LIVE Studio (ce serait une fonctionnalité à part entière). */
+export const NOTE_TIKTOK_LIVE_STUDIO = 'TikTok LIVE Studio est disponible sur votre compte, mais LIVE Studio diffuse lui-même vers TikTok et ne fournit aucune clé externe visible ici.';
 
 /** Texte du diagnostic : les NOMS des variables serveur à poser (jamais leurs valeurs). */
 export function diagnosticConfig(missing: string[]): string {

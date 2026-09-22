@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Instagram, Facebook, Youtube, Radio, RotateCw, Square, ExternalLink, X, Settings2, AlertTriangle, FlaskConical, HelpCircle } from 'lucide-react';
 import type { BroadcastDestination, BroadcastLike, BroadcastPlatform, BroadcastStatus } from '@/components/session/BroadcastTypes';
 import { BroadcastConfigForm } from '@/components/session/BroadcastConfigForm';
-import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR } from '@/lib/broadcastUi';
+import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR, GUIDE_TIKTOK_ENCODEUR, NOTE_TIKTOK_LIVE_STUDIO } from '@/lib/broadcastUi';
 
 /**
  * 📡 « Diffuser en direct » — le tiroir des RÉSEAUX.
@@ -16,7 +16,7 @@ import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour,
  *   Configuration requise = diagnostic avec les NOMS des variables serveur) ;
  * - 21/09 (suite) : Facebook a DEUX voies — « Connecter avec Meta » (OAuth) et « Configurer manuellement »
  *   (URL RTMPS + clé de Live Producer), pour ne plus jamais être bloqué par une App Review ; TikTok dit la
- *   cause exacte (« Accès RTMP non activé sur ce compte » + « Comment l’activer ») au lieu d'un « Configurer »
+ *   fait prouvé (« Aucune clé de diffusion externe fournie par TikTok » + « Comment faire » : un guide) au lieu d'un « Configurer »
  *   qui mène à une impasse ;
  * - une panne isolée (TikTok) n'arrête pas les autres : « Réessayer » ne touche qu'elle ;
  * - « Arrêter tout » demande confirmation ; l'arrêt d'une seule destination, non ;
@@ -186,12 +186,18 @@ const Ligne: React.FC<{ d: BroadcastDestination; b: BroadcastLike; ouvert: boole
           <span>{EXPLICATION_ACCES_RESERVE}</span>
         </p>
       )}
-      {/* TikTok : la cause exacte, dépliée à la demande — jamais une promesse. */}
+      {/* TikTok : ce que TikTok ne fournit pas, où le chercher, et quoi faire ensuite — jamais une promesse. */}
       {!pendantLive && aide && action.kind === 'aide_encodeur' && (
-        <p className="mt-1.5 ml-8 flex items-start gap-1.5 text-[11px] leading-snug text-white/65" data-testid={`broadcast-aide-texte-${d.platform}`}>
-          <HelpCircle className="w-3.5 h-3.5 mt-px shrink-0" aria-hidden="true" />
-          <span>{AIDE_TIKTOK_ENCODEUR}</span>
-        </p>
+        <div className="mt-1.5 ml-8 space-y-1.5" data-testid={`broadcast-aide-texte-${d.platform}`}>
+          <p className="flex items-start gap-1.5 text-[11px] leading-snug text-white/65">
+            <HelpCircle className="w-3.5 h-3.5 mt-px shrink-0" aria-hidden="true" />
+            <span>{AIDE_TIKTOK_ENCODEUR}</span>
+          </p>
+          <ol className="list-decimal pl-8 space-y-0.5 text-[11px] leading-snug text-white/55" data-testid={`broadcast-aide-guide-${d.platform}`}>
+            {GUIDE_TIKTOK_ENCODEUR.map((etape) => <li key={etape}>{etape}</li>)}
+          </ol>
+          <p className="text-[11px] leading-snug text-white/45">{NOTE_TIKTOK_LIVE_STUDIO}</p>
+        </div>
       )}
       {!pendantLive && ouvert && formulairePossible && (
         <BroadcastConfigForm d={d} onSave={(s) => b.configure(d.platform, s)} onForget={() => b.forget(d.platform)} onClose={() => onOuvrir(false)} />

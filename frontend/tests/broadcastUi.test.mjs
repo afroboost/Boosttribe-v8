@@ -72,7 +72,7 @@ test('aucune présélection : l’état vient du hook, l’UI n’appelle jamais
 
 test('interrupteur : role=switch + aria-checked, seulement pour un compte relié', () => {
   assert.ok(DRAWER.includes('role="switch"') && DRAWER.includes('aria-checked={d.selected}'));
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR } from '@/lib/broadcastUi';"), 'helpers purs importés');
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR, GUIDE_TIKTOK_ENCODEUR, NOTE_TIKTOK_LIVE_STUDIO } from '@/lib/broadcastUi';"), 'helpers purs importés');
   assert.ok(DRAWER.includes('{!pendantLive && selectionnable(d.status) && ('), 'rendu conditionné à selectionnable');
 });
 
@@ -100,7 +100,7 @@ test('Configurer (Instagram / TikTok) : bouton → formulaire séparé ; Configu
   assert.ok(DRAWER.includes('<BroadcastConfigForm d={d} onSave={(s) => b.configure(d.platform, s)} onForget={() => b.forget(d.platform)}'), 'formulaire câblé sur configure()/forget()');
   assert.ok(DRAWER.includes("{!pendantLive && action.kind === 'diagnostic' && ("), 'diagnostic');
   assert.ok(DRAWER.includes('data-testid={`broadcast-diagnostic-${d.platform}`}') && DRAWER.includes('diagnosticConfig(action.missing)'), 'noms des variables serveur');
-  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR } from '@/lib/broadcastUi';"));
+  assert.ok(DRAWER.includes("import { libelleStatut, selectionnable, nbSelectionnes, formatDuree, actionPour, actionSecondaire, diagnosticConfig, EXPLICATION_ACCES_RESERVE, AIDE_TIKTOK_ENCODEUR, GUIDE_TIKTOK_ENCODEUR, NOTE_TIKTOK_LIVE_STUDIO } from '@/lib/broadcastUi';"));
   assert.ok(DRAWER.includes('data-testid="broadcast-avis"'), 'avis (retour OAuth, refus) affiché');
 });
 
@@ -223,22 +223,48 @@ test('Facebook : OAuth Meta OU repli RTMPS manuel — deux actions, jamais un «
   assert.ok(!/Connexion Facebook/.test(aideConnexion('facebook', 'manual')));
 });
 
-test('TikTok : « Accès RTMP TikTok non activé sur ce compte » + « Comment l’activer » — jamais un Configurer en impasse', async () => {
-  const { actionPour, actionSecondaire, libelleStatut, AIDE_TIKTOK_ENCODEUR } = await import('./.build/broadcastUi.mjs');
+test('TikTok : message précis, guide numéroté, note LIVE Studio — jamais un seuil d’abonnés en dur', async () => {
+  const { actionPour, actionSecondaire, libelleStatut, AIDE_TIKTOK_ENCODEUR, GUIDE_TIKTOK_ENCODEUR, NOTE_TIKTOK_LIVE_STUDIO } = await import('./.build/broadcastUi.mjs');
   const tiktok = { platform: 'tiktok', status: 'not_configured', selected: false, kind: 'manual', manualOk: true };
-  assert.equal(libelleStatut(tiktok, false), 'Accès RTMP TikTok non activé sur ce compte');
-  assert.deepEqual(actionPour(tiktok), { kind: 'aide_encodeur', libelle: 'Comment l’activer' });
+  // 1. état : ce que TikTok ne fournit PAS (fait prouvé), jamais une cause devinée
+  assert.equal(libelleStatut(tiktok, false), 'Aucune clé de diffusion externe fournie par TikTok');
+  assert.deepEqual(actionPour(tiktok), { kind: 'aide_encodeur', libelle: 'Comment faire' });
   assert.deepEqual(actionSecondaire(tiktok), { kind: 'configure', libelle: 'J’ai une clé' });
-  assert.match(AIDE_TIKTOK_ENCODEUR, /logiciel externe/i);
-  assert.match(AIDE_TIKTOK_ENCODEUR, /LIVE Studio/);
+  // 2. l’aide dit POURQUOI et QUAND ce sera possible
+  assert.match(AIDE_TIKTOK_ENCODEUR, /URL de serveur/i);
+  assert.match(AIDE_TIKTOK_ENCODEUR, /cl[ée] de diffusion/i);
+  assert.match(AIDE_TIKTOK_ENCODEUR, /d[èe]s que TikTok/i);
+  assert.match(AIDE_TIKTOK_ENCODEUR, /[ée]ligibilit[ée] du compte/i, 'éligibilité : générique, décidée par TikTok');
+  // 3. guide numéroté : où chercher, quoi chercher, quoi faire ensuite
+  assert.ok(Array.isArray(GUIDE_TIKTOK_ENCODEUR) && GUIDE_TIKTOK_ENCODEUR.length >= 4);
+  const guide = GUIDE_TIKTOK_ENCODEUR.join(' | ');
+  assert.match(guide, /ordinateur/i);
+  assert.match(guide, /Outils LIVE|LIVE Center|Centre LIVE/i);
+  assert.match(guide, /Logiciel de streaming|Streaming software/i);
+  assert.match(guide, /Server URL|URL du serveur/i);
+  assert.match(guide, /Stream Key|cl[ée] de diffusion/i);
+  assert.match(guide, /J’ai une clé/);
+  // 4. LIVE Studio : disponible, mais il diffuse lui-même — aucune promesse de pont
+  assert.match(NOTE_TIKTOK_LIVE_STUDIO, /LIVE Studio/);
+  assert.match(NOTE_TIKTOK_LIVE_STUDIO, /diffuse lui-m[êe]me/i);
+  assert.ok(!/Afroboost (peut|pourra) (envoyer|diffuser).{0,30}LIVE Studio/i.test(NOTE_TIKTOK_LIVE_STUDIO), 'aucun pont promis');
+  // 5. JAMAIS de seuil chiffré ni de faux bouton d’activation
+  const textes = [libelleStatut(tiktok, false), AIDE_TIKTOK_ENCODEUR, NOTE_TIKTOK_LIVE_STUDIO, guide].join(' ');
+  assert.ok(!/1\s?000|1,000|1000 abonn/i.test(textes), 'aucun seuil d’abonnés codé en dur');
+  for (const faux of ['Demander l’accès', 'Activer l’accès', 'Activer maintenant']) assert.ok(!textes.includes(faux), `aucun faux bouton « ${faux} »`);
+  assert.ok(!/Acc[èe]s RTMP TikTok non activ[ée]/.test(textes), 'ancien message vague retiré');
   // Instagram : inchangé
   assert.equal(libelleStatut({ platform: 'instagram', status: 'not_configured', selected: false, kind: 'manual' }, false), 'Non configuré');
   assert.deepEqual(actionPour({ platform: 'instagram', status: 'not_configured', selected: false, kind: 'manual' }), { kind: 'configure', libelle: 'Configurer' });
-  // Une vraie clé enregistrée → Configuré, Modifier, cochable
+  // Une vraie clé enregistrée → Configuré, Modifier, cochable (formulaire inchangé)
   assert.deepEqual(actionPour({ ...tiktok, status: 'configured', keyHint: 'ab12' }), { kind: 'configured', libelle: 'Modifier' });
-  // Tiroir : bloc d’aide TikTok + bouton secondaire câblés
-  assert.ok(DRAWER.includes("action.kind === 'aide_encodeur'"), 'bloc « Comment l’activer » rendu');
+  assert.equal(libelleStatut({ ...tiktok, status: 'configured', keyHint: 'ab12' }, false), 'Configuré — clé enregistrée (…ab12)');
+  // Tiroir : bloc d’aide + guide + note, et bouton secondaire câblés
+  assert.ok(DRAWER.includes("action.kind === 'aide_encodeur'"), 'bloc d’aide rendu');
   assert.ok(DRAWER.includes('data-testid={`broadcast-aide-${d.platform}`}'));
+  assert.ok(DRAWER.includes('data-testid={`broadcast-aide-guide-${d.platform}`}'), 'guide numéroté rendu');
+  assert.ok(DRAWER.includes('GUIDE_TIKTOK_ENCODEUR.map'), 'les étapes viennent du helper pur');
+  assert.ok(DRAWER.includes('NOTE_TIKTOK_LIVE_STUDIO'), 'note LIVE Studio rendue');
   assert.ok(DRAWER.includes("secondaire?.kind === 'configure'"), 'bouton secondaire → formulaire');
   assert.ok(DRAWER.includes('data-testid={`broadcast-configure-secondaire-${d.platform}`}'));
 });

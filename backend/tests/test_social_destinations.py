@@ -345,6 +345,7 @@ class _FauxHttpx:
     appels = []
     pages = []
     chaines = []
+    accounts_reponse = None  # forcer une réponse Graph (erreur) pour /me/accounts
 
     def __init__(self, *a, **k):
         pass
@@ -361,6 +362,8 @@ class _FauxHttpx:
             assert params["client_secret"] == "secret-app-fb" and params["code"] == "CODE-FB"
             return _Reponse(200, {"access_token": "USER-TOKEN-FB"})
         if "/me/accounts" in url:
+            if _FauxHttpx.accounts_reponse is not None:
+                return _FauxHttpx.accounts_reponse
             return _Reponse(200, {"data": _FauxHttpx.pages})
         if "youtube/v3/channels" in url:
             return _Reponse(200, {"items": _FauxHttpx.chaines})
@@ -378,7 +381,7 @@ class _FauxHttpx:
 def oauth(contexte, monkeypatch):
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", _FauxHttpx)
-    _FauxHttpx.appels, _FauxHttpx.pages, _FauxHttpx.chaines = [], [], []
+    _FauxHttpx.appels, _FauxHttpx.pages, _FauxHttpx.chaines, _FauxHttpx.accounts_reponse = [], [], [], None
     return contexte
 
 
@@ -659,3 +662,69 @@ def test_n6_callback_flb_page_afroboost_seule_acceptee_jamais_la_premiere(oauth,
     r = client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
     assert r.headers["location"].endswith("#social=facebook:refused")
     assert asyncio.run(store.lire("user-afroboost-0001", "facebook")) is None
+
+
+# ─── O. Sécurité des journaux + diagnostic /me/accounts SANS secret ───────────────────────────
+def test_o1_httpx_httpcore_ne_journalisent_jamais_une_url_avec_jeton(contexte, caplog):
+    """httpx journalise en INFO « HTTP Request: GET <url> » — avec `?access_token=…` dans l'URL de /me/accounts.
+    Charger le module doit ramener httpx/httpcore à WARNING : un jeton fictif ne doit JAMAIS atteindre les logs."""
+    mod, store, client, h = contexte
+    assert logging.getLogger("httpx").level >= logging.WARNING and logging.getLogger("httpcore").level >= logging.WARNING
+    with caplog.at_level(logging.DEBUG):
+        logging.getLogger("httpx").info("HTTP Request: GET https://graph.facebook.com/v25.0/me/accounts?access_token=SECRET_TEST_123 \"HTTP/1.1 200 OK\"")
+        logging.getLogger("httpcore.http11").debug("send_request_headers.started access_token=SECRET_TEST_123")
+    assert "SECRET_TEST_123" not in caplog.text
+
+
+def test_o2_diagnostic_me_accounts_sans_secret_page_trouvee(oauth, caplog):
+    mod, store, client, h = oauth
+    caplog.set_level(logging.INFO)
+    _FauxHttpx.pages = [{"id": "555555555555555", "name": "Studiio", "access_token": "PAGE-TOKEN-STUDIIO", "tasks": ["ANALYZE"]},
+                        {"id": "100000000000001", "name": "Afroboost", "access_token": "PAGE-TOKEN-AFROBOOST-SECRET", "tasks": ["MODERATE", "CREATE_CONTENT", "MANAGE"]}]
+    state = _state_depuis(client, h, "facebook", "https://afroboost.com/live/session/abc")
+    r = client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
+    assert r.headers["location"].endswith("#social=facebook:connected")
+    t = caplog.text
+    assert "EXPECTED_PAGE_ID=100000000000001" in t and "ACCOUNTS_COUNT=2" in t
+    assert "PAGE_ID=555555555555555 PAGE_NAME=Studiio HAS_ACCESS_TOKEN=true TASKS=ANALYZE" in t
+    assert "PAGE_ID=100000000000001 PAGE_NAME=Afroboost HAS_ACCESS_TOKEN=true TASKS=MODERATE,CREATE_CONTENT,MANAGE" in t
+    assert "MATCH_FOUND=true MATCH_HAS_ACCESS_TOKEN=true" in t
+    for interdit in ("PAGE-TOKEN", "USER-TOKEN-FB", "CODE-FB", "secret-app-fb", state):
+        assert interdit not in t, f"jamais « {interdit} » dans les journaux"
+    # l'appel demande explicitement les champs utiles, jamais par en-tête Authorization en clair dans un log
+    assert ("GET", "https://graph.facebook.com/v25.0/me/accounts") in _FauxHttpx.appels
+
+
+def test_o3_diagnostic_me_accounts_page_absente_et_sans_jeton(oauth, caplog):
+    mod, store, client, h = oauth
+    caplog.set_level(logging.INFO)
+    # C : la Page attendue n'est pas dans la liste
+    _FauxHttpx.pages = [{"id": "555555555555555", "name": "Studiio", "access_token": "PAGE-TOKEN-STUDIIO"}]
+    state = _state_depuis(client, h, "facebook")
+    assert client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False).headers["location"].endswith(":refused")
+    assert "ACCOUNTS_COUNT=1" in caplog.text and "MATCH_FOUND=false MATCH_HAS_ACCESS_TOKEN=false" in caplog.text
+    # B : présente mais SANS access_token → refus, et le diagnostic le dit
+    caplog.clear()
+    _FauxHttpx.pages = [{"id": "100000000000001", "name": "Afroboost", "tasks": ["ANALYZE"]}]
+    state = _state_depuis(client, h, "facebook")
+    assert client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False).headers["location"].endswith(":refused")
+    assert "PAGE_ID=100000000000001 PAGE_NAME=Afroboost HAS_ACCESS_TOKEN=false TASKS=ANALYZE" in caplog.text
+    assert "MATCH_FOUND=true MATCH_HAS_ACCESS_TOKEN=false" in caplog.text
+    # A : data vide
+    caplog.clear(); _FauxHttpx.pages = []
+    state = _state_depuis(client, h, "facebook")
+    client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
+    assert "ACCOUNTS_COUNT=0" in caplog.text
+    assert "PAGE-TOKEN" not in caplog.text
+
+
+def test_o4_diagnostic_me_accounts_erreur_graph_structuree(oauth, caplog):
+    mod, store, client, h = oauth
+    caplog.set_level(logging.INFO)
+    _FauxHttpx.accounts_reponse = _Reponse(400, {"error": {"message": "(#200) Requires pages_show_list", "type": "OAuthException", "code": 200, "error_subcode": 1349125, "fbtrace_id": "AbC"}})
+    state = _state_depuis(client, h, "facebook")
+    r = client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
+    assert r.headers["location"].endswith("#social=facebook:error")
+    t = caplog.text
+    assert "GRAPH_ERROR HTTP=400 type=OAuthException code=200 subcode=1349125 message=(#200) Requires pages_show_list" in t
+    assert "USER-TOKEN-FB" not in t and "CODE-FB" not in t

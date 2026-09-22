@@ -51,6 +51,11 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("boosttribe-social")
+# httpx journalise en INFO « HTTP Request: GET <url complète> » — or l'URL de /me/accounts porte `?access_token=…`
+# (jeton utilisateur Facebook) et celle de Google des paramètres sensibles. Jamais dans un journal : ces deux
+# bibliothèques ne parlent qu'à partir de WARNING. (Les appels sortants de ce module sont TOUS des appels Graph/Google.)
+for _nom_bavard in ("httpx", "httpcore"):
+    logging.getLogger(_nom_bavard).setLevel(logging.WARNING)
 
 PLATFORMS = ("instagram", "facebook", "youtube", "tiktok")
 PLATEFORMES_OAUTH = ("facebook", "youtube")
@@ -667,15 +672,34 @@ async def _echanger_code_facebook(code: str) -> Dict[str, Any]:
             logger.warning("[SOCIAL] facebook oauth/access_token HTTP %s", t.status_code)
             raise HTTPException(status_code=502, detail="Facebook a refusé l'échange du code")
         jeton_user = t.json().get("access_token") or ""
-        pages = await c.get(f"{FB_GRAPH}/me/accounts", params={"access_token": jeton_user, "fields": "id,name,access_token"})
-    if pages.status_code != 200:
-        raise HTTPException(status_code=502, detail="Facebook n'a pas renvoyé les Pages du compte")
+        pages = await c.get(f"{FB_GRAPH}/me/accounts", params={"access_token": jeton_user, "fields": "id,name,access_token,tasks"})
     attendu = _env(ENV_FB_PAGE)
-    for page in pages.json().get("data") or []:
-        if str(page.get("id")) == attendu and page.get("access_token"):
-            return {"account_id": attendu, "account_label": page.get("name") or "Facebook Afroboost",
-                    "jeton": page["access_token"], "expires_at": None}
-    logger.warning("[SOCIAL] facebook : la Page Afroboost n'est pas parmi les Pages du compte connecté → refus")
+    if pages.status_code != 200:
+        # Erreur Graph STRUCTURÉE (type / code / subcode / message) — jamais le jeton, jamais le code OAuth.
+        try:
+            err = (pages.json() or {}).get("error") or {}
+        except ValueError:
+            err = {}
+        logger.warning("[SOCIAL] facebook /me/accounts GRAPH_ERROR HTTP=%s type=%s code=%s subcode=%s message=%s",
+                       pages.status_code, err.get("type"), err.get("code"), err.get("error_subcode"), err.get("message"))
+        raise HTTPException(status_code=502, detail="Facebook n'a pas renvoyé les Pages du compte")
+    data = pages.json().get("data") or []
+    # Diagnostic SANS secret (22/09) : ce que Meta renvoie réellement — identifiants, noms, présence d'un jeton de
+    # Page (jamais sa valeur), tâches — pour trancher entre « Page absente », « sans jeton », « autre ID ».
+    logger.info("[SOCIAL] facebook /me/accounts EXPECTED_PAGE_ID=%s ACCOUNTS_COUNT=%d", attendu, len(data))
+    correspondante: Optional[Dict[str, Any]] = None
+    for page in data:
+        pid = str(page.get("id"))
+        logger.info("[SOCIAL] facebook /me/accounts PAGE_ID=%s PAGE_NAME=%s HAS_ACCESS_TOKEN=%s TASKS=%s",
+                    pid, page.get("name"), str(bool(page.get("access_token"))).lower(), ",".join(page.get("tasks") or []) or "-")
+        if pid == attendu and correspondante is None:
+            correspondante = page
+    logger.info("[SOCIAL] facebook /me/accounts MATCH_FOUND=%s MATCH_HAS_ACCESS_TOKEN=%s",
+                str(correspondante is not None).lower(), str(bool(correspondante and correspondante.get("access_token"))).lower())
+    if correspondante and correspondante.get("access_token"):
+        return {"account_id": attendu, "account_label": correspondante.get("name") or "Facebook Afroboost",
+                "jeton": correspondante["access_token"], "expires_at": None}
+    logger.warning("[SOCIAL] facebook : la Page Afroboost n'est pas parmi les Pages du compte connecté (ou sans jeton de Page) → refus")
     raise HTTPException(status_code=403, detail="Ce compte Facebook ne gère pas la Page Afroboost — connexion refusée")
 
 

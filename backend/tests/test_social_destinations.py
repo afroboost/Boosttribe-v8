@@ -346,6 +346,7 @@ class _FauxHttpx:
     pages = []
     chaines = []
     accounts_reponse = None  # forcer une réponse Graph (erreur) pour /me/accounts
+    page_directe = None      # réponse de GET /{page-id} (consultation directe) — None = 400 Graph
 
     def __init__(self, *a, **k):
         pass
@@ -365,6 +366,12 @@ class _FauxHttpx:
             if _FauxHttpx.accounts_reponse is not None:
                 return _FauxHttpx.accounts_reponse
             return _Reponse(200, {"data": _FauxHttpx.pages})
+        if "/me/permissions" in url:
+            return _Reponse(200, {"data": [{"permission": "pages_show_list", "status": "granted"}, {"permission": "publish_video", "status": "declined"}]})
+        if url.endswith("/100000000000001"):  # consultation DIRECTE de la Page attendue (assets Business)
+            if _FauxHttpx.page_directe is not None:
+                return _FauxHttpx.page_directe
+            return _Reponse(400, {"error": {"message": "Unsupported get request", "type": "GraphMethodException", "code": 100, "error_subcode": 33}})
         if "youtube/v3/channels" in url:
             return _Reponse(200, {"items": _FauxHttpx.chaines})
         return _Reponse(404, {})
@@ -381,7 +388,7 @@ class _FauxHttpx:
 def oauth(contexte, monkeypatch):
     import httpx
     monkeypatch.setattr(httpx, "AsyncClient", _FauxHttpx)
-    _FauxHttpx.appels, _FauxHttpx.pages, _FauxHttpx.chaines, _FauxHttpx.accounts_reponse = [], [], [], None
+    _FauxHttpx.appels, _FauxHttpx.pages, _FauxHttpx.chaines, _FauxHttpx.accounts_reponse, _FauxHttpx.page_directe = [], [], [], None, None
     return contexte
 
 
@@ -728,3 +735,49 @@ def test_o4_diagnostic_me_accounts_erreur_graph_structuree(oauth, caplog):
     t = caplog.text
     assert "GRAPH_ERROR HTTP=400 type=OAuthException code=200 subcode=1349125 message=(#200) Requires pages_show_list" in t
     assert "USER-TOKEN-FB" not in t and "CODE-FB" not in t
+
+
+def test_o5_me_accounts_vide_mais_page_accordee_via_business_consultation_directe(oauth, caplog):
+    """Prod 22/09 : la Page est ACCORDÉE à l'app (intégrations professionnelles) mais /me/accounts renvoie data=[]
+    (Page d'un portefeuille Business). Repli : GET /{PAGE_ID}?fields=id,name,access_token,tasks — accepté SEULEMENT
+    si l'id renvoyé est AFROBOOST_FB_PAGE_ID et qu'un jeton de Page est présent. Diagnostic sans secret."""
+    mod, store, client, h = oauth
+    caplog.set_level(logging.INFO)
+    _FauxHttpx.pages = []
+    _FauxHttpx.page_directe = _Reponse(200, {"id": "100000000000001", "name": "Afroboost", "access_token": "PAGE-TOKEN-AFROBOOST-SECRET", "tasks": ["MANAGE", "CREATE_CONTENT"]})
+    state = _state_depuis(client, h, "facebook", "https://afroboost.com/live/session/abc")
+    r = client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"].endswith("#social=facebook:connected")
+    t = caplog.text
+    assert "ACCOUNTS_COUNT=0" in t and "MATCH_FOUND=false" in t
+    assert "PERMISSIONS granted=pages_show_list declined=publish_video" in t
+    assert "DIRECT_PAGE HTTP=200 PAGE_ID=100000000000001 PAGE_NAME=Afroboost HAS_ACCESS_TOKEN=true TASKS=MANAGE,CREATE_CONTENT" in t
+    assert "PAGE-TOKEN" not in t and "USER-TOKEN-FB" not in t and "CODE-FB" not in t
+    row = asyncio.run(store.lire("user-afroboost-0001", "facebook"))
+    assert row["account_id"] == "100000000000001" and row["mode"] == "oauth" and "PAGE-TOKEN" not in str(row)
+    assert mod._dechiffrer(row["oauth_token_enc"]) == "PAGE-TOKEN-AFROBOOST-SECRET"
+    assert _etat(client, h, "facebook")["status"] == "connected"
+    # la consultation directe ne porte que sur l'ID ATTENDU (jamais une autre Page), avec les champs utiles
+    assert ("GET", "https://graph.facebook.com/v25.0/100000000000001") in _FauxHttpx.appels
+
+
+def test_o6_consultation_directe_refuse_autre_id_ou_sans_jeton_ou_erreur(oauth, caplog):
+    mod, store, client, h = oauth
+    caplog.set_level(logging.INFO)
+    # Graph renvoie un AUTRE id sous cette URL → refus (garde stricte)
+    _FauxHttpx.pages = []
+    _FauxHttpx.page_directe = _Reponse(200, {"id": "999999999999999", "name": "Spordateur", "access_token": "PAGE-TOKEN-SPORDATEUR"})
+    state = _state_depuis(client, h, "facebook")
+    assert client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False).headers["location"].endswith(":refused")
+    assert asyncio.run(store.lire("user-afroboost-0001", "facebook")) is None
+    # présente mais sans jeton → refus
+    _FauxHttpx.page_directe = _Reponse(200, {"id": "100000000000001", "name": "Afroboost"})
+    state = _state_depuis(client, h, "facebook")
+    assert client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False).headers["location"].endswith(":refused")
+    assert "DIRECT_PAGE HTTP=200 PAGE_ID=100000000000001 PAGE_NAME=Afroboost HAS_ACCESS_TOKEN=false" in caplog.text
+    # erreur Graph structurée → refus, journal sans secret
+    caplog.clear(); _FauxHttpx.page_directe = None
+    state = _state_depuis(client, h, "facebook")
+    assert client.get("/social/oauth/facebook/callback", params={"code": "CODE-FB", "state": state}, follow_redirects=False).headers["location"].endswith(":refused")
+    assert "DIRECT_PAGE GRAPH_ERROR HTTP=400 type=GraphMethodException code=100 subcode=33 message=Unsupported get request" in caplog.text
+    assert "PAGE-TOKEN" not in caplog.text and "USER-TOKEN-FB" not in caplog.text

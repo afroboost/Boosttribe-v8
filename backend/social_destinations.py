@@ -673,7 +673,16 @@ async def _echanger_code_facebook(code: str) -> Dict[str, Any]:
             raise HTTPException(status_code=502, detail="Facebook a refusé l'échange du code")
         jeton_user = t.json().get("access_token") or ""
         pages = await c.get(f"{FB_GRAPH}/me/accounts", params={"access_token": jeton_user, "fields": "id,name,access_token,tasks"})
-    attendu = _env(ENV_FB_PAGE)
+        attendu = _env(ENV_FB_PAGE)
+        # Repli (22/09) : une Page accordée à l'app au niveau d'un portefeuille Business peut ne PAS figurer dans
+        # /me/accounts (data=[] en prod alors que l'intégration montre la Page cochée). On consulte alors la Page
+        # ATTENDUE directement — et elle seule — avec le jeton utilisateur ; les permissions accordées sont
+        # journalisées (noms + statuts, jamais un jeton) pour comprendre ce que Meta a réellement donné.
+        directe = None
+        permissions = None
+        if pages.status_code == 200 and not any(str(p.get("id")) == attendu for p in (pages.json().get("data") or [])):
+            permissions = await c.get(f"{FB_GRAPH}/me/permissions", params={"access_token": jeton_user})
+            directe = await c.get(f"{FB_GRAPH}/{attendu}", params={"access_token": jeton_user, "fields": "id,name,access_token,tasks"})
     if pages.status_code != 200:
         # Erreur Graph STRUCTURÉE (type / code / subcode / message) — jamais le jeton, jamais le code OAuth.
         try:
@@ -699,6 +708,27 @@ async def _echanger_code_facebook(code: str) -> Dict[str, Any]:
     if correspondante and correspondante.get("access_token"):
         return {"account_id": attendu, "account_label": correspondante.get("name") or "Facebook Afroboost",
                 "jeton": correspondante["access_token"], "expires_at": None}
+    if permissions is not None and permissions.status_code == 200:
+        perms = permissions.json().get("data") or []
+        logger.info("[SOCIAL] facebook PERMISSIONS granted=%s declined=%s",
+                    ",".join(p.get("permission", "?") for p in perms if p.get("status") == "granted") or "-",
+                    ",".join(p.get("permission", "?") for p in perms if p.get("status") != "granted") or "-")
+    if directe is not None:
+        if directe.status_code == 200:
+            j = directe.json() or {}
+            logger.info("[SOCIAL] facebook DIRECT_PAGE HTTP=200 PAGE_ID=%s PAGE_NAME=%s HAS_ACCESS_TOKEN=%s TASKS=%s",
+                        j.get("id"), j.get("name"), str(bool(j.get("access_token"))).lower(), ",".join(j.get("tasks") or []) or "-")
+            # Garde inchangée : SEULE la Page attendue, AVEC un jeton de Page. Jamais « la première Page ».
+            if str(j.get("id")) == attendu and j.get("access_token"):
+                return {"account_id": attendu, "account_label": j.get("name") or "Facebook Afroboost",
+                        "jeton": j["access_token"], "expires_at": None}
+        else:
+            try:
+                err = (directe.json() or {}).get("error") or {}
+            except ValueError:
+                err = {}
+            logger.warning("[SOCIAL] facebook DIRECT_PAGE GRAPH_ERROR HTTP=%s type=%s code=%s subcode=%s message=%s",
+                           directe.status_code, err.get("type"), err.get("code"), err.get("error_subcode"), err.get("message"))
     logger.warning("[SOCIAL] facebook : la Page Afroboost n'est pas parmi les Pages du compte connecté (ou sans jeton de Page) → refus")
     raise HTTPException(status_code=403, detail="Ce compte Facebook ne gère pas la Page Afroboost — connexion refusée")
 

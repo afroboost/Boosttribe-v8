@@ -121,3 +121,40 @@ test('panneau prêt : la résolution vient de resultat.resolution (piste encodé
   assert.ok(CODE.includes('libelleVideoResultat(resultat.resolution, resultat.format)'), 'une ligne « résolution · codec »');
   assert.ok(!CODE.includes('recorder.qualite}</dd>') && !CODE.includes("qualite === '1080p' ? '1920"), 'jamais déduite de la qualité choisie');
 });
+
+/* ═══════════ ACCÈS DIRECT À L'ENREGISTREMENT DEPUIS LA VISIO (23/09/2026) ═══════════
+   L'action existait déjà, mais seulement dans le menu ⋮ : trois gestes pendant un
+   direct. On la remonte dans la barre ronde. Ces bancs verrouillent la seule chose qui
+   compte : c'est la MÊME action et le MÊME état — pas un second enregistreur. */
+
+test('le bouton direct appelle l’action EXISTANTE, et ne crée aucun second moteur', () => {
+  const code = codeSeul(VISIO);
+  assert.ok(code.includes('data-testid="visio-record-direct"'), 'le bouton existe');
+  // Un seul déclencheur possible : la prop déjà utilisée par l'item du menu.
+  assert.ok(code.includes('onClick={recordSupporte ? onToggleRecord : undefined}'));
+  // Aucun état local d'enregistrement n'est introduit dans le panneau.
+  assert.ok(!/useState[^\n]*record/i.test(code), 'pas de nouvel état d’enregistrement');
+  assert.ok(!/MediaRecorder|useProgramRecorder|useSessionRecorder/.test(code),
+    'le panneau n’enregistre rien lui-même');
+  // L'item du menu ⋮ reste en place : on ajoute une porte, on n'en ferme aucune.
+  assert.ok(code.includes("testId: 'visio-record'"), 'l’entrée du menu ⋮ est conservée');
+});
+
+test('réservé à l’hôte : un spectateur ne voit pas le bouton', () => {
+  const code = codeSeul(VISIO);
+  const i = code.indexOf('data-testid="visio-record-direct"');
+  const bloc = code.slice(Math.max(0, i - 1800), i);
+  assert.ok(/\{canManageStage && onToggleRecord && \(/.test(bloc),
+    'le rendu est gardé par canManageStage');
+});
+
+test('l’état actif ne tient pas qu’à la couleur (accessibilité)', () => {
+  const code = codeSeul(VISIO);
+  const i = code.indexOf('data-testid="visio-record-direct"');
+  const bloc = code.slice(i - 1400, i + 1400);
+  assert.ok(/aria-pressed=\{recordEtat === 'enregistrement'\}/.test(bloc), 'aria-pressed');
+  assert.ok(/aria-label=/.test(bloc), 'aria-label explicite');
+  assert.ok(/formatDureeRec\(recordDureeSec\)/.test(bloc), 'la durée est annoncée');
+  assert.ok(/animate-pulse/.test(bloc), 'un repère visuel non chromatique');
+  assert.ok(/aria-disabled=\{!recordSupporte\}/.test(bloc), 'l’indisponibilité est dite');
+});

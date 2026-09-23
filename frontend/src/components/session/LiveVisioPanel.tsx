@@ -500,6 +500,43 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </button>
         )}
 
+        {/* 🔴 ENREGISTRER — LA MÊME ACTION QUE DANS LE MENU ⋮, remontée à portée de pouce.
+            Ce bouton ne crée AUCUN enregistreur : il appelle `onToggleRecord`, exactement
+            comme l'item du menu, et lit le MÊME état (`recordEtat`). Une seule source de
+            vérité, un seul moteur (useSessionRecorder → useProgramRecorder), une seule
+            règle « rien à l'antenne → caméra du coach à l'antenne » (antennePourEnregistrer).
+            Réservé à l'hôte / co-hôte : un spectateur ne le voit pas.
+            L'état actif ne repose PAS sur la seule couleur — le bouton porte un point
+            clignotant, la durée, `aria-pressed` et un `aria-label` qui le dit. */}
+        {canManageStage && onToggleRecord && (
+          <button
+            type="button"
+            onClick={recordSupporte ? onToggleRecord : undefined}
+            disabled={!recordSupporte}
+            className={`relative ${ROUND} ${recordEtat === 'enregistrement' ? ACCENT : DARK}${recordSupporte ? '' : ' opacity-40 cursor-not-allowed'}`}
+            title={!recordSupporte ? (recordMotif || 'Enregistrement indisponible')
+              : recordEtat === 'enregistrement' ? `Arrêter l'enregistrement (${formatDureeRec(recordDureeSec)})`
+              : recordEtat === 'finalisation' ? 'Finalisation en cours…'
+              : 'Enregistrer'}
+            aria-label={!recordSupporte ? (recordMotif || 'Enregistrement indisponible')
+              : recordEtat === 'enregistrement' ? `Enregistrement en cours depuis ${formatDureeRec(recordDureeSec)} — arrêter`
+              : recordEtat === 'finalisation' ? 'Finalisation de l’enregistrement en cours'
+              : 'Démarrer l’enregistrement'}
+            aria-pressed={recordEtat === 'enregistrement'}
+            aria-disabled={!recordSupporte}
+            data-testid="visio-record-direct"
+            data-record-etat={recordEtat}
+          >
+            {recordEtat === 'enregistrement' ? <Square className="w-5 h-5" /> : <Disc className="w-5 h-5" />}
+            {recordEtat === 'enregistrement' && (
+              <span className="absolute -top-1 -right-1 flex items-center gap-0.5 px-1 rounded-full bg-[var(--bt-accent)] text-[8px] font-bold tracking-wide text-white leading-4 tabular-nums" data-testid="visio-record-direct-duree">
+                <span className="w-1 h-1 rounded-full bg-white animate-pulse" aria-hidden="true" />
+                {formatDureeRec(recordDureeSec)}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* 📡 Diffuser en direct — icône ronde (mobile et desktop), fuchsia quand un direct tourne. */}
         {canManageStage && onToggleBroadcast && (
           <button

@@ -1196,3 +1196,33 @@ export async function uploadSessionVideo(
     return { error: e instanceof Error ? e.message : 'Backend injoignable' };
   }
 }
+
+/**
+ * 🤖 SOUFFLEUR — suggestions PRIVÉES de l'hôte. Le serveur vérifie lui-même que
+ * l'appelant est bien hôte/co-hôte de CETTE session (401/403) : cacher le panneau ne
+ * suffirait pas. Une indisponibilité n'est pas une erreur ici — le direct continue,
+ * l'écran l'annonce. Aucun secret ne transite : la clé IA ne quitte jamais le serveur.
+ */
+export async function suggestionsAssistant(corps: {
+  session_id: string;
+  mode: 'chat' | 'visio';
+  messages: { nom: string; texte: string }[];
+  invite?: string | null;
+  sujet?: string | null;
+}): Promise<{ ok: boolean; suggestions: string[]; raison?: string }> {
+  if (!API_URL) return { ok: false, suggestions: [], raison: 'ia_non_configuree' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, suggestions: [], raison: 'hors_ligne' };
+  try {
+    const res = await fetch(`${API_URL}/live/assistant/suggestions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(corps),
+    });
+    if (!res.ok) return { ok: false, suggestions: [], raison: res.status === 403 ? 'reserve_hote' : 'fournisseur_indisponible' };
+    const d = await res.json().catch(() => ({}));
+    return { ok: !!d.ok, suggestions: Array.isArray(d.suggestions) ? d.suggestions : [], raison: d.raison };
+  } catch {
+    return { ok: false, suggestions: [], raison: 'hors_ligne' };
+  }
+}

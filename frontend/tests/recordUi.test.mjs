@@ -131,20 +131,26 @@ test('le bouton direct appelle l’action EXISTANTE, et ne crée aucun second mo
   const code = codeSeul(VISIO);
   assert.ok(code.includes('data-testid="visio-record-direct"'), 'le bouton existe');
   // Un seul déclencheur possible : la prop déjà utilisée par l'item du menu.
-  assert.ok(code.includes('onClick={recordSupporte ? onToggleRecord : undefined}'));
+  // Le bouton DÉCLENCHE (démarrer/arrêter) ; l'item du menu, lui, OUVRE le panneau.
+  assert.ok(code.includes('onClick={recordSupporte ? (onRecordDirect || onToggleRecord) : undefined}'));
   // Aucun état local d'enregistrement n'est introduit dans le panneau.
   assert.ok(!/useState[^\n]*record/i.test(code), 'pas de nouvel état d’enregistrement');
   assert.ok(!/MediaRecorder|useProgramRecorder|useSessionRecorder/.test(code),
     'le panneau n’enregistre rien lui-même');
   // L'item du menu ⋮ reste en place : on ajoute une porte, on n'en ferme aucune.
   assert.ok(code.includes("testId: 'visio-record'"), 'l’entrée du menu ⋮ est conservée');
+  // Côté page : le clic appelle le MOTEUR EXISTANT, pas un nouveau.
+  const page = codeSeul(lire('pages', 'SessionPage.tsx'));
+  assert.ok(page.includes('void recorder.arreter();') && page.includes('void recorder.demarrer();'),
+    'démarrage/arrêt par le recorder existant');
+  assert.equal((page.match(/useProgramRecorder\(/g) || []).length, 1, 'un seul enregistreur dans la page');
 });
 
 test('réservé à l’hôte : un spectateur ne voit pas le bouton', () => {
   const code = codeSeul(VISIO);
   const i = code.indexOf('data-testid="visio-record-direct"');
   const bloc = code.slice(Math.max(0, i - 1800), i);
-  assert.ok(/\{canManageStage && onToggleRecord && \(/.test(bloc),
+  assert.ok(/\{canManageStage && \(onRecordDirect \|\| onToggleRecord\) && \(/.test(bloc),
     'le rendu est gardé par canManageStage');
 });
 

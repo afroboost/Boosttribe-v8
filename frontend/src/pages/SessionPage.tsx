@@ -65,6 +65,11 @@ import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import RecordPanel from '@/components/session/RecordPanel';
 import { useProgramRecorder } from '@/hooks/useProgramRecorder';
 import { antennePourEnregistrer } from '@/lib/recordLogic';
+import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
+import {
+  doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique,
+  type ModeSouffleur, type EtatRelance,
+} from '@/lib/assistantHote';
 import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
 import { useProgramStream } from '@/hooks/useProgramStream';
 import { useBroadcast } from '@/hooks/useBroadcast';
@@ -79,7 +84,7 @@ import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest } from '@/lib/paymentApi';
-import { startRecording, stopRecording, uploadRecording, getCreditsConfig } from '@/lib/paymentApi';
+import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   getPawapayConfig, claimPendingAccess,
@@ -2760,6 +2765,84 @@ export const SessionPage: React.FC = () => {
     arrierePlanProgramme: programme.stats.arrierePlan,
   });
   const [recordOpen, setRecordOpen] = useState(false);
+  // ═══ 🤖 LE SOUFFLEUR — assistant PRIVÉ de l'hôte ════════════════════════════════
+  //
+  //  ÉTEINT PAR DÉFAUT, et c'est volontaire : tant que le coach ne l'allume pas, aucune
+  //  requête ne part et rien n'est facturé. Allumé, il ne s'exprime que dans SON panneau :
+  //  aucun `broadcast`, aucun écrit en base, rien qui parte vers un participant.
+  //
+  //  ⚠️ « Insérer » dépose dans le champ du chat — il n'ENVOIE jamais. Le seul chemin vers
+  //  un message publié reste le bouton Envoyer, appuyé par l'hôte.
+  const [assistantOuvert, setAssistantOuvert] = useState(false);
+  const [assistantActif, setAssistantActif] = useState(false);
+  const [assistantMode, setAssistantMode] = useState<ModeSouffleur>('chat');
+  const [assistantSuggestions, setAssistantSuggestions] = useState<string[]>([]);
+  const [assistantEnCours, setAssistantEnCours] = useState(false);
+  const [assistantIndispo, setAssistantIndispo] = useState<string | null>(null);
+  const [brouillonChat, setBrouillonChat] = useState<string | null>(null);
+  const relanceRef = useRef<EtatRelance>({ dernierAppelMs: 0, derniereEmpreinte: '' });
+
+  // Qui est à l'écran AVEC l'hôte ? Une caméra distante = une personne montée sur scène.
+  //    Sans personne, le mode « En visio » reste fermé : on ne propose pas de relances
+  //    adressées à un invité qui n'existe pas.
+  const inviteEnVisio = useMemo(() => {
+    const autres = (videoMesh.remoteCameras || []).map((c) => c.userId).filter((id) => id && id !== socket.userId);
+    if (!autres.length) return null;
+    const p = participants.find((x) => autres.includes(x.id) && !x.isCurrentUser);
+    return (p && p.name) || null;
+  }, [videoMesh.remoteCameras, participants, socket.userId]);
+  useEffect(() => {
+    // Le mode suit la réalité : quelqu'un monte → on prépare l'échange ; il descend → chat.
+    setAssistantMode((prev) => {
+      const auto = modeAutomatique(inviteEnVisio);
+      return prev === auto ? prev : auto;
+    });
+  }, [inviteEnVisio]);
+
+  const demanderSuggestions = useCallback(async (forcer: boolean) => {
+    if (!sessionId || !canShare) return;
+    const contexte = messagesPourIA(groupMessages as unknown as { name?: string; text?: string }[]);
+    const empreinte = empreinteContexte(assistantMode, contexte, inviteEnVisio);
+    if (!doitAppeler({ etat: relanceRef.current, empreinte, maintenant: Date.now(),
+                       actif: assistantActif, forcer, enCours: assistantEnCours })) return;
+    relanceRef.current = { dernierAppelMs: Date.now(), derniereEmpreinte: empreinte };
+    setAssistantEnCours(true);
+    const r = await suggestionsAssistant({
+      session_id: sessionId, mode: assistantMode, messages: contexte,
+      invite: assistantMode === 'visio' ? inviteEnVisio : null,
+      sujet: description || null,
+    });
+    setAssistantEnCours(false);
+    if (r.ok) { setAssistantSuggestions(r.suggestions); setAssistantIndispo(null); }
+    else { setAssistantSuggestions([]); setAssistantIndispo(r.raison || 'fournisseur_indisponible'); }
+  }, [sessionId, canShare, assistantMode, assistantActif, assistantEnCours, groupMessages, inviteEnVisio, description]);
+
+  // Relance automatique : un nouveau message, ou quelqu'un qui monte/descend de scène.
+  //    Le débit est borné dans `doitAppeler` (délai minimum + empreinte inchangée).
+  useEffect(() => {
+    if (!assistantActif || !assistantOuvert) return;
+    void demanderSuggestions(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistantActif, assistantOuvert, assistantMode, inviteEnVisio, groupMessages.length]);
+
+  const assistantNode: React.ReactNode = canShare ? (
+    <AssistantHotePanel
+      open={assistantOuvert}
+      onClose={() => setAssistantOuvert(false)}
+      actif={assistantActif}
+      mode={assistantMode}
+      suggestions={assistantSuggestions}
+      enCours={assistantEnCours}
+      indisponible={assistantIndispo}
+      invite={inviteEnVisio}
+      onBasculer={(a) => { setAssistantActif(a); if (!a) { setAssistantSuggestions([]); setAssistantIndispo(null); } }}
+      onMode={(m) => setAssistantMode(m)}
+      onActualiser={() => { void demanderSuggestions(true); }}
+      onInserer={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}
+      mobile={studioMobile}
+    />
+  ) : null;
+
   const recordNode: React.ReactNode = (
     <RecordPanel recorder={recorder} open={recordOpen} onClose={() => setRecordOpen(false)} mobile={studioMobile} />
   );
@@ -4008,6 +4091,18 @@ export const SessionPage: React.FC = () => {
       recordSupporte={recorder.capacite.supporte}
       recordMotif={recorder.capacite.motif}
       onToggleRecord={() => setRecordOpen((o) => !o)}
+      onRecordDirect={() => {
+        // Le bouton rond DÉCLENCHE, il n'ouvre pas un panneau : c'est tout l'intérêt.
+        // Même moteur, mêmes garde-fous (`demarrerProgramme` applique « rien à l'antenne
+        // → caméra du coach à l'antenne »), et l'erreur éventuelle est dite à l'écran.
+        if (recorder.etat === 'enregistrement') { void recorder.arreter(); return; }
+        if (recorder.etat === 'finalisation') return;
+        setRecordOpen(true);            // le panneau montre l'avancement et le résultat
+        void recorder.demarrer();
+      }}
+      onToggleAssistant={() => setAssistantOuvert((o) => !o)}
+      assistantOuvert={assistantOuvert}
+      assistantActif={assistantActif}
       broadcastOpen={broadcastOpen}
       broadcastLive={broadcast.live}
       onToggleBroadcast={() => setBroadcastOpen((o) => !o)}
@@ -4122,6 +4217,8 @@ export const SessionPage: React.FC = () => {
   const chatPanelNode = (sessionId && !isGuestRestricted) ? (
     <ChatPanel
       open={chatOpen}
+      brouillonGroupe={brouillonChat}
+      onBrouillonPose={() => setBrouillonChat(null)}
       onToggle={toggleChat}
       onClose={() => setChatOpen(false)}
       isPro={isPro}
@@ -5772,6 +5869,12 @@ export const SessionPage: React.FC = () => {
       {/* 🐛 BUG 3 : chat porté dans l'élément plein écran (visio) s'il y en a un → visible/utilisable
           par-dessus le plein écran ; sinon dans body (comportement inchangé). Rendu inside video plein écran = SharedMediaPlayer. */}
       {!videoEnlarged && fsChatPortalTarget && createPortal(chatPanelNode, fsChatPortalTarget)}
+
+      {/* 🤖 LE SOUFFLEUR — rendu ICI, à la racine de la page et en `position: fixed`.
+          C'est un choix, pas un hasard : il vit volontairement HORS de `camAreaRef`, la
+          zone que composent le Programme (donc le MP4) et les flux sociaux. Ce qui est
+          privé ne doit pas pouvoir tomber dans un fichier ni partir chez un participant. */}
+      {assistantNode}
 
       {/* 🐛 BUG 5 : demandes de scène PORTÉES dans l'élément plein écran → accepter/refuser/faire descendre
           par-dessus le plein écran (visio ET vidéo partagée), sans quitter le plein écran. */}

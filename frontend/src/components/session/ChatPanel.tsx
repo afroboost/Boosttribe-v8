@@ -45,6 +45,9 @@ interface ChatPanelProps {
   onSendGroup: (text: string) => void;
   onSendPrivate: (partnerId: string, text: string) => void;
   onDeleteGroup?: (id: string) => void;      // modération hôte
+  /** Texte à DÉPOSER dans le champ du groupe (assistant de l'hôte) — jamais envoyé. */
+  brouillonGroupe?: string | null;
+  onBrouillonPose?: () => void;
 }
 
 const fmtTime = (ts: number): string => {
@@ -94,8 +97,28 @@ const MessageBubble: React.FC<{
 );
 
 // 📝 Zone de saisie + envoi (Entrée = envoyer, Maj+Entrée = retour à la ligne).
-const Composer: React.FC<{ onSend: (text: string) => void; placeholder: string }> = ({ onSend, placeholder }) => {
+/**
+ * 🤖 `brouillon` — INSÉRER N'EST PAS ENVOYER.
+ * Une suggestion de l'assistant est déposée ICI, dans le champ, et s'arrête là : l'hôte
+ * la relit, la modifie s'il veut, et appuie lui-même sur Envoyer. Il n'existe volontairement
+ * aucun chemin entre une suggestion et un message publié. Le champ est mis au point pour
+ * que le curseur soit déjà dedans.
+ */
+const Composer: React.FC<{
+  onSend: (text: string) => void;
+  placeholder: string;
+  brouillon?: string | null;
+  onBrouillonPose?: () => void;
+}> = ({ onSend, placeholder, brouillon, onBrouillonPose }) => {
   const [value, setValue] = useState('');
+  const champRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (!brouillon) return;
+    setValue(brouillon);
+    try { champRef.current?.focus(); } catch { /* ignore */ }
+    onBrouillonPose?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brouillon]);
   const send = () => {
     const t = value.trim();
     if (!t) return;
@@ -105,6 +128,8 @@ const Composer: React.FC<{ onSend: (text: string) => void; placeholder: string }
   return (
     <div className="flex items-end gap-2 p-2.5 border-t border-white/10 bg-black/30">
       <textarea
+        ref={champRef}
+        data-testid="chat-composer"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
@@ -156,7 +181,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   meUserId, isHost, participants,
   tab, onTab, partner, onOpenPartner,
   groupMessages, privateThreads, unread,
-  onSendGroup, onSendPrivate, onDeleteGroup,
+  onSendGroup, onSendPrivate, onDeleteGroup, brouillonGroupe = null, onBrouillonPose,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -330,7 +355,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
                     ))
                   )}
                 </div>
-                <Composer onSend={onSendGroup} placeholder="Message au groupe…" />
+                <Composer onSend={onSendGroup} placeholder="Message au groupe…" brouillon={brouillonGroupe} onBrouillonPose={onBrouillonPose} />
               </>
             ) : partner && partnerInfo ? (
               <>

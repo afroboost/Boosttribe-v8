@@ -82,6 +82,17 @@ interface LiveVisioPanelProps {
   // ⏺ Enregistrement local du Programme (Phase 4) : item ⋮ « Enregistrer » ; le panneau est
   //    `recordNode` (rendu quand `recordOpen`). Sur la vidéo : seulement un badge « ● REC » en
   //    enregistrement. Aucune donnée de fichier ici : états, durée, capacité, rappel.
+  /**
+   * Démarre / arrête RÉELLEMENT l'enregistrement (bouton rond de la barre). C'est la
+   * même mécanique que le panneau — `recorder.demarrer()` / `recorder.arreter()`, avec
+   * la règle « rien à l'antenne → caméra du coach » déjà branchée dedans. `onToggleRecord`,
+   * lui, ne fait qu'ouvrir le panneau : les deux portes restent distinctes et existantes.
+   */
+  onRecordDirect?: () => void;
+  /** 🤖 Souffleur privé de l'hôte — bouton rond + panneau rendu par le parent. */
+  onToggleAssistant?: () => void;
+  assistantOuvert?: boolean;
+  assistantActif?: boolean;
   recordNode?: React.ReactNode;
   recordOpen?: boolean;
   recordEtat?: RecEtat;
@@ -145,6 +156,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
   broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
+  onRecordDirect, onToggleAssistant, assistantOuvert = false, assistantActif = false,
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene,
@@ -508,10 +520,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             Réservé à l'hôte / co-hôte : un spectateur ne le voit pas.
             L'état actif ne repose PAS sur la seule couleur — le bouton porte un point
             clignotant, la durée, `aria-pressed` et un `aria-label` qui le dit. */}
-        {canManageStage && onToggleRecord && (
+        {canManageStage && (onRecordDirect || onToggleRecord) && (
           <button
             type="button"
-            onClick={recordSupporte ? onToggleRecord : undefined}
+            onClick={recordSupporte ? (onRecordDirect || onToggleRecord) : undefined}
             disabled={!recordSupporte}
             className={`relative ${ROUND} ${recordEtat === 'enregistrement' ? ACCENT : DARK}${recordSupporte ? '' : ' opacity-40 cursor-not-allowed'}`}
             title={!recordSupporte ? (recordMotif || 'Enregistrement indisponible')
@@ -534,6 +546,24 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                 {formatDureeRec(recordDureeSec)}
               </span>
             )}
+          </button>
+        )}
+
+        {/* 🤖 ASSISTANT IA — PRIVÉ. Réservé à l'hôte / co-hôte, comme le panneau qu'il ouvre :
+            le serveur refuse de toute façon un appelant qui n'est pas hôte (403). Il ne
+            diffuse rien, ne publie rien, et vit HORS de la zone caméra — donc hors du
+            Programme enregistré et hors des flux sociaux. */}
+        {canManageStage && onToggleAssistant && (
+          <button
+            type="button"
+            onClick={onToggleAssistant}
+            className={`${ROUND} ${assistantOuvert ? ACCENT : DARK}`}
+            title={assistantActif ? 'Assistant IA (activé) — visible par toi seul' : 'Assistant IA — visible par toi seul'}
+            aria-label={assistantActif ? 'Ouvrir l’assistant IA privé, actuellement activé' : 'Ouvrir l’assistant IA privé'}
+            aria-pressed={assistantOuvert}
+            data-testid="visio-assistant"
+          >
+            <Sparkles className="w-5 h-5" />
           </button>
         )}
 

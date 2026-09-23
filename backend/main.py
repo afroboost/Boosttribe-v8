@@ -1452,6 +1452,131 @@ async def livekit_demote(body: LiveKitParticipantBody, authorization: Optional[s
     return {"ok": True, "identity": target, "role": "viewer"}
 
 
+# =========================================================================== #
+# 🤖 SOUFFLEUR — ASSISTANT IA **PRIVÉ** DE L'HÔTE PENDANT LE DIRECT
+#
+# Ce qu'il est : un souffleur. Il PROPOSE deux à quatre phrases courtes que l'hôte
+# lit, choisit, modifie ou ignore. Il n'écrit jamais dans le chat, ne parle jamais,
+# ne touche ni au micro ni à la caméra. L'hôte reste décisionnaire de bout en bout.
+#
+# POURQUOI CETTE ROUTE EXISTE CÔTÉ SERVEUR. La clé OpenAI est déjà ici, chiffrée en
+# base (`get_openai_key`, utilisée par la transcription). La mettre dans le navigateur
+# pour économiser un aller-retour la rendrait lisible par n'importe qui ouvre le
+# bundle. Elle ne sort donc pas d'ici — et la réponse renvoyée ne contient que du
+# texte de suggestion, jamais le moindre secret.
+#
+# ⚠️ CACHER LE PANNEAU NE SUFFIT PAS. Un spectateur qui devine l'URL doit être
+# refusé par le SERVEUR : `_is_host_or_cohost` est donc vérifié ici, exactement
+# comme pour le rôle « stage » de LiveKit. Sans jeton : 401. Pas hôte : 403.
+# =========================================================================== #
+SOUFFLEUR_MODEL = os.environ.get("OPENAI_SOUFFLEUR_MODEL", "gpt-4o-mini")
+SOUFFLEUR_MAX_MESSAGES = 8       # fenêtre de contexte volontairement courte
+SOUFFLEUR_MAX_CAR = 280          # par message
+SOUFFLEUR_MAX_SUGGESTIONS = 4
+
+# Une adresse ou un numéro n'aide EN RIEN à formuler une réponse, et n'a donc aucune
+# raison de partir chez un tiers. On les remplace avant l'envoi, sans rien deviner
+# d'autre : mieux vaut masquer un faux positif que laisser filer un vrai contact.
+_RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
+_RE_TEL = re.compile(r"(?<!\d)(?:\+\d{1,3}[\s.-]?)?(?:\d[\s.-]?){8,14}\d(?!\d)")
+
+
+def _souffleur_nettoyer(texte: Optional[str]) -> str:
+    """Le texte tel qu'il partira : tronqué, sans adresse e-mail ni numéro."""
+    t = str(texte or "").strip()
+    t = _RE_EMAIL.sub("[adresse masquée]", t)
+    t = _RE_TEL.sub("[numéro masqué]", t)
+    return t[:SOUFFLEUR_MAX_CAR]
+
+
+class SouffleurBody(BaseModel):
+    session_id: str
+    mode: str = "chat"                                  # "chat" | "visio"
+    messages: Optional[List[Dict[str, Any]]] = None     # [{nom, texte}] — chat récent
+    invite: Optional[str] = None                        # prénom de l'invité à l'écran
+    sujet: Optional[str] = None                         # titre/thème de la session
+
+
+def _souffleur_instructions(mode: str) -> str:
+    base = ("Tu es le souffleur privé d'un coach sportif qui anime un direct Afroboost "
+            "(cardio et danse afrobeat au casque, à Neuchâtel). Tu ne parles JAMAIS au public : "
+            "tu proposes au coach des phrases qu'il dira lui-même, avec ses mots. "
+            "Ton : court, chaleureux, énergique, tutoiement, une à deux phrases maximum par "
+            "suggestion, lisibles en deux secondes. N'invente aucun prix, aucun horaire, "
+            "aucune promesse commerciale : si l'information manque, propose au coach de la donner "
+            "lui-même ou d'inviter la personne à essayer une séance. "
+            'Réponds en JSON strict : {"suggestions": ["…", "…"]}. '
+            f"Entre 2 et {SOUFFLEUR_MAX_SUGGESTIONS} suggestions.")
+    if mode == "visio":
+        return base + (" CONTEXTE : une personne vient de monter à l'écran avec le coach. "
+                       "Propose des QUESTIONS à lui poser, des relances sur ce qu'elle vient de "
+                       "dire, ou une façon de conclure et de rendre l'antenne.")
+    return base + (" CONTEXTE : le coach lit le chat du direct. Propose des RÉPONSES au dernier "
+                   "message, adressées à la personne qui l'a écrit.")
+
+
+@app.post("/live/assistant/suggestions")
+async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str] = Header(default=None)):
+    """Suggestions PRIVÉES pour l'hôte. 401 sans jeton, 403 si l'appelant n'est pas hôte.
+
+    Ne renvoie jamais autre chose que du texte de suggestion. En cas d'indisponibilité
+    (clé absente, fournisseur en panne, réponse illisible), répond `ok: false` avec un
+    motif — le direct ne doit jamais s'arrêter parce qu'un souffleur se tait.
+    """
+    user = await get_user_from_token(authorization)          # 401 si absent/invalide
+    session_id = (body.session_id or "").strip()
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if not await _is_host_or_cohost(session_id, user.get("id")):
+        raise HTTPException(status_code=403, detail="assistant_reserve_a_l_hote")
+
+    key = await get_openai_key()
+    if not key:
+        return {"ok": False, "raison": "ia_non_configuree", "suggestions": []}
+
+    mode = body.mode if body.mode in ("chat", "visio") else "chat"
+    lignes: List[str] = []
+    for m in (body.messages or [])[-SOUFFLEUR_MAX_MESSAGES:]:
+        nom = _souffleur_nettoyer((m or {}).get("nom"))[:40] or "Participant"
+        texte = _souffleur_nettoyer((m or {}).get("texte"))
+        if texte:
+            lignes.append(f"{nom} : {texte}")
+    contexte = []
+    if body.sujet:
+        contexte.append("Session : " + _souffleur_nettoyer(body.sujet)[:80])
+    if mode == "visio" and body.invite:
+        contexte.append("À l'écran avec le coach : " + _souffleur_nettoyer(body.invite)[:40])
+    if lignes:
+        contexte.append("Chat récent :\n" + "\n".join(lignes))
+    if not contexte:
+        contexte.append("Aucun message pour l'instant : propose des relances pour lancer l'échange.")
+
+    payload = {"model": SOUFFLEUR_MODEL, "temperature": 0.7, "max_tokens": 300,
+               "response_format": {"type": "json_object"},
+               "messages": [{"role": "system", "content": _souffleur_instructions(mode)},
+                            {"role": "user", "content": "\n\n".join(contexte)}]}
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post("https://api.openai.com/v1/chat/completions",
+                                     headers={"Authorization": f"Bearer {key}",
+                                              "Content-Type": "application/json"},
+                                     json=payload)
+        if resp.status_code != 200:
+            logger.warning("[SOUFFLEUR] fournisseur HTTP %s", resp.status_code)
+            return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+        import json as _json
+        brut = resp.json()["choices"][0]["message"]["content"]
+        obj = _json.loads(brut)
+        sugg = obj.get("suggestions") if isinstance(obj, dict) else None
+        propres = [str(x).strip()[:220] for x in (sugg or []) if str(x or "").strip()]
+        if not propres:
+            return {"ok": False, "raison": "reponse_illisible", "suggestions": []}
+        return {"ok": True, "mode": mode, "suggestions": propres[:SOUFFLEUR_MAX_SUGGESTIONS]}
+    except Exception as exc:  # noqa: BLE001 — un souffleur muet n'arrête pas un direct
+        logger.warning("[SOUFFLEUR] indisponible : %s", type(exc).__name__)
+        return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+
+
 @app.post("/stripe/sync-plan")
 async def sync_plan(body: SyncPlanBody, authorization: Optional[str] = Header(default=None)):
     if not await apply_stripe_key():

@@ -32,10 +32,14 @@ const SESSION = lire('pages', 'SessionPage.tsx');
 
 test('serveur vidéo injoignable : startCamera répond NON, il ne fait pas semblant', () => {
   const code = codeSeul(HOOK_LK);
-  assert.ok(code.includes("if (connexionRef.current === 'echec') return false;"),
+  assert.ok(code.includes("connexionRef.current === 'echec'") && /connexionRef\.current === 'echec'[\s\S]{0,80}return false;/.test(code),
     'une connexion en échec ne peut pas rendre un succès');
-  // L'état existe et couvre les trois issues.
-  for (const etat of ["'en-cours'", "'connectee'", "'echec'"]) {
+  // 22/09/2026 : la garantie s'étend au REFUS DE PUBLIER (le serveur n'accorde pas la
+  // scène). Même principe, autre cause : on ne rend jamais un succès qu'on n'a pas.
+  assert.ok(code.includes("connexionRef.current === 'refus-publication'"),
+    'un refus de publier ne peut pas rendre un succès non plus');
+  // L'état existe et couvre les issues.
+  for (const etat of ["'en-cours'", "'connectee'", "'echec'", "'refus-publication'"]) {
     assert.ok(code.includes(`setConnexion(${etat})`), `l'état ${etat} est posé quelque part`);
   }
   assert.ok(/connexion,/.test(code.slice(code.lastIndexOf('return {'))), 'l’état est exposé à l’écran');

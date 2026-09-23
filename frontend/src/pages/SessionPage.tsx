@@ -69,6 +69,11 @@ import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
 import { useProgramStream } from '@/hooks/useProgramStream';
 import { useBroadcast } from '@/hooks/useBroadcast';
 import { capacitePartageEcran, arreterPistesPartage } from '@/lib/screenShareLogic';
+import { deciderPseudo } from '@/lib/identiteLive';
+import {
+  EVENEMENT_CAMERA_HOTE, BATTEMENT_CAMERA_MS,
+  appliquerSignalCamera, purgerCamerasPerimees, peutRecevoirLaVideo, raisonVisioFermee as motifVisioFermee,
+} from '@/lib/cameraHoteSignal';
 import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
@@ -1363,14 +1368,30 @@ export const SessionPage: React.FC = () => {
   const [mobileTab, setMobileTab] = useState<'player' | 'controls'>('player');
   const [screenSharing, setScreenSharing] = useState(false); // 🖥️ l'hôte/co-hôte partage son écran
   const [remoteScreenActive, setRemoteScreenActive] = useState(false); // un AUTRE partage son écran
+  // 🎥 UNE CAMÉRA DIFFUSE-T-ELLE DANS CETTE SESSION ? (signal brut, reçu par Realtime)
+  //    Le partage d'écran avait déjà son annonce (`SCREEN_SHARE_STATE`) ; la caméra n'en
+  //    avait AUCUNE. Les participants restaient donc hors de la room et ne recevaient rien.
+  const [cameraHoteActive, setCameraHoteActive] = useState(false);
+  //    …et l'ai-je le DROIT de la recevoir ? Calculé plus bas, quand toutes les règles
+  //    d'accès de la session sont connues (paywall, billet, salle d'attente, lecture seule).
+  //    Le signal n'ouvre AUCUNE porte : il allume l'écran de qui pouvait déjà entrer.
+  const [cameraHoteAVoir, setCameraHoteAVoir] = useState(false);
+  const camerasDistantesRef = useRef<Map<string, number>>(new Map());
+  // 🔑 L'autorité de diffusion est-elle écrite côté serveur ? Le backend n'accorde la scène
+  //    qu'à l'hôte enregistré (`playlists.host_id`) ou à un co-hôte déclaré. Tant que
+  //    `claimHost` n'a pas répondu, demander le jeton « stage » revient à courir contre
+  //    l'écriture en base — et à repartir spectateur sans rien publier.
+  const publicationPrete = isAdminUser || isCoHost || (!!user?.id && sessionHostId != null && sessionHostId === user.id);
   // 🎥 LiveKit (SFU) — remplace le mesh PeerJS pour les caméras/écran. Interface identique à useVideoMesh.
   const videoMesh = useLiveKitStage({
     sessionId: sessionId || '',
     userId: socket.userId,
     name: nickname || undefined,
-    // la room doit être active pour le Live Visio, le partage d'écran émis OU reçu
-    active: (liveMode || screenSharing || remoteScreenActive) && !!sessionId,
+    // la room doit être active pour le Live Visio, le partage d'écran émis OU reçu,
+    // ET quand une caméra diffuse alors qu'on a le droit de la voir (jonction automatique).
+    active: (liveMode || screenSharing || remoteScreenActive || cameraHoteAVoir) && !!sessionId,
     canPublish: canShare, // hôte/co-hôtes publient ; les autres sont viewers (promus par l'hôte si acceptés)
+    publicationPrete,
     maxCameras: MAX_VISIO_CAMERAS,
     onLimit: () => showToast(`Limite de ${MAX_VISIO_CAMERAS} caméras atteinte`, 'warning'),
     onStageFull: () => showToast('Scène pleine (10 max)', 'warning'),
@@ -1413,7 +1434,11 @@ export const SessionPage: React.FC = () => {
       // le serveur vidéo est injoignable (ce n'est PAS chez toi, et aucune permission
       // n'y changera rien). Le message générique « autorisez l'accès » envoyait chercher
       // dans les réglages du navigateur une panne qui était côté serveur.
-      if (videoMesh.connexion === 'echec') {
+      if (videoMesh.connexion === 'refus-publication') {
+        // Troisième cause, longtemps invisible : le serveur REFUSE le droit de diffuser.
+        // Ni le navigateur ni le réseau n'y sont pour quelque chose.
+        showToast('Le serveur n\'accorde pas le droit de diffuser sur cette session : ta caméra n\'est pas envoyée. Recharge la page.', 'error');
+      } else if (videoMesh.connexion === 'echec') {
         showToast('Serveur vidéo injoignable : la caméra ne peut pas démarrer. Ce n\'est pas une autorisation à donner.', 'error');
       } else if (videoMesh.activeCameraCount < MAX_VISIO_CAMERAS) {
         showToast('Impossible d\'accéder à la caméra (autorisez l\'accès)', 'error');
@@ -1469,6 +1494,33 @@ export const SessionPage: React.FC = () => {
     const t = setInterval(() => broadcastScreenState(true), 4000);
     return () => clearInterval(t);
   }, [screenSharing, sessionId, broadcastScreenState]);
+
+  // 🎥 « MA CAMÉRA DIFFUSE » — l'annonce qui manquait, calquée sur celle du partage d'écran.
+  //
+  //    Ce n'est pas un nouveau transport : c'est le MÊME canal Realtime `playback:<id>`, le
+  //    MÊME type de message, le MÊME battement de 4 s pour ceux qui arrivent après le début.
+  //    On l'émet sur `videoMesh.cameraOn`, qui ne passe à `true` qu'APRÈS la publication
+  //    réelle de la piste — jamais sur le clic. Une caméra refusée par le navigateur ou par
+  //    le serveur n'annonce donc rien, et personne ne se connecte pour regarder du vide.
+  //    (Le mode « Programme à l'antenne » garde `cameraOn` : les participants reçoivent
+  //    toujours une piste `Camera`, l'annonce reste donc vraie.)
+  const cameraDiffusee = canShare && videoMesh.cameraOn;
+  const broadcastHostCameraState = useCallback((active: boolean) => {
+    if (sessionId && supabase && isSupabaseConfigured) {
+      supabase.channel(`playback:${sessionId}`).send({
+        type: 'broadcast', event: EVENEMENT_CAMERA_HOTE, payload: { active, userId: socket.userId },
+      });
+    }
+  }, [sessionId, socket.userId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    broadcastHostCameraState(cameraDiffusee);
+    if (!cameraDiffusee) return;
+    const t = setInterval(() => broadcastHostCameraState(true), BATTEMENT_CAMERA_MS);
+    // Le départ propre le dit tout de suite ; un onglet fermé brutalement est rattrapé par
+    // la péremption côté récepteur (aucun « off » ne part jamais dans ce cas-là).
+    return () => { clearInterval(t); broadcastHostCameraState(false); };
+  }, [cameraDiffusee, sessionId, broadcastHostCameraState]);
   // 🎤 Poignée du micro HÔTE (MicrophoneControl) → permet de (dé)activer le micro depuis la barre plein
   //    écran du Live Visio (BUG 5), via le MÊME chemin que le bouton principal.
   const handleLiveMicToggle = useCallback(() => {
@@ -1769,6 +1821,57 @@ export const SessionPage: React.FC = () => {
     if (data) setAccessInfo(data);
   }, [sessionId]);
   useEffect(() => { refreshAccess(); }, [refreshAccess]);
+
+  // ═══ 🎥 JONCTION AUTOMATIQUE À LA VIDÉO — le cœur du correctif ═══════════════════════
+  //
+  //  Ce bloc est ICI, et pas plus haut, parce qu'il a besoin de TOUTES les règles d'accès
+  //  de la session (paywall crédits, billet, salle d'attente, lecture seule) — elles sont
+  //  déclarées au-dessus. Le signal caméra ne contourne aucune d'elles : il se contente
+  //  d'allumer l'écran de quelqu'un qui avait déjà le droit d'être là.
+  //
+  //  1) Péremption : un diffuseur qui ne bat plus depuis 13 s sort du registre. Sans cela,
+  //     un onglet fermé brutalement laisserait croire à une caméra vivante pour toujours.
+  useEffect(() => {
+    if (!cameraHoteActive) return;
+    const t = setInterval(() => {
+      if (purgerCamerasPerimees(camerasDistantesRef.current, Date.now())) {
+        setCameraHoteActive(camerasDistantesRef.current.size > 0);
+      }
+    }, BATTEMENT_CAMERA_MS);
+    return () => clearInterval(t);
+  }, [cameraHoteActive]);
+
+  //  2) Le droit de regarder. Les six raisons de refus existent déjà et sont déjà
+  //     appliquées ailleurs (deux paywalls plein écran, deux écrans de salle d'attente) ;
+  //     on les relit pour ne même pas OUVRIR de connexion média à qui n'a pas payé.
+  const droitsVisio = {
+    lectureSeule: isGuestRestricted,
+    paywallCredits: !!creditsBlocked,
+    billetManquant: hasTicket === false,
+    attenteInscription: paidAwaitingSignup,
+    refuse: refused,
+    enAttenteAdmission: isPrivate && !isHost && !isAdminUser && !admitted,
+    pseudoConnu: !!nickname,
+  };
+  const peutRegarderLaVideo = peutRecevoirLaVideo(droitsVisio);
+  const raisonVisioFermee = motifVisioFermee(droitsVisio);
+  useEffect(() => {
+    const aVoir = cameraHoteActive && peutRegarderLaVideo;
+    setCameraHoteAVoir((prev) => (prev === aVoir ? prev : aVoir));
+  }, [cameraHoteActive, peutRegarderLaVideo]);
+
+  //  3) Ouvrir l'écran Live Visio tout seul — et le refermer SEULEMENT si c'est nous qui
+  //     l'avions ouvert. Quelqu'un qui a cliqué « Live Visio » de sa main ne doit pas voir
+  //     son écran se refermer parce que l'hôte a coupé sa caméra trois secondes.
+  const visioOuverteAutoRef = useRef(false);
+  useEffect(() => {
+    if (!sessionId) return;
+    if (cameraHoteAVoir && !liveMode) { visioOuverteAutoRef.current = true; setLiveMode(true); return; }
+    if (!cameraHoteAVoir && liveMode && visioOuverteAutoRef.current) {
+      visioOuverteAutoRef.current = false;
+      setLiveMode(false);
+    }
+  }, [cameraHoteAVoir, liveMode, sessionId]);
 
   // 🔗 Intégration afroboost (iframe) : au démarrage RÉEL du live (accès accordé, aucun paywall),
   //    on prévient afroboost pour débiter 1 crédit (idempotent sur jti côté afroboost) + postMessage.
@@ -2268,6 +2371,18 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current || !payload.payload) return;
         const p = payload.payload as { active?: boolean };
         setRemoteScreenActive(!!p.active);
+      })
+      // 🎥 caméra d'un diffuseur : même mécanisme, pour la CAMÉRA cette fois. On tient un
+      //    registre `userId → dernier battement` plutôt qu'un simple booléen : plusieurs
+      //    personnes peuvent être à l'écran, et un onglet fermé brutalement n'envoie jamais
+      //    son « off ». Le filtre se fait sur l'identité (mon propre écho est ignoré), pas
+      //    sur le rôle : un co-hôte doit voir la caméra de l'hôte, et réciproquement.
+      .on('broadcast', { event: EVENEMENT_CAMERA_HOTE }, (payload) => {
+        if (!payload.payload) return;
+        const p = payload.payload as { active?: boolean; userId?: string };
+        if (appliquerSignalCamera(camerasDistantesRef.current, p, myUserIdRef.current, Date.now())) {
+          setCameraHoteActive(camerasDistantesRef.current.size > 0);
+        }
       })
       // 🚪 SALLE D'ATTENTE — l'hôte reçoit les demandes d'accès des participants
       .on('broadcast', { event: 'JOIN_REQUEST' }, (payload) => {
@@ -3316,20 +3431,26 @@ export const SessionPage: React.FC = () => {
   }, [isHost, ownerPlaylistKey, sessionId]);
 
   // Initialize - check for stored nickname
+  //
+  // 🪪 L'IDENTITÉ AFROBOOST EST DÉJÀ LÀ — ON LA LIT ENFIN. Ce bloc ne consultait que
+  // `localStorage['bt_nickname']` : un coach ou un abonné reconnu par Afroboost devait
+  // retaper son nom, alors que ce nom arrive par le pont d'intégration et vit déjà dans
+  // `profile.full_name`. La règle (et le repli e-mail qu'on refuse) est dans
+  // `lib/identiteLive.ts`, testée à part. On attend la fin du chargement de l'auth :
+  // sans cela le profil arriverait APRÈS ce montage et la modale s'ouvrirait pour rien.
   useEffect(() => {
-    const stored = getStoredNickname();
-    
-    if (stored) {
-      setNickname(stored);
+    if (authLoading) return;
+    const d = deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email });
+    if (d.pseudo) {
+      setNickname(d.pseudo);
+      setShowNicknameModal(false);
       setIsInitialized(true);
-    } else {
-      // Show modal if joining a session (has sessionId) or creating one
-      if (urlSessionId || sessionId) {
-        setShowNicknameModal(true);
-      }
-      setIsInitialized(true);
+      return;
     }
-  }, [urlSessionId, sessionId]);
+    // Show modal if joining a session (has sessionId) or creating one
+    if (urlSessionId || sessionId) setShowNicknameModal(true);
+    setIsInitialized(true);
+  }, [urlSessionId, sessionId, authLoading, profile?.full_name, user?.email]);
 
   // B : photo de profil obligatoire — exécute `next` si avatar présent, sinon ouvre le crop
   const ensureAvatar = useCallback((next: () => void) => {
@@ -3396,14 +3517,15 @@ export const SessionPage: React.FC = () => {
     if (user?.id) markActiveSession(user.id, newSessionId);
     navigate(`/session/${newSessionId}`, { replace: true });
 
-    const stored = getStoredNickname();
-    if (!stored) {
-      setShowNicknameModal(true);
-    } else {
-      setNickname(stored);
+    // Même règle qu'au montage : le nom Afroboost vaut pseudo (cf. `lib/identiteLive.ts`).
+    const d = deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email });
+    if (d.pseudo) {
+      setNickname(d.pseudo);
       showToast('Session créée ! Partagez le lien avec vos amis.', 'success');
+    } else {
+      setShowNicknameModal(true);
     }
-  }, [navigate, showToast, sessionLimit, user?.id]);
+  }, [navigate, showToast, sessionLimit, user?.id, profile?.full_name, user?.email]);
 
   // B : à la création, l'hôte DOIT avoir une photo de profil
   const handleCreateSession = useCallback(() => {
@@ -4040,7 +4162,7 @@ export const SessionPage: React.FC = () => {
         isHost={isHost}
         onSubmit={handleNicknameSubmit}
         theme={theme}
-        initialNickname={nickname || getStoredNickname() || ''}
+        initialNickname={nickname || deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email }).prerempli}
         currentAvatar={myAvatar}
         onAddPhoto={handleAddPhotoFromModal}
       />
@@ -4264,13 +4386,16 @@ export const SessionPage: React.FC = () => {
             <p className="text-white/50 text-sm mb-4">Choisis comment les participants accèdent à ce live.</p>
             <div className="space-y-2 mb-4">
               {(([
-                { v: 'open', label: 'Ouverte (crédits)', desc: 'Le public dépense 1 crédit pour rejoindre.' },
+                // 💳 Le libellé ne doit pas laisser croire à une vente : ce crédit va à la
+                //    PLATEFORME, jamais au coach (POST /credits/spend ne crédite personne).
+                //    Seul le mode « Payante (billet CHF) » rémunère, via wallet + payout.
+                { v: 'open', label: "Ouverte (crédits d'accès)", desc: "1 crédit d'accès par participant. Ces crédits vont à la plateforme, pas à toi." },
                 // 💳 « Payante (billet CHF) » réservée aux coachs en mode commission (argent via la plateforme).
                 //    En abonnement, le coach encaisse lui-même via son lien/QR privé → on masque l'option.
                 ...(coachPaymentType === 'commission'
                   ? [{ v: 'paid', label: 'Payante (billet CHF)', desc: 'Tu fixes un prix par place ; billet requis.' }]
                   : []),
-                { v: 'private', label: 'Privée (lien/QR)', desc: 'Invités gratuits via le lien.' },
+                { v: 'private', label: 'Privée (lien/QR)', desc: 'Invités gratuits via le lien — ils voient ta vidéo. Encaisse toi-même hors plateforme.' },
               ]) as { v: 'open' | 'paid' | 'private'; label: string; desc: string }[]).map((opt) => (
                 <button
                   key={opt.v}
@@ -4620,34 +4745,45 @@ export const SessionPage: React.FC = () => {
                 >
                   <Headphones className="w-4 h-4" /> {t('session.mode.listen')}
                 </button>
+                {/* 🎥 REGARDER ≠ DIFFUSER. Ce bouton n'ouvre QUE l'écran des caméras ; le droit
+                    de publier reste décidé par le serveur (rôle « stage »). Il était verrouillé
+                    sur `isFree`, c'est-à-dire sur le PLAN de la personne — si bien qu'un invité
+                    d'un live déclaré GRATUIT (« Privée — invités gratuits via le lien ») ne
+                    pouvait pas voir la vidéo qu'on venait de lui promettre. Le verrou suit
+                    maintenant les règles de LA SESSION, qui sont déjà appliquées par ailleurs
+                    (paywall crédits, billet, salle d'attente, lecture seule) : rien n'est
+                    ouvert qui était fermé, la session « Ouverte (crédits) » reste payante. */}
                 <button
                   onClick={() => {
-                    if (isFree) {
-                      showToast('Live Visio : procurez-vous des crédits', 'warning');
-                      navigate('/pricing');
+                    if (!peutRegarderLaVideo) {
+                      showToast(raisonVisioFermee, 'warning');
+                      if (creditsBlocked || isGuestRestricted) return;
                       return;
                     }
                     setLiveMode(true);
                   }}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    isFree ? 'text-white/40 cursor-not-allowed' : liveMode ? 'text-white' : 'text-white/60 hover:text-white'
+                    !peutRegarderLaVideo ? 'text-white/40 cursor-not-allowed' : liveMode ? 'text-white' : 'text-white/60 hover:text-white'
                   }`}
-                  style={liveMode && !isFree ? { background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' } : undefined}
-                  title={isFree ? 'Live Visio : procurez-vous des crédits' : undefined}
+                  style={liveMode && peutRegarderLaVideo ? { background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' } : undefined}
+                  title={peutRegarderLaVideo ? undefined : raisonVisioFermee}
                   data-testid="mode-live"
                 >
-                  {isFree ? <Lock className="w-4 h-4" /> : <Video className="w-4 h-4" />} {t('session.mode.live')}
+                  {peutRegarderLaVideo ? <Video className="w-4 h-4" /> : <Lock className="w-4 h-4" />} {t('session.mode.live')}
                 </button>
               </div>
             )}
 
-            {/* 🔒 Plan gratuit : Live Visio verrouillé → invite Pro */}
-            {isFree && sessionId && (
-              <div className="bt-tab-diffusion flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit">
-                <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> Live Visio : nécessite des crédits</span>
-                <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
-                  Acheter des crédits
-                </button>
+            {/* 🔒 Visio fermée — on dit LAQUELLE des règles ferme la porte, et on ne
+                propose l'achat de crédits que quand c'est bien de cela qu'il s'agit. */}
+            {!peutRegarderLaVideo && sessionId && !isHost && (
+              <div className="bt-tab-diffusion flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10 w-fit" data-testid="visio-fermee">
+                <span className="flex items-center gap-1.5 text-white/50 text-xs"><Lock className="w-3.5 h-3.5" /> {raisonVisioFermee}</span>
+                {!!creditsBlocked && (
+                  <button onClick={() => navigate('/pricing')} className="px-2.5 py-1 rounded-md text-white text-xs font-medium" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
+                    Acheter des crédits
+                  </button>
+                )}
               </div>
             )}
 
@@ -4706,15 +4842,15 @@ export const SessionPage: React.FC = () => {
               {prompteurNode}
               <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
                 <p className="text-white/70 text-sm mb-3">
-                  {isFree ? 'La Live Visio nécessite des crédits.' : 'Active la Live Visio pour afficher les caméras.'}
+                  {peutRegarderLaVideo ? 'Active la Live Visio pour afficher les caméras.' : raisonVisioFermee}
                 </p>
-                {isFree ? (
-                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
-                    Acheter des crédits
-                  </button>
-                ) : (
+                {peutRegarderLaVideo ? (
                   <button onClick={() => sessionId && setLiveMode(true)} className="px-4 py-2 rounded-lg text-white text-sm font-medium inline-flex items-center gap-2" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
                     <Video className="w-4 h-4" /> Démarrer la Live Visio
+                  </button>
+                ) : !!creditsBlocked && (
+                  <button onClick={() => navigate('/pricing')} className="px-4 py-2 rounded-lg text-white text-sm font-medium" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}>
+                    Acheter des crédits
                   </button>
                 )}
               </div>

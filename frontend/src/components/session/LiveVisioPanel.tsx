@@ -106,7 +106,7 @@ interface LiveVisioPanelProps {
   prompteurOuvert?: boolean;
   onTogglePrompteur?: () => void;
   /** État de la connexion au serveur vidéo — affiché, jamais tu. */
-  connexionScene?: 'inactive' | 'en-cours' | 'connectee' | 'echec';
+  connexionScene?: 'inactive' | 'en-cours' | 'connectee' | 'echec' | 'refus-publication';
   // 🎵 Commandes musique compactes (⏮ ▶/⏸ ⏭ + titre) — LE lecteur existant, pas un second.
   //    Rendues dans le panneau ET dans le plein écran : changer de morceau ne doit pas
   //    obliger à sortir de la vue caméra.
@@ -266,6 +266,20 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
              role="status" data-testid="visio-connexion-echec">
           Serveur vidéo injoignable : les caméras ne peuvent pas démarrer. Ce n'est pas une
           autorisation à donner — le problème est côté serveur.
+        </div>
+      )}
+
+      {/* ⛔ DROIT DE DIFFUSER REFUSÉ — une panne de réseau et un refus d'autorisation ne se
+          soignent pas pareil, donc ils ne se disent pas pareil. Le serveur n'accorde la
+          scène qu'à l'hôte enregistré de la session : si l'autorité n'a pas pu être écrite
+          (session revendiquée par un autre compte, session expirée, connexion perdue), on
+          l'écrit noir sur blanc au lieu de laisser croire que la caméra diffuse. */}
+      {connexionScene === 'refus-publication' && (
+        <div className="px-4 py-2 text-xs leading-snug text-amber-300 bg-amber-500/10 border-b border-amber-500/25"
+             role="status" data-testid="visio-refus-publication">
+          Le serveur n'a pas accordé le droit de diffuser sur cette session : ta caméra n'est
+          PAS envoyée aux participants. Recharge la page ; si cela persiste, la session
+          appartient à un autre compte.
         </div>
       )}
 

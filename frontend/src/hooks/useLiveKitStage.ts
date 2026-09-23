@@ -38,6 +38,15 @@ export interface LiveKitStageOptions {
   name?: string;
   active: boolean;            // se connecter à la room quand true (Live Visio OU partage écran émis/reçu)
   canPublish: boolean;       // hôte/co-hôte → rôle initial "stage" ; sinon "viewer"
+  /**
+   * 🔑 L'autorité de l'hôte est-elle DÉJÀ écrite côté serveur (`playlists.host_id`) ?
+   * Le backend n'accorde le rôle « stage » qu'à un hôte/co-hôte déjà enregistré. Demander
+   * le jeton avant la fin de `claimHost` revenait à courir contre l'écriture en base : on
+   * repartait alors en spectateur, sans rien publier ni rien dire. Tant que ce drapeau est
+   * `false` pour quelqu'un qui doit publier, on ATTEND (l'effet se rejoue quand il passe à
+   * `true`). Absent ⇒ `true` : aucun appelant existant n'est modifié.
+   */
+  publicationPrete?: boolean;
   maxCameras?: number;       // défaut 10 (= MAX_STAGE)
   onLimit?: () => void;      // parité useVideoMesh (limite locale)
   onStageFull?: () => void;  // backend 409 "stage_full" → "Scène pleine (10 max)"
@@ -51,7 +60,7 @@ export type PromoteResult = 'ok' | 'stage_full' | 'error';
  * L'écran ne montrait alors RIEN — ni caméra, ni erreur. Une panne serveur devenait
  * indiscernable d'un bouton mort, et se cherchait dans le code de la caméra.
  */
-export type EtatConnexionScene = 'inactive' | 'en-cours' | 'connectee' | 'echec';
+export type EtatConnexionScene = 'inactive' | 'en-cours' | 'connectee' | 'echec' | 'refus-publication';
 
 export interface LiveKitStageReturn {
   ready: boolean;
@@ -128,7 +137,7 @@ async function getAuthHeader(): Promise<Record<string, string>> {
 }
 
 export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageReturn {
-  const { sessionId, userId, name, active, canPublish, maxCameras = MAX_STAGE, onStageFull } = options;
+  const { sessionId, userId, name, active, canPublish, publicationPrete = true, maxCameras = MAX_STAGE, onStageFull } = options;
 
   const [ready, setReady] = useState(false);
   const [connexion, setConnexion] = useState<EtatConnexionScene>('inactive');
@@ -317,6 +326,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   // ─── Cycle de vie : connexion à la room selon `active` + rôle initial (canPublish) ───
   useEffect(() => {
     if (!active || !sessionId || !userId || !API_URL) { setConnexion('inactive'); return; }
+    // 🔑 Course résolue : quelqu'un qui doit publier n'ouvre RIEN tant que son autorité
+    //    n'est pas écrite côté serveur. On reste « en-cours » (l'écran dit « connexion… »),
+    //    et cet effet se rejoue dès que `publicationPrete` passe à `true`.
+    if (canPublish && !publicationPrete) { setConnexion('en-cours'); return; }
 
     let cancelled = false;
     setConnexion('en-cours');
@@ -369,13 +382,29 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       .on(RoomEvent.Disconnected, () => { if (!cancelled) setReady(false); });
 
     (async () => {
-      // Rôle initial : hôte/co-hôte → stage ; sinon viewer. Repli viewer si 409/échec stage.
+      // Rôle initial : hôte/co-hôte → stage ; sinon viewer.
+      //
+      // ⚠️ LE REPLI SILENCIEUX EST SUPPRIMÉ. Avant, un `stage` refusé (401 sans jeton
+      // Supabase, 403 `stage_reserved_to_host` parce que `playlists.host_id` n'était pas
+      // encore écrit) retombait SANS UN MOT sur un jeton `viewer`. L'hôte se connectait
+      // alors sans le droit de publier : `startCamera` répondait « oui », la caméra
+      // s'allumait dans son navigateur, et RIEN ne partait vers les participants. C'est
+      // exactement le symptôme rapporté — « les participants ne reçoivent pas ma vidéo ».
+      // Un refus de publier se DIT ; il ne se déguise pas en spectateur.
+      //
+      // Seule exception conservée, parce qu'elle est déjà annoncée à l'écran : la scène
+      // pleine (409). Là, spectateur est la bonne réponse, et `onStageFull` la nomme.
       let creds: { token: string; url: string } | 'stage_full' | null = null;
       if (canPublish) {
         creds = await fetchToken('stage');
         if (creds === 'stage_full') { onStageFullRef.current?.(); creds = await fetchToken('viewer'); }
+        else if (!creds) {
+          if (!cancelled) setConnexion('refus-publication');
+          return;
+        }
+      } else {
+        creds = await fetchToken('viewer');
       }
-      if (!creds || creds === 'stage_full') creds = await fetchToken('viewer');
       if (!creds || creds === 'stage_full') {
         // Pas de jeton : backend injoignable, ou refus. Le dire, ne pas attendre en silence.
         if (!cancelled) setConnexion('echec');
@@ -423,13 +452,13 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       setRemoteScreen(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, sessionId, userId, canPublish]);
+  }, [active, sessionId, userId, canPublish, publicationPrete]);
 
   const startCamera = useCallback(async (_force = false): Promise<boolean> => {
     // Connexion en échec : répondre « oui » ferait taire l'appelant, qui n'afficherait
     // aucune erreur — c'est exactement ce qui a masqué une panne du SFU pendant des
     // semaines. Une demande mise en attente sur une connexion morte n'est pas un succès.
-    if (connexionRef.current === 'echec') return false;
+    if (connexionRef.current === 'echec' || connexionRef.current === 'refus-publication') return false;
     const room = roomRef.current;
     if (!room) { pendingCameraRef.current = true; return true; }
     if (cameraOnRef.current) return true;
@@ -437,10 +466,17 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     if (room.localParticipant.permissions?.canPublish) {
       return publishCamera();
     }
-    // Sinon : viewer en attente de promotion par l'hôte → publiera dès la permission accordée.
+    // ⚠️ ICI VIVAIT LE MENSONGE. Mettre la demande « en attente » et répondre `true` a un
+    //    sens pour un SPECTATEUR qui lève la main : sa caméra partira quand l'hôte l'aura
+    //    accepté (`ParticipantPermissionsChanged`). Pour quelqu'un qui EST hôte ou co-hôte,
+    //    cette même réponse signifiait « c'est bon » alors que rien ne partirait jamais :
+    //    personne ne va le promouvoir, il EST déjà censé avoir le droit. On répond donc non,
+    //    et l'appelant affiche la raison (l'état `connexion` la porte).
+    if (canPublish) return false;
+    // Spectateur en attente de promotion par l'hôte → publiera dès la permission accordée.
     pendingCameraRef.current = true;
     return true;
-  }, [publishCamera]);
+  }, [publishCamera, canPublish]);
 
   const stopCamera = useCallback(() => {
     const room = roomRef.current;

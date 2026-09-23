@@ -31,17 +31,22 @@ interface ModeOption {
   Icon: React.ComponentType<{ className?: string }>;
 }
 
+// 🏷️ LES LIBELLÉS DISENT CE QUE LE CODE FAIT, ET RIEN D'AUTRE.
+//    « Accès avec inscription » était faux : AUCUNE inscription n'est créée ici, et aucun
+//    compte n'est exigé — la seule obligation est de donner un nom. Ce qui change vraiment
+//    entre les deux options, c'est le chat et la vidéo. On les nomme donc par leur effet.
+//    (Les règles ne bougent pas : `guest` coupe toujours chat + visio, `account` les ouvre.)
 const OPTIONS: ModeOption[] = [
   {
     mode: 'guest',
-    label: 'Accès sans inscription',
-    desc: "Le public rejoint avec juste un prénom/nom. Écoute/lecture seule (pas de chat ni de visio).",
+    label: 'Accès lecture seule',
+    desc: "Le public rejoint avec un prénom/nom, sans compte. Il écoute et regarde le lecteur — pas de chat, pas de vidéo.",
     Icon: UserX,
   },
   {
     mode: 'account',
-    label: 'Accès avec inscription',
-    desc: 'Nom requis. Accès complet : chat + visio.',
+    label: 'Accès complet',
+    desc: 'Nom demandé (aucun compte à créer). Chat + vidéo du live.',
     Icon: UserPlus,
   },
 ];

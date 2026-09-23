@@ -256,3 +256,24 @@ test('une proposition de THÈME n’est pas une réponse — elle n’enterre ri
 test('le panneau affiche selon la PROVENANCE du brouillon, pas selon l’onglet', () => {
   assert.ok(PANNEAU.includes('const source = etat.origineBrouillon;'));
 });
+
+// ── CIBLES TACTILES — mesurées au banc, pas estimées ────────────────────────────────
+//
+// Première version : A-, A+ et la croix de fermeture tenaient dans 16 à 20 px. Sur un
+// téléphone posé par terre pendant un cours, c'est intouchable. 36 px au doigt.
+
+test('A-, A+ et la fermeture partagent la même cible tactile généreuse', () => {
+  assert.ok(/const BTN_TAILLE = 'w-9 h-9 sm:w-7 sm:h-7/.test(PANNEAU), 'cible : 36 px au doigt, 28 px à la souris');
+  ['prompteur-a-moins', 'prompteur-a-plus', 'assistant-fermer'].forEach((id) => {
+    const i = PANNEAU.indexOf(`data-testid="${id}"`);
+    assert.ok(i > 0, `bouton manquant : ${id}`);
+    assert.ok(PANNEAU.slice(i - 260, i).includes('BTN_TAILLE'), `${id} n’utilise pas la cible tactile`);
+  });
+});
+
+test('le panneau passe AU-DESSUS de la bulle du chat, sous les modales', () => {
+  // La bulle flottante du chat vit à z-[130] et retombait pile sur la rangée des
+  // actions IA (vu sur une capture 390×844). Les modales restent à z-[140].
+  assert.ok(PANNEAU.includes('z-[135]'), 'le panneau doit être à z-[135]');
+  assert.ok(!PANNEAU.includes('z-[130]'), 'plus aucune couche du panneau à z-[130]');
+});

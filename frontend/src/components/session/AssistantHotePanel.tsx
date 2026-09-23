@@ -76,6 +76,8 @@ const MOTIFS: Record<string, string> = {
 const BTN = 'px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors';
 const BTN_PRIM = `${BTN} text-white`;
 const BTN_SEC = `${BTN} text-white/70 border border-white/15 hover:text-white`;
+/** Cible tactile des réglages de taille : 36 px au doigt, 28 px à la souris. */
+const BTN_TAILLE = 'w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center shrink-0';
 
 export const AssistantHotePanel: React.FC<Props> = ({
   open, onClose, mobile = false, actif, onBasculer, onglet, onOnglet, etat, theme, onTheme,
@@ -162,9 +164,13 @@ export const AssistantHotePanel: React.FC<Props> = ({
 
   return (
     <div
+      // z-[135] et non z-[130] : la bulle flottante du chat de session vit à z-[130]
+      // et retombait PILE sur la rangée « Continuer / Raccourcir / Développer / Plus
+      // naturel ». Vu sur une capture 390×844, pas déduit. Les modales (z-[140])
+      // restent au-dessus, comme il faut.
       className={mobile
-        ? 'fixed inset-x-0 bottom-0 z-[130] max-h-[82vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'
-        : 'fixed right-4 bottom-24 z-[130] w-[380px] max-h-[74vh] overflow-y-auto rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'}
+        ? 'fixed inset-x-0 bottom-0 z-[135] max-h-[82vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'
+        : 'fixed right-4 bottom-24 z-[135] w-[380px] max-h-[74vh] overflow-y-auto rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'}
       role="dialog" aria-label="Prompteur privé de l'hôte" data-testid="assistant-hote-panneau"
     >
       <div className="sticky top-0 flex items-center gap-2 px-4 py-3 bg-[#15151b] border-b border-white/10">
@@ -178,7 +184,7 @@ export const AssistantHotePanel: React.FC<Props> = ({
           IA {actif ? 'activée' : 'éteinte'}
         </button>
         <button type="button" onClick={onClose} aria-label="Fermer le prompteur"
-          className="text-white/50 hover:text-white" data-testid="assistant-fermer"><X className="w-4 h-4" /></button>
+          className={`${BTN_TAILLE} rounded-lg text-white/50 hover:text-white`} data-testid="assistant-fermer"><X className="w-4 h-4" /></button>
       </div>
 
       <p className="px-4 pt-3 text-[11px] leading-snug text-white/40">
@@ -191,10 +197,13 @@ export const AssistantHotePanel: React.FC<Props> = ({
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[10px] font-bold tracking-wide text-white/40 flex-1">AU PROMPTEUR</span>
             <span className="text-[10px] text-white/35 tabular-nums">{taille} px</span>
+            {/* A- / A+ : 36 px au doigt, 28 px à la souris. La première version tenait
+                dans 20 px — invisible à l'usage, et intouchable sur un téléphone posé
+                au sol pendant un cours. Mesuré au banc, pas estimé. */}
             <button type="button" onClick={onPlusPetit} aria-label="Réduire le texte du prompteur"
-              className="p-1 rounded-md border border-white/15 text-white/70 hover:text-white" data-testid="prompteur-a-moins"><Minus className="w-3 h-3" /></button>
+              className={`${BTN_TAILLE} rounded-lg border border-white/15 text-white/70 hover:text-white`} data-testid="prompteur-a-moins"><Minus className="w-4 h-4" /></button>
             <button type="button" onClick={onPlusGrand} aria-label="Agrandir le texte du prompteur"
-              className="p-1 rounded-md border border-white/15 text-white/70 hover:text-white" data-testid="prompteur-a-plus"><Plus className="w-3 h-3" /></button>
+              className={`${BTN_TAILLE} rounded-lg border border-white/15 text-white/70 hover:text-white`} data-testid="prompteur-a-plus"><Plus className="w-4 h-4" /></button>
           </div>
           <p className="text-white/75 text-xs leading-snug line-clamp-3 whitespace-pre-wrap">{etat.affiche}</p>
           {peutReprendre(etat) && (

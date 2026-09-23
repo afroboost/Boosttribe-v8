@@ -1,5 +1,6 @@
 import React from 'react';
-import { Sparkles, X, RotateCw, Copy, CornerDownLeft, Check, MessageSquare, PenLine, Wand2, Eraser, Undo2, Minus, Plus } from 'lucide-react';
+import { Sparkles, X, RotateCw, Copy, CornerDownLeft, Check, MessageSquare, PenLine, Wand2, Eraser, Undo2,
+  Minus, Plus, Mic, MicOff, Video, VideoOff, SwitchCamera, Disc, Square, PhoneOff } from 'lucide-react';
 import type { ModeSouffleur } from '@/lib/assistantHote';
 import {
   ACTIONS_TEXTE, type ActionTexte, type EtatPrompteur, type QuestionEnAttente,
@@ -47,6 +48,29 @@ interface Props {
   invite: string | null;
   modeQuestion: ModeSouffleur;
   // Actions
+  /**
+   * 🎛️ LES COMMANDES QU'ON NE DOIT JAMAIS PERDRE DE VUE.
+   *
+   * Sur mobile, le prompteur est une feuille qui monte du bas : elle recouvre la
+   * barre du Live. Or le prompteur existe pour que le coach LISE SON TEXTE SANS
+   * LÂCHER SON DIRECT — couper son micro, éteindre sa caméra, arrêter
+   * l'enregistrement, terminer. Lui demander de fermer le prompteur pour ça, c'est
+   * lui demander de perdre sa ligne au milieu d'une phrase.
+   *
+   * Ce ne sont PAS de nouveaux boutons : ce sont les mêmes rappels que ceux de la
+   * barre, remontés à portée de pouce. Aucun second état, aucune seconde logique.
+   */
+  controles?: {
+    micActif: boolean;
+    onMic?: () => void;
+    cameraActive: boolean;
+    onCamera?: () => void;
+    onFlip?: () => void;
+    enregistre: boolean;
+    onRecord?: () => void;
+    recordDisponible?: boolean;
+    onTerminer?: () => void;
+  };
   onEcrire: (t: string) => void;
   onAfficher: (source: 'manuel' | 'theme' | 'question') => void;
   onEffacer: () => void;
@@ -78,10 +102,15 @@ const BTN_PRIM = `${BTN} text-white`;
 const BTN_SEC = `${BTN} text-white/70 border border-white/15 hover:text-white`;
 /** Cible tactile des réglages de taille : 36 px au doigt, 28 px à la souris. */
 const BTN_TAILLE = 'w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center shrink-0';
+/** Commandes du direct : mêmes rondes que la barre du Live, à portée de pouce. */
+const ROND = 'w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-colors';
+const SOMBRE = 'bg-white/10 text-white/80 hover:bg-white/15';
+const VERT = 'bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/35';
+const ACCENT_ROND = 'bg-[rgb(var(--bt-accent-rgb)/0.3)] text-[var(--bt-accent)]';
 
 export const AssistantHotePanel: React.FC<Props> = ({
   open, onClose, mobile = false, actif, onBasculer, onglet, onOnglet, etat, theme, onTheme,
-  enCours, indisponible, invite, modeQuestion, onEcrire, onAfficher, onEffacer,
+  enCours, indisponible, invite, modeQuestion, controles, onEcrire, onAfficher, onEffacer,
   onUtiliserSuggestion, onIgnorerSuggestion, onDemanderTexte, onOuvrirQuestion,
   onAutreReponse, onReprendre, taille, onPlusPetit, onPlusGrand, onInsererChat,
 }) => {
@@ -164,15 +193,73 @@ export const AssistantHotePanel: React.FC<Props> = ({
 
   return (
     <div
-      // z-[135] et non z-[130] : la bulle flottante du chat de session vit à z-[130]
-      // et retombait PILE sur la rangée « Continuer / Raccourcir / Développer / Plus
+      // OÙ SE POSE CE PANNEAU, ET POURQUOI PAS AILLEURS.
+      //
+      // Sur grand écran il était à DROITE — c'est-à-dire exactement sur la colonne
+      // du Live : vidéo, barre de commandes, tout dessous. Il est passé à GAUCHE,
+      // au-dessus de la colonne lecteur/playlist : la vidéo reste visible, la barre
+      // reste cliquable, le coach lit et pilote en même temps.
+      //
+      // z-[135] et non z-[130] : la bulle flottante du chat vit à z-[130] et
+      // retombait PILE sur la rangée « Continuer / Raccourcir / Développer / Plus
       // naturel ». Vu sur une capture 390×844, pas déduit. Les modales (z-[140])
       // restent au-dessus, comme il faut.
       className={mobile
-        ? 'fixed inset-x-0 bottom-0 z-[135] max-h-[82vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'
-        : 'fixed right-4 bottom-24 z-[135] w-[380px] max-h-[74vh] overflow-y-auto rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'}
+        ? 'fixed inset-x-0 bottom-0 z-[135] max-h-[70vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'
+        : 'fixed left-4 bottom-24 z-[135] w-[380px] max-h-[74vh] overflow-y-auto rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'}
       role="dialog" aria-label="Prompteur privé de l'hôte" data-testid="assistant-hote-panneau"
     >
+      {/* 🎛️ LES COMMANDES DU DIRECT, COLLÉES EN HAUT DU PROMPTEUR.
+          Un panneau flottant recouvre forcément QUELQUE CHOSE : sur mobile la barre
+          du Live, sur grand écran la colonne d'à côté. Plutôt que de déplacer le
+          problème d'un bord à l'autre, les commandes dont on ne peut pas se passer
+          en direct voyagent AVEC le prompteur. Ce ne sont pas de nouveaux boutons :
+          mêmes rappels, même état, aucune logique dupliquée. Et comme l'en-tête est
+          collant, elles restent là quand le texte défile — c'est tout l'intérêt.
+          Le micro de l'hôte, en particulier, n'a JAMAIS été dans la barre du Live
+          (`hideMicButton` pour l'hôte) : il vivait dans la colonne mixeur. Ici, il
+          est enfin à côté du texte que le coach est en train de lire. */}
+      {controles && (
+        <div className="sticky top-0 z-10 flex items-center justify-center gap-2 px-3 py-2 bg-[#15151b] border-b border-white/10"
+          role="group" aria-label="Commandes du direct" data-testid="prompteur-barre-live">
+          {controles.onMic && (
+            <button type="button" onClick={controles.onMic} aria-pressed={controles.micActif}
+              aria-label={controles.micActif ? 'Couper le micro' : 'Activer le micro'}
+              className={`${ROND} ${controles.micActif ? VERT : SOMBRE}`} data-testid="prompteur-live-mic">
+              {controles.micActif ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            </button>
+          )}
+          {controles.onCamera && (
+            <button type="button" onClick={controles.onCamera} aria-pressed={controles.cameraActive}
+              aria-label={controles.cameraActive ? 'Éteindre la caméra' : 'Allumer la caméra'}
+              className={`${ROND} ${controles.cameraActive ? VERT : SOMBRE}`} data-testid="prompteur-live-camera">
+              {controles.cameraActive ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+            </button>
+          )}
+          {controles.onFlip && (
+            <button type="button" onClick={controles.onFlip} aria-label="Changer de caméra (avant/arrière)"
+              className={`${ROND} ${SOMBRE}`} data-testid="prompteur-live-flip">
+              <SwitchCamera className="w-5 h-5" />
+            </button>
+          )}
+          {controles.onRecord && (
+            <button type="button" onClick={controles.recordDisponible === false ? undefined : controles.onRecord}
+              disabled={controles.recordDisponible === false} aria-pressed={controles.enregistre}
+              aria-label={controles.enregistre ? 'Arrêter l’enregistrement' : 'Démarrer l’enregistrement'}
+              className={`${ROND} ${controles.enregistre ? ACCENT_ROND : SOMBRE}${controles.recordDisponible === false ? ' opacity-40 cursor-not-allowed' : ''}`}
+              data-testid="prompteur-live-record">
+              {controles.enregistre ? <Square className="w-5 h-5" /> : <Disc className="w-5 h-5" />}
+            </button>
+          )}
+          {controles.onTerminer && (
+            <button type="button" onClick={controles.onTerminer} aria-label="Terminer le Live"
+              className={`${ROND} bg-red-500/20 text-red-300 hover:bg-red-500/30`} data-testid="prompteur-live-terminer">
+              <PhoneOff className="w-5 h-5" />
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="sticky top-0 flex items-center gap-2 px-4 py-3 bg-[#15151b] border-b border-white/10">
         <Sparkles className="w-4 h-4" style={{ color: 'var(--bt-accent)' }} aria-hidden="true" />
         <span className="text-white text-sm font-semibold flex-1">Prompteur</span>
@@ -205,7 +292,10 @@ export const AssistantHotePanel: React.FC<Props> = ({
             <button type="button" onClick={onPlusGrand} aria-label="Agrandir le texte du prompteur"
               className={`${BTN_TAILLE} rounded-lg border border-white/15 text-white/70 hover:text-white`} data-testid="prompteur-a-plus"><Plus className="w-4 h-4" /></button>
           </div>
-          <p className="text-white/75 text-xs leading-snug line-clamp-3 whitespace-pre-wrap">{etat.affiche}</p>
+          {/* L'aperçu n'est pas une note de bas de page : c'est ce que le coach
+              relit d'un coup d'œil. 14 px minimum, jamais rapetissé pour faire
+              tenir des boutons. */}
+          <p className="text-white/85 text-sm leading-relaxed line-clamp-3 whitespace-pre-wrap">{etat.affiche}</p>
           {peutReprendre(etat) && (
             <button type="button" onClick={onReprendre} className={`${BTN_SEC} mt-2`} data-testid="prompteur-reprendre">
               <Undo2 className="w-3.5 h-3.5 inline mr-1" />Reprendre mon thème

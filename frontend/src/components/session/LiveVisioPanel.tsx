@@ -88,6 +88,8 @@ interface LiveVisioPanelProps {
    * la règle « rien à l'antenne → caméra du coach » déjà branchée dedans. `onToggleRecord`,
    * lui, ne fait qu'ouvrir le panneau : les deux portes restent distinctes et existantes.
    */
+  /** 🔴 Terminer RÉELLEMENT le live (arrêt, annonce, statut public). Hôte seulement. */
+  onTerminerLive?: () => void;
   onRecordDirect?: () => void;
   /** 🤖 Souffleur privé de l'hôte — bouton rond + panneau rendu par le parent. */
   onToggleAssistant?: () => void;
@@ -156,7 +158,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
   broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
-  onRecordDirect, onToggleAssistant, assistantOuvert = false, assistantActif = false,
+  onTerminerLive, onRecordDirect, onToggleAssistant, assistantOuvert = false, assistantActif = false,
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene,
@@ -583,6 +585,24 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             {broadcastLive && (
               <span className="absolute -top-1 -right-1 px-1 rounded-full bg-[var(--bt-accent)] text-[8px] font-bold tracking-wide text-white leading-4" aria-hidden="true" data-testid="visio-broadcast-badge">LIVE</span>
             )}
+          </button>
+        )}
+
+        {/* 🔴 TERMINER LE LIVE — visible, nommé, et à l'écart des bascules courantes.
+            Il était caché dans le menu ⋮ sous « Quitter le live », et ne quittait rien :
+            il fermait l'écran pendant que la caméra, la room et le statut public
+            continuaient. Une action irréversible mérite d'être vue — et de demander
+            confirmation avant de couper l'antenne. */}
+        {canManageStage && onTerminerLive && (
+          <button
+            type="button"
+            onClick={() => { if (window.confirm('Terminer le Live pour tout le monde ?')) onTerminerLive(); }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-colors bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40"
+            title="Terminer le Live : arrête la diffusion et prévient tout le monde"
+            aria-label="Terminer le Live"
+            data-testid="visio-terminer-live"
+          >
+            <Square className="w-4 h-4" /> Terminer
           </button>
         )}
 

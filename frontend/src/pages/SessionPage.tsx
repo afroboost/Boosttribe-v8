@@ -65,6 +65,7 @@ import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import RecordPanel from '@/components/session/RecordPanel';
 import { useProgramRecorder } from '@/hooks/useProgramRecorder';
 import { antennePourEnregistrer } from '@/lib/recordLogic';
+import { EVENEMENT_LIVE_TERMINE, EVENEMENTS_DEPART, departDoitAnnoncer, sequenceFinDuLive } from '@/lib/finDuLive';
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
 import {
   doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique,
@@ -90,7 +91,7 @@ import {
   getPawapayConfig, claimPendingAccess,
   type SessionAccessInfo, type PawapayConfig,
 } from '@/lib/paymentApi';
-import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone } from 'lucide-react';
+import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone, Square } from 'lucide-react';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { indexSuivant, aUnePisteSuivante, indexPrecedent, aUnePistePrecedente, actionPrecedent } from '@/lib/playlistNav';
 
@@ -2382,6 +2383,13 @@ export const SessionPage: React.FC = () => {
       //    personnes peuvent être à l'écran, et un onglet fermé brutalement n'envoie jamais
       //    son « off ». Le filtre se fait sur l'identité (mon propre écho est ignoré), pas
       //    sur le rôle : un co-hôte doit voir la caméra de l'hôte, et réciproquement.
+      // 🔴 L'hôte a terminé : les participants l'apprennent ICI, pas en voyant
+      //    l'image se figer. Sans ce message, ils restaient dans une room vide.
+      .on('broadcast', { event: EVENEMENT_LIVE_TERMINE }, () => {
+        if (isHostRef.current) return;
+        setLiveTermine(true);
+        setLiveMode(false);
+      })
       .on('broadcast', { event: EVENEMENT_CAMERA_HOTE }, (payload) => {
         if (!payload.payload) return;
         const p = payload.payload as { active?: boolean; userId?: string };
@@ -2842,6 +2850,63 @@ export const SessionPage: React.FC = () => {
       mobile={studioMobile}
     />
   ) : null;
+
+  // ═══ 🔴 TERMINER LE LIVE — pour de vrai ═══════════════════════════════════════
+  //
+  //  « Quitter le live » ne faisait que fermer l'écran (`setLiveMode(false)`) : caméra
+  //  encore allumée, room LiveKit encore ouverte, enregistrement non finalisé, aucun
+  //  participant prévenu, et la page d'accueil d'Afroboost qui continuait d'annoncer
+  //  « EN DIRECT » jusqu'à trois heures. C'est le live fantôme.
+  //
+  //  L'ordre des étapes vit dans `lib/finDuLive.ts`, testé à part : finaliser AVANT de
+  //  couper les pistes (un fichier fermé sur des pistes mortes pèse 0 octet — déjà payé),
+  //  prévenir AVANT de quitter la room (après, le canal est fermé), annoncer la fin en
+  //  DERNIER (avant, on déclarerait terminé un live qui diffuse encore).
+  const [liveTermine, setLiveTermine] = useState(false);
+  const annoncerFinRef = useRef<() => void>(() => {});
+  const terminerLive = useCallback(async () => {
+    const etapes = sequenceFinDuLive({
+      enregistrementEnCours: recorder.etat === 'enregistrement',
+      partageEcranActif: screenSharing,
+      cameraActive: videoMesh.cameraOn,
+      microActif: !!hostMicActive,
+      estHote: canShare,
+    });
+    for (const etape of etapes) {
+      try {
+        if (etape === 'finaliser-enregistrement') await recorder.arreter();
+        else if (etape === 'prevenir-participants') {
+          if (sessionId && supabase && isSupabaseConfigured) {
+            await supabase.channel(`playback:${sessionId}`).send({
+              type: 'broadcast', event: EVENEMENT_LIVE_TERMINE, payload: { session: sessionId },
+            });
+          }
+        } else if (etape === 'couper-camera') videoMesh.stopCamera();
+        else if (etape === 'couper-ecran') {
+          videoMesh.stopScreen();
+          arreterPistesPartage(screenStreamRef.current?.getTracks() ?? []);
+          screenStreamRef.current = null;
+          setScreenSharing(false);
+          broadcastScreenState(false);
+        } else if (etape === 'couper-micro') hostMicCtrlRef.current?.toggle();
+        else if (etape === 'quitter-room') setLiveMode(false);   // `active` retombe → room.disconnect()
+        else if (etape === 'annoncer-fin') annoncerFinRef.current();
+        else if (etape === 'retour-ecran') setLiveTermine(true);
+      } catch { /* une étape qui échoue n'empêche pas les suivantes : on veut TOUT couper */ }
+    }
+  }, [recorder, screenSharing, videoMesh, canShare, sessionId, broadcastScreenState, hostMicActive]);
+
+  // Le départ n'est pas toujours un clic. Fermeture d'onglet, veille, rafraîchissement :
+  // le navigateur n'exécute AUCUN nettoyage React. `pagehide` est le seul point fiable.
+  useEffect(() => {
+    const annoncer = () => {
+      if (!departDoitAnnoncer(canShare, embedStartedRef.current)) return;
+      notifyEmbedSessionEnded({ sessionCode: sessionId || '', isHost: true });
+    };
+    annoncerFinRef.current = annoncer;
+    EVENEMENTS_DEPART.forEach((e) => window.addEventListener(e, annoncer));
+    return () => { EVENEMENTS_DEPART.forEach((e) => window.removeEventListener(e, annoncer)); };
+  }, [canShare, sessionId]);
 
   const recordNode: React.ReactNode = (
     <RecordPanel recorder={recorder} open={recordOpen} onClose={() => setRecordOpen(false)} mobile={studioMobile} />
@@ -3898,6 +3963,35 @@ export const SessionPage: React.FC = () => {
   // PRIVÉE n'entre pas tant qu'il n'est pas admis. Sessions publiques : isPrivate=false → jamais ici.
   const isConfirmedParticipant = privacyChecked && !isHost && !isAdminUser
     && (!user?.id || (sessionHostId != null && user.id !== sessionHostId));
+  // 🔴 LIVE TERMINÉ — un écran clair, des deux côtés. Le participant ne reste plus
+  //    devant une image figée dans une room vide, et l'hôte voit que tout est bien coupé.
+  if (liveTermine) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6" style={{ background: '#0b0b0f' }} data-testid="live-termine">
+        <div className="max-w-sm text-center space-y-4">
+          <div className="w-14 h-14 mx-auto rounded-full flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.06)' }}>
+            <Square className="w-6 h-6 text-white/70" />
+          </div>
+          <h1 className="text-xl font-semibold text-white">Le Live est terminé</h1>
+          <p className="text-white/55 text-sm">
+            {canShare
+              ? 'Ta diffusion est arrêtée : caméra, micro et enregistrement sont coupés, et la page d’accueil ne montre plus « EN DIRECT ».'
+              : 'Merci d’avoir suivi cette séance. À très vite !'}
+          </p>
+          <button
+            type="button"
+            onClick={() => { setLiveTermine(false); navigate('/session'); }}
+            className="px-5 py-2.5 rounded-xl text-white text-sm font-medium"
+            style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
+            data-testid="live-termine-retour"
+          >
+            Revenir aux sessions
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (nickname && isConfirmedParticipant && refused) {
     return <WaitingRoomScreen name={nickname} photoUrl={myAvatar} refused />;
   }
@@ -4091,6 +4185,7 @@ export const SessionPage: React.FC = () => {
       recordSupporte={recorder.capacite.supporte}
       recordMotif={recorder.capacite.motif}
       onToggleRecord={() => setRecordOpen((o) => !o)}
+      onTerminerLive={() => { void terminerLive(); }}
       onRecordDirect={() => {
         // Le bouton rond DÉCLENCHE, il n'ouvre pas un panneau : c'est tout l'intérêt.
         // Même moteur, mêmes garde-fous (`demarrerProgramme` applique « rien à l'antenne

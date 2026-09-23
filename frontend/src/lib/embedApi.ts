@@ -100,6 +100,7 @@ export async function notifyEmbedSessionStarted(contexte: { sessionCode?: string
 
   // Déjà consommé pour ce jti → on se contente de re-signaler au parent.
   if (jti && getStored(CONSUMED_KEY) === jti) {
+    _liveAnnonce = true;
     postToParent({ type: 'bt:session-started', jti, ...detail });
     return;
   }
@@ -123,13 +124,46 @@ export async function notifyEmbedSessionStarted(contexte: { sessionCode?: string
     postToParent({ type: 'bt:session-ended', jti, ...detail });
     return;
   }
+  _liveAnnonce = true;
   postToParent({ type: 'bt:session-started', jti, ...detail });
 }
 
 /** Fin de session (no-op hors mode embed) → informe le parent afroboost. */
 export function notifyEmbedSessionEnded(contexte: { sessionCode?: string | null; isHost?: boolean } = {}): void {
   const token = getStored(TOKEN_KEY);
+  _liveAnnonce = false;           // fin annoncée : plus aucun battement ne doit partir
   if (!token) return;
   const jti = getStored(JTI_KEY) || '';
   postToParent({ type: 'bt:session-ended', jti, session_code: String(contexte.sessionCode || ''), is_host: !!contexte.isHost });
+}
+
+/**
+ * 💓 SIGNE DE VIE DE L'HÔTE — le seul cas de fin qui n'a AUCUN événement.
+ *
+ *  Bouton « Terminer », navigation, rafraîchissement, fermeture d'onglet : tous
+ *  produisent un événement navigateur, tous éteignent le live en moins d'une
+ *  seconde. Mais quand la connexion du coach disparaît et que l'onglet reste
+ *  ouvert, il ne se passe RIEN — et le live restait public trois heures.
+ *
+ *  Tant qu'il diffuse, sa page le redit. Afroboost ne garde que la date du
+ *  dernier signe et éteint quand elle vieillit (fenêtre de grâce côté serveur).
+ *  Aucune donnée de session ne circule de plus qu'au démarrage.
+ */
+export const BATTEMENT_HOTE_MS = 15000;
+
+/**
+ * Le DÉBUT a-t-il été annoncé ? `notifyEmbedSessionStarted` est asynchrone : elle
+ * attend le débit du crédit avant de poster. Sans ce drapeau, le premier battement
+ * partait AVANT le « started » et tombait dans le vide — Afroboost n'avait pas
+ * encore de session à rafraîchir. On ne bat qu'une fois le live déclaré.
+ */
+let _liveAnnonce = false;
+
+export const liveEstAnnonce = (): boolean => _liveAnnonce;
+
+export function notifyEmbedHeartbeat(contexte: { sessionCode?: string | null; isHost?: boolean } = {}): void {
+  const token = getStored(TOKEN_KEY);
+  if (!token || !_liveAnnonce || !contexte.isHost || !contexte.sessionCode) return;
+  postToParent({ type: 'bt:session-heartbeat', jti: getStored(JTI_KEY) || '',
+                 session_code: String(contexte.sessionCode), is_host: true });
 }

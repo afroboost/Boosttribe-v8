@@ -39,7 +39,7 @@ import type { RemoteMediaState, SharedMediaPlayerHandle } from '@/components/ses
 import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
-import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded } from '@/lib/embedApi';
+import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded, notifyEmbedHeartbeat, BATTEMENT_HOTE_MS } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PanneauPrompteur } from '@/components/session/PanneauPrompteur';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
@@ -1918,6 +1918,21 @@ export const SessionPage: React.FC = () => {
     return () => { if (embedStartedRef.current) notifyEmbedSessionEnded({ sessionCode: embedContexteRef.current.sessionCode || '', isHost: !!embedContexteRef.current.isHost }); };
   }, []);
 
+  // 💓 Signe de vie de l'hôte, tant qu'il diffuse. C'est le SEUL mécanisme qui
+  //    couvre la coupure réseau : là, aucun événement navigateur ne se produit,
+  //    et le live restait public trois heures. Voir `lib/embedApi.ts`.
+  useEffect(() => {
+    if (!isHost) return;
+    const battre = () => {
+      if (!embedStartedRef.current) return;   // le live n'a pas démarré ici
+
+      notifyEmbedHeartbeat({ sessionCode: embedContexteRef.current.sessionCode || '', isHost: true });
+    };
+    battre();
+    const t = setInterval(battre, BATTEMENT_HOTE_MS);
+    return () => clearInterval(t);
+  }, [isHost, sessionId]);
+
   // 🎟️ Session payante : le participant non-hôte a besoin d'un billet valide pour accéder au live.
   useEffect(() => {
     if (isHost || isAdminUser) { setHasTicket(true); return; }
@@ -2881,6 +2896,25 @@ export const SessionPage: React.FC = () => {
       taille={prompteur.taille}
       onPlusPetit={prompteur.plusPetit}
       onPlusGrand={prompteur.plusGrand}
+      // Les MÊMES rappels que la barre du Live — pas une seconde logique. Sur
+      // mobile la feuille recouvre la barre ; sans eux, couper son micro
+      // obligerait à fermer le prompteur, donc à perdre sa ligne.
+      controles={{
+        micActif: !!hostMicActive,
+        onMic: handleLiveMicToggle,
+        cameraActive: videoMesh.cameraOn,
+        onCamera: handleToggleCamera,
+        onFlip: videoMesh.videoDevices.length > 1 ? videoMesh.flipCamera : undefined,
+        enregistre: recorder.etat === 'enregistrement',
+        recordDisponible: recorder.capacite.supporte,
+        onRecord: () => {
+          if (recorder.etat === 'enregistrement') { void recorder.arreter(); return; }
+          if (recorder.etat === 'finalisation') return;
+          setRecordOpen(true);
+          void recorder.demarrer();
+        },
+        onTerminer: () => { if (window.confirm('Terminer le Live pour tout le monde ?')) void terminerLive(); },
+      }}
       onEcrire={(t) => setEtatPrompteur((e) => ecrire(e, t))}
       // « Afficher » doit AFFICHER : le test en navigateur réel a montré que poser le
       // script ne suffisait pas — la bande de lecture sur la vidéo est un second

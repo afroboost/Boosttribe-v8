@@ -1,179 +1,288 @@
 import React from 'react';
-import { Sparkles, X, RotateCw, Copy, CornerDownLeft, Check, MessageSquare, Video } from 'lucide-react';
+import { Sparkles, X, RotateCw, Copy, CornerDownLeft, Check, MessageSquare, PenLine, Wand2, Eraser, Undo2, Minus, Plus } from 'lucide-react';
 import type { ModeSouffleur } from '@/lib/assistantHote';
+import {
+  ACTIONS_TEXTE, type ActionTexte, type EtatPrompteur, type QuestionEnAttente,
+  libelleAttente, peutReprendre,
+} from '@/lib/prompteurSources';
 
 /**
- * 🤖 LE SOUFFLEUR — panneau PRIVÉ de l'hôte pendant le direct.
+ * 📝 LE PROMPTEUR DE L'HÔTE — privé, et gouverné par une seule règle : l'IA propose,
+ * l'hôte décide.
  *
- * CE QU'IL NE FAIT PAS, et c'est le plus important : il n'envoie rien. Aucun bouton ici
- * ne publie un message. « Insérer » dépose le texte dans le champ du chat de l'hôte —
- * qui relit, corrige s'il veut, et envoie lui-même. Il n'y a volontairement aucun
- * chemin, même caché, entre une suggestion et un message publié.
+ * Trois sources alimentent le MÊME écran de lecture : le texte que l'hôte écrit
+ * lui-même (qui marche sans IA, toujours), un thème que l'assistant l'aide à formuler,
+ * et les réponses aux questions du chat. Les états restent séparés — brouillon, texte
+ * affiché, suggestion en attente — parce que les mélanger coûterait cher en direct :
+ * on ne fait pas disparaître le texte qu'un coach est en train de lire face caméra
+ * parce qu'un participant vient d'écrire.
  *
- * CE QUI N'EN SORT PAS : ce panneau n'est rendu que chez l'hôte, il ne diffuse aucun
- * état par Realtime, et il vit HORS de la zone caméra — le Programme enregistré (MP4)
- * et les flux sociaux composent `camAreaRef`, pas cette colonne. Réserve honnête : si
- * l'hôte partage son ÉCRAN ENTIER au niveau système, son écran contient ce panneau.
- * Aucune application ne peut promettre le contraire, et on ne le promet donc pas.
+ * Aucun bouton d'ici n'envoie quoi que ce soit dans le chat. « Afficher » met le texte
+ * sous les yeux de l'hôte, rien de plus. Le participant ne voit ni ce panneau, ni le
+ * brouillon, ni les suggestions, ni la file d'attente.
  *
- * Éteint par défaut : tant que l'hôte ne l'allume pas, aucune requête n'est émise.
+ * Réserve honnête, écrite plutôt que tue : si l'hôte partage son ÉCRAN ENTIER au
+ * niveau système, son écran contient ce panneau. Aucune application ne peut promettre
+ * le contraire.
  */
 
-export interface SuggestionsEtat {
-  actif: boolean;
-  mode: ModeSouffleur;
-  suggestions: string[];
-  enCours: boolean;
-  /** Motif renvoyé par le serveur quand il ne peut pas répondre (jamais un secret). */
-  indisponible: string | null;
-  /** Prénom de la personne actuellement à l'écran avec l'hôte, si elle existe. */
-  invite: string | null;
-}
+export type OngletPrompteur = 'texte' | 'theme' | 'questions';
 
-interface Props extends SuggestionsEtat {
+interface Props {
   open: boolean;
   onClose: () => void;
-  onBasculer: (actif: boolean) => void;
-  onMode: (m: ModeSouffleur) => void;
-  onActualiser: () => void;
-  /** Dépose le texte dans le champ du chat — SANS l'envoyer. Absent = seul « Copier ». */
-  onInserer?: (texte: string) => void;
   mobile?: boolean;
+  /** L'assistant est-il allumé ? Éteint, aucune requête ne part — le texte manuel, lui, marche toujours. */
+  actif: boolean;
+  onBasculer: (a: boolean) => void;
+  onglet: OngletPrompteur;
+  onOnglet: (o: OngletPrompteur) => void;
+  etat: EtatPrompteur;
+  /** Thème saisi par l'hôte (onglet « Thème IA »). */
+  theme: string;
+  onTheme: (t: string) => void;
+  enCours: boolean;
+  indisponible: string | null;
+  /** Personne actuellement à l'écran avec l'hôte (mode « en visio »). */
+  invite: string | null;
+  modeQuestion: ModeSouffleur;
+  // Actions
+  onEcrire: (t: string) => void;
+  onAfficher: (source: 'manuel' | 'theme' | 'question') => void;
+  onEffacer: () => void;
+  onUtiliserSuggestion: () => void;
+  onIgnorerSuggestion: () => void;
+  onDemanderTexte: (action: ActionTexte) => void;
+  onOuvrirQuestion: (id: string) => void;
+  onAutreReponse: () => void;
+  onReprendre: () => void;
+  /** Taille du texte du prompteur (A- / A+) — les réglages du prompteur existant. */
+  taille: number;
+  onPlusPetit: () => void;
+  onPlusGrand: () => void;
+  /** Dépose dans le champ du chat — SANS envoyer. */
+  onInsererChat?: (t: string) => void;
 }
 
 const MOTIFS: Record<string, string> = {
   ia_non_configuree: "Assistant indisponible : aucune clé IA configurée sur le serveur.",
-  fournisseur_indisponible: "Assistant indisponible pour le moment. Le direct continue normalement.",
-  reponse_illisible: "Assistant indisponible : réponse inutilisable. Réessaie dans un instant.",
+  fournisseur_indisponible: "Assistant indisponible pour le moment. Ton texte manuel, lui, fonctionne toujours.",
+  reponse_illisible: "Réponse inutilisable. Réessaie dans un instant.",
+  texte_absent: "Écris d'abord ton thème ou ton texte.",
   hors_ligne: "Assistant indisponible : connexion interrompue.",
+  reserve_hote: "Réservé à l'hôte de cette session.",
 };
 
+const BTN = 'px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors';
+const BTN_PRIM = `${BTN} text-white`;
+const BTN_SEC = `${BTN} text-white/70 border border-white/15 hover:text-white`;
+
 export const AssistantHotePanel: React.FC<Props> = ({
-  open, onClose, actif, mode, suggestions, enCours, indisponible, invite,
-  onBasculer, onMode, onActualiser, onInserer, mobile = false,
+  open, onClose, mobile = false, actif, onBasculer, onglet, onOnglet, etat, theme, onTheme,
+  enCours, indisponible, invite, modeQuestion, onEcrire, onAfficher, onEffacer,
+  onUtiliserSuggestion, onIgnorerSuggestion, onDemanderTexte, onOuvrirQuestion,
+  onAutreReponse, onReprendre, taille, onPlusPetit, onPlusGrand, onInsererChat,
 }) => {
-  const [copie, setCopie] = React.useState<number | null>(null);
-  React.useEffect(() => { if (copie === null) return; const t = setTimeout(() => setCopie(null), 1400); return () => clearTimeout(t); }, [copie]);
+  const [copie, setCopie] = React.useState(false);
+  React.useEffect(() => { if (!copie) return; const t = setTimeout(() => setCopie(false), 1400); return () => clearTimeout(t); }, [copie]);
   if (!open) return null;
 
-  const copier = async (texte: string, i: number) => {
-    try { await navigator.clipboard.writeText(texte); setCopie(i); } catch { /* presse-papiers refusé */ }
-  };
-
-  const ONGLET = (m: ModeSouffleur, libelle: string, icone: React.ReactNode, dispo: boolean) => (
-    <button
-      type="button"
-      onClick={() => dispo && onMode(m)}
-      disabled={!dispo}
-      aria-pressed={mode === m}
-      title={dispo ? libelle : "Personne n'est à l'écran avec toi pour l'instant"}
-      className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-        mode === m ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]'
-                   : dispo ? 'text-white/60 hover:text-white' : 'text-white/25 cursor-not-allowed'}`}
-      data-testid={`assistant-mode-${m}`}
-    >
+  const attente = libelleAttente(etat);
+  const ONGLET = (cle: OngletPrompteur, libelle: string, icone: React.ReactNode, badge?: number) => (
+    <button type="button" onClick={() => onOnglet(cle)} aria-pressed={onglet === cle}
+      className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+        onglet === cle ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]' : 'text-white/55 hover:text-white'}`}
+      data-testid={`prompteur-onglet-${cle}`}>
       {icone}{libelle}
+      {!!badge && <span className="ml-0.5 px-1 rounded-full bg-[var(--bt-accent)] text-white text-[9px] leading-4">{badge}</span>}
     </button>
   );
+
+  const zoneSuggestion = etat.suggestion ? (
+    <div className="rounded-xl border border-[rgb(var(--bt-accent-rgb)/0.4)] bg-[rgb(var(--bt-accent-rgb)/0.08)] p-3 space-y-2" data-testid="prompteur-suggestion">
+      <p className="text-[10px] font-bold tracking-wide text-[var(--bt-accent)]">NOUVELLE SUGGESTION IA</p>
+      {etat.questionActive && (
+        <p className="text-[11px] text-white/45 leading-snug" data-testid="prompteur-question-active">
+          {etat.questionActive.auteur} demande : « {etat.questionActive.texte} »
+        </p>
+      )}
+      <p className="text-white text-sm leading-snug whitespace-pre-wrap">{etat.suggestion}</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={onUtiliserSuggestion} className={BTN_PRIM}
+          style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
+          title="La suggestion devient ton brouillon — tu pourras la modifier avant de l'afficher"
+          data-testid="prompteur-utiliser">
+          <Check className="w-3.5 h-3.5 inline mr-1" />Utiliser dans le prompteur
+        </button>
+        <button type="button" onClick={onAutreReponse} className={BTN_SEC} disabled={!actif || enCours} data-testid="prompteur-autre">
+          <RotateCw className={`w-3.5 h-3.5 inline mr-1${enCours ? ' animate-spin' : ''}`} />Autre proposition
+        </button>
+        <button type="button" onClick={onIgnorerSuggestion} className={BTN_SEC} data-testid="prompteur-ignorer">Ignorer</button>
+      </div>
+    </div>
+  ) : null;
+
+  // La source d'affichage n'est pas celle de l'ONGLET mais celle du BROUILLON : une
+  // réponse prise dans « Questions » s'édite dans « Mon texte », et doit rester une
+  // réponse — sinon elle écrase le thème sans retour possible.
+  const editeur = (placeholder: string, _source: 'manuel' | 'theme') => {
+  const source = etat.origineBrouillon;
+  return (
+    <>
+      <textarea
+        value={etat.brouillon}
+        onChange={(e) => onEcrire(e.target.value)}
+        rows={mobile ? 4 : 6}
+        placeholder={placeholder}
+        className="w-full resize-none px-3 py-2 rounded-xl bg-white/8 border border-white/10 text-white text-sm leading-relaxed placeholder-white/25 focus:outline-none focus:border-[rgb(var(--bt-accent-rgb)/0.6)]"
+        data-testid="prompteur-editeur"
+      />
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => onAfficher(source)} disabled={!etat.brouillon.trim()}
+          className={`${BTN_PRIM} disabled:opacity-40`}
+          style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
+          data-testid="prompteur-afficher">
+          Afficher sur le prompteur
+        </button>
+        <button type="button" onClick={onEffacer} className={BTN_SEC} data-testid="prompteur-effacer">
+          <Eraser className="w-3.5 h-3.5 inline mr-1" />Effacer
+        </button>
+        {onInsererChat && (
+          <button type="button" onClick={() => { onInsererChat(etat.brouillon); }}
+            disabled={!etat.brouillon.trim()} className={`${BTN_SEC} disabled:opacity-40`}
+            title="Dépose le texte dans le champ du chat — sans l'envoyer"
+            data-testid="prompteur-inserer-chat">
+            <CornerDownLeft className="w-3.5 h-3.5 inline mr-1" />Insérer au chat
+          </button>
+        )}
+      </div>
+    </>
+  );
+  };
 
   return (
     <div
       className={mobile
-        ? 'fixed inset-x-0 bottom-0 z-[130] max-h-[80vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'
-        : 'fixed right-4 bottom-24 z-[130] w-[340px] max-h-[70vh] overflow-y-auto rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'}
-      role="dialog"
-      aria-label="Assistant IA privé de l'hôte"
-      data-testid="assistant-hote-panneau"
+        ? 'fixed inset-x-0 bottom-0 z-[130] max-h-[82vh] overflow-y-auto rounded-t-2xl border-t border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'
+        : 'fixed right-4 bottom-24 z-[130] w-[380px] max-h-[74vh] overflow-y-auto rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.35)] bg-[#15151b] shadow-2xl'}
+      role="dialog" aria-label="Prompteur privé de l'hôte" data-testid="assistant-hote-panneau"
     >
       <div className="sticky top-0 flex items-center gap-2 px-4 py-3 bg-[#15151b] border-b border-white/10">
         <Sparkles className="w-4 h-4" style={{ color: 'var(--bt-accent)' }} aria-hidden="true" />
-        <span className="text-white text-sm font-semibold flex-1">Assistant IA</span>
-        <button
-          type="button"
-          onClick={() => onBasculer(!actif)}
-          aria-pressed={actif}
-          aria-label={actif ? "Éteindre l'assistant" : "Allumer l'assistant"}
+        <span className="text-white text-sm font-semibold flex-1">Prompteur</span>
+        <button type="button" onClick={() => onBasculer(!actif)} aria-pressed={actif}
+          aria-label={actif ? "Éteindre l'assistant IA" : "Allumer l'assistant IA"}
           className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${
-            actif ? 'border-[var(--bt-accent)] text-[var(--bt-accent)] bg-[rgb(var(--bt-accent-rgb)/0.12)]'
-                  : 'border-white/20 text-white/50'}`}
-          data-testid="assistant-bascule"
-        >
-          {actif ? 'Activé' : 'Désactivé'}
+            actif ? 'border-[var(--bt-accent)] text-[var(--bt-accent)] bg-[rgb(var(--bt-accent-rgb)/0.12)]' : 'border-white/20 text-white/50'}`}
+          data-testid="assistant-bascule">
+          IA {actif ? 'activée' : 'éteinte'}
         </button>
-        <button type="button" onClick={onClose} aria-label="Fermer l'assistant"
-          className="text-white/50 hover:text-white" data-testid="assistant-fermer">
-          <X className="w-4 h-4" />
-        </button>
+        <button type="button" onClick={onClose} aria-label="Fermer le prompteur"
+          className="text-white/50 hover:text-white" data-testid="assistant-fermer"><X className="w-4 h-4" /></button>
       </div>
 
       <p className="px-4 pt-3 text-[11px] leading-snug text-white/40">
-        Visible par toi seul. L'assistant propose — c'est toujours toi qui écris et qui envoies.
+        Visible par toi seul. L'IA propose — c'est toujours toi qui écris, qui affiches et qui parles.
       </p>
 
+      {/* Texte actuellement à l'antenne + réglages de lecture */}
+      {etat.affiche ? (
+        <div className="mx-4 mt-3 rounded-xl border border-white/10 bg-white/5 p-3" data-testid="prompteur-affiche">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] font-bold tracking-wide text-white/40 flex-1">AU PROMPTEUR</span>
+            <span className="text-[10px] text-white/35 tabular-nums">{taille} px</span>
+            <button type="button" onClick={onPlusPetit} aria-label="Réduire le texte du prompteur"
+              className="p-1 rounded-md border border-white/15 text-white/70 hover:text-white" data-testid="prompteur-a-moins"><Minus className="w-3 h-3" /></button>
+            <button type="button" onClick={onPlusGrand} aria-label="Agrandir le texte du prompteur"
+              className="p-1 rounded-md border border-white/15 text-white/70 hover:text-white" data-testid="prompteur-a-plus"><Plus className="w-3 h-3" /></button>
+          </div>
+          <p className="text-white/75 text-xs leading-snug line-clamp-3 whitespace-pre-wrap">{etat.affiche}</p>
+          {peutReprendre(etat) && (
+            <button type="button" onClick={onReprendre} className={`${BTN_SEC} mt-2`} data-testid="prompteur-reprendre">
+              <Undo2 className="w-3.5 h-3.5 inline mr-1" />Reprendre mon thème
+            </button>
+          )}
+        </div>
+      ) : null}
+
       <div className="flex gap-1 mx-4 mt-3 p-1 rounded-xl bg-white/5">
-        {ONGLET('chat', 'Chat', <MessageSquare className="w-3.5 h-3.5" />, true)}
-        {ONGLET('visio', 'En visio', <Video className="w-3.5 h-3.5" />, !!invite)}
+        {ONGLET('texte', 'Mon texte', <PenLine className="w-3.5 h-3.5" />)}
+        {ONGLET('theme', 'Thème IA', <Wand2 className="w-3.5 h-3.5" />)}
+        {ONGLET('questions', 'Questions', <MessageSquare className="w-3.5 h-3.5" />, etat.file.length)}
       </div>
-      {mode === 'visio' && invite && (
-        <p className="px-4 pt-2 text-[11px] text-white/50">À l'écran avec toi : <span className="text-white/80">{invite}</span></p>
+
+      {attente && onglet !== 'questions' && (
+        <p className="px-4 pt-2 text-[11px] text-[var(--bt-accent)]" role="status" data-testid="prompteur-attente">💬 {attente}</p>
+      )}
+      {indisponible && (
+        <p className="px-4 pt-2 text-[11px] text-amber-300/80" role="status" data-testid="assistant-indisponible">
+          {MOTIFS[indisponible] || MOTIFS.fournisseur_indisponible}
+        </p>
       )}
 
-      <div className="px-4 py-3 space-y-2">
-        {!actif ? (
-          <p className="text-white/50 text-sm" data-testid="assistant-eteint">
-            Assistant éteint. Allume-le pour recevoir des suggestions.
-          </p>
-        ) : indisponible ? (
-          <p className="text-amber-300/80 text-sm" role="status" data-testid="assistant-indisponible">
-            {MOTIFS[indisponible] || MOTIFS.fournisseur_indisponible}
-          </p>
-        ) : enCours && !suggestions.length ? (
-          <p className="text-white/50 text-sm" role="status" data-testid="assistant-chargement">Réflexion…</p>
-        ) : !suggestions.length ? (
-          <p className="text-white/50 text-sm" data-testid="assistant-vide">
-            Aucune suggestion pour l'instant. Actualise quand tu veux.
-          </p>
-        ) : (
-          suggestions.map((texte, i) => (
-            <div key={texte} className="rounded-xl border border-white/10 bg-white/5 p-3" data-testid="assistant-suggestion">
-              <p className="text-white text-sm leading-snug">{texte}</p>
-              <div className="flex gap-2 mt-2">
-                {onInserer && (
-                  <button
-                    type="button"
-                    onClick={() => onInserer(texte)}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-[var(--bt-accent)] bg-[rgb(var(--bt-accent-rgb)/0.15)] hover:bg-[rgb(var(--bt-accent-rgb)/0.25)]"
-                    title="Déposer dans le champ du chat — sans envoyer"
-                    data-testid="assistant-inserer"
-                  >
-                    <CornerDownLeft className="w-3.5 h-3.5" /> Insérer
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => copier(texte, i)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium text-white/70 border border-white/15 hover:text-white"
-                  data-testid="assistant-copier"
-                >
-                  {copie === i ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copie === i ? 'Copié' : 'Copier'}
-                </button>
-              </div>
+      <div className="px-4 py-3 space-y-3">
+        {onglet === 'texte' && (
+          <>
+            {editeur('Écris ici ce que tu veux dire pendant ton Live…', 'manuel')}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {ACTIONS_TEXTE.filter((a) => a.cle !== 'theme').map((a) => (
+                <button key={a.cle} type="button" onClick={() => onDemanderTexte(a.cle)}
+                  disabled={!actif || enCours || !etat.brouillon.trim()}
+                  className={`${BTN_SEC} disabled:opacity-35`} data-testid={`prompteur-action-${a.cle}`}>{a.libelle}</button>
+              ))}
             </div>
-          ))
+            {zoneSuggestion}
+          </>
+        )}
+
+        {onglet === 'theme' && (
+          <>
+            <label className="block text-[11px] text-white/50" htmlFor="prompteur-theme">Mon thème</label>
+            <input id="prompteur-theme" value={theme} onChange={(e) => onTheme(e.target.value)}
+              placeholder="Les bienfaits de la danse afro sur le mental"
+              className="w-full px-3 py-2 rounded-xl bg-white/8 border border-white/10 text-white text-sm placeholder-white/25 focus:outline-none focus:border-[rgb(var(--bt-accent-rgb)/0.6)]"
+              data-testid="prompteur-theme-champ" />
+            <button type="button" onClick={() => onDemanderTexte('theme')} disabled={!actif || enCours || !theme.trim()}
+              className={`${BTN_PRIM} disabled:opacity-40`}
+              style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
+              data-testid="prompteur-rediger">
+              <Wand2 className={`w-3.5 h-3.5 inline mr-1${enCours ? ' animate-spin' : ''}`} />Aide-moi à rédiger
+            </button>
+            {zoneSuggestion}
+            <p className="text-[11px] text-white/35 pt-1">La proposition arrive dans « Mon texte » : tu la modifies avant de l'afficher.</p>
+          </>
+        )}
+
+        {onglet === 'questions' && (
+          <>
+            {etat.questionActive && (
+              <p className="text-[11px] text-white/45 leading-snug">
+                {etat.questionActive.auteur} demande : « {etat.questionActive.texte} »
+              </p>
+            )}
+            {zoneSuggestion}
+            {!etat.file.length && !etat.suggestion && (
+              <p className="text-white/45 text-sm" data-testid="prompteur-aucune-question">
+                {actif ? 'Aucune question en attente.' : "Assistant éteint : allume-le pour préparer des réponses."}
+              </p>
+            )}
+            {etat.file.map((q: QuestionEnAttente) => (
+              <button key={q.id} type="button" onClick={() => onOuvrirQuestion(q.id)}
+                className="w-full text-left rounded-xl border border-white/10 bg-white/5 p-2.5 hover:bg-white/10"
+                data-testid="prompteur-question-file">
+                <span className="block text-[11px] text-[var(--bt-accent)] font-semibold">{q.auteur}</span>
+                <span className="block text-white/75 text-xs leading-snug">{q.texte}</span>
+              </button>
+            ))}
+            {invite && <p className="text-[11px] text-white/35 pt-1">À l'écran avec toi : {invite} — mode {modeQuestion === 'visio' ? '« en visio »' : '« chat »'}.</p>}
+          </>
         )}
       </div>
 
-      <div className="px-4 pb-4" style={{ paddingBottom: mobile ? 'max(1rem, env(safe-area-inset-bottom))' : undefined }}>
-        <button
-          type="button"
-          onClick={onActualiser}
-          disabled={!actif || enCours}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-medium text-white border border-white/15 hover:bg-white/5 disabled:opacity-40"
-          data-testid="assistant-actualiser"
-        >
-          <RotateCw className={`w-4 h-4${enCours ? ' animate-spin' : ''}`} />
-          Actualiser les suggestions
+      <div className="px-4 pb-4 flex gap-2" style={{ paddingBottom: mobile ? 'max(1rem, env(safe-area-inset-bottom))' : undefined }}>
+        <button type="button" onClick={() => { try { navigator.clipboard.writeText(etat.brouillon); setCopie(true); } catch { /* refusé */ } }}
+          disabled={!etat.brouillon.trim()} className={`${BTN_SEC} flex-1 disabled:opacity-40`} data-testid="prompteur-copier">
+          {copie ? <Check className="w-3.5 h-3.5 inline mr-1" /> : <Copy className="w-3.5 h-3.5 inline mr-1" />}{copie ? 'Copié' : 'Copier'}
         </button>
       </div>
     </div>

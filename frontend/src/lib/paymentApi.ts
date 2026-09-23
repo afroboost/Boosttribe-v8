@@ -1203,12 +1203,16 @@ export async function uploadSessionVideo(
  * suffirait pas. Une indisponibilité n'est pas une erreur ici — le direct continue,
  * l'écran l'annonce. Aucun secret ne transite : la clé IA ne quitte jamais le serveur.
  */
+export type ModeAssistant = 'chat' | 'visio' | 'theme' | 'continuer' | 'raccourcir' | 'developper' | 'naturel';
+
 export async function suggestionsAssistant(corps: {
   session_id: string;
-  mode: 'chat' | 'visio';
+  mode: ModeAssistant;
   messages: { nom: string; texte: string }[];
   invite?: string | null;
   sujet?: string | null;
+  /** Le texte de l'hôte, pour les modes de rédaction. Le chat n'y est jamais joint. */
+  texte?: string | null;
 }): Promise<{ ok: boolean; suggestions: string[]; raison?: string }> {
   if (!API_URL) return { ok: false, suggestions: [], raison: 'ia_non_configuree' };
   const token = await getAccessToken();

@@ -1489,12 +1489,32 @@ def _souffleur_nettoyer(texte: Optional[str]) -> str:
     return t[:SOUFFLEUR_MAX_CAR]
 
 
+# Modes d'AIDE À LA RÉDACTION (prompteur). Ils ne lisent pas le chat : ils travaillent
+# le texte que l'hôte a écrit lui-même. Le résultat est une PROPOSITION — le frontend ne
+# l'affiche jamais d'office, et l'hôte reste libre de la réécrire entièrement.
+SOUFFLEUR_MODES_TEXTE = {
+    "theme": ("L'hôte te donne un THÈME. Rédige ce qu'il pourra DIRE à voix haute pour "
+              "l'introduire et le développer : une courte introduction, deux ou trois idées, "
+              "une conclusion. Pas de titres, pas de listes à puces, pas de markdown — "
+              "du texte qui se lit."),
+    "continuer": ("Continue le texte de l'hôte dans SA voix, sans le réécrire. Renvoie "
+                  "UNIQUEMENT la suite, prête à être lue."),
+    "raccourcir": "Raccourcis le texte de l'hôte de moitié environ, en gardant son sens et son ton.",
+    "developper": "Développe le texte de l'hôte avec une ou deux idées de plus, dans son ton.",
+    "naturel": ("Reformule le texte de l'hôte pour qu'il sonne parlé et naturel à l'oral : "
+                "phrases courtes, mots simples, rien d'écrit."),
+}
+SOUFFLEUR_MAX_TEXTE = 4000          # ce que l'hôte peut soumettre
+SOUFFLEUR_MAX_REDACTION = 900       # jetons de sortie pour un texte de prompteur
+
+
 class SouffleurBody(BaseModel):
     session_id: str
-    mode: str = "chat"                                  # "chat" | "visio"
+    mode: str = "chat"                                  # "chat" | "visio" | modes de rédaction
     messages: Optional[List[Dict[str, Any]]] = None     # [{nom, texte}] — chat récent
     invite: Optional[str] = None                        # prénom de l'invité à l'écran
     sujet: Optional[str] = None                         # titre/thème de la session
+    texte: Optional[str] = None                         # le texte/thème écrit par l'hôte
 
 
 def _souffleur_instructions(mode: str) -> str:
@@ -1534,7 +1554,49 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
     if not key:
         return {"ok": False, "raison": "ia_non_configuree", "suggestions": []}
 
-    mode = body.mode if body.mode in ("chat", "visio") else "chat"
+    mode = body.mode if (body.mode in ("chat", "visio") or body.mode in SOUFFLEUR_MODES_TEXTE) else "chat"
+
+    # ── AIDE À LA RÉDACTION : on travaille le texte de l'hôte, pas le chat ──
+    #    Le chat n'a rien à faire ici : demander « raccourcis mon intro » n'autorise pas
+    #    à envoyer les messages des participants chez un tiers.
+    if mode in SOUFFLEUR_MODES_TEXTE:
+        texte = _souffleur_nettoyer(body.texte)[:SOUFFLEUR_MAX_TEXTE] if body.texte else ""
+        if not texte.strip():
+            return {"ok": False, "raison": "texte_absent", "suggestions": []}
+        consigne = (
+            "Tu écris pour un coach sportif qui anime un direct Afroboost (cardio et danse "
+            "afrobeat au casque, à Neuchâtel) et qui LIRA ton texte à voix haute sur un "
+            "prompteur, face caméra. Écris donc du parlé : phrases courtes, mots simples, "
+            "tutoiement, chaleureux et énergique. Pas de markdown, pas de listes, pas de "
+            "titres. N'invente AUCUN prix, horaire, lieu, promotion ni condition : si "
+            "l'information manque, tourne la phrase pour que le coach la donne lui-même. "
+            + SOUFFLEUR_MODES_TEXTE[mode] +
+            ' Réponds en JSON strict : {"texte": "…"}.'
+        )
+        payload = {"model": SOUFFLEUR_MODEL, "temperature": 0.8,
+                   "max_tokens": SOUFFLEUR_MAX_REDACTION,
+                   "response_format": {"type": "json_object"},
+                   "messages": [{"role": "system", "content": consigne},
+                                {"role": "user", "content": texte}]}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post("https://api.openai.com/v1/chat/completions",
+                                         headers={"Authorization": f"Bearer {key}",
+                                                  "Content-Type": "application/json"},
+                                         json=payload)
+            if resp.status_code != 200:
+                logger.warning("[SOUFFLEUR] rédaction HTTP %s", resp.status_code)
+                return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+            import json as _json
+            obj = _json.loads(resp.json()["choices"][0]["message"]["content"])
+            propose = str((obj or {}).get("texte") or "").strip()
+            if not propose:
+                return {"ok": False, "raison": "reponse_illisible", "suggestions": []}
+            return {"ok": True, "mode": mode, "suggestions": [propose[:6000]]}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[SOUFFLEUR] rédaction indisponible : %s", type(exc).__name__)
+            return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+
     lignes: List[str] = []
     for m in (body.messages or [])[-SOUFFLEUR_MAX_MESSAGES:]:
         nom = _souffleur_nettoyer((m or {}).get("nom"))[:40] or "Participant"

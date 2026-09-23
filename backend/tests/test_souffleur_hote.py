@@ -75,6 +75,9 @@ def appli(monkeypatch):
                 return FausseReponse(500, {})
             if etat["reponse"] == "illisible":
                 return FausseReponse(200, {"choices": [{"message": {"content": "{}"}}]})
+            if (json or {}).get("max_tokens") == 900:      # mode rédaction
+                return FausseReponse(200, {"choices": [{"message": {"content":
+                    '{"texte":"Aujourd\'hui je vais vous parler de ce que la danse change vraiment."}'}}]})
             return FausseReponse(200, {"choices": [{"message": {"content":
                 '{"suggestions":["Oui, les débutants sont les bienvenus.","Viens essayer une séance."]}'}}]})
 
@@ -207,3 +210,65 @@ def test_la_cle_part_dans_l_en_tete_et_nulle_part_ailleurs(appli):
     assert appel["headers"]["Authorization"] == "Bearer sk-test-factice"
     assert "sk-test-factice" not in str(appel["json"]), "la clé n'est pas dans le corps"
     assert "sk-test-factice" not in r.text, "la clé ne revient pas au navigateur"
+
+
+# ══════════ 4. AIDE À LA RÉDACTION DU PROMPTEUR ══════════
+
+def test_l_hote_fait_rediger_son_theme(appli):
+    """Le coach donne une idée, l'IA lui rend un texte à LIRE — pas un plan en markdown."""
+    _m, etat, c = appli
+    r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
+               json={"session_id": "SESS-1", "mode": "theme",
+                     "texte": "Les bienfaits de la danse afro sur le mental"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True and d["mode"] == "theme" and len(d["suggestions"]) == 1
+    consigne = etat["appels"][0]["json"]["messages"][0]["content"]
+    assert "prompteur" in consigne and "à voix haute" in consigne
+    assert "Pas de markdown" in consigne
+    assert "N'invente AUCUN prix" in consigne
+
+
+@pytest.mark.parametrize("mode", ["continuer", "raccourcir", "developper", "naturel"])
+def test_les_quatre_retouches_du_texte_de_l_hote(appli, mode):
+    _m, etat, c = appli
+    r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
+               json={"session_id": "SESS-1", "mode": mode, "texte": "Afroboost c'est avant tout une expérience."})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert etat["appels"][0]["json"]["messages"][1]["content"] == "Afroboost c'est avant tout une expérience."
+
+
+def test_la_redaction_n_envoie_PAS_le_chat_des_participants(appli):
+    """Demander « raccourcis mon intro » n'autorise pas à envoyer les messages du public."""
+    _m, etat, c = appli
+    c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
+           json={"session_id": "SESS-1", "mode": "raccourcir", "texte": "Mon intro à moi.",
+                 "messages": [{"nom": "Julie", "texte": "SECRET-DU-CHAT"}]})
+    envoye = str(etat["appels"][0]["json"])
+    assert "SECRET-DU-CHAT" not in envoye
+    assert "Mon intro à moi." in envoye
+
+
+def test_un_texte_vide_ne_declenche_aucun_appel(appli):
+    _m, etat, c = appli
+    r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
+               json={"session_id": "SESS-1", "mode": "theme", "texte": "   "})
+    assert r.json() == {"ok": False, "raison": "texte_absent", "suggestions": []}
+    assert etat["appels"] == []
+
+
+def test_la_redaction_masque_aussi_adresses_et_numeros(appli):
+    _m, etat, c = appli
+    c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
+           json={"session_id": "SESS-1", "mode": "naturel",
+                 "texte": "Écris-moi à coach@example.com ou au +41 79 123 45 67"})
+    envoye = str(etat["appels"][0]["json"])
+    assert "coach@example.com" not in envoye and "[adresse masquée]" in envoye
+    assert "[numéro masqué]" in envoye
+
+
+def test_la_redaction_reste_reservee_a_l_hote(appli):
+    _m, etat, c = appli
+    r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer spectateur"},
+               json={"session_id": "SESS-1", "mode": "theme", "texte": "un thème"})
+    assert r.status_code == 403 and etat["appels"] == []

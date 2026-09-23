@@ -71,6 +71,12 @@ import {
   doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique,
   type ModeSouffleur, type EtatRelance,
 } from '@/lib/assistantHote';
+import type { OngletPrompteur } from '@/components/session/AssistantHotePanel';
+import {
+  ETAT_INITIAL, ecrire, afficher, effacer, recevoirSuggestion, utiliserSuggestion,
+  ignorerSuggestion, recevoirQuestion, ouvrirQuestion, reprendreTexte,
+  type EtatPrompteur, type QuestionEnAttente, type ActionTexte,
+} from '@/lib/prompteurSources';
 import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
 import { useProgramStream } from '@/hooks/useProgramStream';
 import { useBroadcast } from '@/hooks/useBroadcast';
@@ -2773,26 +2779,29 @@ export const SessionPage: React.FC = () => {
     arrierePlanProgramme: programme.stats.arrierePlan,
   });
   const [recordOpen, setRecordOpen] = useState(false);
-  // ═══ 🤖 LE SOUFFLEUR — assistant PRIVÉ de l'hôte ════════════════════════════════
+  // ═══ 📝 LE PROMPTEUR DE L'HÔTE — trois sources, un seul écran ═══════════════════
   //
-  //  ÉTEINT PAR DÉFAUT, et c'est volontaire : tant que le coach ne l'allume pas, aucune
-  //  requête ne part et rien n'est facturé. Allumé, il ne s'exprime que dans SON panneau :
-  //  aucun `broadcast`, aucun écrit en base, rien qui parte vers un participant.
+  //  Règle unique, et tout le reste en découle : l'IA PROPOSE, l'HÔTE DÉCIDE. Rien de
+  //  ce que produit l'assistant n'arrive sous les yeux du coach sans un clic. Les
+  //  états sont séparés dans `lib/prompteurSources.ts` (brouillon / affiché /
+  //  suggestion / file), parce que les mélanger coûterait cher en direct : on ne fait
+  //  pas disparaître le texte qu'un coach lit face caméra parce qu'un participant
+  //  vient d'écrire dans le chat.
   //
-  //  ⚠️ « Insérer » dépose dans le champ du chat — il n'ENVOIE jamais. Le seul chemin vers
-  //  un message publié reste le bouton Envoyer, appuyé par l'hôte.
+  //  ⚠️ Le prompteur N'EST PAS l'assistant. Éteindre l'IA, ou la perdre, ne retire
+  //  rien au texte manuel : c'est le mode qui doit toujours marcher.
   const [assistantOuvert, setAssistantOuvert] = useState(false);
   const [assistantActif, setAssistantActif] = useState(false);
   const [assistantMode, setAssistantMode] = useState<ModeSouffleur>('chat');
-  const [assistantSuggestions, setAssistantSuggestions] = useState<string[]>([]);
   const [assistantEnCours, setAssistantEnCours] = useState(false);
   const [assistantIndispo, setAssistantIndispo] = useState<string | null>(null);
   const [brouillonChat, setBrouillonChat] = useState<string | null>(null);
+  const [ongletPrompteur, setOngletPrompteur] = useState<OngletPrompteur>('texte');
+  const [themeIA, setThemeIA] = useState('');
+  const [etatPrompteur, setEtatPrompteur] = useState<EtatPrompteur>(ETAT_INITIAL);
   const relanceRef = useRef<EtatRelance>({ dernierAppelMs: 0, derniereEmpreinte: '' });
 
-  // Qui est à l'écran AVEC l'hôte ? Une caméra distante = une personne montée sur scène.
-  //    Sans personne, le mode « En visio » reste fermé : on ne propose pas de relances
-  //    adressées à un invité qui n'existe pas.
+  // Qui est à l'écran AVEC l'hôte ? Une caméra distante = quelqu'un monté sur scène.
   const inviteEnVisio = useMemo(() => {
     const autres = (videoMesh.remoteCameras || []).map((c) => c.userId).filter((id) => id && id !== socket.userId);
     if (!autres.length) return null;
@@ -2800,54 +2809,95 @@ export const SessionPage: React.FC = () => {
     return (p && p.name) || null;
   }, [videoMesh.remoteCameras, participants, socket.userId]);
   useEffect(() => {
-    // Le mode suit la réalité : quelqu'un monte → on prépare l'échange ; il descend → chat.
-    setAssistantMode((prev) => {
-      const auto = modeAutomatique(inviteEnVisio);
-      return prev === auto ? prev : auto;
-    });
+    setAssistantMode((prev) => { const auto = modeAutomatique(inviteEnVisio); return prev === auto ? prev : auto; });
   }, [inviteEnVisio]);
 
-  const demanderSuggestions = useCallback(async (forcer: boolean) => {
-    if (!sessionId || !canShare) return;
+  // Le texte affiché alimente le prompteur EXISTANT (overlay sur la vidéo, taille,
+  //    vitesse, miroir). On ne construit pas un second prompteur : on remplit celui-là.
+  useEffect(() => { prompteur.setScript(etatPrompteur.affiche); }, [etatPrompteur.affiche]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Les questions du chat entrent dans la FILE — jamais à l'écran. Le seul effet
+  //    visible autorisé est un compteur discret.
+  useEffect(() => {
+    if (!canShare || !groupMessages.length) return;
+    const dernier = groupMessages[groupMessages.length - 1] as unknown as { id?: string; name?: string; text?: string; userId?: string };
+    if (!dernier || !dernier.text || dernier.userId === socket.userId) return;
+    setEtatPrompteur((e) => recevoirQuestion(e, {
+      id: String(dernier.id || `${dernier.name}-${dernier.text}`),
+      auteur: String(dernier.name || 'Participant'),
+      texte: String(dernier.text),
+    }));
+  }, [groupMessages, canShare, socket.userId]);
+
+  const demanderIA = useCallback(async (corps: Parameters<typeof suggestionsAssistant>[0], question: QuestionEnAttente | null) => {
+    setAssistantEnCours(true);
+    const r = await suggestionsAssistant(corps);
+    setAssistantEnCours(false);
+    if (r.ok && r.suggestions.length) {
+      setAssistantIndispo(null);
+      setEtatPrompteur((e) => recevoirSuggestion(e, r.suggestions[0], question));
+    } else {
+      setAssistantIndispo(r.raison || 'fournisseur_indisponible');
+    }
+  }, []);
+
+  // Aide à la rédaction : elle travaille le TEXTE DE L'HÔTE, jamais le chat.
+  const demanderTexte = useCallback((action: ActionTexte) => {
+    if (!sessionId || !assistantActif) return;
+    const texte = action === 'theme' ? themeIA : etatPrompteur.brouillon;
+    if (!texte.trim()) { setAssistantIndispo('texte_absent'); return; }
+    void demanderIA({ session_id: sessionId, mode: action, messages: [], texte }, null);
+  }, [sessionId, assistantActif, themeIA, etatPrompteur.brouillon, demanderIA]);
+
+  // Réponse à une question : le contexte reste le chat, borné et nettoyé côté serveur.
+  const demanderReponse = useCallback((q: QuestionEnAttente | null, forcer: boolean) => {
+    if (!sessionId || !assistantActif) return;
     const contexte = messagesPourIA(groupMessages as unknown as { name?: string; text?: string }[]);
-    const empreinte = empreinteContexte(assistantMode, contexte, inviteEnVisio);
+    const empreinte = empreinteContexte(assistantMode, contexte, inviteEnVisio) + (q ? `|${q.id}` : '');
     if (!doitAppeler({ etat: relanceRef.current, empreinte, maintenant: Date.now(),
                        actif: assistantActif, forcer, enCours: assistantEnCours })) return;
     relanceRef.current = { dernierAppelMs: Date.now(), derniereEmpreinte: empreinte };
-    setAssistantEnCours(true);
-    const r = await suggestionsAssistant({
-      session_id: sessionId, mode: assistantMode, messages: contexte,
-      invite: assistantMode === 'visio' ? inviteEnVisio : null,
-      sujet: description || null,
-    });
-    setAssistantEnCours(false);
-    if (r.ok) { setAssistantSuggestions(r.suggestions); setAssistantIndispo(null); }
-    else { setAssistantSuggestions([]); setAssistantIndispo(r.raison || 'fournisseur_indisponible'); }
-  }, [sessionId, canShare, assistantMode, assistantActif, assistantEnCours, groupMessages, inviteEnVisio, description]);
-
-  // Relance automatique : un nouveau message, ou quelqu'un qui monte/descend de scène.
-  //    Le débit est borné dans `doitAppeler` (délai minimum + empreinte inchangée).
-  useEffect(() => {
-    if (!assistantActif || !assistantOuvert) return;
-    void demanderSuggestions(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assistantActif, assistantOuvert, assistantMode, inviteEnVisio, groupMessages.length]);
+    void demanderIA({ session_id: sessionId, mode: assistantMode, messages: contexte,
+                      invite: assistantMode === 'visio' ? inviteEnVisio : null,
+                      sujet: description || null }, q || etatPrompteur.questionActive);
+  }, [sessionId, assistantActif, assistantEnCours, assistantMode, groupMessages, inviteEnVisio, description, etatPrompteur.questionActive, demanderIA]);
 
   const assistantNode: React.ReactNode = canShare ? (
     <AssistantHotePanel
       open={assistantOuvert}
       onClose={() => setAssistantOuvert(false)}
+      mobile={studioMobile}
       actif={assistantActif}
-      mode={assistantMode}
-      suggestions={assistantSuggestions}
+      onBasculer={(a) => { setAssistantActif(a); if (!a) setAssistantIndispo(null); }}
+      onglet={ongletPrompteur}
+      onOnglet={setOngletPrompteur}
+      etat={etatPrompteur}
+      theme={themeIA}
+      onTheme={setThemeIA}
       enCours={assistantEnCours}
       indisponible={assistantIndispo}
       invite={inviteEnVisio}
-      onBasculer={(a) => { setAssistantActif(a); if (!a) { setAssistantSuggestions([]); setAssistantIndispo(null); } }}
-      onMode={(m) => setAssistantMode(m)}
-      onActualiser={() => { void demanderSuggestions(true); }}
-      onInserer={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}
-      mobile={studioMobile}
+      modeQuestion={assistantMode}
+      taille={prompteur.taille}
+      onPlusPetit={prompteur.plusPetit}
+      onPlusGrand={prompteur.plusGrand}
+      onEcrire={(t) => setEtatPrompteur((e) => ecrire(e, t))}
+      // « Afficher » doit AFFICHER : le test en navigateur réel a montré que poser le
+      // script ne suffisait pas — la bande de lecture sur la vidéo est un second
+      // interrupteur, et elle est fermée par défaut. L'hôte cliquait, et ne voyait rien.
+      onAfficher={(src) => { setEtatPrompteur((e) => afficher(e, src)); setPrompteurSurVideo(true); }}
+      onEffacer={() => { setEtatPrompteur((e) => effacer(e)); setPrompteurSurVideo(false); }}
+      onUtiliserSuggestion={() => { setEtatPrompteur((e) => utiliserSuggestion(e)); setOngletPrompteur('texte'); }}
+      onIgnorerSuggestion={() => setEtatPrompteur((e) => ignorerSuggestion(e))}
+      onDemanderTexte={demanderTexte}
+      onOuvrirQuestion={(id) => {
+        setEtatPrompteur((e) => ouvrirQuestion(e, id));
+        const q = etatPrompteur.file.find((x) => x.id === id) || null;
+        demanderReponse(q, true);
+      }}
+      onAutreReponse={() => demanderReponse(etatPrompteur.questionActive, true)}
+      onReprendre={() => { setEtatPrompteur((e) => reprendreTexte(e)); setPrompteurSurVideo(true); }}
+      onInsererChat={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}
     />
   ) : null;
 

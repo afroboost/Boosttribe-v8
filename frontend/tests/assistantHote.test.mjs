@@ -97,7 +97,7 @@ test('INSÉRER N’EST PAS ENVOYER : aucun chemin entre une suggestion et un mes
     'le panneau ne connaît AUCUNE fonction d’envoi');
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   // Le seul effet de « Insérer » : poser un brouillon et ouvrir le chat.
-  assert.ok(page.includes('onInserer={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab(\'group\'); }}'));
+  assert.ok(page.includes('onInsererChat={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab(\'group\'); }}'));
   const chat = codeSeul(lire('components', 'session', 'ChatPanel.tsx'));
   assert.ok(chat.includes('setValue(brouillon);'), 'le brouillon remplit le champ…');
   assert.ok(!/brouillon[^\n]*send\(\)/.test(chat), '…et ne déclenche jamais l’envoi');
@@ -133,6 +133,20 @@ test('réservé à l’hôte des DEUX côtés : bouton gardé, et panneau non re
 test('éteint par défaut : aucune requête tant que le coach ne l’allume pas', () => {
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   assert.ok(page.includes('const [assistantActif, setAssistantActif] = useState(false)'));
-  assert.ok(page.includes('if (!assistantActif || !assistantOuvert) return;'),
-    'la relance automatique est gardée deux fois');
+  // Les DEUX portes vers l'IA refusent de partir tant que l'interrupteur est éteint.
+  ['const demanderTexte', 'const demanderReponse'].forEach((porte) => {
+    const bloc = page.slice(page.indexOf(porte), page.indexOf(porte) + 400);
+    assert.ok(/if \(!sessionId \|\| !assistantActif\) return;/.test(bloc), `porte non gardée : ${porte}`);
+  });
+});
+
+test('plus aucune relance AUTOMATIQUE : l’IA ne part que sur un clic', () => {
+  const page = codeSeul(lire('pages', 'SessionPage.tsx'));
+  // Le prompteur a remplacé la boucle de suggestions par des boutons. Aucun effet ne doit
+  // appeler l'IA : sinon une question du chat déclencherait une requête à l'insu de l'hôte.
+  page.split('useEffect(').slice(1).forEach((bloc) => {
+    const corps = bloc.slice(0, bloc.indexOf('}, ['));
+    assert.ok(!/demanderIA|demanderReponse|demanderTexte/.test(corps),
+      'un effet appelle l’IA sans clic de l’hôte');
+  });
 });

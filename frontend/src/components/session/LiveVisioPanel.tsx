@@ -1,16 +1,15 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, PictureInPicture2, Columns2, SquareUser } from 'lucide-react';
+import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
-import { LiveControls } from '@/components/session/LiveControls';
+import { LiveControls, type LectureLive } from '@/components/session/LiveControls';
 import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
 import { zoneCommentaires, colonnesGrille, dispositionBarre, ancrageImage } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
-import { PIP_TAILLE } from '@/lib/studioScenes';
 import { FluxEcran } from '@/components/session/SceneRenderer';
 import {
-  contenuScenePrincipale, dispositionsPartage, bornerVignette, DISPOSITION_DEFAUT, VIGNETTE_DEFAUT,
+  contenuScenePrincipale, dispositionsPartage, placementVignette, decoupeCoteACote, apercuEcranLocal, DISPOSITION_DEFAUT,
   type ContenuScene, type DispositionPartage,
 } from '@/lib/sceneLive';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -128,10 +127,10 @@ interface LiveVisioPanelProps {
   onTogglePrompteur?: () => void;
   /** État de la connexion au serveur vidéo — affiché, jamais tu. */
   connexionScene?: 'inactive' | 'en-cours' | 'connectee' | 'echec' | 'refus-publication';
-  // 🎵 Commandes musique compactes (⏮ ▶/⏸ ⏭ + titre) — LE lecteur existant, pas un second.
-  //    Rendues dans le panneau ET dans le plein écran : changer de morceau ne doit pas
-  //    obliger à sortir de la vue caméra.
-  audioNode?: React.ReactNode;
+  // 🎵 LA musique (le lecteur existant, pas un second) : Play/Pause dans la colonne de la
+  //    barre, précédent / suivant dans ⋮. Plus de grosse barre ⏮ ▶ ⏭ permanente : elle
+  //    mangeait le bas de la scène, là où vivent le champ commentaire et la caméra.
+  lecture?: LectureLive | null;
   /**
    * 🔴 Hôte PROPRIÉTAIRE de la session : seul à voir « Terminer » (qui coupe le Live pour
    * tous). Un co-hôte gère la scène mais ne termine pas : son ⋮ garde « Quitter ».
@@ -205,7 +204,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
   onTerminerLive, onRecordDirect,
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
-  prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
+  prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, lecture,
   connexionScene, estHote,
   chatOverlayNode, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
   filmActif = false, rendreFilm, ecranStream = null, ecranLocal = false,
@@ -319,7 +318,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   //    La personne « caméra » de la scène : celle épinglée, sinon l'hôte à l'image, sinon la
   //    1ʳᵉ à l'image. Aucune → la tuile « Caméra coupée » ne prend JAMAIS la place du contenu.
   const [disposition, setDisposition] = useState<DispositionPartage>(DISPOSITION_DEFAUT);
-  const [vignette, setVignette] = useState(VIGNETTE_DEFAUT);
+  // Position GLISSÉE de la vignette, en fraction de la scène ; null = coin bas-droit par défaut.
+  const [vignette, setVignette] = useState<{ x: number; y: number } | null>(null);
   const sceneBoxRef = useRef<HTMLDivElement>(null);
   const glisse = useRef<{ dx: number; dy: number } | null>(null);
   const filmPresent = filmActif && !!rendreFilm;
@@ -379,19 +379,55 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   const chatVisible = !!chatOverlayNode && !commentairesMasques;
   const inputVisible = !!commentInputNode && !commentairesMasques;
 
-  // 🎬 La vignette se GLISSE (souris / doigt) : position normalisée 0..1, bornée au cadre ; en
-  //    plein écran, la barre verticale est posée sur l'image → la borne droite recule d'autant.
-  const reserveDroitePx = camFullscreen ? enPx(zone.reserveDroite) + 12 : 0;
+  // 📷 GÉOMÉTRIE RÉELLE de la scène : sa taille, et ce qui la recouvre (la colonne de la barre
+  //    à droite, le champ commentaire en bas). Mesurée au montage et à chaque redimensionnement
+  //    (ResizeObserver) ; setState seulement si un chiffre change (pas de boucle).
+  const [geoScene, setGeoScene] = useState({ largeur: 0, hauteur: 0, droiteLibre: 0, dessous: 0 });
+  useLayoutEffect(() => {
+    const scene = sceneBoxRef.current;
+    const aire = camAreaRef.current;
+    if (!modeContenu || !scene || !aire) return;
+    const mesurer = () => {
+      const s = scene.getBoundingClientRect();
+      const a = aire.getBoundingClientRect();
+      const g = {
+        largeur: Math.round(s.width),
+        hauteur: Math.round(s.height),
+        droiteLibre: Math.round(a.right - s.right),
+        dessous: Math.round(a.bottom - s.bottom),
+      };
+      setGeoScene((p) => (p.largeur === g.largeur && p.hauteur === g.hauteur && p.droiteLibre === g.droiteLibre && p.dessous === g.dessous ? p : g));
+    };
+    mesurer();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(mesurer) : null;
+    ro?.observe(scene);
+    ro?.observe(aire);
+    window.addEventListener('resize', mesurer);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', mesurer); };
+  }, [camFullscreen, modeContenu]);
+  // Ce qui mord sur la scène : la colonne de la barre (60 px au bord droit de la zone) et le
+  // champ (44 px + marges, au bas de la zone). En vue normale la zone réserve déjà la colonne
+  // (paddingRight) → 0 ; en plein écran, la scène va jusqu'au bord → 60.
+  const reserveDroitePx = Math.max(0, enPx(zone.reserveDroite) - geoScene.droiteLibre);
+  // En plein écran, la rangée des invités (vignettes ~54 px) s'ajoute au-dessus du champ.
+  const reserveBasPx = Math.max(0, (inputVisible ? 64 : 8) + (camFullscreen && fsOthers.length > 0 ? 64 : 0) - geoScene.dessous);
+  const placeVignette = placementVignette({
+    largeurScene: geoScene.largeur, hauteurScene: geoScene.hauteur, reserveDroitePx, reserveBasPx, position: vignette,
+  });
+  const decoupe = decoupeCoteACote({ largeur: geoScene.largeur, hauteur: geoScene.hauteur });
+
+  // 🎬 La vignette se GLISSE (souris / doigt) : on retient le coin haut-gauche en FRACTION de la
+  //    scène, déjà borné par `placementVignette` — et re-borné à chaque rendu (redimensionnement).
   const deplacerVignette = (e: React.PointerEvent<HTMLDivElement>) => {
     const box = sceneBoxRef.current?.getBoundingClientRect();
     const g = glisse.current;
     if (!box || !g || box.width <= 0 || box.height <= 0) return;
-    const pip = e.currentTarget.getBoundingClientRect();
-    const suivante = bornerVignette(
-      { x: (e.clientX - g.dx - box.left) / box.width, y: (e.clientY - g.dy - box.top) / box.height },
-      { hauteur: pip.height / box.height, reserveDroite: reserveDroitePx / box.width },
-    );
-    setVignette((p) => (p.x === suivante.x && p.y === suivante.y ? p : suivante));
+    const p = placementVignette({
+      largeurScene: box.width, hauteurScene: box.height, reserveDroitePx, reserveBasPx,
+      position: { x: (e.clientX - g.dx - box.left) / box.width, y: (e.clientY - g.dy - box.top) / box.height },
+    });
+    const suivante = { x: p.x / box.width, y: p.y / box.height };
+    setVignette((v) => (v && v.x === suivante.x && v.y === suivante.y ? v : suivante));
   };
   const tuileScene = (p: VisioParticipant) => (
     <CameraTile
@@ -406,7 +442,23 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
       hideMicBadge={p.id === myUserId}
     />
   );
+  // 🪞 Anti-miroir : l'hôte qui partage l'onglet / l'écran où tourne l'appli verrait son aperçu
+  //    en abyme. Son aperçu LOCAL devient alors un placeholder ; la publication ne change pas.
+  const surfaceEcran = (() => {
+    try {
+      const st = ecranStream?.getVideoTracks()[0]?.getSettings() as (MediaTrackSettings & { displaySurface?: string }) | undefined;
+      return st?.displaySurface;
+    } catch { return undefined; }
+  })();
   const contenuDe = (c: ContenuScene, classe: string) => {
+    if (c === 'ecran' && ecranStream && apercuEcranLocal({ ecranLocal, displaySurface: surfaceEcran }) === 'placeholder') {
+      return (
+        <div className={`w-full h-full flex flex-col items-center justify-center gap-2 bg-black text-white/70 text-sm text-center px-3 ${classe}`} role="status" data-testid="scene-ecran-placeholder">
+          <MonitorUp className="w-8 h-8 text-[var(--bt-accent)]" aria-hidden="true" />
+          <span>Votre écran est partagé</span>
+        </div>
+      );
+    }
     if (c === 'ecran' && ecranStream) return <FluxEcran stream={ecranStream} muted={ecranLocal} className={`w-full h-full ${classe}`} />;
     if (c === 'camera' && personneScene) return tuileScene(personneScene);
     return null;
@@ -469,15 +521,26 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </div>
         )}
         {arbitrage.principal === 'ecran' && (
-          <div className={`absolute inset-y-0 left-0 ${arbitrage.cote ? 'w-1/2' : 'w-full'}`} data-testid="scene-ecran">
+          <div
+            className={`absolute ${!arbitrage.cote ? 'inset-0' : decoupe === 'vertical' ? 'inset-x-0 top-0 h-1/2' : 'inset-y-0 left-0'}`}
+            style={arbitrage.cote && decoupe === 'horizontal' ? { width: `calc((100% - ${reserveDroitePx}px) / 2)` } : undefined}
+            data-testid="scene-ecran"
+          >
             {contenuDe('ecran', '')}
           </div>
         )}
         {arbitrage.principal === 'camera' && personneDansScene && (
           <div className="absolute inset-0" data-testid="scene-camera">{tuileScene(personneDansScene)}</div>
         )}
+        {/* Côte à côte : 50/50 à gauche de la barre en paysage ; EMPILÉ en portrait (écran en
+            haut, caméra en bas). La caméra remplit sa moitié (object-cover) : jamais de moitié noire. */}
         {arbitrage.cote && (
-          <div className="absolute inset-y-0 right-0 w-1/2 border-l border-white/10" data-testid="scene-cote">
+          <div
+            className={`absolute ${decoupe === 'vertical' ? 'inset-x-0 bottom-0 h-1/2 border-t' : 'inset-y-0 border-l'} border-white/10`}
+            style={decoupe === 'horizontal' ? { left: `calc((100% - ${reserveDroitePx}px) / 2)`, right: `${reserveDroitePx}px` } : undefined}
+            data-testid="scene-cote"
+            data-decoupe={decoupe}
+          >
             {contenuDe(arbitrage.cote, '')}
           </div>
         )}
@@ -486,7 +549,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             role="group"
             aria-label="Vignette : glisser pour la déplacer"
             className="absolute z-10 overflow-hidden rounded-lg border border-white/25 bg-black shadow-lg shadow-black/50 cursor-grab active:cursor-grabbing touch-none select-none"
-            style={{ left: `${vignette.x * 100}%`, top: `${vignette.y * 100}%`, width: `${PIP_TAILLE * 100}%`, aspectRatio: '16 / 9' }}
+            style={{ left: placeVignette.x, top: placeVignette.y, width: placeVignette.largeur, height: placeVignette.hauteur }}
             onPointerDown={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               glisse.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
@@ -748,6 +811,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             onToggleCommentaires={onToggleCommentaires}
             onLeaveLive={onLeaveLive}
             onReduce={camFullscreen ? exitCamFullscreen : undefined}
+            lecture={lecture}
           />
 
           {/* Pile bas-gauche : chat, invités, champ, musique — à gauche de la barre. */}
@@ -803,27 +867,16 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               </div>
             )}
 
-            {/* Champ commentaire : pleine largeur de la pile sur téléphone, ≤ 24 rem sur ordinateur. */}
+            {/* Champ commentaire : CENTRÉ en bas, à gauche de la barre — pleine largeur utile sur
+                téléphone, ≤ 36 rem sur ordinateur. Il a pris la place de l'ancienne barre musique. */}
             {inputVisible && (
-              <div className="pointer-events-auto relative px-2 w-full" style={{ maxWidth: zone.inputLargeurMax }} data-testid="visio-calque-input">
+              <div className="pointer-events-auto relative self-center px-2 w-full" style={{ maxWidth: zone.inputLargeurMax }} data-testid="visio-calque-input" data-alignement={zone.inputAlignement}>
                 {commentInputNode}
-              </div>
-            )}
-
-            {/* 🎵 Musique atteignable sans sortir du plein écran. */}
-            {audioNode && camFullscreen && (
-              <div className="pointer-events-none relative flex justify-center px-3" data-testid="visio-fs-audio">
-                <div className="pointer-events-auto w-full max-w-sm">{audioNode}</div>
               </div>
             )}
           </div>
         </div>
       </div>
-
-      {/* 🎵 Commandes musique — dans le panneau, juste sous les caméras. */}
-      {audioNode && !camFullscreen && (
-        <div className="px-3 pb-1" data-testid="visio-audio">{audioNode}</div>
-      )}
 
       {/* 🎬 Studio — panneau (desktop) ou tiroir plein écran (mobile, `fixed` dans le nœud). Fermé = rien. */}
       {studioOpen && studioNode}

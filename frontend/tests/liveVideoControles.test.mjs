@@ -120,36 +120,31 @@ test('mobile ET desktop montent le panneau visio, donc l overlay', () => {
 
 /* ───────────────────────── AUDIO : ⏮ ▶/⏸ ⏭ sous les yeux ───────────────────────── */
 
-test('les commandes musique sont DANS le Live vidéo, plein écran compris', () => {
+test('les commandes musique sont DANS le Live vidéo (colonne + ⋮), plein écran compris', () => {
+  // 28/09 : plus de grosse barre ⏮ ▶ ⏭ posée sous la scène — Play/Pause dans la colonne de
+  // la barre Live (même composant dans les deux modes), ⏮ ⏭ dans son ⋮.
   const code = codeSeul(SESSION);
-  assert.ok(code.includes('audioNode={miniAudioControlNode}'), 'le panneau visio reçoit la barre');
+  assert.ok(code.includes('lecture={lectureLive}'), 'le panneau visio reçoit la lecture');
   const p = codeSeul(PANEL);
-  assert.ok(p.includes('data-testid="visio-fs-audio"'), 'rendue dans le plein écran');
-  assert.ok(p.includes('data-testid="visio-audio"'), 'rendue dans le panneau');
-  // Jamais les deux à la fois : sinon deux barres empilées à l'écran.
-  assert.ok(p.includes('{audioNode && !camFullscreen && ('), 'une seule barre affichée à la fois');
+  assert.ok(p.includes('lecture={lecture}'), 'transmise à LA barre (LiveControls)');
+  assert.ok(!p.includes('audioNode'), 'aucune seconde barre musique');
 });
 
 test('⏮ et ⏭ réutilisent LES gestionnaires du lecteur — aucun second moteur', () => {
   const code = codeSeul(SESSION);
-  assert.ok(code.includes('onClick={() => handlePlayerPrevious(audioState?.currentTime ?? 0)}'));
-  assert.ok(code.includes('onClick={handlePlayerNext}'));
+  assert.ok(code.includes('() => handlePlayerPrevious(audioState?.currentTime ?? 0)'));
+  assert.ok(code.includes('onSuivant: miniAudioSuivante ? handlePlayerNext : undefined'));
   // L'ancienne navigation parallèle du mini-contrôle a disparu.
   assert.ok(!code.includes('handleMiniTrackNav'), 'plus de seconde mécanique de sélection');
   // Un seul lecteur audio dans la page.
   assert.equal((code.match(/<AudioPlayer/g) || []).length, 1, 'un seul <AudioPlayer>');
-  assert.equal((code.match(/const miniAudioControlNode/g) || []).length, 1, 'une seule barre compacte');
+  assert.equal((code.match(/const lectureLive/g) || []).length, 1, 'une seule commande de lecture');
 });
 
-test('premier / dernier morceau : bouton VISIBLE mais désactivé', () => {
+test('premier / dernier morceau : les MÊMES règles décident de ⏮ / ⏭ (items du menu ⋮)', () => {
   const code = codeSeul(SESSION);
-  assert.ok(code.includes("disabled={miniAudioPrecedent === 'rien'}"), '⏮ désactivé, pas masqué');
-  assert.ok(code.includes('disabled={!miniAudioSuivante}'), '⏭ désactivé, pas masqué');
-  // Les deux boutons sont rendus inconditionnellement (pas de `&&` qui les ferait disparaître).
-  for (const id of ['mini-audio-prev', 'mini-audio-next']) {
-    const avant = code.slice(Math.max(0, code.indexOf(`data-testid="${id}"`) - 700), code.indexOf(`data-testid="${id}"`));
-    assert.ok(!/\{\s*(canPrev|canNext|miniAudio\w+)\s*&&\s*\(/.test(avant), `${id} n est pas conditionné à l affichage`);
-  }
+  assert.ok(code.includes("onPrecedent: miniAudioPrecedent === 'rien' ? undefined :"), '⏮ absent quand il n y a rien avant');
+  assert.ok(code.includes('onSuivant: miniAudioSuivante ?'), '⏭ absent au dernier morceau');
 });
 
 test('la décision de ⏮ vient d actionPrecedent, pas d un seuil recopié', () => {

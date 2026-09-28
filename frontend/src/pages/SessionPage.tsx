@@ -101,7 +101,7 @@ import {
   getPawapayConfig, claimPendingAccess,
   type SessionAccessInfo, type PawapayConfig,
 } from '@/lib/paymentApi';
-import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone, Square, ScrollText, MonitorUp } from 'lucide-react';
+import { Maximize2, Minimize2, Coins, Ticket, Smartphone, Square, ScrollText, MonitorUp } from 'lucide-react';
 import { indexSuivant, aUnePisteSuivante, indexPrecedent, aUnePistePrecedente, actionPrecedent } from '@/lib/playlistNav';
 
 // LocalStorage key for nickname
@@ -4228,10 +4228,9 @@ export const SessionPage: React.FC = () => {
   //    Programme (le compositeur ne peint que des pistes vidéo) — donc ni MP4 ni diffusion.
   const prompteurTiroirNode = (canShare && liveMode) ? assistantNode : null;
 
-  // 🎚️ COMMANDES MUSIQUE COMPACTES — ⏮ ▶/⏸ ⏭ + titre, LÀ OÙ LE COACH REGARDE.
-  //
-  //  Le coach filme : il ne doit pas quitter la vue caméra pour changer de morceau.
-  //  Ce bloc est rendu dans le panneau Live Visio ET dans son plein écran (`audioNode`).
+  // 🎚️ COMMANDES MUSIQUE DU LIVE — plus de grosse barre ⏮ ▶ ⏭ + titre posée sous la scène :
+  //  elle mangeait le bas de l'image (là où vivent le champ commentaire et la caméra).
+  //  Play/Pause va dans la COLONNE de la barre Live, ⏮ / ⏭ (et le titre) dans son menu ⋮.
   //
   //  CE N'EST PAS UN SECOND LECTEUR. Aucun `<audio>` n'est créé ici : play/pause agit
   //  sur L'UNIQUE élément musique (#bt-music-audio) via `handleMiniPlayPause`, et
@@ -4240,57 +4239,19 @@ export const SessionPage: React.FC = () => {
   //
   //  ⏮ suit la convention de tous les lecteurs, et elle n'est PAS décidée ici :
   //  `actionPrecedent` répond « redémarrer » au-delà de 3 s, « précédent » au tout
-  //  début s'il existe un titre avant, « rien » sinon. La MÊME fonction sert à
-  //  désactiver le bouton — deux endroits qui en décideraient finiraient par diverger.
-  //  Premier / dernier morceau : le bouton reste VISIBLE et devient désactivé, jamais
-  //  masqué : un bouton qui disparaît laisse croire à une panne.
+  //  début s'il existe un titre avant, « rien » sinon (l'item n'est alors pas proposé).
   const miniAudioIndex = selectedTrack ? tracks.findIndex((t) => t.id === selectedTrack.id) : -1;
   const miniAudioAPrecedente = canShare && aUnePistePrecedente(tracks.length, miniAudioIndex, repeatMode);
   const miniAudioPrecedent = actionPrecedent(audioState?.currentTime ?? 0, miniAudioAPrecedente);
   const miniAudioSuivante = canShare && aUnePisteSuivante(tracks.length, miniAudioIndex, repeatMode);
-  //  ZONE TACTILE : chaque bouton fait au moins 44 × 44 px (pouce, Samsung, plein
-  //  écran) — l'icône reste petite, c'est la cible qui grandit.
-  const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ? (
-    <div
-      className="flex items-center gap-1 rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] px-2 py-1"
-      data-testid="mini-audio-control"
-    >
-      <button
-        onClick={() => handlePlayerPrevious(audioState?.currentTime ?? 0)}
-        disabled={miniAudioPrecedent === 'rien'}
-        className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-        title={miniAudioPrecedent === 'redemarrer' ? 'Reprendre au début' : 'Morceau précédent'}
-        aria-label={miniAudioPrecedent === 'redemarrer' ? 'Reprendre le morceau au début' : 'Morceau précédent'}
-        data-testid="mini-audio-prev"
-      >
-        <SkipBack className="w-4 h-4" />
-      </button>
-      <button
-        onClick={handleMiniPlayPause}
-        className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-full text-white flex-shrink-0"
-        style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
-        title={audioState?.isPlaying ? 'Pause' : 'Lecture'}
-        aria-label={audioState?.isPlaying ? 'Mettre la musique en pause' : 'Lancer la musique'}
-        data-testid="mini-audio-playpause"
-      >
-        {audioState?.isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-      </button>
-      <button
-        onClick={handlePlayerNext}
-        disabled={!miniAudioSuivante}
-        className="min-w-[44px] min-h-[44px] inline-flex items-center justify-center rounded-lg text-white/70 hover:bg-white/10 transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-        title="Morceau suivant"
-        aria-label="Morceau suivant"
-        data-testid="mini-audio-next"
-      >
-        <SkipForward className="w-4 h-4" />
-      </button>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-white text-xs font-medium">{selectedTrack.title}</p>
-        {selectedTrack.artist && <p className="truncate text-white/40 text-[11px]">{selectedTrack.artist}</p>}
-      </div>
-    </div>
-  ) : null;
+  const lectureLive = (canShare && selectedTrack && shareMode === 'audio') ? {
+    enCours: !!audioState?.isPlaying,
+    titre: selectedTrack.artist ? `${selectedTrack.title} — ${selectedTrack.artist}` : selectedTrack.title,
+    onPlayPause: handleMiniPlayPause,
+    onPrecedent: miniAudioPrecedent === 'rien' ? undefined : () => handlePlayerPrevious(audioState?.currentTime ?? 0),
+    libellePrecedent: miniAudioPrecedent === 'redemarrer' ? 'Reprendre le morceau au début' : 'Morceau précédent',
+    onSuivant: miniAudioSuivante ? handlePlayerNext : undefined,
+  } : null;
 
   // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
   // 💬 CHAT LIVE posé SUR la vidéo (plus de grande carte) + ❤️ réactions flottantes.
@@ -4405,7 +4366,7 @@ export const SessionPage: React.FC = () => {
       commentairesMasques={commentairesMasques}
       onToggleCommentaires={() => setCommentairesMasques((m) => !m)}
       connexionScene={videoMesh.connexion}
-      audioNode={miniAudioControlNode}
+      lecture={lectureLive}
       // 🎬 Film et écran partagé EN GRAND dans la scène (les personnes en vignettes).
       //    Le lecteur est une FONCTION : son nœud (unique) est bâti plus bas.
       filmActif={shareMode !== 'audio' && !!sharedMedia}

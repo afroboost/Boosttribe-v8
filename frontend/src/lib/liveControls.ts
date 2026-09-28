@@ -21,6 +21,7 @@ export type CommandeId =
   | 'prompteur'
   | 'diffusion'     // diffuser en direct (multistream)
   | 'demandes'      // demandes de scène en attente (hôte) — n'apparaît que s'il y en a
+  | 'lecture'       // lire / mettre en pause LA musique (seulement si une musique est chargée)
   | 'terminer'      // terminer le Live pour tous (hôte seulement)
   | 'reduire';      // sortir du plein écran caméra
 
@@ -41,12 +42,12 @@ export const LARGEUR_PILULE = 212;
  * commande qui fait exister le coach à l'écran ne se cherchent pas dans un menu.
  */
 export const PRIORITE_COMMANDES: readonly CommandeId[] = [
-  'terminer', 'camera', 'scene', 'micro', 'reduire', 'record', 'prompteur', 'demandes', 'partage', 'diffusion',
+  'terminer', 'camera', 'scene', 'micro', 'reduire', 'record', 'lecture', 'prompteur', 'demandes', 'partage', 'diffusion',
 ];
 
 /** Ordre d'AFFICHAGE, de gauche à droite (ou de haut en bas en colonne). */
 export const ORDRE_COMMANDES: readonly CommandeId[] = [
-  'micro', 'camera', 'scene', 'partage', 'record', 'prompteur', 'diffusion', 'demandes', 'terminer', 'reduire',
+  'micro', 'camera', 'scene', 'partage', 'record', 'prompteur', 'lecture', 'diffusion', 'demandes', 'terminer', 'reduire',
 ];
 
 export interface Repartition {
@@ -153,6 +154,11 @@ export interface ZoneCommentaires {
   chatHauteurMax: string;
   /** Largeur max du champ commentaire (pleine largeur sur mobile). */
   inputLargeurMax: string;
+  /**
+   * Le champ est CENTRÉ en bas de la scène (entre le bord gauche et la colonne de la barre) :
+   * il remplace l'ancienne barre média ⏮ ▶ ⏭ et reste visible avec caméra, écran, film.
+   */
+  inputAlignement: 'centre';
   /** Largeur de la colonne des réactions (à droite). */
   reactionsLargeur: string;
   /** Hors plein écran : espace réservé sous les vignettes pour ne pas les recouvrir. */
@@ -186,7 +192,7 @@ export function zoneCommentaires(e: EntreeZone): ZoneCommentaires {
   // Hors plein écran, le chat réduit a une hauteur FIXE : c'est elle que `reserveBas`
   // réserve sous la grille des caméras.
   const chatHauteurMax = reduit ? (e.pleinEcran ? '25%' : '7rem') : (e.pleinEcran ? '38%' : '40%');
-  const inputLargeurMax = mobile ? '100%' : '24rem';
+  const inputLargeurMax = mobile ? '100%' : '36rem';
   const reactionsLargeur = mobile ? '3rem' : '3.5rem';
   // Barre v2 : la barre est à DROITE, elle ne réserve plus 4 rem en bas.
   // Champ + chat réduit ≈ 10 rem (hors plein écran, plusieurs caméras).
@@ -194,7 +200,7 @@ export function zoneCommentaires(e: EntreeZone): ZoneCommentaires {
   const { reserveDroite } = dispositionBarre({ largeur: e.largeur, hauteur: 0, pleinEcran: e.pleinEcran });
   const hauteurMin = e.pleinEcran || !avecCalques ? undefined : (mobile ? '26rem' : '22rem');
   const reservePrompteur = !e.pleinEcran && e.prompteurOuvert ? '16rem' : '0px';
-  return { mobile, reduit, chatLargeurMax, chatHauteurMax, inputLargeurMax, reactionsLargeur, reserveBas, reserveDroite, hauteurMin, reservePrompteur };
+  return { mobile, reduit, chatLargeurMax, chatHauteurMax, inputLargeurMax, inputAlignement: 'centre', reactionsLargeur, reserveBas, reserveDroite, hauteurMin, reservePrompteur };
 }
 
 /**

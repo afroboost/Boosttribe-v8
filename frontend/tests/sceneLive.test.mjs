@@ -158,13 +158,13 @@ test('deplacerSansCouper : repli appendChild, et un film EN LECTURE reprend s il
 test('LiveVisioPanel : film et écran rendus DANS la zone caméra, arbitrés par sceneLive', () => {
   assert.ok(PANEL.includes("from '@/lib/sceneLive'"));
   assert.ok(PANEL.includes('contenuScenePrincipale('));
-  const zone = PANEL.slice(PANEL.indexOf('ref={camAreaRef}'), PANEL.indexOf('data-testid="visio-audio"'));
+  const zone = PANEL.slice(PANEL.indexOf('ref={camAreaRef}'), PANEL.indexOf('{studioOpen && studioNode}'));
   assert.ok(zone.includes('{modeContenu && sceneContenu}'), 'la scène de contenu est DANS la cible du plein écran');
   const scene = PANEL.slice(PANEL.indexOf('const deplacerVignette = '), PANEL.indexOf('data-testid="live-visio-panel"'));
   assert.ok(scene.includes('data-testid="scene-film"') && scene.includes('{rendreFilm?.()}'), 'le film est dans la scène');
   assert.ok(scene.includes('data-testid="scene-ecran"'), 'l écran aussi');
   assert.ok(scene.includes('data-testid="scene-dispositions"'), 'contrôle de disposition dans la scène');
-  assert.ok(scene.includes('bornerVignette('), 'vignette glissée bornée par la fonction pure');
+  assert.ok(scene.includes('placementVignette('), 'vignette glissée bornée par la fonction pure (pixels)');
   assert.ok(!/#[0-9a-fA-F]{6}\b/.test(scene), 'aucune couleur codée en dur');
   assert.ok(scene.includes('w-10 h-10'), 'cibles de 40 px');
   // Le lecteur ne change pas de parent entre vue normale et plein écran (pas de remontage).

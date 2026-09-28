@@ -1,6 +1,7 @@
 import React from 'react';
 import { Mic, MicOff, Video, VideoOff, Hand, Minimize2, MonitorUp, MonitorX, ScrollText, Power, SwitchCamera, SlidersHorizontal } from 'lucide-react';
 import { Timer, Clapperboard, Sparkles, Disc, Square, LogOut, MessageSquareOff, MessageSquare, Users, Radio } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Music } from 'lucide-react';
 import { MenuActions, type MenuAction } from '@/components/session/MenuActions';
 import { libelleItemRecord, formatDureeRec } from '@/lib/recordUi';
 import { repartirCommandes, SEUIL_MOBILE, TAILLE_BOUTON, LARGEUR_PILULE, ESPACE_BOUTONS, ESPACE_COLONNE, type CommandeId } from '@/lib/liveControls';
@@ -82,6 +83,24 @@ export interface LiveControlsProps {
 
   onLeaveLive?: () => void;
   onReduce?: () => void;
+
+  /**
+   * 🎵 LA musique (le lecteur existant, jamais un second) : Play/Pause dans la colonne,
+   * précédent / suivant dans ⋮. Absent = aucune musique chargée → aucun bouton.
+   */
+  lecture?: LectureLive | null;
+}
+
+/** Commandes de LA musique, construites par la page à partir des gestionnaires du lecteur. */
+export interface LectureLive {
+  enCours: boolean;
+  titre?: string;
+  onPlayPause: () => void;
+  /** Absent = rien avant (premier morceau, début) : l'item n'est pas proposé. */
+  onPrecedent?: () => void;
+  /** Libellé de l'item précédent (« Reprendre au début » au-delà de 3 s). */
+  libellePrecedent?: string;
+  onSuivant?: () => void;
 }
 
 // Boutons ronds : 44 px (cible tactile), focus clavier visible, voile translucide.
@@ -102,7 +121,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   onToggleBroadcast, broadcastOpen = false, broadcastLive = false,
   onTerminerLive, onStartTimer, onToggleStudio, studioOpen = false, embellirNode,
   commentairesMasques = false, onToggleCommentaires,
-  onLeaveLive, onReduce,
+  onLeaveLive, onReduce, lecture,
 }) => {
   const vertical = orientation === 'verticale';
   // Écran large (≥ 640 px) : décide du partage d'écran « indisponible » visible (desktop).
@@ -124,6 +143,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   if (canManageStage && (onRecordDirect || onToggleRecord)) candidats.push('record');
   if (onTogglePrompteur) candidats.push('prompteur');
   if (canManageStage && onToggleBroadcast) candidats.push('diffusion');
+  if (lecture) candidats.push('lecture');
   if (canManageStage && onToggleStageRequests && stageRequestCount > 0) candidats.push('demandes');
   if (peutTerminer) candidats.push('terminer');
   if (onReduce) candidats.push('reduire');
@@ -137,6 +157,8 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   }, vertical ? ESPACE_COLONNE : ESPACE_BOUTONS);
   const enBarre = (c: CommandeId) => barre.includes(c);
 
+  const libelleLecture = lecture?.enCours ? 'Mettre en pause' : 'Lire la musique';
+
   // ── Commandes principales qui débordent : mêmes gestionnaires, rangées dans ⋮ ──
   const debordement: Record<CommandeId, () => MenuAction | null> = {
     micro: () => ({ id: 'd-micro', label: micActive ? 'Couper le micro' : 'Activer le micro', icon: micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />, onSelect: onToggleMic!, active: micActive, testId: pleinEcran ? 'visio-fs-mic' : 'visio-mic-toggle' }),
@@ -148,6 +170,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
     diffusion: () => ({ id: 'broadcast', label: broadcastLive ? 'En direct — gérer' : 'Diffuser en direct', icon: <Radio className="w-5 h-5" />, onSelect: onToggleBroadcast!, active: broadcastLive || broadcastOpen, testId: 'visio-broadcast-item' }),
     demandes: () => ({ id: 'd-demandes', label: `Demandes de scène (${stageRequestCount})`, icon: <Hand className="w-5 h-5" />, onSelect: onToggleStageRequests!, testId: pleinEcran ? 'visio-fs-stage-requests' : 'visio-stage-requests' }),
     terminer: () => ({ id: 'd-terminer', label: 'Terminer le Live', icon: <Power className="w-5 h-5" />, onSelect: terminer, danger: true, testId: 'visio-terminer-live' }),
+    lecture: () => (lecture ? { id: 'd-lecture', label: libelleLecture, icon: lecture.enCours ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />, onSelect: lecture.onPlayPause, active: lecture.enCours, testId: 'visio-lecture' } : null),
     reduire: () => ({ id: 'd-reduire', label: 'Quitter le plein écran', icon: <Minimize2 className="w-5 h-5" />, onSelect: onReduce!, testId: 'visio-camera-fs-reduce' }),
   };
   const itemsDebordement = menu.map((c) => debordement[c]()).filter((x): x is MenuAction => !!x);
@@ -156,6 +179,29 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   //    Enregistrer (panneau) → Embellir → Commentaires → Quitter (rouge, dernier). ──
   const items: MenuAction[] = [
     ...itemsDebordement.filter((i) => !i.danger),
+    // 🎵 Précédent / suivant : secondaires, dans ⋮ (le Play/Pause est dans la colonne).
+    ...(lecture?.titre ? [{
+      id: 'musique-titre',
+      label: lecture.titre,
+      icon: <Music className="w-5 h-5" />,
+      onSelect: () => {},
+      node: <span className="flex-1 min-w-0 truncate text-white/60" data-testid="visio-musique-titre">{lecture.titre}</span>,
+      testId: 'visio-musique-titre',
+    }] : []),
+    ...(lecture?.onPrecedent ? [{
+      id: 'musique-precedent',
+      label: lecture.libellePrecedent || 'Morceau précédent',
+      icon: <SkipBack className="w-5 h-5" />,
+      onSelect: lecture.onPrecedent,
+      testId: 'visio-musique-precedent',
+    }] : []),
+    ...(lecture?.onSuivant ? [{
+      id: 'musique-suivant',
+      label: 'Morceau suivant',
+      icon: <SkipForward className="w-5 h-5" />,
+      onSelect: lecture.onSuivant,
+      testId: 'visio-musique-suivant',
+    }] : []),
     ...(canManageStage && onSources ? [{
       id: 'sources',
       label: sourcesAvancees ? 'Sources' : 'Caméra externe',
@@ -379,6 +425,21 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
           data-testid={pleinEcran ? 'visio-fs-prompteur' : 'visio-prompteur-toggle'}
         >
           <ScrollText className="w-5 h-5" />
+        </button>
+      )}
+
+      {/* 🎵 Lire / mettre en pause LA musique — le lecteur existant, pas un second. */}
+      {enBarre('lecture') && lecture && (
+        <button
+          type="button"
+          onClick={lecture.onPlayPause}
+          className={`${ROUND} ${lecture.enCours ? ACCENT : DARK}`}
+          title={lecture.titre ? `${libelleLecture} — ${lecture.titre}` : libelleLecture}
+          aria-label={libelleLecture}
+          aria-pressed={lecture.enCours}
+          data-testid="visio-lecture"
+        >
+          {lecture.enCours ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
         </button>
       )}
 

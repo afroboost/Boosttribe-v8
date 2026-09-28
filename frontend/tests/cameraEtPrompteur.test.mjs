@@ -146,7 +146,7 @@ test('il existe une zone de saisie ATTEIGNABLE depuis le Live vidéo', () => {
 test('le tiroir est DANS la zone caméra — sinon il n existe pas en plein écran', () => {
   const code = codeSeul(PANEL);
   const debutZone = code.indexOf('ref={camAreaRef}');
-  const finZone = code.indexOf('data-testid="visio-audio"');
+  const finZone = code.indexOf('{studioOpen && studioNode}');
   const positions = [...code.matchAll(/prompteurTiroirNode\}/g)].map((m) => m.index);
   assert.ok(positions.length >= 2, 'monté aux deux endroits');
   for (const i of positions) {

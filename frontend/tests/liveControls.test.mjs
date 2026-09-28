@@ -82,12 +82,13 @@ test('une caméra, téléphone : chat ≤ 70 % de large, ≤ 40 % de haut, champ
   assert.equal(fs.reserveBas, '0px');
 });
 
-test('ordinateur : chat ≤ 22 rem, champ ≤ 24 rem à gauche, réactions en colonne étroite', () => {
+test('ordinateur : chat ≤ 22 rem, champ ≤ 36 rem CENTRÉ, réactions en colonne étroite', () => {
   for (const largeur of [768, 1280, 1440]) {
     const z = zoneCommentaires({ largeur, camerasActives: 1, pleinEcran: true });
     assert.equal(z.mobile, false);
     assert.equal(z.chatLargeurMax, '22rem');
-    assert.equal(z.inputLargeurMax, '24rem');
+    assert.equal(z.inputLargeurMax, '36rem');
+    assert.equal(z.inputAlignement, 'centre');
     assert.equal(z.reactionsLargeur, '3.5rem');
   }
 });
@@ -123,7 +124,7 @@ test('UNE seule barre rendue : LiveControls, une fois, hors de toute branche ple
 
 test('la barre est DANS la zone caméra (cible du plein écran), VERTICALE À DROITE, au-dessus du prompteur', () => {
   const debut = PANEL.indexOf('ref={camAreaRef}');
-  const fin = PANEL.indexOf('data-testid="visio-audio"');
+  const fin = PANEL.indexOf('{studioOpen && studioNode}');
   const i = PANEL.indexOf('<LiveControls');
   assert.ok(i > debut && i < fin, 'LiveControls est à l’intérieur de camAreaRef');
   assert.ok(PANEL.includes('pointer-events-none absolute z-[115] inset-0'),
@@ -287,7 +288,7 @@ test('slots chat / réactions / champ : props du panneau', () => {
 
 test('slots rendus DANS camAreaRef, dans les DEUX modes (aucune condition camFullscreen)', () => {
   const debut = PANEL.indexOf('ref={camAreaRef}');
-  const fin = PANEL.indexOf('data-testid="visio-audio"');
+  const fin = PANEL.indexOf('{studioOpen && studioNode}');
   for (const slot of ['{chatOverlayNode}', '{reactionsNode}', '{commentInputNode}']) {
     const i = PANEL.indexOf(slot);
     assert.ok(i > debut && i < fin, `${slot} est dans la zone caméra`);
@@ -300,7 +301,7 @@ test('slots rendus DANS camAreaRef, dans les DEUX modes (aucune condition camFul
 });
 
 test('mise en page : barre à droite ; en bas à gauche le chat (+ réactions), puis le champ', () => {
-  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('data-testid="visio-audio"'));
+  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('{studioOpen && studioNode}'));
   const ordre = ['{chatOverlayNode}', '{reactionsNode}', '{commentInputNode}'].map((k) => couche.indexOf(k));
   assert.ok(ordre.every((i) => i > 0) && ordre[0] < ordre[1] && ordre[1] < ordre[2], 'chat + réactions, puis champ');
   assert.ok(couche.includes('maxWidth: zone.chatLargeurMax') && couche.includes('height: zone.chatHauteurMax'), 'tailles du chat = zoneCommentaires');
@@ -341,7 +342,7 @@ test('QA : grille = largeur de la ZONE, jamais de l’écran', async () => {
 });
 
 test('QA : le chat remplit SON calque (derniers messages visibles) et ne capte aucun clic', () => {
-  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('data-testid="visio-audio"'));
+  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('{studioOpen && studioNode}'));
   const chat = couche.slice(couche.lastIndexOf('<div', couche.indexOf('data-testid="visio-calque-chat"')), couche.indexOf('data-testid="visio-calque-chat"'));
   assert.ok(chat.includes('pointer-events-none'), 'calque chat transparent aux clics');
   assert.ok(chat.includes('h-full'), 'hauteur définie : le débordement part en HAUT (anciens messages)');

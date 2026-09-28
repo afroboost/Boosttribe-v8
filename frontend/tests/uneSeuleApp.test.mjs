@@ -92,7 +92,7 @@ test('les quatre outils du coach ont UNE seule condition : canShare (hôte ou co
   assert.ok(code.includes('const prompteurNode = (canShare && !liveMode) ?'), 'lanceur prompteur');
   assert.ok(code.includes('const assistantNode: React.ReactNode = canShare ?'), 'panneau prompteur');
   assert.ok(code.includes('const prompteurOverlayNode = (canShare && prompteurSurVideo) ?'), 'overlay');
-  assert.ok(code.includes("const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ?"), '⏮ ▶ ⏭');
+  assert.ok(code.includes("const lectureLive = (canShare && selectedTrack && shareMode === 'audio') ?"), '⏮ ▶ ⏭');
   assert.ok(code.includes('onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}'), 'bouton Prompteur');
   assert.ok(code.includes('onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}'), 'minuteur');
   // Un seul LiveVisioPanel monté — pas de variante « embed ».
@@ -129,20 +129,21 @@ test('plein écran : prompteur, tiroir et musique restent DANS le nœud plein é
   }
   // Barre unique (28/09) : la barre et la musique sont dans la couche commune, DANS la
   // zone caméra (cible du plein écran), rendues dans les deux modes.
-  const zone = code.slice(code.indexOf('ref={camAreaRef}'), code.indexOf('data-testid="visio-audio"'));
-  for (const attendu of ['<LiveControls', 'onTogglePrompteur={onTogglePrompteur}', 'data-testid="visio-fs-audio"', '{audioNode && camFullscreen && (']) {
+  const zone = code.slice(code.indexOf('ref={camAreaRef}'), code.indexOf('{studioOpen && studioNode}'));
+  for (const attendu of ['<LiveControls', 'onTogglePrompteur={onTogglePrompteur}', 'lecture={lecture}']) {
     assert.ok(zone.includes(attendu), `zone caméra contient ${attendu}`);
   }
 });
 
-test('⏮ ▶/⏸ ⏭ : cible tactile 44 px, boutons visibles même désactivés, un seul lecteur', () => {
+test('⏮ ▶/⏸ ⏭ : Play/Pause 44 px dans la colonne, ⏮ ⏭ dans ⋮, un seul lecteur', () => {
   const code = codeSeul(SESSION);
-  const bloc = code.slice(code.indexOf('const miniAudioControlNode'), code.indexOf('const liveVisioNode'));
-  assert.equal((bloc.match(/min-w-\[44px\] min-h-\[44px\]/g) || []).length, 3, 'les trois boutons font 44 px');
-  assert.ok(bloc.includes("disabled={miniAudioPrecedent === 'rien'}"), '⏮ désactivé, jamais masqué');
-  assert.ok(bloc.includes('disabled={!miniAudioSuivante}'), '⏭ désactivé, jamais masqué');
+  const bloc = code.slice(code.indexOf('const lectureLive'), code.indexOf('const liveVisioNode'));
+  assert.ok(bloc.includes('onPlayPause: handleMiniPlayPause'), 'play/pause de L unique élément musique');
   assert.ok(!bloc.includes('<audio') && !bloc.includes('new Audio('), 'aucun second lecteur');
-  assert.ok(bloc.includes('onClick={handlePlayerNext}') && bloc.includes('handlePlayerPrevious('), 'mêmes gestionnaires que le grand lecteur');
+  assert.ok(bloc.includes('handlePlayerNext') && bloc.includes('handlePlayerPrevious('), 'mêmes gestionnaires que le grand lecteur');
+  const lc = codeSeul(lire('components', 'session', 'LiveControls.tsx'));
+  const bouton = lc.slice(lc.indexOf("{enBarre('lecture') && lecture && ("), lc.indexOf('data-testid="visio-lecture"'));
+  assert.ok(bouton.includes('${ROUND}'), 'cible tactile 44 px (ROUND = w-11 h-11)');
 });
 
 /* ───────────── 3. L'habillage Afroboost se construit d'ICI ───────────── */

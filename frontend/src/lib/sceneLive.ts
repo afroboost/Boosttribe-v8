@@ -111,6 +111,89 @@ export function bornerVignette(
   };
 }
 
+/* ───────────── Vignette en PIXELS, toujours DANS la scène ───────────── */
+
+/** Marge (px) entre la vignette et les bords (ou les réserves) de la scène. */
+export const MARGE_VIGNETTE_PX = 8;
+/** Plancher de largeur (px) — sauf scène minuscule : 45 % de sa largeur. */
+export const VIGNETTE_MIN_PX = 140;
+/** Plafond de largeur : 40 % de la scène. */
+export const VIGNETTE_MAX = 0.4;
+
+export interface EntreePlacement {
+  largeurScene: number;
+  hauteurScene: number;
+  /** Bande réservée à droite (barre verticale posée sur l'image), en px. */
+  reserveDroitePx?: number;
+  /** Bande réservée en bas (champ commentaire), en px. */
+  reserveBasPx?: number;
+  /** Coin haut-gauche choisi au glisser, en FRACTION de la scène (0..1) ; absent = coin bas-droit. */
+  position?: { x: number; y: number } | null;
+  /** Largeur visée, en fraction de la scène (défaut : celle du studio, 28 %). */
+  taille?: number;
+}
+
+export interface PlacementVignette { x: number; y: number; largeur: number; hauteur: number }
+
+/**
+ * 📷 Où poser la vignette (caméra ou écran) — en PIXELS, recalculé à chaque rendu et à chaque
+ * redimensionnement de la scène. Mesuré en prod : placée en pourcentages (left/top 70 %,
+ * largeur 28 %, 16:9), elle sortait par le bas d'une scène plus large que 16:9 et passait
+ * sous la barre verticale ; en panneau latéral elle tombait à 83 px de large.
+ *
+ * Règles : largeur = 28 % bornée [min(140 px, 45 %) ; 40 %], hauteur = largeur × 9/16 ;
+ * elle tient TOUJOURS dans la scène (quitte à rapetisser) ; elle évite la barre
+ * (`reserveDroitePx`) et le champ (`reserveBasPx`) tant que la place le permet sans passer
+ * sous son plancher — sinon la réserve cède, jamais le cadre. Par défaut : coin bas-droit.
+ */
+export function placementVignette(e: EntreePlacement): PlacementVignette {
+  const L = Number.isFinite(e.largeurScene) ? Math.max(0, e.largeurScene) : 0;
+  const H = Number.isFinite(e.hauteurScene) ? Math.max(0, e.hauteurScene) : 0;
+  if (L <= 0 || H <= 0) return { x: 0, y: 0, largeur: 0, hauteur: 0 };
+  const m = Math.min(MARGE_VIGNETTE_PX, L / 10, H / 10);
+  const rd = Math.max(0, Number.isFinite(e.reserveDroitePx) ? (e.reserveDroitePx as number) : 0);
+  const rb = Math.max(0, Number.isFinite(e.reserveBasPx) ? (e.reserveBasPx as number) : 0);
+  const taille = e.taille && e.taille > 0 ? e.taille : PIP_TAILLE;
+  const plancher = Math.min(VIGNETTE_MIN_PX, 0.45 * L);
+  let largeur = Math.max(Math.min(taille * L, VIGNETTE_MAX * L), plancher);
+  // 1) Jamais plus grande que la scène elle-même.
+  largeur = Math.min(largeur, L - 2 * m, ((H - 2 * m) * 16) / 9);
+  // 2) Hors barre et hors champ, tant que ça ne l'écrase pas sous son plancher.
+  const horsReserves = Math.min(L - rd - 2 * m, ((H - rb - 2 * m) * 16) / 9);
+  if (horsReserves >= Math.min(largeur, plancher)) largeur = Math.min(largeur, horsReserves);
+  largeur = Math.max(0, largeur);
+  const hauteur = (largeur * 9) / 16;
+  // Réserves effectives : elles cèdent (partiellement) si la vignette ne tient pas autrement.
+  const rdE = Math.max(0, Math.min(rd, L - 2 * m - largeur));
+  const rbE = Math.max(0, Math.min(rb, H - 2 * m - hauteur));
+  const xMax = Math.max(m, L - rdE - m - largeur);
+  const yMax = Math.max(m, H - rbE - m - hauteur);
+  const borne = (v: number, max: number) => Math.min(Math.max(v, m), max);
+  const p = e.position;
+  const x = p && Number.isFinite(p.x) ? borne(p.x * L, xMax) : xMax;
+  const y = p && Number.isFinite(p.y) ? borne(p.y * H, yMax) : yMax;
+  return { x, y, largeur, hauteur };
+}
+
+/**
+ * « Côte à côte » : 50/50 en paysage ; sur une scène PORTRAIT (téléphone en plein écran),
+ * deux moitiés de 180 px de large ne montrent rien → empilé (écran en haut, caméra en bas).
+ */
+export function decoupeCoteACote(e: { largeur: number; hauteur: number }): 'horizontal' | 'vertical' {
+  return e.hauteur > e.largeur && e.largeur > 0 ? 'vertical' : 'horizontal';
+}
+
+/**
+ * 🪞 Anti-miroir. L'HÔTE qui partage l'onglet (ou l'écran entier) où tourne l'application
+ * verrait son aperçu local s'afficher dans lui-même, à l'infini. Dans ce cas SEULEMENT, son
+ * aperçu local devient un placeholder sobre ; ce qui est publié ne change pas (les
+ * participants voient le vrai écran). Surface inconnue (Safari / Firefox) : aucune hypothèse.
+ * Ne concerne que l'ÉCRAN — la caméra locale n'est jamais masquée par cette règle.
+ */
+export function apercuEcranLocal(e: { ecranLocal: boolean; displaySurface?: string | null }): 'flux' | 'placeholder' {
+  return e.ecranLocal && (e.displaySurface === 'browser' || e.displaySurface === 'monitor') ? 'placeholder' : 'flux';
+}
+
 /* ───────────── Déplacer l'UNIQUE lecteur sans le couper ───────────── */
 
 /** Un média du lecteur (<video>, <audio>) — juste ce qu'il faut pour le relancer. */

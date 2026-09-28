@@ -4,7 +4,7 @@ import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/Sou
 import { CameraTile } from '@/components/session/CameraTile';
 import { LiveControls } from '@/components/session/LiveControls';
 import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
-import { zoneCommentaires } from '@/lib/liveControls';
+import { zoneCommentaires, colonnesGrille } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -272,10 +272,12 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   const avecCalques = !!(chatOverlayNode || reactionsNode || commentInputNode);
   const zone = zoneCommentaires({
     largeur: largeurZone,
-    camerasActives: activeCameraCount,
+    // QA 28/09 : une vignette « caméra coupée » se recouvre aussi — toute vignette compte.
+    camerasActives: Math.max(activeCameraCount, participants.length),
     pleinEcran: camFullscreen,
     vignettes: camFullscreen && fsOthers.length > 0,
     avecCalques,
+    prompteurOuvert: prompteurOuvert && !!prompteurTiroirNode,
   });
   const chatVisible = !!chatOverlayNode && !commentairesMasques;
   const inputVisible = !!commentInputNode && !commentairesMasques;
@@ -347,7 +349,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'relative p-3'}
         /* Hors plein écran : sous les vignettes, la place de la barre (et du chat s'il y a
            plusieurs caméras) — les personnes filmées ne sont jamais recouvertes. */
-        style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas})` }}
+        style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})` }}
         data-testid="visio-camera-area"
       >
         {camFullscreen ? (
@@ -375,8 +377,16 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             {timerNode}
             {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle. */}
             {prompteurNode}
-            {/* ✍️ …et on peut l'ÉCRIRE là aussi, sans sortir du plein écran. */}
-            {prompteurTiroirNode}
+            {/* ✍️ …et on peut l'ÉCRIRE là aussi, sans sortir du plein écran. Jamais sur le
+                centre de l'image (le visage) — QA 28/09 : à 55 % de haut il le couvrait.
+                Téléphone / tablette : moitié BASSE ; grand écran : moitié DROITE. */}
+            <div
+              className={`pointer-events-none absolute z-[135] ${largeurZone < 1024 ? 'inset-x-0 top-1/2' : 'left-1/2 right-0 top-0'}`}
+              style={{ bottom: 'env(safe-area-inset-bottom)' }}
+              data-testid="visio-prompteur-place"
+            >
+              {prompteurTiroirNode}
+            </div>
           </>
         ) : spotlightP ? (
           /* 🔍 Vue agrandie : une grande caméra + les autres en miniatures (clic sur une miniature = l'agrandir) */
@@ -395,7 +405,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             )}
           </div>
         ) : layout === 'grid' ? (
-          <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          /* Colonnes selon la largeur de la ZONE (colonne desktop ≈ 384 px), pas de l'écran. */
+          <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${colonnesGrille(largeurZone, participants.length)}, minmax(0, 1fr))` }}>
             {participants.map((p) => (
               <div key={p.id}>{tileFor(p)}</div>
             ))}
@@ -417,7 +428,15 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             <span className="w-1.5 h-1.5 rounded-full bg-[var(--bt-accent)] animate-pulse" aria-hidden="true" /> REC {formatDureeRec(recordDureeSec)}
           </span>
         )}
-        {!camFullscreen && prompteurTiroirNode}
+        {/* Hors plein écran, le panneau occupe une place RÉSERVÉE sous les vignettes
+            (`reservePrompteur`) : il ne recouvre plus les personnes filmées. */}
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-[135]"
+          style={{ height: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})` }}
+          data-testid="visio-prompteur-place"
+        >
+          {!camFullscreen && prompteurTiroirNode}
+        </div>
 
         {/* 🎛️ COUCHE LIVE — UNE seule, dans les DEUX modes (le plein écran prend cette zone pour
             cible, donc tout ce qui est ici le suit). Transparente aux clics, sauf ses éléments.
@@ -445,12 +464,12 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           {(chatVisible || reactionsNode) && (
             <div className="relative flex items-end justify-between gap-2 px-2 min-h-0" style={{ height: zone.chatHauteurMax }} data-testid="visio-calque-haut">
               {chatVisible ? (
-                <div className="pointer-events-auto min-w-0 max-h-full overflow-hidden" style={{ width: '100%', maxWidth: zone.chatLargeurMax }} data-testid="visio-calque-chat">
+                <div className="pointer-events-none min-w-0 h-full overflow-hidden" style={{ width: '100%', maxWidth: zone.chatLargeurMax }} data-testid="visio-calque-chat">
                   {chatOverlayNode}
                 </div>
               ) : <span />}
               {reactionsNode && (
-                <div className="pointer-events-auto shrink-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
+                <div className="pointer-events-none shrink-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
                   {reactionsNode}
                 </div>
               )}

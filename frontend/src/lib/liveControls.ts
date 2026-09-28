@@ -97,6 +97,8 @@ export interface EntreeZone {
   vignettes?: boolean;
   /** Au moins un calque (chat, réactions, champ) est fourni par la page. */
   avecCalques?: boolean;
+  /** Le panneau Prompteur est ouvert DANS la zone caméra. */
+  prompteurOuvert?: boolean;
 }
 
 export interface ZoneCommentaires {
@@ -115,6 +117,12 @@ export interface ZoneCommentaires {
   reserveBas: string;
   /** Hors plein écran : hauteur minimale de la zone caméra (le chat a besoin de place). */
   hauteurMin?: string;
+  /**
+   * Hors plein écran, Prompteur ouvert : place AJOUTÉE sous les vignettes pour le panneau.
+   * Mesuré (QA 28/09) : posé par-dessus, il recouvrait le visage de l'hôte (768 px) ou
+   * toute la colonne desktop. En plein écran, c'est la moitié basse (voir LiveVisioPanel).
+   */
+  reservePrompteur: string;
 }
 
 /**
@@ -139,5 +147,20 @@ export function zoneCommentaires(e: EntreeZone): ZoneCommentaires {
   // Barre seule ≈ 4 rem ; barre + champ + chat réduit ≈ 14 rem.
   const reserveBas = e.pleinEcran ? '0px' : (reduit && avecCalques ? '14rem' : '4rem');
   const hauteurMin = e.pleinEcran || !avecCalques ? undefined : (mobile ? '26rem' : '22rem');
-  return { mobile, reduit, chatLargeurMax, chatHauteurMax, inputLargeurMax, reactionsLargeur, reserveBas, hauteurMin };
+  const reservePrompteur = !e.pleinEcran && e.prompteurOuvert ? '16rem' : '0px';
+  return { mobile, reduit, chatLargeurMax, chatHauteurMax, inputLargeurMax, reactionsLargeur, reserveBas, hauteurMin, reservePrompteur };
+}
+
+/**
+ * Colonnes de la grille des caméras, selon la largeur de la ZONE (pas de l'écran).
+ * Sur ordinateur le panneau vit dans une colonne de ~384 px : un breakpoint d'écran
+ * (lg:grid-cols-3) y posait trois vignettes de 64 px de haut (mesuré, QA 28/09).
+ * Deux personnes sur téléphone : empilées ; ≥ 480 px (ou ≥ 3 personnes) : 2 ; ≥ 900 px : 3.
+ */
+export function colonnesGrille(largeur: number, personnes: number): number {
+  const n = Math.max(1, Math.floor(personnes || 0));
+  const l = largeur || 0;
+  // Trois personnes ou plus : 2 colonnes dès 300 px (empilées, 4 vignettes = 800 px de haut).
+  const max = l >= 900 ? 3 : l >= 480 || (n >= 3 && l >= 300) ? 2 : 1;
+  return Math.min(n, max);
 }

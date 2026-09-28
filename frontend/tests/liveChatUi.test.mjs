@@ -81,3 +81,9 @@ test('input : bascule Question accessible, envoi nommé', () => {
   assert.ok(/aria-label="Envoyer/.test(INPUT));
   assert.ok(INPUT.includes('slotDroite'));
 });
+
+test('QA : les boutons du champ offrent 44 px de cible (le rond visible reste compact)', () => {
+  const boutons = INPUT.split('<button').slice(1).map((b) => b.slice(0, b.indexOf('</button>')));
+  assert.ok(boutons.length >= 2);
+  for (const b of boutons) assert.ok(/className=\{?[`'"][^`'"]*w-11 h-11/.test(b), 'cible 44 px : ' + b.slice(0, 80));
+});

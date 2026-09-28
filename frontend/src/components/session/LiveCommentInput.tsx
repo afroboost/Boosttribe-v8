@@ -114,20 +114,27 @@ export function LiveCommentInput({
             aria-pressed={question}
             aria-label="Marquer comme question"
             title="Marquer comme question"
-            className={`shrink-0 w-9 h-9 grid place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70 ${
-              question ? 'bg-[rgb(var(--bt-accent-rgb)/0.85)] text-white' : 'text-white/75 hover:text-white'
+            className={`group shrink-0 w-11 h-11 grid place-items-center rounded-full outline-none ${
+              question ? 'text-white' : 'text-white/75 hover:text-white'
             }`}
           >
-            <HelpCircle className="w-5 h-5" aria-hidden="true" />
+            <span className={`w-9 h-9 grid place-items-center rounded-full group-focus-visible:ring-2 group-focus-visible:ring-white/70 ${
+              question ? 'bg-[rgb(var(--bt-accent-rgb)/0.85)]' : ''
+            }`}>
+              <HelpCircle className="w-5 h-5" aria-hidden="true" />
+            </span>
           </button>
         )}
         <button
           type="submit"
           disabled={desactive || !normaliserTexte(texte)}
           aria-label="Envoyer le commentaire"
-          className="shrink-0 w-9 h-9 grid place-items-center rounded-full text-white bg-[var(--bt-accent)] disabled:bg-white/10 disabled:text-white/50 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          className="group shrink-0 w-11 h-11 -mr-1 grid place-items-center rounded-full text-white disabled:text-white/50 outline-none"
         >
-          <Send className="w-4 h-4" aria-hidden="true" />
+          {/* Cible 44 px (QA 28/09 : 36 px mesurés), rond visible 36 px inchangé. */}
+          <span className="w-9 h-9 grid place-items-center rounded-full bg-[var(--bt-accent)] group-disabled:bg-white/10 group-focus-visible:ring-2 group-focus-visible:ring-white/70">
+            <Send className="w-4 h-4" aria-hidden="true" />
+          </span>
         </button>
       </form>
       {slotDroite && <div className="shrink-0">{slotDroite}</div>}

@@ -37,7 +37,9 @@ const CSS = `
 .bt-reac-btn { transition: transform .12s ease; }
 .bt-reac-btn:active { transform: scale(.88); }
 @media (prefers-reduced-motion: reduce) {
-  .bt-reac-bulle { animation: bt-reac-fondu 600ms ease-out both; }
+  /* Fondu seul (aucun déplacement). !important : index.css ramène toute animation à
+     0,01 ms en mouvement réduit — la bulle serait invisible (mesuré, QA 28/09). */
+  .bt-reac-bulle { animation: bt-reac-fondu 600ms ease-out both; animation-duration: 600ms !important; }
   .bt-reac-btn, .bt-reac-btn:active { transition: none; transform: none; }
 }
 `;
@@ -132,7 +134,7 @@ export function LiveReactionButton({ onReagir, total, types = ['like'], classNam
   };
   const choisir = (t: TypeReaction) => { onReagir(t); setEventail(false); };
 
-  const libelle = `J'aimer (${total})`;
+  const libelle = `J'aime (${total})`;
 
   return (
     <div className={`relative flex flex-col items-center gap-0.5 ${className}`}>

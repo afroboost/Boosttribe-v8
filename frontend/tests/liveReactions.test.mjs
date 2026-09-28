@@ -168,3 +168,17 @@ test('structure : aucun hex codé en dur, SVG lucide, pas d’écriture en base'
   assert.doesNotMatch(lib, /setTimeout|setInterval|Date\.now/, 'horloge injectée dans la lib');
   assert.match(hook, /MAX_BULLES_SIMULTANEES/);
 });
+
+test('QA : le bouton se nomme « J’aime » (lecteur d’écran), pas « J’aimer »', () => {
+  const comp = codeSeul(lire('components', 'session', 'LiveReactionOverlay.tsx'));
+  assert.ok(!comp.includes("J'aimer"), 'libellé fautif');
+  assert.ok(comp.includes("`J'aime (${total})`"));
+});
+
+test('QA : mouvement réduit — la bulle unique RESTE visible (fondu 600 ms)', () => {
+  // index.css force `animation-duration: 0.01ms !important` sur `*` en mouvement réduit :
+  // mesuré en Chrome, la bulle naissait et mourait dans la même image (0 visible).
+  const comp = lire('components', 'session', 'LiveReactionOverlay.tsx');
+  const bloc = comp.slice(comp.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(bloc, /\.bt-reac-bulle \{[^}]*animation-duration: 600ms !important/);
+});

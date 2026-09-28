@@ -121,7 +121,7 @@ test('la barre est DANS la zone caméra (cible du plein écran), en bas, au-dess
   assert.ok(PANEL.includes('pointer-events-none absolute z-[115] inset-0 flex flex-col justify-end'),
     'couche absolue transparente aux clics, ancrée en bas, z > overlay prompteur (112)');
   assert.ok(PANEL.includes("env(safe-area-inset-bottom)"), 'safe-area en plein écran');
-  assert.ok(PANEL.includes('paddingBottom: `calc(0.75rem + ${zone.reserveBas})`'), 'hors plein écran, la place de la barre est réservée sous les vignettes');
+  assert.ok(PANEL.includes('paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`'), 'hors plein écran, la place de la barre est réservée sous les vignettes');
 });
 
 test('VisioControlBar reste exporté, API compatible, simple adaptateur vers LiveControls', () => {
@@ -232,11 +232,58 @@ test('mise en page : barre en bas, champ juste au-dessus, chat à gauche, réact
   assert.ok(couche.includes('maxWidth: zone.inputLargeurMax'), 'largeur du champ = zoneCommentaires');
   assert.ok(couche.includes('width: zone.reactionsLargeur'), 'colonne des réactions = zoneCommentaires');
   assert.ok(couche.includes('data-testid="visio-fs-thumbs"'), 'vignettes des invités dans la pile : jamais sous le chat');
-  assert.ok(PANEL.includes('camerasActives: activeCameraCount') && PANEL.includes('vignettes: camFullscreen && fsOthers.length > 0'),
+  assert.ok(PANEL.includes('camerasActives: Math.max(activeCameraCount, participants.length)') && PANEL.includes('vignettes: camFullscreen && fsOthers.length > 0'),
     'le chat rapetisse avec les invités');
 });
 
 test('la largeur mesurée ne relance pas de boucle de rendu', () => {
   assert.ok(PANEL.includes('setLargeurZone((p) => (p === l ? p : l))'), 'setState à l’identique évité');
   assert.ok(PANEL.includes('ro?.disconnect()'), 'observateur libéré');
+});
+
+/* ═══════════════ QA MOBILE (28/09) : défauts mesurés en navigateur réel ═══════════════
+ * Harnais Playwright (Chrome) 360→1440 px, vrais composants, faux flux caméra :
+ *  1. le flux de chat débordait par le BAS de son calque (hauteur auto) : les messages les
+ *     plus RÉCENTS étaient rognés, 81 % d'une vignette d'invité recouverte à 360 px ;
+ *  2. le calque du chat captait les clics (pointer-events-auto) sur 40 % de la vidéo ;
+ *  3. sur ordinateur, la grille suivait la largeur de l'ÉCRAN (lg:grid-cols-3) alors
+ *     qu'elle vit dans une colonne de 384 px : vignette de l'hôte à 64 px de haut ;
+ *  4. un participant caméra coupée n'activait pas le mode réduit : chat sur sa vignette ;
+ *  5. le Prompteur ouvert recouvrait le visage de l'hôte (centre de la vidéo). */
+
+test('QA : grille = largeur de la ZONE, jamais de l’écran', async () => {
+  const { colonnesGrille } = await import('./.build/liveControls.mjs');
+  assert.equal(colonnesGrille(384, 1), 1, 'une personne : pleine largeur');
+  assert.equal(colonnesGrille(384, 2), 1, 'colonne desktop étroite, deux personnes : empilées');
+  assert.equal(colonnesGrille(384, 4), 2, 'quatre personnes : 2 × 2, pas une tour de 800 px');
+  assert.equal(colonnesGrille(328, 2), 1, 'téléphone, deux personnes : empilées (comportement historique)');
+  assert.equal(colonnesGrille(328, 3), 2, 'téléphone, trois personnes ou plus : 2 colonnes');
+  assert.equal(colonnesGrille(720, 4), 2, 'tablette : deux colonnes');
+  assert.equal(colonnesGrille(1100, 4), 3, 'large : trois colonnes');
+  assert.equal(colonnesGrille(1100, 2), 2, 'jamais plus de colonnes que de personnes');
+  assert.ok(!/lg:grid-cols-3/.test(PANEL), 'plus de breakpoint écran dans la grille');
+  assert.ok(PANEL.includes('colonnesGrille(largeurZone, participants.length)'));
+});
+
+test('QA : le chat remplit SON calque (derniers messages visibles) et ne capte aucun clic', () => {
+  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques"'), PANEL.indexOf('<LiveControls'));
+  const chat = couche.slice(couche.lastIndexOf('<div', couche.indexOf('data-testid="visio-calque-chat"')), couche.indexOf('data-testid="visio-calque-chat"'));
+  assert.ok(chat.includes('pointer-events-none'), 'calque chat transparent aux clics');
+  assert.ok(chat.includes('h-full'), 'hauteur définie : le débordement part en HAUT (anciens messages)');
+  const reac = couche.slice(couche.lastIndexOf('<div', couche.indexOf('data-testid="visio-calque-reactions"')), couche.indexOf('data-testid="visio-calque-reactions"'));
+  assert.ok(reac.includes('pointer-events-none'), 'colonne des réactions transparente aux clics');
+});
+
+test('QA : toute vignette compte pour le mode réduit (caméra coupée comprise)', () => {
+  assert.ok(PANEL.includes('camerasActives: Math.max(activeCameraCount, participants.length)'));
+});
+
+test('QA : Prompteur ouvert — place réservée hors plein écran, hors du centre en plein écran', () => {
+  const z = zoneCommentaires({ largeur: 390, camerasActives: 1, pleinEcran: false, prompteurOuvert: true });
+  assert.equal(z.reservePrompteur, '16rem');
+  assert.equal(zoneCommentaires({ largeur: 390, camerasActives: 1, pleinEcran: false }).reservePrompteur, '0px');
+  assert.equal(zoneCommentaires({ largeur: 390, camerasActives: 1, pleinEcran: true, prompteurOuvert: true }).reservePrompteur, '0px');
+  assert.ok(PANEL.includes('paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`'));
+  assert.ok(PANEL.includes('data-testid="visio-prompteur-place"'), 'le panneau vit dans une place bornée');
+  assert.ok(PANEL.includes("largeurZone < 1024 ? 'inset-x-0 top-1/2' : 'left-1/2 right-0 top-0'"), 'plein écran : jamais sur le centre de l’image (visage)');
 });

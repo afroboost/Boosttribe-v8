@@ -243,7 +243,8 @@ test('Échap ferme le panneau sans remonter à la page (le plein écran reste)',
 
 test('dans la zone caméra : feuille compacte, translucide, bornée, défilement interne', () => {
   assert.ok(PANNEAU.includes("disposition === 'zone-camera'"));
-  assert.ok(PANNEAU.includes('max-h-[min(55%,calc(100%-6rem))]'), 'mobile : ne masque pas tout l’hôte');
+  assert.ok(PANNEAU.includes('max-h-[calc(100%-6rem)]'), 'borné par sa place (LiveVisioPanel : moitié basse en plein écran mobile)');
+  assert.ok(PANNEAU.includes('pointer-events-auto'), 'cliquable dans une place transparente aux clics');
   assert.ok(PANNEAU.includes('bottom-[4.75rem]'), 'posé au-dessus de la barre Live, jamais dessus');
   assert.ok(PANNEAU.includes('w-[24rem]'), 'desktop : ~24rem de large');
   assert.ok(/absolute[^'"]*overflow-y-auto|overflow-y-auto[^'"]*absolute/.test(PANNEAU), 'défilement interne');

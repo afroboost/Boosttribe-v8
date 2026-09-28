@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   EVT_REACTIONS, EVT_TOTAL, ETAT_INITIAL, MAX_BULLES_SIMULTANEES,
-  ajouterLocal, appliquerLot, bullesAAfficher, creerTamponReactions, doitAnnoncerTotal, synchroTotal, totalDe,
+  ajouterLocal, appliquerLot, bullesAAfficher, creerTamponReactions, doitAnnoncerTotal, synchroTotal, totalDe, totauxAnnoncables,
   type EtatReactions, type LotReactions, type Totaux, type TypeReaction,
 } from '@/lib/liveReactions';
 
@@ -153,7 +153,8 @@ export function useLiveReactions({
     let dernierMs = -Infinity;
     const id = setInterval(() => {
       const now = Date.now();
-      const t = etatRef.current.totaux;
+      // Sans les clics encore en tampon : ils arriveront dans un lot, sinon comptés deux fois.
+      const t = totauxAnnoncables(etatRef.current.totaux, tamponRef.current?.comptesEnAttente());
       if (!doitAnnoncerTotal(dernier, t, dernierMs, now, periodeTotalMs)) return;
       dernier = t;
       dernierMs = now;

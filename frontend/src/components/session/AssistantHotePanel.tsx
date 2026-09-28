@@ -1,6 +1,6 @@
 import React from 'react';
 import { Sparkles, X, RotateCw, Copy, CornerDownLeft, Check, MessageSquare, PenLine, Wand2, Eraser, Undo2,
-  Minus, Plus, Mic, MicOff, Video, VideoOff, SwitchCamera, Disc, Square, PhoneOff, Bot, Play, Pause,
+  Minus, Plus, Bot, Play, Pause,
   FlipHorizontal2, Eye, EyeOff, Gauge, Type, ScrollText } from 'lucide-react';
 import type { ModeSouffleur } from '@/lib/assistantHote';
 import type { Prompteur as InstancePrompteur } from '@/hooks/usePrompteur';
@@ -89,25 +89,6 @@ export interface PanneauPrompteurUniqueProps {
   surVideo?: boolean;
   onSurVideo?: (v: boolean) => void;
   // Actions
-  /**
-   * 🎛️ LES COMMANDES QU'ON NE DOIT JAMAIS PERDRE DE VUE.
-   *
-   * Sur mobile, le prompteur flottant est une feuille qui monte du bas : elle recouvre
-   * la barre du Live. Ce ne sont PAS de nouveaux boutons : ce sont les mêmes rappels
-   * que ceux de la barre, remontés à portée de pouce. Aucun second état, aucune
-   * seconde logique. Optionnel : inutile quand la feuille laisse la barre visible.
-   */
-  controles?: {
-    micActif: boolean;
-    onMic?: () => void;
-    cameraActive: boolean;
-    onCamera?: () => void;
-    onFlip?: () => void;
-    enregistre: boolean;
-    onRecord?: () => void;
-    recordDisponible?: boolean;
-    onTerminer?: () => void;
-  };
   onEcrire: (t: string) => void;
   onAfficher: (source: 'manuel' | 'theme' | 'question') => void;
   onEffacer: () => void;
@@ -148,11 +129,6 @@ const BTN_SEC = `${BTN} text-white/75 border border-white/15 hover:text-white ho
 const BTN_TAILLE = 'w-11 h-11 flex items-center justify-center shrink-0';
 const REGLAGE = `${BTN_TAILLE} rounded-lg border border-white/15 text-white/75 hover:text-white disabled:opacity-35 disabled:cursor-not-allowed`;
 const ONGLET_CLS = 'min-h-[44px] flex-1 min-w-0 flex items-center justify-center gap-1 px-1.5 py-1.5 rounded-lg text-[11px] font-semibold transition-colors';
-/** Commandes du direct : mêmes rondes que la barre du Live, à portée de pouce. */
-const ROND = 'w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-colors';
-const SOMBRE = 'bg-white/10 text-white/80 hover:bg-white/15';
-const VERT = 'bg-emerald-500/25 text-emerald-300 hover:bg-emerald-500/35';
-const ACCENT_ROND = 'bg-[rgb(var(--bt-accent-rgb)/0.3)] text-[var(--bt-accent)]';
 const DEGRADE = { background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' };
 const BORD = 'border-[rgb(var(--bt-accent-rgb)/0.35)]';
 
@@ -161,7 +137,7 @@ const POSITIONS_VIDES: Record<OngletPrompteur, number> = { texte: 0, theme: 0, q
 export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
   open, onClose, mobile = false, disposition = 'flottant', className = '', actif, onBasculer, onglet, onOnglet,
   etat, theme, onTheme, enCours, indisponible, invite, modeQuestion, onModeQuestion, p, surVideo = false,
-  onSurVideo, controles, onEcrire, onAfficher, onEffacer, onUtiliserSuggestion, onIgnorerSuggestion,
+  onSurVideo, onEcrire, onAfficher, onEffacer, onUtiliserSuggestion, onIgnorerSuggestion,
   onDemanderTexte, onOuvrirQuestion, onSelectionnerQuestion, onAfficherQuestion, onPreparerReponse,
   onAutreReponse, onReprendre, taille, onPlusPetit, onPlusGrand, onInsererChat,
 }) => {
@@ -310,50 +286,11 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
       role="dialog" aria-modal="false" aria-label="Prompteur privé de l'hôte" data-testid="assistant-hote-panneau"
       data-disposition={disposition}
     >
-      {/* 🎛️ UN seul bloc collant : commandes du direct (si fournies) + en-tête.
+      {/* 🎛️ UN seul bloc collant : en-tête + Fermer (les commandes du direct vivent
+          dans la barre Live unique, jamais ici).
           Deux en-têtes `sticky top-0` se superposaient : en défilant, « Fermer »
           passait sous l'autre et devenait intouchable. */}
       <div className="sticky top-0 z-10 bg-black/80 backdrop-blur-md" data-testid="prompteur-entete">
-      {controles && (
-        <div className="flex items-center justify-center gap-2 px-3 py-2 border-b border-white/10"
-          role="group" aria-label="Commandes du direct" data-testid="prompteur-barre-live">
-          {controles.onMic && (
-            <button type="button" onClick={controles.onMic} aria-pressed={controles.micActif}
-              aria-label={controles.micActif ? 'Couper le micro' : 'Activer le micro'}
-              className={`${ROND} ${controles.micActif ? VERT : SOMBRE}`} data-testid="prompteur-live-mic">
-              {controles.micActif ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-            </button>
-          )}
-          {controles.onCamera && (
-            <button type="button" onClick={controles.onCamera} aria-pressed={controles.cameraActive}
-              aria-label={controles.cameraActive ? 'Éteindre la caméra' : 'Allumer la caméra'}
-              className={`${ROND} ${controles.cameraActive ? VERT : SOMBRE}`} data-testid="prompteur-live-camera">
-              {controles.cameraActive ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-            </button>
-          )}
-          {controles.onFlip && (
-            <button type="button" onClick={controles.onFlip} aria-label="Changer de caméra (avant/arrière)"
-              className={`${ROND} ${SOMBRE}`} data-testid="prompteur-live-flip">
-              <SwitchCamera className="w-5 h-5" />
-            </button>
-          )}
-          {controles.onRecord && (
-            <button type="button" onClick={controles.recordDisponible === false ? undefined : controles.onRecord}
-              disabled={controles.recordDisponible === false} aria-pressed={controles.enregistre}
-              aria-label={controles.enregistre ? 'Arrêter l’enregistrement' : 'Démarrer l’enregistrement'}
-              className={`${ROND} ${controles.enregistre ? ACCENT_ROND : SOMBRE}${controles.recordDisponible === false ? ' opacity-40 cursor-not-allowed' : ''}`}
-              data-testid="prompteur-live-record">
-              {controles.enregistre ? <Square className="w-5 h-5" /> : <Disc className="w-5 h-5" />}
-            </button>
-          )}
-          {controles.onTerminer && (
-            <button type="button" onClick={controles.onTerminer} aria-label="Terminer le Live"
-              className={`${ROND} bg-red-500/20 text-red-300 hover:bg-red-500/30`} data-testid="prompteur-live-terminer">
-              <PhoneOff className="w-5 h-5" />
-            </button>
-          )}
-        </div>
-      )}
 
       <div className="flex items-center gap-2 pl-4 pr-2 py-1.5 border-b border-white/10">
         <ScrollText className="w-4 h-4 shrink-0" style={{ color: 'var(--bt-accent)' }} aria-hidden="true" />

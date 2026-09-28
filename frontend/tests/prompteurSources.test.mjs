@@ -280,42 +280,20 @@ test('le panneau passe AU-DESSUS de la bulle du chat, sous les modales', () => {
   assert.ok(!PANNEAU.includes('z-[130]'), 'plus aucune couche du panneau à z-[130]');
 });
 
-// ── LE PROMPTEUR NE DOIT PAS COÛTER LE DIRECT ──────────────────────────────────────
+// ── UNE FONCTION = UN ENDROIT (28/09) ──────────────────────────────────────────────
 //
-// Un panneau flottant recouvre forcément quelque chose : sur mobile la barre du Live,
-// sur grand écran la colonne d'à côté. Les commandes dont on ne peut pas se passer en
-// direct voyagent donc AVEC lui, dans son en-tête collant.
+// Micro, caméra, flip, enregistrement et Terminer vivent dans LA barre Live unique
+// (LiveControls), visible en vue normale, agrandie, et Prompteur ouvert. Le panneau
+// Prompteur ne contient QUE ses fonctions : texte, thème IA, questions, assistant.
 
-test('les commandes critiques du direct sont dans le panneau, et dans son en-tête collant', () => {
-  const i = PANNEAU.indexOf('data-testid="prompteur-barre-live"');
-  assert.ok(i > 0, 'la rangée de commandes existe');
-  const bloc = PANNEAU.indexOf('data-testid="prompteur-entete"');
-  assert.ok(bloc > 0 && bloc < i && PANNEAU.slice(bloc - 60, bloc).includes('sticky top-0'),
-    'elle vit dans le bloc collant : visible quand le texte défile');
-  ['prompteur-live-mic', 'prompteur-live-camera', 'prompteur-live-flip',
-   'prompteur-live-record', 'prompteur-live-terminer']
-    .forEach((id) => assert.ok(PANNEAU.includes(id), `commande manquante : ${id}`));
-});
-
-test('ces commandes ne sont pas des doublons de logique : elles rappellent, elles ne décident pas', () => {
-  const bloc = PANNEAU.slice(PANNEAU.indexOf('data-testid="prompteur-barre-live"'),
-                             PANNEAU.indexOf('data-testid="assistant-bascule"'));
-  // Aucun état local, aucun appel direct à un média : uniquement les rappels reçus.
-  assert.ok(!/useState|getUserMedia|MediaRecorder|livekit/i.test(bloc));
-  ['controles.onMic', 'controles.onCamera', 'controles.onFlip', 'controles.onRecord', 'controles.onTerminer']
-    .forEach((r) => assert.ok(bloc.includes(r), `rappel non utilisé : ${r}`));
-});
-
-test('chaque commande du direct est une vraie cible tactile (44 px)', () => {
-  assert.ok(/const ROND = 'w-11 h-11 rounded-full/.test(PANNEAU), 'w-11 = 44 px');
-});
-
-test('le flip n’apparaît QUE s’il y a deux caméras — sinon il ne veut rien dire', () => {
+test('le Prompteur ne contient AUCUNE commande du direct (barre Live = seul endroit)', () => {
+  for (const id of ['prompteur-barre-live', 'prompteur-live-mic', 'prompteur-live-camera',
+    'prompteur-live-flip', 'prompteur-live-record', 'prompteur-live-terminer']) {
+    assert.ok(!PANNEAU.includes(id), `doublon interdit dans le Prompteur : ${id}`);
+  }
+  assert.ok(!/controles\??\./.test(codeSeul(PANNEAU)), 'plus aucun rappel de commande du direct');
   const PAGE = codeSeul(lire('pages', 'SessionPage.tsx'));
-  assert.ok(PAGE.includes('onFlip: videoMesh.videoDevices.length > 1 ? videoMesh.flipCamera : undefined'));
-  // Et le panneau n'affiche le bouton que si le rappel existe.
-  const i = PANNEAU.indexOf('data-testid="prompteur-live-flip"');
-  assert.ok(PANNEAU.slice(i - 300, i).includes('controles.onFlip && ('));
+  assert.ok(!PAGE.includes('controles={'), 'la page ne passe plus de commandes au Prompteur');
 });
 
 test('sur grand écran le panneau laisse la colonne du Live tranquille', () => {
@@ -338,7 +316,7 @@ test('structurel (28/09) : la position de lecture est rendue au texte qui revien
     'le composant mémorise et restitue la position par texte');
 });
 
-test('structurel (28/09) : contrôles du direct ET en-tête « Prompteur » dans UN seul bloc collant', () => {
+test('structurel (28/09) : en-tête « Prompteur » et Fermer dans UN seul bloc collant', () => {
   // Deux en-têtes `sticky top-0` se superposaient : en défilant, « Fermer » et la
   // bascule IA passaient sous la barre z-10 et devenaient intouchables.
   const n = (PANNEAU.match(/sticky top-0/g) || []).length;
@@ -346,8 +324,7 @@ test('structurel (28/09) : contrôles du direct ET en-tête « Prompteur » dans
   const i = PANNEAU.indexOf('data-testid="prompteur-entete"');
   assert.ok(i > 0, 'le bloc collant est identifié');
   const bloc = PANNEAU.slice(i);
-  assert.ok(bloc.indexOf('prompteur-barre-live') > 0 && bloc.indexOf('assistant-fermer') > 0,
-    'barre du direct et bouton Fermer vivent dedans');
+  assert.ok(bloc.indexOf('assistant-fermer') > 0, 'le bouton Fermer vit dedans');
 });
 
 test('structurel (28/09 bis) : la position initiale passe par la règle pure positionInitiale', () => {

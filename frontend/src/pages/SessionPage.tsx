@@ -2911,26 +2911,6 @@ export const SessionPage: React.FC = () => {
       taille={prompteur.taille}
       onPlusPetit={prompteur.plusPetit}
       onPlusGrand={prompteur.plusGrand}
-      // Les MÊMES rappels que la barre du Live — pas une seconde logique. Sur
-      // mobile la feuille recouvre la barre ; sans eux, couper son micro
-      // obligerait à fermer le prompteur, donc à perdre sa ligne.
-      // Pendant le Live, la barre unique est visible sous le panneau : pas de seconde rangée de commandes.
-      controles={liveMode ? undefined : {
-        micActif: !!hostMicActive,
-        onMic: handleLiveMicToggle,
-        cameraActive: videoMesh.cameraOn,
-        onCamera: handleToggleCamera,
-        onFlip: videoMesh.videoDevices.length > 1 ? videoMesh.flipCamera : undefined,
-        enregistre: recorder.etat === 'enregistrement',
-        recordDisponible: recorder.capacite.supporte,
-        onRecord: () => {
-          if (recorder.etat === 'enregistrement') { void recorder.arreter(); return; }
-          if (recorder.etat === 'finalisation') return;
-          setRecordOpen(true);
-          void recorder.demarrer();
-        },
-        onTerminer: () => { if (window.confirm('Terminer le Live pour tout le monde ?')) void terminerLive(); },
-      }}
       onEcrire={(t) => setEtatPrompteur((e) => ecrire(e, t))}
       // « Afficher » doit AFFICHER : le test en navigateur réel a montré que poser le
       // script ne suffisait pas — la bande de lecture sur la vidéo est un second

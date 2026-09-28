@@ -262,12 +262,14 @@ test('le panneau affiche selon la PROVENANCE du brouillon, pas selon l’onglet'
 // Première version : A-, A+ et la croix de fermeture tenaient dans 16 à 20 px. Sur un
 // téléphone posé par terre pendant un cours, c'est intouchable. 36 px au doigt.
 
-test('A-, A+ et la fermeture partagent la même cible tactile généreuse', () => {
-  assert.ok(/const BTN_TAILLE = 'w-9 h-9 sm:w-7 sm:h-7/.test(PANNEAU), 'cible : 36 px au doigt, 28 px à la souris');
+test('A-, A+ et la fermeture partagent la même cible tactile généreuse (44 px)', () => {
+  // Refonte UX Live Visio : 44 px partout (au doigt comme à la souris).
+  assert.ok(/const BTN_TAILLE = 'w-11 h-11/.test(PANNEAU), 'cible : 44 px');
   ['prompteur-a-moins', 'prompteur-a-plus', 'assistant-fermer'].forEach((id) => {
     const i = PANNEAU.indexOf(`data-testid="${id}"`);
     assert.ok(i > 0, `bouton manquant : ${id}`);
-    assert.ok(PANNEAU.slice(i - 260, i).includes('BTN_TAILLE'), `${id} n’utilise pas la cible tactile`);
+    const avant = PANNEAU.slice(i - 260, i);
+    assert.ok(avant.includes('BTN_TAILLE') || avant.includes('REGLAGE'), `${id} n’utilise pas la cible tactile`);
   });
 });
 

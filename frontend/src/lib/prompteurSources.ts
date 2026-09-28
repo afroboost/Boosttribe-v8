@@ -29,6 +29,8 @@ export interface QuestionEnAttente {
   id: string;
   auteur: string;
   texte: string;
+  /** Heure d'arrivée (ms epoch) — affichée HH:MM dans l'onglet Questions. */
+  ts?: number;
 }
 
 export interface EtatPrompteur {
@@ -55,13 +57,36 @@ export interface EtatPrompteur {
    * au test en navigateur réel, pas au banc.
    */
   origineBrouillon: SourcePrompteur;
+  /**
+   * À QUOI RÉPOND LA SUGGESTION EN ATTENTE : un thème, ou la question sélectionnée.
+   * Sans ce champ, sélectionner une question pendant qu'une proposition de THÈME
+   * attendait la transformait en « réponse » — et l'afficher enterrait le thème.
+   */
+  origineSuggestion: SourcePrompteur | null;
+  /**
+   * Identifiants de questions DÉJÀ reçues (bornés). La page relit toute la liste des
+   * messages à chaque rendu : sans cette mémoire, une question traitée puis retirée
+   * reviendrait dans la file à la relecture suivante.
+   */
+  questionsVues: string[];
 }
 
 export const ETAT_INITIAL: EtatPrompteur = {
   brouillon: '', affiche: '', sourceAffichee: null, suggestion: null,
   questionActive: null, file: [], repriseTexte: null, repriseSource: null,
-  origineBrouillon: 'manuel',
+  origineBrouillon: 'manuel', origineSuggestion: null, questionsVues: [],
 };
+
+/**
+ * Le script DÉJÀ sauvegardé par `usePrompteur` (localStorage) devient l'état de départ :
+ * brouillon ET texte affiché. Avant, l'état partait vide et l'effet de la page
+ * (`prompteur.setScript(etat.affiche)`) écrasait au montage le script de la veille.
+ */
+export function etatInitialDepuisScript(script: string | null | undefined): EtatPrompteur {
+  const t = typeof script === 'string' ? script : '';
+  if (!t.trim()) return ETAT_INITIAL;
+  return { ...ETAT_INITIAL, brouillon: t, affiche: t, sourceAffichee: 'manuel', origineBrouillon: 'manuel' };
+}
 
 /**
  * L'hôte écrit. C'est le seul chemin qui modifie le brouillon sans clic explicite.
@@ -98,7 +123,13 @@ export function effacer(e: EtatPrompteur): EtatPrompteur {
  * tout l'objet de ce module. Elle attend dans son coin.
  */
 export function recevoirSuggestion(e: EtatPrompteur, texte: string, question: QuestionEnAttente | null): EtatPrompteur {
-  return { ...e, suggestion: texte, questionActive: question };
+  // Une proposition de THÈME ne désélectionne pas la question choisie par l'hôte.
+  return {
+    ...e,
+    suggestion: texte,
+    questionActive: question || e.questionActive,
+    origineSuggestion: question ? 'question' : 'theme',
+  };
 }
 
 /**
@@ -113,13 +144,19 @@ export function utiliserSuggestion(e: EtatPrompteur): EtatPrompteur {
     suggestion: null,
     // Le brouillon garde sa provenance : c'est elle qui décide, à l'affichage, s'il
     // faut mettre le thème de côté pour pouvoir y revenir.
-    origineBrouillon: e.questionActive ? 'question' : 'theme',
+    origineBrouillon: e.origineSuggestion === 'question' ? 'question' : 'theme',
+    origineSuggestion: null,
   };
 }
 
-/** « Ignorer » : la proposition disparaît, rien d'autre ne bouge. */
+/** « Ignorer » : la proposition disparaît, et la question qu'elle visait avec elle. */
 export function ignorerSuggestion(e: EtatPrompteur): EtatPrompteur {
-  return { ...e, suggestion: null, questionActive: null };
+  return {
+    ...e,
+    suggestion: null,
+    origineSuggestion: null,
+    questionActive: e.origineSuggestion === 'question' ? null : e.questionActive,
+  };
 }
 
 /**
@@ -127,8 +164,10 @@ export function ignorerSuggestion(e: EtatPrompteur): EtatPrompteur {
  * Le seul effet visible autorisé est un compteur discret.
  */
 export function recevoirQuestion(e: EtatPrompteur, q: QuestionEnAttente): EtatPrompteur {
-  if (e.file.some((x) => x.id === q.id) || (e.questionActive && e.questionActive.id === q.id)) return e;
-  return { ...e, file: [...e.file, q].slice(-10) };
+  const vues = e.questionsVues || [];
+  if (vues.includes(q.id) || e.file.some((x) => x.id === q.id)
+      || (e.questionActive && e.questionActive.id === q.id)) return e;
+  return { ...e, file: [...e.file, q].slice(-10), questionsVues: [...vues, q.id].slice(-MEMOIRE_VUES) };
 }
 
 /** L'hôte ouvre une question de la file : elle devient active, la file se réduit. */
@@ -137,6 +176,138 @@ export function ouvrirQuestion(e: EtatPrompteur, id: string): EtatPrompteur {
   if (!q) return e;
   return { ...e, questionActive: q, file: e.file.filter((x) => x.id !== id) };
 }
+
+/** Combien d'identifiants de questions déjà vues on garde en mémoire. */
+export const MEMOIRE_VUES = 300;
+
+/** Longueur maximale d'une question gardée pour le prompteur. */
+export const LONGUEUR_MAX_QUESTION = 500;
+
+/** Forme minimale d'un message de chat lu par le prompteur. */
+export interface MessagePourQuestion {
+  id?: string;
+  name?: string;
+  text?: string;
+  userId?: string;
+  ts?: number;
+  /** Posé par le spectateur qui a choisi « Poser une question ». Seul signal retenu. */
+  question?: unknown;
+}
+
+/**
+ * Un message du chat devient-il une question pour l'hôte ?
+ *
+ * AVANT : tout message d'un autre participant entrait dans la file — « bravo », « 🔥 »,
+ * « on m'entend ? ». Du bruit, en direct. MAINTENANT : seul un message MARQUÉ
+ * `question: true` (le booléen, pas une chaîne) en devient une. Jamais les miens,
+ * jamais un texte vide ; texte borné ; seuls id, auteur, texte et heure sortent.
+ */
+export function messageVersQuestion(
+  m: MessagePourQuestion | null | undefined,
+  meUserId: string | null | undefined,
+): QuestionEnAttente | null {
+  if (!m || m.question !== true) return null;
+  if (meUserId && m.userId === meUserId) return null;
+  const texte = String(m.text || '').trim().slice(0, LONGUEUR_MAX_QUESTION);
+  if (!texte) return null;
+  const auteur = String(m.name || '').trim().slice(0, 40) || 'Participant';
+  const ts = typeof m.ts === 'number' && Number.isFinite(m.ts) ? m.ts : undefined;
+  const id = String(m.id || `${m.userId || auteur}-${ts ?? ''}-${texte}`);
+  return ts === undefined ? { id, auteur, texte } : { id, auteur, texte, ts };
+}
+
+/**
+ * Toute la liste des messages, pas seulement le dernier : une rafale ne perd plus de
+ * question. Rien de nouveau → le MÊME objet est rendu (aucun rendu, aucune boucle).
+ */
+export function recevoirMessages(
+  e: EtatPrompteur,
+  messages: MessagePourQuestion[] | null | undefined,
+  meUserId: string | null | undefined,
+): EtatPrompteur {
+  let r = e;
+  for (const m of messages || []) {
+    const q = messageVersQuestion(m, meUserId);
+    if (q) r = recevoirQuestion(r, q);
+  }
+  return r;
+}
+
+/**
+ * Le message a été supprimé du chat (modération) : la question disparaît de la file,
+ * et si c'était la question sélectionnée, la réponse qui la visait part avec elle.
+ * Le texte affiché et « Mon texte » ne bougent pas. Son id reste « vu ».
+ */
+export function retirerQuestion(e: EtatPrompteur, id: string): EtatPrompteur {
+  const dansFile = e.file.some((x) => x.id === id);
+  const active = !!e.questionActive && e.questionActive.id === id;
+  if (!dansFile && !active) return e;
+  const suggestionVisee = active && e.origineSuggestion === 'question';
+  return {
+    ...e,
+    file: dansFile ? e.file.filter((x) => x.id !== id) : e.file,
+    questionActive: active ? null : e.questionActive,
+    suggestion: suggestionVisee ? null : e.suggestion,
+    origineSuggestion: suggestionVisee ? null : e.origineSuggestion,
+  };
+}
+
+/**
+ * Sélectionner une question SANS appeler l'IA. L'ancienne question sélectionnée
+ * retourne en tête de file (elle n'est pas perdue) ; une réponse préparée pour ELLE
+ * est retirée (elle ne répondrait plus à la bonne question). Une suggestion de THÈME,
+ * le brouillon et le texte affiché ne bougent pas.
+ */
+export function selectionnerQuestion(e: EtatPrompteur, id: string): EtatPrompteur {
+  const q = e.file.find((x) => x.id === id);
+  if (!q) return e;
+  const prec = e.questionActive;
+  const reste = e.file.filter((x) => x.id !== id);
+  const suggestionVisee = !!prec && e.origineSuggestion === 'question';
+  return {
+    ...e,
+    questionActive: q,
+    file: prec && prec.id !== id ? [prec, ...reste].slice(-10) : reste,
+    suggestion: suggestionVisee ? null : e.suggestion,
+    origineSuggestion: suggestionVisee ? null : e.origineSuggestion,
+  };
+}
+
+/**
+ * « Afficher sur le prompteur » la QUESTION sélectionnée, pour la lire à voix haute.
+ * L'écran change ; « Mon texte » (le brouillon), jamais. Le thème affiché est mis de
+ * côté pour « Reprendre mon thème », exactement comme pour une réponse.
+ */
+export function afficherQuestion(e: EtatPrompteur): EtatPrompteur {
+  const q = e.questionActive;
+  if (!q) return e;
+  const memoriser = !!e.affiche && e.sourceAffichee !== 'question';
+  return {
+    ...e,
+    affiche: `${q.auteur} demande :\n${q.texte}`,
+    sourceAffichee: 'question',
+    repriseTexte: memoriser ? e.affiche : e.repriseTexte,
+    repriseSource: memoriser ? e.sourceAffichee : e.repriseSource,
+  };
+}
+
+/** Heure d'une question, « HH:MM » en heure locale ; '' si inconnue. */
+export function heureQuestion(ts: number | null | undefined): string {
+  if (typeof ts !== 'number' || !Number.isFinite(ts)) return '';
+  const d = new Date(ts);
+  const deux = (n: number) => String(n).padStart(2, '0');
+  return `${deux(d.getHours())}:${deux(d.getMinutes())}`;
+}
+
+/** Les quatre onglets du panneau unique, dans l'ordre d'affichage. */
+export const ONGLETS_PROMPTEUR = [
+  { cle: 'texte', libelle: 'Mon texte' },
+  { cle: 'theme', libelle: 'Thème IA' },
+  { cle: 'questions', libelle: 'Questions' },
+  { cle: 'assistant', libelle: 'Assistant IA' },
+] as const;
+
+export type OngletPrompteur = (typeof ONGLETS_PROMPTEUR)[number]['cle'];
 
 /**
  * « Reprendre mon thème » : on rend EXACTEMENT le texte qui était à l'antenne avant la

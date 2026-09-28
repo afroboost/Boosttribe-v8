@@ -199,6 +199,20 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // Le conteneur de la zone caméras est TOUJOURS monté et visible → requestFullscreen fiable (aucun remontage des flux).
   const camAreaRef = useRef<HTMLDivElement>(null);
   const { fullscreen: camFullscreen, enter: enterCamFullscreen, exit: exitCamFullscreen } = useFullscreen(camAreaRef);
+  // 📜 ramenerBarre — ouvrir le Prompteur réserve de la place sous les caméras (le visage
+  //    reste libre) : sur un écran court, la barre Live passait SOUS le bas de l'écran (mesuré
+  //    en prod, 414/430 px). Une fonction = un endroit : la barre doit rester atteignable.
+  //    `nearest` ne bouge rien si elle est déjà visible.
+  React.useEffect(() => {
+    if (!prompteurOuvert || camFullscreen) return;
+    const ramenerBarre = () => {
+      const barre = camAreaRef.current?.querySelector('[data-testid="visio-controls"]');
+      const reduit = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      barre?.scrollIntoView({ block: 'nearest', behavior: reduit ? 'auto' : 'smooth' });
+    };
+    const id = requestAnimationFrame(ramenerBarre);
+    return () => cancelAnimationFrame(id);
+  }, [prompteurOuvert, camFullscreen]);
   // 📏 Largeur RÉELLE de la zone caméra : décide ce qui tient dans la barre et la place du
   //    chat. Mise à jour seulement si elle change (pas de setState à l'identique → pas de boucle).
   const [largeurZone, setLargeurZone] = useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 1280));

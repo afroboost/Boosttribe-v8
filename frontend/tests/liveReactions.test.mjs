@@ -72,7 +72,7 @@ test('2 émetteurs simultanés → totaux additionnés', () => {
   let e = ETAT_INITIAL;
   e = appliquerLot(e, { from: 'a', seq: 1, counts: { like: 5 } }, 1000);
   e = appliquerLot(e, { from: 'b', seq: 1, counts: { like: 3, feu: 2 } }, 1000);
-  assert.deepEqual(e.totaux, { like: 8, bravo: 0, feu: 2 });
+  assert.deepEqual(e.totaux, { like: 8, bravo: 0, feu: 2, pouce: 0, main: 0, rire: 0 });
 });
 
 test('rejeu du même seq (ou plus ancien) ignoré — même référence', () => {
@@ -87,7 +87,7 @@ test('lot abusif plafonné à 60 par lot et par émetteur', () => {
   const e = appliquerLot(ETAT_INITIAL, { from: 'x', seq: 1, counts: { like: 10_000, feu: 500 } }, 0);
   assert.equal(totalDe(e.totaux), MAX_PAR_LOT);
   assert.equal(MAX_PAR_LOT, 60);
-  assert.deepEqual(plafonnerComptes({ like: -3, bravo: 2.7, feu: 'x' }), { like: 0, bravo: 2, feu: 0 });
+  assert.deepEqual(plafonnerComptes({ like: -3, bravo: 2.7, feu: 'x' }), { like: 0, bravo: 2, feu: 0, pouce: 0, main: 0, rire: 0 });
 });
 
 test('rafale d’un même émetteur (< 700 ms) ignorée à la réception', () => {
@@ -110,7 +110,7 @@ test('ajouterLocal compte ses propres clics', () => {
 test('synchroTotal garde le max ; rien de plus grand → même référence', () => {
   const e = appliquerLot(ETAT_INITIAL, { from: 'a', seq: 1, counts: { like: 10, feu: 4 } }, 0);
   const s = synchroTotal(e, { like: 42, bravo: 1, feu: 2 });
-  assert.deepEqual(s.totaux, { like: 42, bravo: 1, feu: 4 });
+  assert.deepEqual(s.totaux, { like: 42, bravo: 1, feu: 4, pouce: 0, main: 0, rire: 0 });
   assert.equal(synchroTotal(s, { like: 5, bravo: 0, feu: 0 }), s);
   assert.equal(synchroTotal(s, null), s);
   assert.equal(synchroTotal(s, { like: 1e12 }), s, 'total absurde ignoré');

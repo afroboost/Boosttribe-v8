@@ -3,6 +3,15 @@ import { Play, Pause, RotateCcw, Minus, Plus, FlipHorizontal2, X, Check } from '
 import type { Prompteur as EtatPrompteur } from '@/hooks/usePrompteur';
 
 /**
+ * @deprecated Refonte UX Live Visio : NE PLUS RENDRE ce composant dans la session Live.
+ * Il est remplacé par le panneau unique `PanneauPrompteurUnique`
+ * (components/session/AssistantHotePanel.tsx), ouvert par l'icône Prompteur de la barre
+ * Live : un seul éditeur « Mon texte », branché sur le brouillon (lib/prompteurSources),
+ * et les mêmes réglages de lecture via l'instance partagée `p`. Ce fichier écrivait
+ * directement `p.script`, ce qui faisait DEUX vérités du texte. Conservé tant que
+ * SessionPage le monte ; à supprimer une fois qu'il n'y est plus (/studio ne l'utilise pas).
+ */
+/**
  * ✍️ TiroirPrompteur — ÉCRIRE SON TEXTE SANS QUITTER LE DIRECT.
  *
  * LE MANQUE QU'IL COMBLE. Le texte se lit désormais sur la vidéo, mais il n'y avait

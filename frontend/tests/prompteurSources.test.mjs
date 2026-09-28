@@ -332,7 +332,7 @@ test('l’aperçu « AU PROMPTEUR » reste confortable à lire', () => {
 
 test('structurel (28/09) : la position de lecture est rendue au texte qui revient', () => {
   const comp = codeSeul(lire('components', 'studio', 'Prompteur.tsx'));
-  assert.ok(comp.includes('memoriserPosition(') && comp.includes('positionPourTexte('),
+  assert.ok(comp.includes('memoriserPosition(') && comp.includes('positionInitiale('),
     'le composant mémorise et restitue la position par texte');
 });
 
@@ -346,4 +346,11 @@ test('structurel (28/09) : contrôles du direct ET en-tête « Prompteur » dans
   const bloc = PANNEAU.slice(i);
   assert.ok(bloc.indexOf('prompteur-barre-live') > 0 && bloc.indexOf('assistant-fermer') > 0,
     'barre du direct et bouton Fermer vivent dedans');
+});
+
+test('structurel (28/09 bis) : la position initiale passe par la règle pure positionInitiale', () => {
+  const comp = codeSeul(lire('components', 'studio', 'Prompteur.tsx'));
+  assert.ok(comp.includes('positionInitiale('), 'la règle vit dans studioLogic, testée');
+  const r = comp.slice(comp.indexOf('const reset'), comp.indexOf('useImperativeHandle(ref'));
+  assert.ok(r.includes('memoriserPosition('), '⟲ mémorise explicitement 0 pour le texte courant');
 });

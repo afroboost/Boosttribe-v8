@@ -45,6 +45,36 @@ export function memoriserPosition(m: Map<string, number>, texte: string, positio
 
 export const positionPourTexte = (m: Map<string, number>, texte: string): number | undefined => m.get(texte);
 
+/**
+ * Le nouveau texte est-il une RETOUCHE du texte courant (frappe, retour arrière,
+ * correction au milieu) plutôt qu'un autre texte ? On mesure ce qui reste intact
+ * (préfixe + suffixe communs) : une retouche en garde au moins la moitié.
+ */
+export function estRetouche(avant: string, nouveau: string): boolean {
+  if (!avant || !nouveau) return false;
+  const court = Math.min(avant.length, nouveau.length);
+  let pre = 0;
+  while (pre < court && avant[pre] === nouveau[pre]) pre += 1;
+  let suf = 0;
+  while (suf < court - pre && avant[avant.length - 1 - suf] === nouveau[nouveau.length - 1 - suf]) suf += 1;
+  return (pre + suf) * 2 >= court;
+}
+
+/**
+ * 28/09 (bis) — position de départ quand le texte affiché change :
+ *  1. texte déjà lu → sa position mémorisée ;
+ *  2. retouche du texte courant (frappe dans /studio en pleine lecture) → on ne bouge pas ;
+ *  3. sinon, texte NEUF → en haut (0). Avant : il héritait du défilement du précédent.
+ */
+export function positionInitiale(
+  m: Map<string, number>, texteAvant: string, texteNouveau: string, positionCourante: number,
+): number {
+  const connue = m.get(texteNouveau);
+  if (connue !== undefined) return connue;
+  if (estRetouche(texteAvant, texteNouveau)) return positionCourante;
+  return 0;
+}
+
 export const bornerVitesse = (v: number): number =>
   Math.min(VITESSE_MAX, Math.max(VITESSE_MIN, Math.round(v / VITESSE_PAS) * VITESSE_PAS));
 

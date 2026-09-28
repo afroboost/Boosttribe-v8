@@ -1,5 +1,5 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
-import { pasDefilement, finAtteinte, DT_MAX_MS, memoriserPosition, positionPourTexte } from '@/lib/studioLogic';
+import { pasDefilement, finAtteinte, DT_MAX_MS, memoriserPosition, positionInitiale } from '@/lib/studioLogic';
 
 /**
  * 📜 Prompteur — le texte qui défile, à lire face caméra.
@@ -69,10 +69,18 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
   tailleRef.current = tailleTexte;
   onFinRef.current = onFin;
 
+  // 28/09 — position de lecture PAR TEXTE : un texte qui revient (« Reprendre mon
+  // thème ») reprend là où il en était. Aucun état React : un Map dans une ref,
+  // alimenté par l'événement `scroll` (manuel ou boucle rAF).
+  const positionsRef = useRef<Map<string, number>>(new Map());
+  const texteCourantRef = useRef(texte);
+
   const reset = useCallback(() => {
     const el = conteneurRef.current;
     resteRef.current = 0;
     if (el) el.scrollTop = 0;
+    // ⟲ : 0 est mémorisé tout de suite (si on était déjà à 0, aucun `scroll` ne part).
+    memoriserPosition(positionsRef.current, texteCourantRef.current, 0);
   }, []);
 
   useImperativeHandle(ref, () => ({ reset }), [reset]);
@@ -108,16 +116,16 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
     };
   }, [enLecture]);
 
-  // 28/09 — position de lecture PAR TEXTE : un texte qui revient (« Reprendre mon
-  // thème ») reprend là où il en était. Aucun état React : un Map dans une ref,
-  // alimenté par l'événement `scroll` (manuel ou boucle rAF).
-  const positionsRef = useRef<Map<string, number>>(new Map());
-  const texteCourantRef = useRef(texte);
+  // 28/09 (bis) — un texte NEUF démarre en haut (il héritait du défilement du
+  // précédent) ; un texte connu reprend sa position ; une retouche (frappe dans
+  // /studio pendant la lecture) ne bouge pas. Règle pure : `positionInitiale`.
   useLayoutEffect(() => {
+    const avant = texteCourantRef.current;
     texteCourantRef.current = texte;
     const el = conteneurRef.current;
-    const p = positionPourTexte(positionsRef.current, texte);
-    if (el && p !== undefined) { el.scrollTop = p; resteRef.current = 0; }
+    if (!el || avant === texte) return;
+    const p = positionInitiale(positionsRef.current, avant, texte, el.scrollTop);
+    if (p !== el.scrollTop) { el.scrollTop = p; resteRef.current = 0; }
   }, [texte]);
   const surDefilement = useCallback(() => {
     const el = conteneurRef.current;

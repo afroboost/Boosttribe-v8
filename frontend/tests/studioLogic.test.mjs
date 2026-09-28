@@ -188,3 +188,35 @@ test('prompteur : la mémoire de positions reste bornée', () => {
   assert.equal(L.positionPourTexte(m, 'texte 49'), 49, 'le plus récent est gardé');
   assert.equal(L.positionPourTexte(m, 'texte 0'), undefined, 'le plus ancien est oublié');
 });
+
+// 28/09 (bis) — DÉFAUT mesuré en prod : thème A défilé à 1200 → nouveau texte B
+// affiché → B démarrait à 1200 (hérité de A). Un texte jamais vu démarre en haut,
+// SAUF s'il est une retouche du texte courant (frappe dans /studio pendant la lecture).
+test('prompteur : un NOUVEAU texte démarre en haut, un texte connu reprend sa position', () => {
+  const m = new Map();
+  const A = 'THEME : un long texte de présentation que je lis face caméra.';
+  const B = 'Question du public : comment tu t’entraînes le matin ?';
+  L.memoriserPosition(m, A, 1200);
+  assert.equal(L.positionInitiale(m, A, B, 1200), 0, 'B nouveau démarre à 0, pas à 1200');
+  L.memoriserPosition(m, B, 0);
+  assert.equal(L.positionInitiale(m, B, A, 0), 1200, 'retour à A = 1200');
+  // reset sur A : la mémoire passe à 0, et c'est ce qu'on retrouve ensuite
+  L.memoriserPosition(m, A, 0);
+  assert.equal(L.positionInitiale(m, B, A, 0), 0, 'après ⟲, A est mémorisé à 0');
+});
+
+test('prompteur (/studio) : taper pendant la lecture ne ramène PAS le texte en haut', () => {
+  const m = new Map();
+  const avant = 'Bonjour à tous, aujourd’hui on parle de cardio et de danse.';
+  L.memoriserPosition(m, avant, 800);
+  const ajout = avant + ' Et';                              // frappe en fin de texte
+  assert.equal(L.positionInitiale(m, avant, ajout, 800), 800);
+  const efface = avant.slice(0, -1);                        // retour arrière
+  assert.equal(L.positionInitiale(m, avant, efface, 800), 800);
+  const milieu = avant.replace('cardio', 'cardio intense'); // retouche au milieu
+  assert.equal(L.positionInitiale(m, avant, milieu, 800), 800);
+  // tout sélectionner + coller un autre texte = un texte NEUF
+  assert.equal(L.positionInitiale(m, avant, 'Tout autre chose, rien à voir ici.', 800), 0);
+  // premier texte (avant vide) : en haut
+  assert.equal(L.positionInitiale(new Map(), '', 'Premier texte', 0), 0);
+});

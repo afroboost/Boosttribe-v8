@@ -285,10 +285,11 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
 
   const q = etat.questionActive;
 
+  // zone-camera : posé AU-DESSUS de la barre Live unique (bas de la zone caméra) — jamais dessus.
   const classeRacine = disposition === 'zone-camera'
     ? (mobile
-      ? `absolute inset-x-2 bottom-2 z-[135] max-h-[55%] overflow-y-auto overscroll-contain rounded-2xl border ${BORD} bg-black/65 backdrop-blur-md shadow-2xl`
-      : `absolute right-3 bottom-3 z-[135] w-[24rem] max-w-[calc(100%-1.5rem)] max-h-[80%] overflow-y-auto overscroll-contain rounded-2xl border ${BORD} bg-black/65 backdrop-blur-md shadow-2xl`)
+      ? `absolute inset-x-2 bottom-[4.75rem] z-[135] max-h-[min(55%,calc(100%-6rem))] overflow-y-auto overscroll-contain rounded-2xl border ${BORD} bg-black/65 backdrop-blur-md shadow-2xl`
+      : `absolute right-3 bottom-[4.75rem] z-[135] w-[24rem] max-w-[calc(100%-1.5rem)] max-h-[calc(100%-6rem)] overflow-y-auto overscroll-contain rounded-2xl border ${BORD} bg-black/65 backdrop-blur-md shadow-2xl`)
     // OÙ SE POSE LE PANNEAU FLOTTANT, ET POURQUOI PAS AILLEURS : à GAUCHE sur grand
     // écran (la colonne du Live reste visible et cliquable), et à z-[135] : la bulle
     // du chat vit à z-[130] et retombait pile sur les actions IA (vu à 390×844) ;

@@ -89,10 +89,11 @@ test('dans SessionPage, le mode embed ne sert QU au crédit afroboost — jamais
 test('les quatre outils du coach ont UNE seule condition : canShare (hôte ou co-hôte)', () => {
   const code = codeSeul(SESSION);
   assert.ok(code.includes('const canShare = isHost || isCoHost;'));
-  assert.ok(code.includes('const prompteurNode = canShare ?'), 'panneau prompteur');
+  assert.ok(code.includes('const prompteurNode = (canShare && !liveMode) ?'), 'lanceur prompteur');
+  assert.ok(code.includes('const assistantNode: React.ReactNode = canShare ?'), 'panneau prompteur');
   assert.ok(code.includes('const prompteurOverlayNode = (canShare && prompteurSurVideo) ?'), 'overlay');
   assert.ok(code.includes("const miniAudioControlNode = (canShare && selectedTrack && shareMode === 'audio') ?"), '⏮ ▶ ⏭');
-  assert.ok(code.includes('onTogglePrompteur={canShare ? () => {'), 'bouton Prompteur');
+  assert.ok(code.includes('onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}'), 'bouton Prompteur');
   assert.ok(code.includes('onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}'), 'minuteur');
   // Un seul LiveVisioPanel monté — pas de variante « embed ».
   assert.equal((code.match(/<LiveVisioPanel\b/g) || []).length, 1, 'un seul LiveVisioPanel');

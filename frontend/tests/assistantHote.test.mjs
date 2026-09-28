@@ -97,17 +97,25 @@ test('INSÉRER N’EST PAS ENVOYER : aucun chemin entre une suggestion et un mes
     'le panneau ne connaît AUCUNE fonction d’envoi');
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   // Le seul effet de « Insérer » : poser un brouillon et ouvrir le chat.
-  assert.ok(page.includes('onInsererChat={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab(\'group\'); }}'));
+  // Hors Live seulement (pendant le Live, le chat est posé sur la vidéo : pas d'insertion).
+  assert.ok(page.includes('onInsererChat={liveMode ? undefined : (texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab(\'group\'); }}'));
   const chat = codeSeul(lire('components', 'session', 'ChatPanel.tsx'));
   assert.ok(chat.includes('setValue(brouillon);'), 'le brouillon remplit le champ…');
   assert.ok(!/brouillon[^\n]*send\(\)/.test(chat), '…et ne déclenche jamais l’envoi');
 });
 
-test('le panneau est PRIVÉ : rendu hors de la zone caméra, et jamais diffusé', () => {
+test('le panneau est PRIVÉ : jamais peint dans le Programme, jamais diffusé', () => {
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
-  // Rendu à la racine de la page, pas dans `camAreaRef` (que composent le MP4 et les flux sociaux).
-  const i = page.indexOf('{assistantNode}');
-  assert.ok(i > page.indexOf('createPortal(chatPanelNode'), 'rendu au niveau page');
+  // Hors Live : racine de la page. Pendant le Live : zone caméra (pour suivre le plein écran).
+  const i = page.indexOf('{!liveMode && assistantNode}');
+  assert.ok(i > page.indexOf('createPortal(chatPanelNode'), 'hors Live, rendu au niveau page');
+  assert.ok(page.includes('const prompteurTiroirNode = (canShare && liveMode) ? assistantNode : null;'),
+    'pendant le Live, le panneau est dans la zone caméra');
+  // Ce qui rend la zone caméra sûre : le compositeur du Programme (MP4 + diffusion) ne lit
+  // AUCUN DOM de la page — il ne peint que des pistes vidéo.
+  const comp = codeSeul(lire('lib', 'programCompositor.ts'));
+  assert.ok(!/querySelector|getElementById|html2canvas|foreignObject|camArea/.test(comp),
+    'le Programme ne capture jamais le DOM');
   // Aucun état de l'assistant ne part par Realtime.
   assert.ok(!/broadcast[^\n]*assistant|assistant[^\n]*broadcast/i.test(page),
     'aucune diffusion Realtime de l’assistant');

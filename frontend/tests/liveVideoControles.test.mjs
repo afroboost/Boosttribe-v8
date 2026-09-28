@@ -88,7 +88,9 @@ test('l overlay ne peut PAS entrer dans le flux des participants', () => {
 
 test('un participant n a NI panneau NI overlay', () => {
   const code = codeSeul(SESSION);
-  assert.ok(/const prompteurNode = canShare \?/.test(code),
+  assert.ok(/const prompteurNode = \(canShare && !liveMode\) \?/.test(code),
+    'le lanceur est réservé à qui présente (hôte ou co-hôte)');
+  assert.ok(/const assistantNode: React\.ReactNode = canShare \?/.test(code),
     'le panneau est réservé à qui présente (hôte ou co-hôte)');
   assert.ok(/const prompteurOverlayNode = \(canShare && prompteurSurVideo\) \?/.test(code),
     'l overlay est réservé à qui présente');
@@ -165,7 +167,7 @@ test('un seul usePrompteur dans la session : panneau et overlay partagent l inst
   const code = codeSeul(SESSION);
   assert.equal((code.match(/usePrompteur\(/g) || []).length, 1, 'appelé une seule fois');
   assert.ok(code.includes('usePrompteur(false)'), 'raccourcis OFF : l espace reste au lecteur audio');
-  assert.ok(code.includes('<PanneauPrompteur p={prompteur}'), 'le panneau reçoit l instance');
+  assert.ok(/<AssistantHotePanel[\s\S]*?p=\{prompteur\}/.test(code), 'le panneau reçoit l instance');
   assert.ok(code.includes('p={prompteur}'), 'l overlay reçoit la MÊME instance');
   // Ni le panneau ni l'overlay ne rappellent le hook.
   for (const [nom, src] of [['PanneauPrompteur', PANNEAU], ['PrompteurOverlay', OVERLAY]]) {
@@ -182,7 +184,8 @@ test('une seule PRÉSENTATION du texte sur la vidéo : /studio et la session la 
 });
 
 test('le panneau reste le lieu de PRÉPARATION et renvoie vers la caméra', () => {
-  assert.ok(PANNEAU.includes('live-prompteur-script'), 'on y écrit son texte');
-  assert.ok(PANNEAU.includes('live-prompteur-sur-video'), 'et on y bascule vers l affichage caméra');
-  assert.ok(codeSeul(SESSION).includes('onAfficherSurLaVideo={() => setPrompteurSurVideo(true)}'));
+  const UNIQUE = lire('components', 'session', 'AssistantHotePanel.tsx');
+  assert.ok(UNIQUE.includes('prompteur-editeur'), 'on y écrit son texte');
+  assert.ok(UNIQUE.includes('prompteur-sur-video'), 'et on y bascule vers l affichage caméra');
+  assert.ok(codeSeul(SESSION).includes('onSurVideo={setPrompteurSurVideo}'));
 });

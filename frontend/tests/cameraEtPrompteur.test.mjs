@@ -103,7 +103,7 @@ test('afficher ou fermer le prompteur ne touche jamais la caméra', () => {
   // Fermer, côté page, ne fait QUE changer un état d'affichage.
   const code = codeSeul(SESSION);
   assert.ok(code.includes('onFermer={() => setPrompteurSurVideo(false)}'));
-  assert.ok(code.includes('onFermer={() => setPrompteurEnEdition(false)}'));
+  assert.ok(code.includes('onClose={() => setAssistantOuvert(false)}'), 'fermer le panneau = un état d affichage');
 });
 
 test('le prompteur ne remonte pas les vignettes caméra : il est leur VOISIN', () => {
@@ -162,10 +162,11 @@ test('script vide : un message ET un moyen d écrire, pas une invitation en l ai
   assert.ok(bloc.includes('pointer-events-auto'), 'le bouton est réellement cliquable');
 });
 
-test('demander le prompteur sans texte ouvre de quoi écrire', () => {
+test('demander le prompteur ouvre de quoi écrire', () => {
   const code = codeSeul(SESSION);
-  assert.ok(code.includes('const vide = !prompteur.script.trim();'));
-  assert.ok(code.includes('if (vide) setPrompteurEnEdition(true);'),
+  // L'icône Prompteur ouvre LE panneau, dont l'onglet par défaut est « Mon texte » (l'éditeur).
+  assert.ok(code.includes('onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}'));
+  assert.ok(code.includes("useState<OngletPrompteur>('texte')"),
     'ouvrir un cadre vide sans clavier n’aiderait personne');
 });
 
@@ -178,12 +179,13 @@ test('le texte s enregistre en frappant — aucune étape « valider » à oubli
   assert.ok(lire('hooks', 'usePrompteur.ts').includes("'bt_studio_script'"));
 });
 
-test('trois surfaces, UNE instance : panneau, overlay, tiroir', () => {
+test('deux surfaces, UNE instance : panneau unique et overlay', () => {
   const code = codeSeul(SESSION);
   assert.equal((code.match(/usePrompteur\(/g) || []).length, 1, 'un seul appel au hook');
-  for (const m of ['<PanneauPrompteur p={prompteur}', '<TiroirPrompteur p={prompteur}', 'p={prompteur}']) {
-    assert.ok(code.includes(m), `la même instance est passée (${m})`);
-  }
+  assert.ok(code.includes('p={prompteur}'), 'la même instance est passée');
+  // Les anciens éditeurs (colonne droite, tiroir) ne sont plus rendus : un seul endroit.
+  assert.ok(!code.includes('<PanneauPrompteur'), 'plus de second panneau Prompteur');
+  assert.ok(!code.includes('<TiroirPrompteur'), 'plus de tiroir d écriture séparé');
   for (const [nom, src] of [['PrompteurOverlay', OVERLAY], ['TiroirPrompteur', TIROIR]]) {
     assert.ok(!/\busePrompteur\(/.test(codeSeul(src)), `${nom} ne crée pas sa propre instance`);
   }

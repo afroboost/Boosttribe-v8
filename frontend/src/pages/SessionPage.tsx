@@ -41,9 +41,7 @@ import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
 import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded, notifyEmbedHeartbeat, BATTEMENT_HOTE_MS } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
-import { PanneauPrompteur } from '@/components/session/PanneauPrompteur';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
-import { TiroirPrompteur } from '@/components/session/TiroirPrompteur';
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
@@ -103,7 +101,7 @@ import {
   getPawapayConfig, claimPendingAccess,
   type SessionAccessInfo, type PawapayConfig,
 } from '@/lib/paymentApi';
-import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone, Square } from 'lucide-react';
+import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone, Square, ScrollText } from 'lucide-react';
 import { DraggableWindow } from '@/components/session/DraggableWindow';
 import { indexSuivant, aUnePisteSuivante, indexPrecedent, aUnePistePrecedente, actionPrecedent } from '@/lib/playlistNav';
 
@@ -785,8 +783,6 @@ export const SessionPage: React.FC = () => {
   const prompteur = usePrompteur(false);
   // Overlay refermé au départ : la caméra garde sa place tant que le coach ne l'ouvre pas.
   const [prompteurSurVideo, setPrompteurSurVideo] = useState(false);
-  // Tiroir d'écriture — la SEULE surface où l'on tape son texte quand on est en Live vidéo.
-  const [prompteurEnEdition, setPrompteurEnEdition] = useState(false);
 
   // 💓 POINT 3a: dernier état de lecture de l'hôte (pour heartbeat de resynchro)
   const heartbeatStateRef = useRef<{ isPlaying: boolean; currentTime: number; trackId: number | null }>({
@@ -2175,6 +2171,8 @@ export const SessionPage: React.FC = () => {
   const [groupMessages, setGroupMessages] = useState<ChatMessage[]>([]);
   const [privateThreads, setPrivateThreads] = useState<Record<string, ChatMessage[]>>({});
   const [chatUnread, setChatUnread] = useState<Record<string, number>>({}); // clé 'group' | partnerId
+  // 🙈 « Masquer les commentaires » (menu ⋮ du Live) : cache le chat posé sur la vidéo, sans quitter le Live.
+  const [commentairesMasques, setCommentairesMasques] = useState(false);
   // Refs lues par les handlers Realtime (souscrits une seule fois) pour décider de l'incrément "non lu".
   const isProRef = useRef(isPro);
   useEffect(() => { isProRef.current = isPro; }, [isPro]);
@@ -2895,6 +2893,7 @@ export const SessionPage: React.FC = () => {
   const assistantNode: React.ReactNode = canShare ? (
     <AssistantHotePanel
       open={assistantOuvert}
+      disposition={liveMode ? 'zone-camera' : 'flottant'}
       onClose={() => setAssistantOuvert(false)}
       mobile={studioMobile}
       actif={assistantActif}
@@ -2914,7 +2913,8 @@ export const SessionPage: React.FC = () => {
       // Les MÊMES rappels que la barre du Live — pas une seconde logique. Sur
       // mobile la feuille recouvre la barre ; sans eux, couper son micro
       // obligerait à fermer le prompteur, donc à perdre sa ligne.
-      controles={{
+      // Pendant le Live, la barre unique est visible sous le panneau : pas de seconde rangée de commandes.
+      controles={liveMode ? undefined : {
         micActif: !!hostMicActive,
         onMic: handleLiveMicToggle,
         cameraActive: videoMesh.cameraOn,
@@ -2958,7 +2958,8 @@ export const SessionPage: React.FC = () => {
       onSurVideo={setPrompteurSurVideo}
       onAutreReponse={() => demanderReponse(etatPrompteur.questionActive, true)}
       onReprendre={() => { setEtatPrompteur((e) => reprendreTexte(e)); setPrompteurSurVideo(true); }}
-      onInsererChat={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}
+      // Pendant le Live, le chat est posé sur la vidéo (plus de carte ChatPanel) : pas d'insertion.
+      onInsererChat={liveMode ? undefined : (texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}
     />
   ) : null;
 
@@ -4163,8 +4164,21 @@ export const SessionPage: React.FC = () => {
   //  était `isHost` seul : un co-animateur voyait sa caméra mais pas son prompteur.
   //  Le texte ne quitte de toute façon jamais le navigateur — aucun socket, aucune
   //  requête (un banc le vérifie).
-  const prompteurNode = canShare ? (
-    <PanneauPrompteur p={prompteur} onAfficherSurLaVideo={() => setPrompteurSurVideo(true)} />
+  //  V-UX (28/09) : ce n'est plus un éditeur. Il n'existe qu'UN panneau Prompteur
+  //  (AssistantHotePanel : Mon texte / Thème IA / Questions / Assistant IA). Hors Live,
+  //  ce bouton l'ouvre en feuille flottante ; pendant le Live, c'est l'icône Prompteur
+  //  de la barre qui l'ouvre DANS la vidéo.
+  const prompteurNode = (canShare && !liveMode) ? (
+    <button
+      type="button"
+      onClick={() => { setOngletPrompteur('texte'); setAssistantOuvert(true); }}
+      className="w-full flex items-center gap-2 min-h-[44px] px-4 py-2.5 rounded-2xl border border-white/10 bg-white/5 text-sm font-semibold text-white/85 hover:bg-white/10 transition-colors"
+      data-testid="prompteur-lanceur"
+    >
+      <ScrollText className="w-4 h-4 text-[var(--bt-accent)]" aria-hidden="true" />
+      Prompteur
+      <span className="ml-auto text-xs font-normal text-white/45">Mon texte · Thème IA · Questions</span>
+    </button>
   ) : null;
 
   // 📜 LE PROMPTEUR FACE CAMÉRA — le texte SUR la vidéo, pas à côté.
@@ -4186,7 +4200,7 @@ export const SessionPage: React.FC = () => {
       barre
       compte
       onFermer={() => setPrompteurSurVideo(false)}
-      onEditer={() => setPrompteurEnEdition(true)}
+      onEditer={() => { setOngletPrompteur('texte'); setAssistantOuvert(true); }}
     />
   ) : null;
 
@@ -4196,9 +4210,10 @@ export const SessionPage: React.FC = () => {
   //  disparaître. Le coach se retrouvait devant « écris ton texte ci-dessous » sans
   //  aucun « ci-dessous ». Ce tiroir est monté DANS la zone caméra, donc il suit le
   //  plein écran — c'est la seule façon d'y être visible.
-  const prompteurTiroirNode = (canShare && prompteurEnEdition) ? (
-    <TiroirPrompteur p={prompteur} onFermer={() => setPrompteurEnEdition(false)} />
-  ) : null;
+  // 📝 Pendant le Live, le panneau Prompteur UNIQUE vit dans la zone caméra (slot
+  //    historique du tiroir) : il suit donc le plein écran. Ce DOM n'entre jamais dans le
+  //    Programme (le compositeur ne peint que des pistes vidéo) — donc ni MP4 ni diffusion.
+  const prompteurTiroirNode = (canShare && liveMode) ? assistantNode : null;
 
   // 🎚️ COMMANDES MUSIQUE COMPACTES — ⏮ ▶/⏸ ⏭ + titre, LÀ OÙ LE COACH REGARDE.
   //
@@ -4265,6 +4280,33 @@ export const SessionPage: React.FC = () => {
   ) : null;
 
   // 🎥 Le panneau Live Visio (rendu UNE seule fois : soit flottant mobile, soit colonne droite desktop)
+  // 💬 CHAT LIVE posé SUR la vidéo (plus de grande carte) + ❤️ réactions flottantes.
+  //    Mêmes messages, même transport (CHAT_GROUP) que le ChatPanel : seule la présentation change.
+  const chatLiveAutorise = !!sessionId && !isGuestRestricted;
+  const liveChatOverlayNode = chatLiveAutorise ? (
+    <LiveChatOverlay
+      messages={groupMessages}
+      meUserId={socket.userId}
+      hostUserIds={participants.filter((p) => p.isHost).map((p) => p.id)}
+      masques={commentairesMasques}
+    />
+  ) : null;
+  const liveReactionButtonNode = (
+    <LiveReactionButton onReagir={reactions.reagir} total={reactions.total} types={['like', 'bravo', 'feu']} />
+  );
+  const liveCommentInputNode = chatLiveAutorise ? (
+    <LiveCommentInput
+      onEnvoyer={(texte, { question }) => { handleSendGroupMessage(texte, { question }); return true; }}
+      desactive={!isPro}
+      motifDesactive="Les commentaires sont réservés aux membres Pro"
+      peutPoserQuestion={!canShare}
+      slotDroite={liveReactionButtonNode}
+    />
+  ) : null;
+  const liveReactionsNode = (
+    <LiveReactionOverlay bulles={reactions.bulles} onFin={reactions.retirerBulle} />
+  );
+
   const liveVisioNode = (
     <LiveVisioPanel
       participants={participants.map((p) => ({
@@ -4283,7 +4325,7 @@ export const SessionPage: React.FC = () => {
       maxCameras={MAX_VISIO_CAMERAS}
       micActive={isHost ? hostMicActive : isTalking}
       onToggleMic={handleLiveMicToggle}
-      hideMicButton={isHost}
+      estHote={isHost}
       onToggleCamera={handleToggleCamera}
       onLeaveLive={quitterLeLive}
       canManageStage={canShare}
@@ -4337,15 +4379,15 @@ export const SessionPage: React.FC = () => {
       studioOpen={studioOpen}
       onToggleStudio={() => setStudioOpen((o) => !o)}
       prompteurTiroirNode={prompteurTiroirNode}
-      prompteurOuvert={prompteurSurVideo}
-      // Aucun texte encore écrit ? Ouvrir le prompteur SANS ouvrir de quoi écrire serait
-      // montrer un cadre vide. On ouvre les deux : demander le prompteur, c'est demander
-      // à s'en servir.
-      onTogglePrompteur={canShare ? () => {
-        const vide = !prompteur.script.trim();
-        setPrompteurSurVideo((o) => (vide ? true : !o));
-        if (vide) setPrompteurEnEdition(true);
-      } : undefined}
+      // UNE icône Prompteur : elle ouvre LE panneau (texte, thème IA, questions, assistant).
+      // Afficher/masquer le texte sur la vidéo se fait dans ce panneau.
+      prompteurOuvert={assistantOuvert}
+      onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}
+      chatOverlayNode={liveChatOverlayNode}
+      commentInputNode={liveCommentInputNode}
+      reactionsNode={liveReactionsNode}
+      commentairesMasques={commentairesMasques}
+      onToggleCommentaires={() => setCommentairesMasques((m) => !m)}
       connexionScene={videoMesh.connexion}
       audioNode={miniAudioControlNode}
     />
@@ -4441,7 +4483,10 @@ export const SessionPage: React.FC = () => {
 
   // 💬 Panneau de chat — rendu soit au niveau page, soit À L'INTÉRIEUR de la vidéo plein écran (#3).
   //    🚪 Invité (accès sans inscription) → pas de chat (écoute/lecture seule).
-  const chatPanelNode = (sessionId && !isGuestRestricted) ? (
+  //    V-UX (28/09) : pendant un Live vidéo, le chat est posé SUR la vidéo (LiveChatOverlay) —
+  //    la grande carte qui masquait l'hôte et les invités n'est plus montée.
+  //    Exception : la vidéo PARTAGÉE agrandie garde son chat intégré (SharedMediaPlayer).
+  const chatPanelNode = (sessionId && !isGuestRestricted && (!liveMode || videoEnlarged)) ? (
     <ChatPanel
       open={chatOpen}
       brouillonGroupe={brouillonChat}
@@ -6101,7 +6146,7 @@ export const SessionPage: React.FC = () => {
           C'est un choix, pas un hasard : il vit volontairement HORS de `camAreaRef`, la
           zone que composent le Programme (donc le MP4) et les flux sociaux. Ce qui est
           privé ne doit pas pouvoir tomber dans un fichier ni partir chez un participant. */}
-      {assistantNode}
+      {!liveMode && assistantNode}
 
       {/* 🐛 BUG 5 : demandes de scène PORTÉES dans l'élément plein écran → accepter/refuser/faire descendre
           par-dessus le plein écran (visio ET vidéo partagée), sans quitter le plein écran. */}

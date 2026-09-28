@@ -65,10 +65,10 @@ test('le texte reste PRIVÉ : aucun réseau dans la chaîne du prompteur', () =>
 });
 
 test('le panneau est monté dans la session Live, et réservé à qui présente', () => {
-  assert.ok(SESSION.includes("from '@/components/session/PanneauPrompteur'"));
+  assert.ok(SESSION.includes("from '@/components/session/AssistantHotePanel'"));
   // Hôte ET co-hôte : la même condition que « Caméra externe » ou « Partager l’écran ».
   // Avec `isHost` seul, un co-animateur voyait sa caméra mais pas son prompteur.
-  assert.ok(/const prompteurNode = canShare \?/.test(SESSION), 'réservé à qui présente');
+  assert.ok(/const prompteurNode = \(canShare && !liveMode\) \?/.test(SESSION), 'réservé à qui présente');
   // Monté aux DEUX endroits : colonne desktop et onglet Live mobile.
   const occurrences = (SESSION.match(/\{prompteurNode\}/g) || []).length;
   assert.ok(occurrences >= 2, `attendu au moins 2 montages, trouvé ${occurrences}`);

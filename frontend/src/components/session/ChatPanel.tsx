@@ -15,6 +15,8 @@ export interface ChatMessage {
   // privé uniquement :
   fromUserId?: string;
   toUserId?: string;
+  // ❓ Message marqué « question » par son auteur (champ commentaire du Live).
+  question?: boolean;
 }
 
 export interface ChatParticipant {

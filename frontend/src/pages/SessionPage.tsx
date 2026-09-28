@@ -67,6 +67,11 @@ import { useProgramRecorder } from '@/hooks/useProgramRecorder';
 import { antennePourEnregistrer } from '@/lib/recordLogic';
 import { EVENEMENT_LIVE_TERMINE, departDoitAnnoncer, sequenceFinDuLive } from '@/lib/finDuLive';
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
+import { LiveChatOverlay } from '@/components/session/LiveChatOverlay';
+import { LiveCommentInput } from '@/components/session/LiveCommentInput';
+import { LiveReactionOverlay, LiveReactionButton } from '@/components/session/LiveReactionOverlay';
+import { useLiveReactions } from '@/hooks/useLiveReactions';
+import { EVT_REACTIONS, EVT_TOTAL } from '@/lib/liveReactions';
 import {
   doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique,
   type ModeSouffleur, type EtatRelance,
@@ -75,6 +80,7 @@ import type { OngletPrompteur } from '@/components/session/AssistantHotePanel';
 import {
   ETAT_INITIAL, ecrire, afficher, effacer, recevoirSuggestion, utiliserSuggestion,
   ignorerSuggestion, recevoirQuestion, ouvrirQuestion, reprendreTexte,
+  etatInitialDepuisScript, recevoirMessages, retirerQuestion, selectionnerQuestion, afficherQuestion,
   type EtatPrompteur, type QuestionEnAttente, type ActionTexte,
 } from '@/lib/prompteurSources';
 import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
@@ -2174,6 +2180,9 @@ export const SessionPage: React.FC = () => {
   useEffect(() => { isProRef.current = isPro; }, [isPro]);
   const chatOpenRef = useRef(chatOpen);
   useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
+  // ❤️ Réactions Live : le canal (souscrit une fois) passe par ces refs, remplies plus bas
+  //    quand le hook existe — même principe que les refs du chat ci-dessus.
+  const reactionsRecvRef = useRef<{ lot: (p: unknown) => void; total: (p: unknown) => void } | null>(null);
   const chatViewRef = useRef<string>(''); // conversation actuellement visible : '' | 'group' | partnerId | '__list__'
   useEffect(() => {
     chatViewRef.current = !chatOpen
@@ -2520,11 +2529,16 @@ export const SessionPage: React.FC = () => {
           setChatUnread((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }));
         }
       })
+      // ❤️ RÉACTIONS LIVE — lots agrégés (1 événement / 1,5 s max par client), jamais en base.
+      .on('broadcast', { event: EVT_REACTIONS }, (payload) => { reactionsRecvRef.current?.lot(payload.payload); })
+      .on('broadcast', { event: EVT_TOTAL }, (payload) => { reactionsRecvRef.current?.total(payload.payload); })
       // 💬 MODÉRATION — l'hôte supprime un message groupé pour tous
       .on('broadcast', { event: 'CHAT_DELETE' }, (payload) => {
         const p = payload.payload as { id?: string };
         if (!p?.id) return;
         setGroupMessages((prev) => prev.filter((x) => x.id !== p.id));
+        // Un message supprimé par l'hôte quitte aussi la file Questions du prompteur.
+        setEtatPrompteur((e) => retirerQuestion(e, p.id as string));
       })
       // ⏱️ INTERVAL TIMER — événement SÉPARÉ : n'affecte JAMAIS applyRemoteState ni la synchro musique.
       .on('broadcast', { event: 'TIMER' }, (payload) => {
@@ -2815,7 +2829,10 @@ export const SessionPage: React.FC = () => {
   const [brouillonChat, setBrouillonChat] = useState<string | null>(null);
   const [ongletPrompteur, setOngletPrompteur] = useState<OngletPrompteur>('texte');
   const [themeIA, setThemeIA] = useState('');
-  const [etatPrompteur, setEtatPrompteur] = useState<EtatPrompteur>(ETAT_INITIAL);
+  const [etatPrompteur, setEtatPrompteur] = useState<EtatPrompteur>(
+    // Le script déjà mémorisé par usePrompteur est REPRIS (brouillon + affiché) : partir
+    // d'ETAT_INITIAL faisait écraser ce texte par '' via l'effet setScript(affiche) ci-dessous.
+    () => etatInitialDepuisScript(prompteur.script));
   const relanceRef = useRef<EtatRelance>({ dernierAppelMs: 0, derniereEmpreinte: '' });
 
   // Qui est à l'écran AVEC l'hôte ? Une caméra distante = quelqu'un monté sur scène.
@@ -2833,17 +2850,13 @@ export const SessionPage: React.FC = () => {
   //    vitesse, miroir). On ne construit pas un second prompteur : on remplit celui-là.
   useEffect(() => { prompteur.setScript(etatPrompteur.affiche); }, [etatPrompteur.affiche]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Les questions du chat entrent dans la FILE — jamais à l'écran. Le seul effet
-  //    visible autorisé est un compteur discret.
+  // Les questions du chat entrent dans la FILE — jamais à l'écran. SEULS les messages
+  //    marqués « question » par leur auteur y entrent (bouton « ? » du champ commentaire) :
+  //    « salut » ou « 🔥 » ne sont pas des questions. Toute la liste est relue (une rafale
+  //    ne perd plus rien) ; recevoirMessages renvoie le même objet si rien ne change.
   useEffect(() => {
-    if (!canShare || !groupMessages.length) return;
-    const dernier = groupMessages[groupMessages.length - 1] as unknown as { id?: string; name?: string; text?: string; userId?: string };
-    if (!dernier || !dernier.text || dernier.userId === socket.userId) return;
-    setEtatPrompteur((e) => recevoirQuestion(e, {
-      id: String(dernier.id || `${dernier.name}-${dernier.text}`),
-      auteur: String(dernier.name || 'Participant'),
-      texte: String(dernier.text),
-    }));
+    if (!canShare) return;
+    setEtatPrompteur((e) => recevoirMessages(e, groupMessages, socket.userId));
   }, [groupMessages, canShare, socket.userId]);
 
   const demanderIA = useCallback(async (corps: Parameters<typeof suggestionsAssistant>[0], question: QuestionEnAttente | null) => {
@@ -2931,6 +2944,18 @@ export const SessionPage: React.FC = () => {
         const q = etatPrompteur.file.find((x) => x.id === id) || null;
         demanderReponse(q, true);
       }}
+      onSelectionnerQuestion={(id) => setEtatPrompteur((e) => selectionnerQuestion(e, id))}
+      onAfficherQuestion={() => { setEtatPrompteur(afficherQuestion); setPrompteurSurVideo(true); }}
+      // L'IA PROPOSE seulement : la réponse arrive en suggestion, jamais affichée ni envoyée seule.
+      onPreparerReponse={(id) => {
+        setEtatPrompteur((e) => selectionnerQuestion(e, id));
+        const q = etatPrompteur.file.find((x) => x.id === id) || etatPrompteur.questionActive;
+        demanderReponse(q && q.id === id ? q : null, true);
+      }}
+      onModeQuestion={setAssistantMode}
+      p={prompteur}
+      surVideo={prompteurSurVideo}
+      onSurVideo={setPrompteurSurVideo}
       onAutreReponse={() => demanderReponse(etatPrompteur.questionActive, true)}
       onReprendre={() => { setEtatPrompteur((e) => reprendreTexte(e)); setPrompteurSurVideo(true); }}
       onInsererChat={(texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}
@@ -3152,11 +3177,14 @@ export const SessionPage: React.FC = () => {
     () => `${socket.userId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     [socket.userId],
   );
-  const handleSendGroupMessage = useCallback((text: string) => {
+  const handleSendGroupMessage = useCallback((text: string, opts?: { question?: boolean }) => {
     if (!isPro || !text.trim()) return;
     const m: ChatMessage = {
       id: makeChatId(), userId: socket.userId, name: nickname || 'Invité',
       photoUrl: myAvatar || null, text: text.trim(), ts: Date.now(),
+      // ❓ Signal CLAIR de question (bouton « ? » du champ commentaire) : seul ce drapeau
+      //    fait entrer un message dans la file Questions du prompteur de l'hôte.
+      ...(opts?.question ? { question: true } : {}),
     };
     setGroupMessages((prev) => [...prev, m]);
     sendPlaybackEvent('CHAT_GROUP', m);
@@ -3171,6 +3199,10 @@ export const SessionPage: React.FC = () => {
     setPrivateThreads((prev) => ({ ...prev, [partnerId]: [...(prev[partnerId] || []), m] }));
     sendPlaybackEvent('CHAT_PRIVATE', m);
   }, [isPro, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
+
+  // ❤️ RÉACTIONS LIVE — animation locale immédiate, réseau agrégé (lib/liveReactions).
+  const reactions = useLiveReactions({ userId: socket.userId, envoyer: sendPlaybackEvent, estHote: isHost });
+  reactionsRecvRef.current = { lot: reactions.recevoirLot, total: reactions.recevoirTotal };
   const handleDeleteGroupMessage = useCallback((id: string) => {
     if (!isHost) return;
     setGroupMessages((prev) => prev.filter((x) => x.id !== id));

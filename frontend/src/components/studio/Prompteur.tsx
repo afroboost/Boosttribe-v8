@@ -1,5 +1,5 @@
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
-import { pasDefilement, finAtteinte, DT_MAX_MS } from '@/lib/studioLogic';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
+import { pasDefilement, finAtteinte, DT_MAX_MS, memoriserPosition, positionPourTexte } from '@/lib/studioLogic';
 
 /**
  * 📜 Prompteur — le texte qui défile, à lire face caméra.
@@ -108,11 +108,28 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
     };
   }, [enLecture]);
 
+  // 28/09 — position de lecture PAR TEXTE : un texte qui revient (« Reprendre mon
+  // thème ») reprend là où il en était. Aucun état React : un Map dans une ref,
+  // alimenté par l'événement `scroll` (manuel ou boucle rAF).
+  const positionsRef = useRef<Map<string, number>>(new Map());
+  const texteCourantRef = useRef(texte);
+  useLayoutEffect(() => {
+    texteCourantRef.current = texte;
+    const el = conteneurRef.current;
+    const p = positionPourTexte(positionsRef.current, texte);
+    if (el && p !== undefined) { el.scrollTop = p; resteRef.current = 0; }
+  }, [texte]);
+  const surDefilement = useCallback(() => {
+    const el = conteneurRef.current;
+    if (el) memoriserPosition(positionsRef.current, texteCourantRef.current, el.scrollTop);
+  }, []);
+
   const vide = texte.trim().length === 0;
 
   return (
     <div
       ref={conteneurRef}
+      onScroll={surDefilement}
       tabIndex={0}
       role="region"
       aria-label="Texte du prompteur"

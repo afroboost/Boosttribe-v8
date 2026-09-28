@@ -169,3 +169,22 @@ test('le message de debranchement dit quoi faire, sans jargon', () => {
     assert.ok(!L.MESSAGE_CAMERA_DEBRANCHEE.includes(jargon), `jargon : ${jargon}`);
   }
 });
+
+// 28/09 — « thème → question → reprendre mon thème » restaurait le TEXTE mais la
+// lecture repartait du début : aucune position n'était mémorisée.
+test('prompteur : chaque texte retrouve sa position de lecture', () => {
+  const m = new Map();
+  L.memoriserPosition(m, 'THEME long', 420);
+  L.memoriserPosition(m, 'Question courte', 0);
+  assert.equal(L.positionPourTexte(m, 'THEME long'), 420, 'retour au thème = même endroit');
+  assert.equal(L.positionPourTexte(m, 'Question courte'), 0);
+  assert.equal(L.positionPourTexte(m, 'jamais vu'), undefined, 'un texte neuf ne force rien');
+});
+
+test('prompteur : la mémoire de positions reste bornée', () => {
+  const m = new Map();
+  for (let i = 0; i < 50; i += 1) L.memoriserPosition(m, `texte ${i}`, i);
+  assert.ok(m.size <= L.POSITIONS_MAX, `au plus ${L.POSITIONS_MAX} textes gardés`);
+  assert.equal(L.positionPourTexte(m, 'texte 49'), 49, 'le plus récent est gardé');
+  assert.equal(L.positionPourTexte(m, 'texte 0'), undefined, 'le plus ancien est oublié');
+});

@@ -287,7 +287,9 @@ test('le panneau passe AU-DESSUS de la bulle du chat, sous les modales', () => {
 test('les commandes critiques du direct sont dans le panneau, et dans son en-tête collant', () => {
   const i = PANNEAU.indexOf('data-testid="prompteur-barre-live"');
   assert.ok(i > 0, 'la rangée de commandes existe');
-  assert.ok(PANNEAU.slice(i - 220, i).includes('sticky top-0'), 'elle reste visible quand le texte défile');
+  const bloc = PANNEAU.indexOf('data-testid="prompteur-entete"');
+  assert.ok(bloc > 0 && bloc < i && PANNEAU.slice(bloc - 60, bloc).includes('sticky top-0'),
+    'elle vit dans le bloc collant : visible quand le texte défile');
   ['prompteur-live-mic', 'prompteur-live-camera', 'prompteur-live-flip',
    'prompteur-live-record', 'prompteur-live-terminer']
     .forEach((id) => assert.ok(PANNEAU.includes(id), `commande manquante : ${id}`));
@@ -326,4 +328,22 @@ test('l’aperçu « AU PROMPTEUR » reste confortable à lire', () => {
   const ligne = PANNEAU.slice(PANNEAU.lastIndexOf('<p', i), i);
   assert.ok(ligne.includes('text-sm'), 'au moins 14 px');
   assert.ok(!ligne.includes('text-xs'), 'jamais rapetissé pour faire tenir des boutons');
+});
+
+test('structurel (28/09) : la position de lecture est rendue au texte qui revient', () => {
+  const comp = codeSeul(lire('components', 'studio', 'Prompteur.tsx'));
+  assert.ok(comp.includes('memoriserPosition(') && comp.includes('positionPourTexte('),
+    'le composant mémorise et restitue la position par texte');
+});
+
+test('structurel (28/09) : contrôles du direct ET en-tête « Prompteur » dans UN seul bloc collant', () => {
+  // Deux en-têtes `sticky top-0` se superposaient : en défilant, « Fermer » et la
+  // bascule IA passaient sous la barre z-10 et devenaient intouchables.
+  const n = (PANNEAU.match(/sticky top-0/g) || []).length;
+  assert.equal(n, 1, 'un seul élément collant');
+  const i = PANNEAU.indexOf('data-testid="prompteur-entete"');
+  assert.ok(i > 0, 'le bloc collant est identifié');
+  const bloc = PANNEAU.slice(i);
+  assert.ok(bloc.indexOf('prompteur-barre-live') > 0 && bloc.indexOf('assistant-fermer') > 0,
+    'barre du direct et bouton Fermer vivent dedans');
 });

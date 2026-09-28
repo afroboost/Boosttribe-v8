@@ -219,8 +219,12 @@ export const AssistantHotePanel: React.FC<Props> = ({
           Le micro de l'hôte, en particulier, n'a JAMAIS été dans la barre du Live
           (`hideMicButton` pour l'hôte) : il vivait dans la colonne mixeur. Ici, il
           est enfin à côté du texte que le coach est en train de lire. */}
+      {/* 28/09 : UN seul bloc collant. Deux en-têtes `sticky top-0` se
+          superposaient : en défilant, « Fermer » et la bascule IA passaient sous
+          la barre du direct (z-10) et devenaient intouchables. */}
+      <div className="sticky top-0 z-10" data-testid="prompteur-entete">
       {controles && (
-        <div className="sticky top-0 z-10 flex items-center justify-center gap-2 px-3 py-2 bg-[#15151b] border-b border-white/10"
+        <div className="flex items-center justify-center gap-2 px-3 py-2 bg-[#15151b] border-b border-white/10"
           role="group" aria-label="Commandes du direct" data-testid="prompteur-barre-live">
           {controles.onMic && (
             <button type="button" onClick={controles.onMic} aria-pressed={controles.micActif}
@@ -260,7 +264,7 @@ export const AssistantHotePanel: React.FC<Props> = ({
         </div>
       )}
 
-      <div className="sticky top-0 flex items-center gap-2 px-4 py-3 bg-[#15151b] border-b border-white/10">
+      <div className="flex items-center gap-2 px-4 py-3 bg-[#15151b] border-b border-white/10">
         <Sparkles className="w-4 h-4" style={{ color: 'var(--bt-accent)' }} aria-hidden="true" />
         <span className="text-white text-sm font-semibold flex-1">Prompteur</span>
         <button type="button" onClick={() => onBasculer(!actif)} aria-pressed={actif}
@@ -272,6 +276,7 @@ export const AssistantHotePanel: React.FC<Props> = ({
         </button>
         <button type="button" onClick={onClose} aria-label="Fermer le prompteur"
           className={`${BTN_TAILLE} rounded-lg text-white/50 hover:text-white`} data-testid="assistant-fermer"><X className="w-4 h-4" /></button>
+      </div>
       </div>
 
       <p className="px-4 pt-3 text-[11px] leading-snug text-white/40">

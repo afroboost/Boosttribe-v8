@@ -24,6 +24,27 @@ export const FACTEUR_VITESSE = 0.6;
 /** Au-delà, on considère que l'onglet était en arrière-plan : sinon le texte saute d'un bloc. */
 export const DT_MAX_MS = 100;
 
+/**
+ * Position de lecture PAR TEXTE (28/09). « Thème → question → Reprendre mon thème »
+ * restaurait le texte mais la lecture repartait du début. Le prompteur retient où
+ * en était chaque texte affiché ; un texte qui revient reprend à sa place, un texte
+ * neuf n'impose rien. Mémoire bornée : les textes les plus anciens sont oubliés.
+ */
+export const POSITIONS_MAX = 20;
+
+export function memoriserPosition(m: Map<string, number>, texte: string, position: number): void {
+  if (!texte) return;
+  m.delete(texte);                      // réinsérer = le plus récent en dernier
+  m.set(texte, Math.max(0, position));
+  while (m.size > POSITIONS_MAX) {
+    const plusAncien = m.keys().next().value;
+    if (plusAncien === undefined) break;
+    m.delete(plusAncien);
+  }
+}
+
+export const positionPourTexte = (m: Map<string, number>, texte: string): number | undefined => m.get(texte);
+
 export const bornerVitesse = (v: number): number =>
   Math.min(VITESSE_MAX, Math.max(VITESSE_MIN, Math.round(v / VITESSE_PAS) * VITESSE_PAS));
 

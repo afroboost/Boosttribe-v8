@@ -3,17 +3,18 @@ import { Mic, MicOff, Video, VideoOff, Hand, Minimize2, MonitorUp, MonitorX, Scr
 import { Timer, Clapperboard, Sparkles, Disc, Square, LogOut, MessageSquareOff, MessageSquare, Users, Radio } from 'lucide-react';
 import { MenuActions, type MenuAction } from '@/components/session/MenuActions';
 import { libelleItemRecord, formatDureeRec } from '@/lib/recordUi';
-import { repartirCommandes, SEUIL_MOBILE, TAILLE_BOUTON, LARGEUR_PILULE, type CommandeId } from '@/lib/liveControls';
+import { repartirCommandes, SEUIL_MOBILE, TAILLE_BOUTON, LARGEUR_PILULE, ESPACE_BOUTONS, ESPACE_COLONNE, type CommandeId } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 
 /**
  * 🎛️ LA barre de commandes du Live — une seule, partagée par la vue normale ET le plein
  * écran caméra (et, en colonne, par le plein écran de la vidéo partagée via VisioControlBar).
  *
- * Principe Live mobile : la vidéo domine, les commandes flottent en bas sur un voile léger.
+ * Principe Live mobile : la vidéo domine, les commandes flottent sur un voile léger (en
+ * colonne à droite pour le Live Visio depuis la barre v2).
  * Barre = l'essentiel (micro, caméra, partage d'écran, enregistrer, prompteur, diffusion,
- * terminer) ; TOUT le secondaire vit dans le menu ⋮. Ce qui ne tient pas en largeur
- * descend dans ⋮ (règle pure `repartirCommandes`) : jamais de défilement horizontal.
+ * terminer) ; TOUT le secondaire vit dans le menu ⋮. Ce qui ne tient pas (largeur en rangée,
+ * hauteur en colonne) descend dans ⋮ (règle pure `repartirCommandes`) : jamais de défilement.
  *
  * Présentation seulement : chaque bouton appelle EXACTEMENT le gestionnaire reçu, aucun
  * état métier n'est créé ici.
@@ -21,10 +22,12 @@ import type { RecEtat } from '@/components/session/RecordTypes';
 export interface LiveControlsProps {
   /** Plein écran caméra (ou vidéo partagée) : data-testid historiques « visio-fs-* ». */
   pleinEcran: boolean;
-  /** Rangée en bas (défaut) ou colonne à droite (plein écran de la vidéo partagée). */
+  /** Rangée (défaut) ou colonne à droite (Live Visio depuis la barre v2, vidéo partagée). */
   orientation?: 'horizontale' | 'verticale';
   /** Largeur utile mesurée (px) ; sans mesure : aucune contrainte. */
   largeur?: number;
+  /** Colonne : hauteur utile mesurée (px) — ce qui ne tient pas passe dans ⋮. Sans mesure : aucune contrainte. */
+  hauteur?: number;
   className?: string;
   style?: React.CSSProperties;
 
@@ -89,7 +92,7 @@ const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover
 const PILL = 'min-h-[44px] shrink-0 flex items-center gap-1.5 px-3.5 rounded-full text-xs font-medium backdrop-blur-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bt-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-black';
 
 export const LiveControls: React.FC<LiveControlsProps> = ({
-  pleinEcran, orientation = 'horizontale', largeur = Infinity, className = '', style,
+  pleinEcran, orientation = 'horizontale', largeur = Infinity, hauteur = Infinity, className = '', style,
   micActive = false, onToggleMic, cameraOn = false, canManageStage = false, estHote, onToggleCamera,
   onRequestStage, stageRequestPending = false, onToggleStageRequests, stageRequestCount = 0,
   onFlipCamera, peutBasculerCamera = false, onSources, sourcesOuvertes = false, sourcesAvancees = false,
@@ -102,7 +105,10 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   onLeaveLive, onReduce,
 }) => {
   const vertical = orientation === 'verticale';
-  const large = !vertical && largeur >= SEUIL_MOBILE;
+  // Écran large (≥ 640 px) : décide du partage d'écran « indisponible » visible (desktop).
+  const ecranLarge = largeur >= SEUIL_MOBILE;
+  // Pilule « Terminer » avec texte : seulement en rangée large (une colonne reste ronde).
+  const large = !vertical && ecranLarge;
 
   // 🔴 Terminer = hôte propriétaire. Sans `estHote` fourni : ancien comportement (canManageStage).
   const peutTerminer = !!onTerminerLive && (estHote ?? canManageStage);
@@ -114,7 +120,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   if (onToggleMic) candidats.push('micro');
   if (onToggleCamera && (canManageStage || cameraOn)) candidats.push('camera');
   if (!canManageStage && !cameraOn && (onRequestStage || stageRequestPending)) candidats.push('scene');
-  if (canManageStage && screenSupported && onToggleScreenShare && (screenShareDisponible || large)) candidats.push('partage');
+  if (canManageStage && screenSupported && onToggleScreenShare && (screenShareDisponible || ecranLarge)) candidats.push('partage');
   if (canManageStage && (onRecordDirect || onToggleRecord)) candidats.push('record');
   if (onTogglePrompteur) candidats.push('prompteur');
   if (canManageStage && onToggleBroadcast) candidats.push('diffusion');
@@ -123,11 +129,12 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   if (onReduce) candidats.push('reduire');
 
   const pilules = !vertical;
-  const { barre, menu } = repartirCommandes(candidats, vertical ? Infinity : largeur, {
+  // Colonne : contrainte par sa HAUTEUR (gap-3) ; rangée : par sa largeur (gap-2).
+  const { barre, menu } = repartirCommandes(candidats, vertical ? hauteur : largeur, {
     camera: !canManageStage && pilules ? 150 : TAILLE_BOUTON,
     scene: pilules ? LARGEUR_PILULE : TAILLE_BOUTON,
     terminer: large ? 104 : TAILLE_BOUTON,
-  });
+  }, vertical ? ESPACE_COLONNE : ESPACE_BOUTONS);
   const enBarre = (c: CommandeId) => barre.includes(c);
 
   // ── Commandes principales qui débordent : mêmes gestionnaires, rangées dans ⋮ ──
@@ -236,7 +243,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
       role="toolbar"
       aria-label="Commandes du Live"
       aria-orientation={vertical ? 'vertical' : 'horizontal'}
-      className={`pointer-events-auto flex items-center ${vertical ? 'flex-col gap-3' : 'flex-row justify-center gap-2 px-2 py-1.5 max-w-full'} ${className}`}
+      className={`pointer-events-auto flex items-center ${vertical ? 'flex-col gap-3 py-2' : 'flex-row justify-center gap-2 px-2 py-1.5 max-w-full'} ${className}`}
       style={style}
       data-testid={pleinEcran ? 'visio-fs-controls' : 'visio-controls'}
     >

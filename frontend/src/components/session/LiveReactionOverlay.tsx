@@ -4,18 +4,25 @@
  * - `LiveReactionOverlay` : calque `pointer-events-none absolute inset-0`. Le parent le place
  *   dans une colonne étroite à droite de la vidéo. Chaque bulle monte ~2 s avec une légère
  *   dérive et un fondu, puis se retire au `animationend` (aucune fuite : ≤ 24 bulles).
- * - `LiveReactionButton` : bouton rond ≥ 44 px ; appui court = ❤, appui long = petit éventail
- *   (❤ / Bravo / Énergie) si `types` en contient plus d'un.
+ * - `LiveReactionButton` : bouton cœur rond ≥ 44 px. Si `types` en contient plus d'un, un
+ *   SIMPLE CLIC ouvre une palette 3 × 2 (≈ 156 px de large, tient dans 360 px) ; choisir envoie
+ *   et ferme ; clic hors palette / Échap ferme sans envoyer (`actionClicReaction`).
  *
  * Icônes : SVG lucide teintés `var(--bt-accent)` — jamais d'emoji comme icône d'interface.
  */
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Flame, Heart, Sparkles, type LucideIcon } from 'lucide-react';
-import { formaterCompteur, parametresBulle, type TypeReaction } from '@/lib/liveReactions';
+import { Flame, Hand, Heart, Laugh, Sparkles, ThumbsUp, type LucideIcon } from 'lucide-react';
+import {
+  actionClicReaction, formaterCompteur, parametresBulle, type ActionClicReaction, type TypeReaction,
+} from '@/lib/liveReactions';
 import type { BulleReaction } from '@/hooks/useLiveReactions';
 
-export const ICONES_REACTION: Record<TypeReaction, LucideIcon> = { like: Heart, bravo: Sparkles, feu: Flame };
-export const LIBELLES_REACTION: Record<TypeReaction, string> = { like: "J'aime", bravo: 'Bravo', feu: 'Énergie' };
+export const ICONES_REACTION: Record<TypeReaction, LucideIcon> = {
+  like: Heart, bravo: Sparkles, feu: Flame, pouce: ThumbsUp, main: Hand, rire: Laugh,
+};
+export const LIBELLES_REACTION: Record<TypeReaction, string> = {
+  like: "J'aime", bravo: 'Bravo', feu: 'Énergie', pouce: 'Top', main: 'Salut', rire: 'Drôle',
+};
 
 const CSS = `
 @keyframes bt-reac-monte {
@@ -102,51 +109,65 @@ export function LiveReactionOverlay({ bulles, onFin, className = '' }: LiveReact
 export interface LiveReactionButtonProps {
   onReagir: (type: TypeReaction) => void;
   total: number;
-  /** Types proposés (le premier = appui court). Défaut : cœur seul. */
-  types?: TypeReaction[];
+  /** Types proposés dans la palette (le premier = icône du bouton). Défaut : cœur seul, sans palette. */
+  types?: readonly TypeReaction[];
   className?: string;
 }
 
-const APPUI_LONG_MS = 420;
-
 export function LiveReactionButton({ onReagir, total, types = ['like'], className = '' }: LiveReactionButtonProps) {
-  const [eventail, setEventail] = useState(false);
-  const minuterie = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const appuiLong = useRef(false);
+  const [ouverte, setOuverte] = useState(false);
+  const racineRef = useRef<HTMLDivElement>(null);
+  const coeurRef = useRef<HTMLButtonElement>(null);
+  const paletteRef = useRef<HTMLDivElement>(null);
   const principal = types[0] ?? 'like';
-  const autres = types.length > 1;
-  const Icone = ICONES_REACTION[principal];
+  const avecPalette = types.length > 1;
+  const Icone = ICONES_REACTION[principal] ?? Heart;
 
-  const annulerMinuterie = () => { if (minuterie.current) { clearTimeout(minuterie.current); minuterie.current = null; } };
-  useEffect(() => annulerMinuterie, []);
-
-  const onPointerDown = () => {
-    appuiLong.current = false;
-    if (!autres) return;
-    annulerMinuterie();
-    minuterie.current = setTimeout(() => { appuiLong.current = true; setEventail(true); }, APPUI_LONG_MS);
+  const appliquer = (a: ActionClicReaction) => {
+    if (a.envoyer) onReagir(a.envoyer);
+    setOuverte(a.ouvrir);
   };
   const onClick = () => {
-    annulerMinuterie();
-    if (appuiLong.current) { appuiLong.current = false; return; }
-    if (eventail) { setEventail(false); return; }
-    onReagir(principal);
+    if (!avecPalette) { onReagir(principal); return; }
+    appliquer(actionClicReaction(ouverte));
   };
-  const choisir = (t: TypeReaction) => { onReagir(t); setEventail(false); };
+  const choisir = (t: TypeReaction) => {
+    appliquer(actionClicReaction(true, t));
+    coeurRef.current?.focus();
+  };
+
+  // Palette ouverte : clic hors du composant / Échap => fermeture SANS envoi.
+  useEffect(() => {
+    if (!ouverte) return;
+    paletteRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    const dehors = (e: PointerEvent) => {
+      if (racineRef.current && !racineRef.current.contains(e.target as Node)) setOuverte(false);
+    };
+    const clavier = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setOuverte(false); coeurRef.current?.focus(); }
+    };
+    document.addEventListener('pointerdown', dehors);
+    document.addEventListener('keydown', clavier);
+    return () => {
+      document.removeEventListener('pointerdown', dehors);
+      document.removeEventListener('keydown', clavier);
+    };
+  }, [ouverte]);
 
   const libelle = `J'aime (${total})`;
 
   return (
-    <div className={`relative flex flex-col items-center gap-0.5 ${className}`}>
+    <div ref={racineRef} className={`relative flex flex-col items-center gap-0.5 ${className}`}>
       <StyleReactions />
-      {autres && eventail && (
+      {avecPalette && ouverte && (
         <div
+          ref={paletteRef}
           role="menu"
           aria-label="Choisir une réaction"
-          className="absolute bottom-full mb-2 flex flex-col gap-1.5 rounded-full bg-black/45 p-1.5 backdrop-blur-md"
+          className="absolute bottom-full right-0 z-20 mb-2 grid grid-cols-3 gap-1.5 rounded-2xl border border-white/15 bg-black/55 p-1.5 backdrop-blur-md"
         >
           {types.map((t) => {
-            const I = ICONES_REACTION[t];
+            const I = ICONES_REACTION[t] ?? Heart;
             return (
               <button
                 key={t}
@@ -155,7 +176,7 @@ export function LiveReactionButton({ onReagir, total, types = ['like'], classNam
                 aria-label={LIBELLES_REACTION[t]}
                 title={LIBELLES_REACTION[t]}
                 onClick={() => choisir(t)}
-                className="bt-reac-btn flex h-11 w-11 items-center justify-center rounded-full bg-white/10 hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--bt-accent)]"
+                className="bt-reac-btn flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-white/10 hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--bt-accent)]"
                 style={{ color: 'var(--bt-accent)' }}
               >
                 <I size={22} strokeWidth={2} fill="currentColor" fillOpacity={0.35} />
@@ -165,15 +186,12 @@ export function LiveReactionButton({ onReagir, total, types = ['like'], classNam
         </div>
       )}
       <button
+        ref={coeurRef}
         type="button"
         aria-label={libelle}
-        title={autres ? "J'aime — appui long pour plus de réactions" : "J'aime"}
-        aria-haspopup={autres ? 'menu' : undefined}
-        aria-expanded={autres ? eventail : undefined}
-        onPointerDown={onPointerDown}
-        onPointerLeave={annulerMinuterie}
-        onPointerCancel={annulerMinuterie}
-        onContextMenu={(e) => { if (autres) e.preventDefault(); }}
+        title={avecPalette ? "J'aime — choisir une réaction" : "J'aime"}
+        aria-haspopup={avecPalette ? 'menu' : undefined}
+        aria-expanded={avecPalette ? ouverte : undefined}
         onClick={onClick}
         className="bt-reac-btn flex h-11 w-11 min-h-[44px] min-w-[44px] select-none items-center justify-center rounded-full border border-white/15 bg-black/35 backdrop-blur-md hover:bg-black/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--bt-accent)]"
         style={{ color: 'var(--bt-accent)', WebkitTouchCallout: 'none', touchAction: 'manipulation' }}

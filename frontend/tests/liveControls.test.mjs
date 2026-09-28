@@ -3,19 +3,26 @@
  *
  * Avant : une rangée d'icônes sous la vidéo (vue normale) ET une colonne verticale à
  * droite (plein écran, VisioControlBar) — deux barres, deux jeux de boutons, un bouton
- * Assistant séparé. Attendu : UNE barre (LiveControls), en bas de la vidéo, la même dans
- * les deux modes ; le secondaire dans ⋮ ; des calques chat / réactions / champ posés
- * DANS la zone caméra ; tailles calculées par des fonctions pures.
+ * Assistant séparé. Attendu : UNE barre (LiveControls), la même dans les deux modes ; le
+ * secondaire dans ⋮ ; des calques chat / réactions / champ posés DANS la zone caméra ;
+ * tailles calculées par des fonctions pures.
+ *
+ * Barre v2 (28/09) : la barre n'est plus en bas mais VERTICALE À DROITE de la vidéo,
+ * partout (360 → 1440 px, normal et plein écran). Ce qui ne tient pas en HAUTEUR descend
+ * dans ⋮. Le chat et le champ vivent en bas à gauche de la scène, à gauche de la barre.
  *
  * Deux bancs : LOGIQUE (lib/liveControls.ts transpilée) et STRUCTUREL (lecture des sources).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lire, codeSeul } from './lireSource.mjs';
-import {
+import * as LOGIQUE from './.build/liveControls.mjs';
+
+const {
   repartirCommandes, zoneCommentaires, ORDRE_COMMANDES, PRIORITE_COMMANDES,
   TAILLE_BOUTON, ESPACE_BOUTONS, MARGE_BARRE, LARGEUR_PILULE,
-} from './.build/liveControls.mjs';
+  ESPACE_COLONNE, dispositionBarre, ancrageImage,
+} = LOGIQUE;
 
 const PANEL = codeSeul(lire('components', 'session', 'LiveVisioPanel.tsx'));
 const PANEL_BRUT = lire('components', 'session', 'LiveVisioPanel.tsx');
@@ -92,12 +99,13 @@ test('invités sur scène ou vignettes : le chat rapetisse et ne recouvre pas le
   const vign = zoneCommentaires({ largeur: 1280, camerasActives: 1, pleinEcran: true, vignettes: true });
   assert.equal(vign.reduit, true);
   assert.equal(vign.chatHauteurMax, '25%');
-  // Hors plein écran : on réserve sous la grille la place barre + champ + chat réduit.
+  // Hors plein écran : on réserve sous la grille la place champ + chat réduit — plus la
+  // barre (4 rem), qui vit désormais à droite.
   const grille = zoneCommentaires({ largeur: 390, camerasActives: 3, pleinEcran: false });
   assert.equal(grille.chatHauteurMax, '7rem');
-  assert.equal(grille.reserveBas, '14rem');
-  assert.equal(zoneCommentaires({ largeur: 390, camerasActives: 3, pleinEcran: false, avecCalques: false }).reserveBas, '4rem',
-    'sans calque, seule la barre est réservée');
+  assert.equal(grille.reserveBas, '10rem');
+  assert.equal(zoneCommentaires({ largeur: 390, camerasActives: 3, pleinEcran: false, avecCalques: false }).reserveBas, '0px',
+    'sans calque, rien à réserver en bas : la barre est à droite');
 });
 
 /* ═════════════════════════ STRUCTURE : une seule barre ═════════════════════════ */
@@ -113,15 +121,82 @@ test('UNE seule barre rendue : LiveControls, une fois, hors de toute branche ple
   assert.ok(PANEL.includes('onReduce={camFullscreen ? exitCamFullscreen : undefined}'), 'Réduire seulement en plein écran');
 });
 
-test('la barre est DANS la zone caméra (cible du plein écran), en bas, au-dessus du prompteur', () => {
+test('la barre est DANS la zone caméra (cible du plein écran), VERTICALE À DROITE, au-dessus du prompteur', () => {
   const debut = PANEL.indexOf('ref={camAreaRef}');
   const fin = PANEL.indexOf('data-testid="visio-audio"');
   const i = PANEL.indexOf('<LiveControls');
   assert.ok(i > debut && i < fin, 'LiveControls est à l’intérieur de camAreaRef');
-  assert.ok(PANEL.includes('pointer-events-none absolute z-[115] inset-0 flex flex-col justify-end'),
-    'couche absolue transparente aux clics, ancrée en bas, z > overlay prompteur (112)');
-  assert.ok(PANEL.includes("env(safe-area-inset-bottom)"), 'safe-area en plein écran');
-  assert.ok(PANEL.includes('paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`'), 'hors plein écran, la place de la barre est réservée sous les vignettes');
+  assert.ok(PANEL.includes('pointer-events-none absolute z-[115] inset-0'),
+    'couche absolue transparente aux clics, z > overlay prompteur (112)');
+  const barre = PANEL.slice(i, PANEL.indexOf('/>', i));
+  assert.ok(barre.includes('orientation={barre.orientation}'), 'orientation = dispositionBarre (verticale)');
+  assert.ok(barre.includes('hauteur={'), 'la HAUTEUR mesurée décide du débordement dans ⋮');
+  assert.ok(barre.includes('top-1/2 -translate-y-1/2'), 'centrée verticalement');
+  assert.ok(barre.includes('env(safe-area-inset-right)'), 'safe-area à droite en plein écran');
+  assert.ok(PANEL.includes("env(safe-area-inset-bottom)"), 'safe-area en bas pour le chat en plein écran');
+  assert.ok(PANEL.includes('paddingRight: `calc(0.25rem + ${zone.reserveDroite})`'), 'hors plein écran, les vignettes laissent la colonne de la barre libre');
+});
+
+test('barre v2 : dispositionBarre = verticale à droite partout (téléphone → ordinateur, normal et plein écran)', () => {
+  for (const largeur of [360, 390, 414, 430, 768, 1440]) {
+    for (const pleinEcran of [false, true]) {
+      for (const hauteur of [213, 416, 844, 900]) {
+        assert.deepEqual(dispositionBarre({ largeur, hauteur, pleinEcran }),
+          { orientation: 'verticale', cote: 'droite', reserveDroite: '3.75rem' }, `${largeur}×${hauteur} ${pleinEcran ? 'plein écran' : 'normal'}`);
+      }
+    }
+  }
+  const z = zoneCommentaires({ largeur: 1440, pleinEcran: true, camerasActives: 1 });
+  assert.equal(z.reserveDroite, '3.75rem', 'le chat laisse la colonne de la barre libre');
+  assert.ok(!/4rem/.test(z.reserveBas), `reserveBas sans la barre : ${z.reserveBas}`);
+  for (const largeur of [360, 1440]) {
+    const n = zoneCommentaires({ largeur, pleinEcran: false, camerasActives: 1 });
+    assert.equal(n.reserveBas, '0px', `${largeur} px, une caméra : plus rien sous les vignettes pour la barre`);
+    assert.equal(n.reserveDroite, '3.75rem');
+  }
+});
+
+test('barre v2 : en colonne, la HAUTEUR décide (même formule, espace gap-3 = 12 px)', () => {
+  assert.equal(ESPACE_COLONNE, 12, 'gap-3 de la colonne');
+  const hauteurColonne = (barre) => MARGE_BARRE + TAILLE_BOUTON + barre.length * (TAILLE_BOUTON + ESPACE_COLONNE);
+  const r = repartirCommandes(HOTE_PLEIN_ECRAN, 300, {}, ESPACE_COLONNE);
+  assert.ok(r.menu.length > 0, '9 commandes ne tiennent pas dans 300 px de haut');
+  assert.ok(hauteurColonne(r.barre) <= 300, `colonne ${hauteurColonne(r.barre)} px ≤ 300`);
+  assert.ok(r.barre.includes('terminer') && r.barre.includes('camera'), 'vitales gardées');
+  for (const h of [213, 416, 600, 844]) {
+    const x = repartirCommandes(HOTE_PLEIN_ECRAN, h, {}, ESPACE_COLONNE);
+    assert.ok(hauteurColonne(x.barre) <= h, `${h} px : colonne ${hauteurColonne(x.barre)} px`);
+  }
+  assert.deepEqual(repartirCommandes(HOTE_PLEIN_ECRAN, 900, {}, ESPACE_COLONNE).menu, [], '900 px : tout tient');
+  // La colonne reçoit la hauteur : plus de « Infinity » codé en dur pour la verticale.
+  assert.ok(!LC.includes('vertical ? Infinity'), 'LiveControls ne neutralise plus la contrainte en colonne');
+  assert.ok(LC.includes('vertical ? hauteur : largeur'), 'la colonne est contrainte par sa hauteur');
+  assert.ok(LC.includes('vertical ? ESPACE_COLONNE : ESPACE_BOUTONS'), 'gap cohérent avec la classe gap-3');
+  assert.ok(LC.includes("flex-col gap-3 py-2"), 'marge verticale = MARGE_BARRE (py-2 × 2)');
+});
+
+test('barre v2 : chat + champ ancrés au bord gauche de l’IMAGE (object-contain centrée)', () => {
+  assert.deepEqual(ancrageImage({ largeur: 1440, hauteur: 900, ratio: 9 / 16 }), { gauche: 467 }, 'image portrait : bande noire de 467 px');
+  assert.deepEqual(ancrageImage({ largeur: 1440, hauteur: 900, ratio: 4 / 3 }), { gauche: 120 });
+  assert.deepEqual(ancrageImage({ largeur: 1440, hauteur: 900, ratio: 16 / 9 }), { gauche: 0 }, 'image plus large que l’écran : bord de la scène');
+  assert.deepEqual(ancrageImage({ largeur: 390, hauteur: 844, ratio: 16 / 9 }), { gauche: 0 });
+  assert.deepEqual(ancrageImage({ largeur: 1440, hauteur: 900, ratio: 0 }), { gauche: 0 }, 'ratio inconnu : pas d’hypothèse');
+});
+
+test('barre v2 : le champ commentaire est HORS de la pile de la barre', () => {
+  const i = PANEL.indexOf('<LiveControls');
+  const pile = PANEL.indexOf('data-testid="visio-calques-bas"');
+  const input = PANEL.indexOf('data-testid="visio-calque-input"');
+  assert.ok(pile > 0 && input > pile, 'le champ vit dans la pile bas-gauche');
+  assert.ok(i < pile, 'la barre est rendue AVANT (donc hors de) la pile bas-gauche');
+  const blocPile = PANEL.slice(PANEL.lastIndexOf('<div', pile), pile);
+  assert.ok(blocPile.includes('absolute') && blocPile.includes('bottom-0'), 'pile ancrée en bas');
+  const stylePile = PANEL.slice(pile - 500, pile);
+  assert.ok(stylePile.includes('right: droitePile'), 'marge droite ≥ reserveDroite (à gauche de la barre)');
+  assert.ok(PANEL.includes('const droitePile = gaucheCalques > 0 ? `max(${gaucheCalques}px, ${droiteCalques})` : droiteCalques;'), 'jamais moins que la colonne de la barre');
+  assert.ok(stylePile.includes('gaucheCalques'), 'bord gauche = bord de l’image');
+  assert.ok(PANEL.includes('const droiteCalques = camFullscreen ? `calc(${zone.reserveDroite} + env(safe-area-inset-right))` : zone.reserveDroite;'));
+  assert.ok(PANEL.includes('ancrageImage({ largeur: largeurZone, hauteur: hauteurZone, ratio: ratioImage })'), 'ancre = fonction pure testée');
 });
 
 test('VisioControlBar reste exporté, API compatible, simple adaptateur vers LiveControls', () => {
@@ -224,10 +299,10 @@ test('slots rendus DANS camAreaRef, dans les DEUX modes (aucune condition camFul
     'aucun slot n’est réservé à un seul mode');
 });
 
-test('mise en page : barre en bas, champ juste au-dessus, chat à gauche, réactions à droite', () => {
-  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques"'), PANEL.indexOf('<LiveControls'));
+test('mise en page : barre à droite ; en bas à gauche le chat (+ réactions), puis le champ', () => {
+  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('data-testid="visio-audio"'));
   const ordre = ['{chatOverlayNode}', '{reactionsNode}', '{commentInputNode}'].map((k) => couche.indexOf(k));
-  assert.ok(ordre.every((i) => i > 0) && ordre[0] < ordre[1] && ordre[1] < ordre[2], 'chat + réactions, puis champ, puis barre');
+  assert.ok(ordre.every((i) => i > 0) && ordre[0] < ordre[1] && ordre[1] < ordre[2], 'chat + réactions, puis champ');
   assert.ok(couche.includes('maxWidth: zone.chatLargeurMax') && couche.includes('height: zone.chatHauteurMax'), 'tailles du chat = zoneCommentaires');
   assert.ok(couche.includes('maxWidth: zone.inputLargeurMax'), 'largeur du champ = zoneCommentaires');
   assert.ok(couche.includes('width: zone.reactionsLargeur'), 'colonne des réactions = zoneCommentaires');
@@ -266,7 +341,7 @@ test('QA : grille = largeur de la ZONE, jamais de l’écran', async () => {
 });
 
 test('QA : le chat remplit SON calque (derniers messages visibles) et ne capte aucun clic', () => {
-  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques"'), PANEL.indexOf('<LiveControls'));
+  const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('data-testid="visio-audio"'));
   const chat = couche.slice(couche.lastIndexOf('<div', couche.indexOf('data-testid="visio-calque-chat"')), couche.indexOf('data-testid="visio-calque-chat"'));
   assert.ok(chat.includes('pointer-events-none'), 'calque chat transparent aux clics');
   assert.ok(chat.includes('h-full'), 'hauteur définie : le débordement part en HAUT (anciens messages)');
@@ -285,5 +360,6 @@ test('QA : Prompteur ouvert — place réservée hors plein écran, hors du cent
   assert.equal(zoneCommentaires({ largeur: 390, camerasActives: 1, pleinEcran: true, prompteurOuvert: true }).reservePrompteur, '0px');
   assert.ok(PANEL.includes('paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`'));
   assert.ok(PANEL.includes('data-testid="visio-prompteur-place"'), 'le panneau vit dans une place bornée');
-  assert.ok(PANEL.includes("largeurZone < 1024 ? 'inset-x-0 top-1/2' : 'left-1/2 right-0 top-0'"), 'plein écran : jamais sur le centre de l’image (visage)');
+  assert.ok(PANEL.includes("largeurZone < 1024 ? 'left-0 top-1/2' : 'left-1/2 top-0'"), 'plein écran : jamais sur le centre de l’image (visage)');
+  assert.ok((PANEL.match(/right: droiteCalques/g) || []).length >= 4, 'tiroir (deux modes) et texte du prompteur (deux modes) ne recouvrent pas la colonne de la barre');
 });

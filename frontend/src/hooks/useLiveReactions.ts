@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  EVT_REACTIONS, EVT_TOTAL, ETAT_INITIAL, MAX_BULLES_SIMULTANEES,
+  EVT_REACTIONS, EVT_TOTAL, ETAT_INITIAL, MAX_BULLES_SIMULTANEES, TYPES_REACTION,
   ajouterLocal, appliquerLot, bullesAAfficher, creerTamponReactions, doitAnnoncerTotal, synchroTotal, totalDe, totauxAnnoncables,
   type EtatReactions, type LotReactions, type Totaux, type TypeReaction,
 } from '@/lib/liveReactions';
@@ -133,7 +133,7 @@ export function useLiveReactions({
     if (apres === avant) return;
     commit(apres);
     const reduced = reducedRef.current;
-    for (const k of ['like', 'bravo', 'feu'] as TypeReaction[]) {
+    for (const k of TYPES_REACTION) {
       const n = apres.totaux[k] - avant.totaux[k];
       ajouterBulles(k, bullesAAfficher(n, reduced));
       if (reduced && n > 0) break; // 1 bulle en tout

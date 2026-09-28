@@ -209,7 +209,7 @@ test('changement de session : un NOUVEAU client (état initial) repart de 0', ()
   // Le hook est monté dans SessionPage ; une autre session = autre montage = ETAT_INITIAL.
   const C = new Client('A', { estHote: true });
   assert.equal(C.likes, 0);
-  assert.deepEqual(ETAT_INITIAL.totaux, { like: 0, bravo: 0, feu: 0 });
+  assert.deepEqual(ETAT_INITIAL.totaux, { like: 0, bravo: 0, feu: 0, pouce: 0, main: 0, rire: 0 });
 });
 
 test('l’hôte reçoit un TOTAL plus élevé d’un autre émetteur → s’aligne (max), sans cumuler', () => {

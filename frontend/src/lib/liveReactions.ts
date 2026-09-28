@@ -11,8 +11,20 @@
  * L'horloge est toujours injectée (`maintenantMs`) : la lib est testable sans faux timers.
  */
 
-export type TypeReaction = 'like' | 'bravo' | 'feu';
-export const TYPES_REACTION: readonly TypeReaction[] = ['like', 'bravo', 'feu'];
+/**
+ * Protocole ADDITIF : les nouveaux types s'ajoutent EN FIN (la priorité du plafond, dans cet
+ * ordre, reste inchangée pour les 3 historiques). Un client non rechargé ignore les types qu'il
+ * ne connaît pas (plafonnerComptes / synchroTotal ne lisent que SA liste).
+ */
+export type TypeReaction = 'like' | 'bravo' | 'feu' | 'pouce' | 'main' | 'rire';
+export const TYPES_REACTION: readonly TypeReaction[] = ['like', 'bravo', 'feu', 'pouce', 'main', 'rire'];
+
+const estTypeReaction = (t: unknown): t is TypeReaction =>
+  typeof t === 'string' && (TYPES_REACTION as readonly string[]).includes(t);
+
+/** Totaux à 0 pour chaque type connu (jamais de littéral figé à N types). */
+export const totauxVides = (): Totaux =>
+  Object.fromEntries(TYPES_REACTION.map((k) => [k, 0])) as Totaux;
 
 /** Événement broadcast : un lot agrégé de réactions d'un client. */
 export const EVT_REACTIONS = 'LIVE_REACTIONS';
@@ -51,7 +63,7 @@ export const ECART_MIN_RECEPTION_MS = 700;
 export const MAX_TOTAL = 1_000_000_000;
 
 export const ETAT_INITIAL: EtatReactions = Object.freeze({
-  totaux: Object.freeze({ like: 0, bravo: 0, feu: 0 }) as Totaux,
+  totaux: Object.freeze(totauxVides()) as Totaux,
   vus: Object.freeze({}) as Record<string, number>,
   derniers: Object.freeze({}) as Record<string, number>,
 }) as EtatReactions;
@@ -135,10 +147,10 @@ export function creerTamponReactions({
 
 /* ───────────────────────────── RÉCEPTION ───────────────────────────── */
 
-/** Normalise et plafonne les comptes d'un lot (total ≤ max, dans l'ordre like → bravo → feu). */
+/** Normalise et plafonne les comptes d'un lot (total ≤ max, dans l'ordre de TYPES_REACTION). */
 export function plafonnerComptes(c: unknown, max = MAX_PAR_LOT): Totaux {
   const src = (c && typeof c === 'object' ? c : {}) as Record<string, unknown>;
-  const out: Totaux = { like: 0, bravo: 0, feu: 0 };
+  const out: Totaux = totauxVides();
   let reste = max;
   for (const k of TYPES_REACTION) {
     const n = Math.min(entierPositif(src[k]), reste);
@@ -162,12 +174,10 @@ export function appliquerLot(etat: EtatReactions, lot: unknown, maintenantMs: nu
   if (dernier !== undefined && maintenantMs - dernier < ECART_MIN_RECEPTION_MS) return etat;
   const c = plafonnerComptes(counts);
   if (totalDe(c) === 0) return etat;
+  const totaux: Totaux = { ...etat.totaux };
+  for (const k of TYPES_REACTION) totaux[k] = (totaux[k] ?? 0) + c[k];
   return {
-    totaux: {
-      like: etat.totaux.like + c.like,
-      bravo: etat.totaux.bravo + c.bravo,
-      feu: etat.totaux.feu + c.feu,
-    },
+    totaux,
     vus: { ...etat.vus, [from]: seq },
     derniers: { ...etat.derniers, [from]: maintenantMs },
   };
@@ -225,6 +235,18 @@ export function doitAnnoncerTotal(
 }
 
 /* ───────────────────────────── AFFICHAGE ───────────────────────────── */
+
+export type ActionClicReaction = { ouvrir: boolean; envoyer?: TypeReaction };
+
+/**
+ * Bouton cœur + palette. Clic sur le cœur palette fermée : on OUVRE, rien ne part.
+ * Clic sur le cœur (ou hors palette / Échap) palette ouverte : on FERME, rien ne part.
+ * Choix d'un type connu : on l'ENVOIE et on ferme.
+ */
+export function actionClicReaction(paletteOuverte: boolean, typeChoisi?: unknown): ActionClicReaction {
+  if (estTypeReaction(typeChoisi)) return { envoyer: typeChoisi, ouvrir: false };
+  return { ouvrir: !paletteOuverte };
+}
 
 export const MAX_BULLES_PAR_LOT = 8;
 export const MAX_BULLES_SIMULTANEES = 24;

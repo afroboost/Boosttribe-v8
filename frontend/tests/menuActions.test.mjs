@@ -21,9 +21,9 @@ const SESSION = lire('pages', 'SessionPage.tsx');
 const LC = lire('components', 'session', 'LiveControls.tsx');
 const barreDuBas = () => LC;
 
-test('la barre du bas est UNE rangée d’icônes rondes, sans boutons texte pour l’hôte', () => {
+test('la barre Live est UNE file d’icônes rondes (colonne à droite), sans boutons texte pour l’hôte', () => {
   const b = barreDuBas();
-  assert.ok(!b.includes('flex-wrap'), 'plus de retour à la ligne : une seule rangée (le surplus va dans ⋮)');
+  assert.ok(!b.includes('flex-wrap'), 'plus de retour à la ligne : une seule file (le surplus va dans ⋮)');
   assert.ok(b.includes('${ROUND}'), 'les boutons réutilisent les classes rondes de la colonne plein écran');
   assert.ok(/Couper la caméra/.test(b) && !/>\s*\{cameraOn \? 'Couper la caméra'/.test(b),
     'le libellé caméra est un title/aria-label, pas un texte affiché');

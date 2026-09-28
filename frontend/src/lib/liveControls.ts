@@ -26,9 +26,11 @@ export type CommandeId =
 
 /** Cible tactile minimale (WCAG 2.5.5 / Apple HIG) : 44 px. */
 export const TAILLE_BOUTON = 44;
-/** Espace entre deux boutons de la barre (gap-2). */
+/** Espace entre deux boutons de la barre en rangée (gap-2). */
 export const ESPACE_BOUTONS = 8;
-/** Marge intérieure horizontale totale de la barre (px-2 × 2). */
+/** Espace entre deux boutons de la barre en COLONNE (gap-3) — même formule, autre gap. */
+export const ESPACE_COLONNE = 12;
+/** Marge intérieure totale de la barre dans son axe (px-2 × 2 en rangée, py-2 × 2 en colonne). */
 export const MARGE_BARRE = 16;
 /** Largeur d'une pilule texte du spectateur (« Demander à monter en vidéo »). */
 export const LARGEUR_PILULE = 212;
@@ -55,18 +57,21 @@ export interface Repartition {
 }
 
 /**
- * Répartit les commandes disponibles entre la barre et le menu ⋮ selon la largeur.
- * Le bouton ⋮ est TOUJOURS réservé (il porte au moins « Quitter »). Jamais de
- * débordement horizontal : ce qui ne tient pas descend dans le menu.
+ * Répartit les commandes disponibles entre la barre et le menu ⋮ selon la place dans
+ * l'AXE de la barre (largeur en rangée, hauteur en colonne). Le bouton ⋮ est TOUJOURS
+ * réservé (il porte au moins « Quitter »). Jamais de débordement : ce qui ne tient pas
+ * descend dans le menu. Formule : MARGE + ⋮ + n × (bouton + espace) ≤ place.
  *
  * @param candidats commandes réellement disponibles pour cet utilisateur
- * @param largeur   largeur utile de la zone (px) ; `Infinity` = pas de contrainte (colonne)
- * @param largeurs  largeur propre d'une commande si elle n'est pas un bouton rond
+ * @param largeur   place utile dans l'axe (px) ; `Infinity` = pas de contrainte
+ * @param largeurs  taille propre d'une commande si elle n'est pas un bouton rond
+ * @param espace    gap entre boutons : ESPACE_BOUTONS (rangée, gap-2) ou ESPACE_COLONNE (gap-3)
  */
 export function repartirCommandes(
   candidats: readonly CommandeId[],
   largeur: number,
   largeurs: Partial<Record<CommandeId, number>> = {},
+  espace: number = ESPACE_BOUTONS,
 ): Repartition {
   const uniques = ORDRE_COMMANDES.filter((c) => candidats.includes(c));
   const place = (Number.isFinite(largeur) ? Math.max(0, largeur) : Number.MAX_SAFE_INTEGER)
@@ -75,7 +80,7 @@ export function repartirCommandes(
   const gardees = new Set<CommandeId>();
   for (const c of PRIORITE_COMMANDES) {
     if (!uniques.includes(c)) continue;
-    const l = (largeurs[c] ?? TAILLE_BOUTON) + ESPACE_BOUTONS;
+    const l = (largeurs[c] ?? TAILLE_BOUTON) + espace;
     if (utilise + l <= place) { gardees.add(c); utilise += l; }
   }
   return {
@@ -86,6 +91,43 @@ export function repartirCommandes(
 
 /** Largeur sous laquelle on applique la mise en page « téléphone » (= breakpoint sm). */
 export const SEUIL_MOBILE = 640;
+
+export interface DispositionBarre {
+  orientation: 'verticale';
+  cote: 'droite';
+  /**
+   * Largeur réservée à droite pour la colonne : 0,75 rem de marge au bord + 2,75 rem de
+   * bouton (44 px) + 0,25 rem d'air = 3,75 rem (60 px). Le chat, le champ et les
+   * vignettes s'arrêtent là : rien ne passe sous la barre.
+   */
+  reserveDroite: string;
+}
+
+/** Colonne réservée à droite pour la barre verticale (voir DispositionBarre). */
+export const RESERVE_DROITE = '3.75rem';
+
+/**
+ * 🎛️ Barre v2 (28/09) : la barre du Live est une COLONNE À DROITE de la vidéo, sur
+ * téléphone comme sur ordinateur, en vue normale comme en plein écran. En bas, elle
+ * disputait la place au chat et au champ, et poussait tout vers le haut (sur la vidéo).
+ * À droite, elle ne prend qu'une bande de 60 px ; la hauteur mesurée décide de ce qui
+ * tient, le reste va dans ⋮. Même réponse pour toutes les tailles : une seule règle.
+ */
+export function dispositionBarre(_e: { largeur: number; hauteur: number; pleinEcran: boolean }): DispositionBarre {
+  return { orientation: 'verticale', cote: 'droite', reserveDroite: RESERVE_DROITE };
+}
+
+/**
+ * Bord gauche de l'IMAGE réelle d'une vidéo `object-contain` centrée dans la scène
+ * (plein écran). Sur un grand écran, une image portrait (téléphone de l'hôte) ou 4:3 laisse
+ * des bandes noires : le chat et le champ, plaqués au bord de la scène, y tombaient.
+ * On les ancre au bord de l'image. Ratio inconnu (0 / NaN) : aucune hypothèse, bord de scène.
+ */
+export function ancrageImage(e: { largeur: number; hauteur: number; ratio: number }): { gauche: number } {
+  const { largeur, hauteur, ratio } = e;
+  if (!(ratio > 0) || !(largeur > 0) || !(hauteur > 0)) return { gauche: 0 };
+  return { gauche: Math.max(0, Math.round((largeur - hauteur * ratio) / 2)) };
+}
 
 export interface EntreeZone {
   /** Largeur mesurée de la zone caméra (px). */
@@ -115,6 +157,8 @@ export interface ZoneCommentaires {
   reactionsLargeur: string;
   /** Hors plein écran : espace réservé sous les vignettes pour ne pas les recouvrir. */
   reserveBas: string;
+  /** Colonne de la barre verticale, à droite : le chat et le champ s'arrêtent avant. */
+  reserveDroite: string;
   /** Hors plein écran : hauteur minimale de la zone caméra (le chat a besoin de place). */
   hauteurMin?: string;
   /**
@@ -144,11 +188,13 @@ export function zoneCommentaires(e: EntreeZone): ZoneCommentaires {
   const chatHauteurMax = reduit ? (e.pleinEcran ? '25%' : '7rem') : (e.pleinEcran ? '38%' : '40%');
   const inputLargeurMax = mobile ? '100%' : '24rem';
   const reactionsLargeur = mobile ? '3rem' : '3.5rem';
-  // Barre seule ≈ 4 rem ; barre + champ + chat réduit ≈ 14 rem.
-  const reserveBas = e.pleinEcran ? '0px' : (reduit && avecCalques ? '14rem' : '4rem');
+  // Barre v2 : la barre est à DROITE, elle ne réserve plus 4 rem en bas.
+  // Champ + chat réduit ≈ 10 rem (hors plein écran, plusieurs caméras).
+  const reserveBas = e.pleinEcran ? '0px' : (reduit && avecCalques ? '10rem' : '0px');
+  const { reserveDroite } = dispositionBarre({ largeur: e.largeur, hauteur: 0, pleinEcran: e.pleinEcran });
   const hauteurMin = e.pleinEcran || !avecCalques ? undefined : (mobile ? '26rem' : '22rem');
   const reservePrompteur = !e.pleinEcran && e.prompteurOuvert ? '16rem' : '0px';
-  return { mobile, reduit, chatLargeurMax, chatHauteurMax, inputLargeurMax, reactionsLargeur, reserveBas, hauteurMin, reservePrompteur };
+  return { mobile, reduit, chatLargeurMax, chatHauteurMax, inputLargeurMax, reactionsLargeur, reserveBas, reserveDroite, hauteurMin, reservePrompteur };
 }
 
 /**

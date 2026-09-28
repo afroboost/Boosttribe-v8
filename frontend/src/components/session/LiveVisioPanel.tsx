@@ -4,7 +4,7 @@ import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/Sou
 import { CameraTile } from '@/components/session/CameraTile';
 import { LiveControls } from '@/components/session/LiveControls';
 import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
-import { zoneCommentaires, colonnesGrille } from '@/lib/liveControls';
+import { zoneCommentaires, colonnesGrille, dispositionBarre, ancrageImage } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -213,15 +213,21 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
     const id = requestAnimationFrame(ramenerBarre);
     return () => cancelAnimationFrame(id);
   }, [prompteurOuvert, camFullscreen]);
-  // 📏 Largeur RÉELLE de la zone caméra : décide ce qui tient dans la barre et la place du
-  //    chat. Mise à jour seulement si elle change (pas de setState à l'identique → pas de boucle).
+  // 📏 Largeur ET hauteur RÉELLES de la zone caméra : la largeur décide la place du chat,
+  //    la hauteur ce qui tient dans la barre verticale (barre v2). Mises à jour seulement si
+  //    elles changent (pas de setState à l'identique → pas de boucle). La barre est `absolute` :
+  //    sa répartition ne change pas la hauteur mesurée.
   const [largeurZone, setLargeurZone] = useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 1280));
+  const [hauteurZone, setHauteurZone] = useState<number>(() => (typeof window !== 'undefined' ? window.innerHeight : 720));
   useLayoutEffect(() => {
     const el = camAreaRef.current;
     if (!el) return;
     const mesurer = () => {
-      const l = Math.round(el.getBoundingClientRect().width);
+      const r = el.getBoundingClientRect();
+      const l = Math.round(r.width);
+      const h = Math.round(r.height);
       if (l > 0) setLargeurZone((p) => (p === l ? p : l));
+      if (h > 0) setHauteurZone((p) => (p === h ? p : h));
     };
     mesurer();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(mesurer) : null;
@@ -293,6 +299,26 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
     avecCalques,
     prompteurOuvert: prompteurOuvert && !!prompteurTiroirNode,
   });
+  // 🎛️ Barre v2 : colonne à droite, partout. Chat, champ, tiroir du prompteur et texte du
+  //    prompteur s'arrêtent avant elle (`droiteCalques`) — rien ne passe sous un bouton.
+  const barre = dispositionBarre({ largeur: largeurZone, hauteur: hauteurZone, pleinEcran: camFullscreen });
+  const droiteCalques = camFullscreen ? `calc(${zone.reserveDroite} + env(safe-area-inset-right))` : zone.reserveDroite;
+  // Plein écran : l'image est `object-contain` centrée. Sur grand écran, une image portrait
+  // ou 4:3 laisse des bandes noires : chat + champ s'ancrent au bord gauche de l'IMAGE.
+  // Ratio lu sur la piste (width/height, sinon aspectRatio) ; inconnu → bord de la scène.
+  // Borné pour laisser au moins 340 px (chat + barre) à droite de l'ancre.
+  const ratioImage = (() => {
+    if (!camFullscreen || !fsBig) return 0;
+    try {
+      const st = streamFor(fsBig)?.getVideoTracks()[0]?.getSettings();
+      return st?.width && st?.height ? st.width / st.height : (st?.aspectRatio || 0);
+    } catch { return 0; }
+  })();
+  const ancre = ancrageImage({ largeur: largeurZone, hauteur: hauteurZone, ratio: ratioImage });
+  const gaucheCalques = Math.min(ancre.gauche, Math.max(0, largeurZone - 340));
+  // Image centrée : la bande noire de droite = celle de gauche. Les réactions (bout droit de
+  // la pile) restent au bord de l'IMAGE, jamais au-delà de la colonne de la barre.
+  const droitePile = gaucheCalques > 0 ? `max(${gaucheCalques}px, ${droiteCalques})` : droiteCalques;
   const chatVisible = !!chatOverlayNode && !commentairesMasques;
   const inputVisible = !!commentInputNode && !commentairesMasques;
 
@@ -363,7 +389,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'relative p-3'}
         /* Hors plein écran : sous les vignettes, la place de la barre (et du chat s'il y a
            plusieurs caméras) — les personnes filmées ne sont jamais recouvertes. */
-        style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})` }}
+        style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`, paddingRight: `calc(0.25rem + ${zone.reserveDroite})` }}
         data-testid="visio-camera-area"
       >
         {camFullscreen ? (
@@ -389,14 +415,17 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               )}
             </div>
             {timerNode}
-            {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle. */}
-            {prompteurNode}
+            {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle.
+                Borné à gauche de la barre verticale : aucune ligne sous un bouton. */}
+            <div className="pointer-events-none absolute inset-y-0 left-0" style={{ right: droiteCalques }} data-testid="visio-prompteur-texte">
+              {prompteurNode}
+            </div>
             {/* ✍️ …et on peut l'ÉCRIRE là aussi, sans sortir du plein écran. Jamais sur le
                 centre de l'image (le visage) — QA 28/09 : à 55 % de haut il le couvrait.
                 Téléphone / tablette : moitié BASSE ; grand écran : moitié DROITE. */}
             <div
-              className={`pointer-events-none absolute z-[135] ${largeurZone < 1024 ? 'inset-x-0 top-1/2' : 'left-1/2 right-0 top-0'}`}
-              style={{ bottom: 'env(safe-area-inset-bottom)' }}
+              className={`pointer-events-none absolute z-[135] ${largeurZone < 1024 ? 'left-0 top-1/2' : 'left-1/2 top-0'}`}
+              style={{ bottom: 'env(safe-area-inset-bottom)', right: droiteCalques }}
               data-testid="visio-prompteur-place"
             >
               {prompteurTiroirNode}
@@ -434,8 +463,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             ))}
           </div>
         )}
-        {/* Hors plein écran aussi : le texte se lit SUR l'aperçu, jamais à côté. */}
-        {!camFullscreen && prompteurNode}
+        {/* Hors plein écran aussi : le texte se lit SUR l'aperçu, jamais à côté (ni sous la barre). */}
+        <div className="pointer-events-none absolute inset-y-0 left-0" style={{ right: droiteCalques }}>
+          {!camFullscreen && prompteurNode}
+        </div>
         {/* ⏺ Badge discret « ● REC 00:12:34 » — seule trace de l'enregistrement sur la vidéo. */}
         {badgeVisible(recordEtat) && (
           <span className="pointer-events-none absolute top-4 left-4 z-20 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur text-[11px] font-semibold text-[var(--bt-accent)] tabular-nums" role="status" aria-live="off" data-testid="record-badge">
@@ -445,8 +476,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         {/* Hors plein écran, le panneau occupe une place RÉSERVÉE sous les vignettes
             (`reservePrompteur`) : il ne recouvre plus les personnes filmées. */}
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-[135]"
-          style={{ height: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})` }}
+          className="pointer-events-none absolute left-0 bottom-0 z-[135]"
+          style={{ height: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`, right: droiteCalques }}
           data-testid="visio-prompteur-place"
         >
           {!camFullscreen && prompteurTiroirNode}
@@ -454,86 +485,35 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
 
         {/* 🎛️ COUCHE LIVE — UNE seule, dans les DEUX modes (le plein écran prend cette zone pour
             cible, donc tout ce qui est ici le suit). Transparente aux clics, sauf ses éléments.
-            Du bas vers le haut : barre de commandes → musique (plein écran) → champ commentaire
-            → vignettes des invités (plein écran) → flux de chat (gauche) + réactions (droite).
+            Barre v2 (28/09) : la barre est une COLONNE À DROITE (dispositionBarre), centrée en
+            hauteur ; ce qui ne tient pas en hauteur passe dans ⋮. En bas à GAUCHE, une pile
+            séparée : flux de chat (+ réactions à sa droite) → vignettes des invités (plein
+            écran) → champ commentaire → musique (plein écran). Elle s'arrête à `droiteCalques`
+            (jamais sous la barre) et, en plein écran, part du bord gauche de l'IMAGE.
             z-[115] : au-dessus de l'overlay du prompteur (z-[112]), sous ses tiroirs (z-[140]). */}
         <div
-          className="pointer-events-none absolute z-[115] inset-0 flex flex-col justify-end gap-2"
-          style={camFullscreen ? {
-            paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
-            paddingLeft: 'env(safe-area-inset-left)',
-            paddingRight: 'env(safe-area-inset-right)',
-          } : { paddingBottom: '0.25rem' }}
+          className="pointer-events-none absolute z-[115] inset-0"
           data-testid="visio-calques"
           data-mobile={zone.mobile ? 'true' : 'false'}
           data-reduit={zone.reduit ? 'true' : 'false'}
+          data-barre={barre.orientation}
         >
-          {/* Voile léger sous les commandes (plein écran : la vidéo va jusqu'en bas) — lisibilité
-              sans bandeau opaque. Hors plein écran, la barre a déjà sa place sous les vignettes. */}
+          {/* Voile léger en bas (plein écran : la vidéo va jusqu'en bas) — lisibilité du chat
+              sans bandeau opaque. */}
           {camFullscreen && (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 max-h-full bg-gradient-to-t from-black/55 via-black/20 to-transparent" aria-hidden="true" />
           )}
 
-          {/* 3) Chat (gauche) + 4) réactions (droite) — hauteur bornée, jamais sur les invités. */}
-          {(chatVisible || reactionsNode) && (
-            <div className="relative flex items-end justify-between gap-2 px-2 min-h-0" style={{ height: zone.chatHauteurMax }} data-testid="visio-calque-haut">
-              {chatVisible ? (
-                <div className="pointer-events-none min-w-0 h-full overflow-hidden" style={{ width: '100%', maxWidth: zone.chatLargeurMax }} data-testid="visio-calque-chat">
-                  {chatOverlayNode}
-                </div>
-              ) : <span />}
-              {reactionsNode && (
-                <div className="pointer-events-none shrink-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
-                  {reactionsNode}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 1) Invités en vignettes (plein écran) : taper = passe en grand. */}
-          {camFullscreen && fsOthers.length > 0 && (
-            <div className="pointer-events-auto relative flex gap-2 overflow-x-auto px-2" data-testid="visio-fs-thumbs">
-              {fsOthers.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className="w-24 flex-shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bt-accent)]"
-                  onClick={() => setSpotlightId(p.id)}
-                  aria-label={`Afficher ${p.name} en grand`}
-                  data-testid="visio-fs-thumb"
-                >
-                  <CameraTile
-                    name={p.name}
-                    stream={streamFor(p)}
-                    isLocal={p.id === myUserId}
-                    micActive={p.isMicActive}
-                    isHost={p.isHost}
-                    avatarUrl={p.avatarUrl}
-                  />
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* Champ commentaire : pleine largeur sur téléphone, ≤ 24 rem à gauche sur ordinateur. */}
-          {inputVisible && (
-            <div className="pointer-events-auto relative px-2 w-full" style={{ maxWidth: zone.inputLargeurMax }} data-testid="visio-calque-input">
-              {commentInputNode}
-            </div>
-          )}
-
-          {/* 🎵 Musique atteignable sans sortir du plein écran. */}
-          {audioNode && camFullscreen && (
-            <div className="pointer-events-none relative flex justify-center px-3" data-testid="visio-fs-audio">
-              <div className="pointer-events-auto w-full max-w-sm">{audioNode}</div>
-            </div>
-          )}
-
-          {/* 2) LA barre de commandes — même composant en vue normale et en plein écran. */}
+          {/* 2) LA barre de commandes — même composant en vue normale et en plein écran,
+              verticale à droite. Rendue HORS de la pile du chat. */}
           <LiveControls
             pleinEcran={camFullscreen}
             largeur={largeurZone}
-            className="relative self-center"
+            orientation={barre.orientation}
+            /* Hauteur utile de la colonne : zone − 0,75 rem en haut et en bas. */
+            hauteur={Math.max(0, hauteurZone - 24)}
+            className="absolute top-1/2 -translate-y-1/2"
+            style={{ right: camFullscreen ? 'calc(0.75rem + env(safe-area-inset-right))' : '0.75rem' }}
             micActive={micActive}
             onToggleMic={onToggleMic}
             cameraOn={cameraOn}
@@ -575,6 +555,74 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             onLeaveLive={onLeaveLive}
             onReduce={camFullscreen ? exitCamFullscreen : undefined}
           />
+
+          {/* Pile bas-gauche : chat, invités, champ, musique — à gauche de la barre. */}
+          <div
+            className="pointer-events-none absolute bottom-0 flex flex-col justify-end gap-2"
+            style={{
+              left: `${gaucheCalques}px`,
+              right: droitePile,
+              top: 0,
+              paddingBottom: camFullscreen ? 'max(0.5rem, env(safe-area-inset-bottom))' : '0.5rem',
+              paddingLeft: camFullscreen && gaucheCalques === 0 ? 'env(safe-area-inset-left)' : undefined,
+            }}
+            data-testid="visio-calques-bas"
+          >
+            {/* 3) Chat (gauche) + 4) réactions (droite) — hauteur bornée, jamais sur les invités. */}
+            {(chatVisible || reactionsNode) && (
+              <div className="relative flex items-end justify-between gap-2 px-2 min-h-0" style={{ height: zone.chatHauteurMax }} data-testid="visio-calque-haut">
+                {chatVisible ? (
+                  <div className="pointer-events-none min-w-0 h-full overflow-hidden" style={{ width: '100%', maxWidth: zone.chatLargeurMax }} data-testid="visio-calque-chat">
+                    {chatOverlayNode}
+                  </div>
+                ) : <span />}
+                {reactionsNode && (
+                  <div className="pointer-events-none shrink-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
+                    {reactionsNode}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 1) Invités en vignettes (plein écran) : taper = passe en grand. */}
+            {camFullscreen && fsOthers.length > 0 && (
+              <div className="pointer-events-auto relative flex gap-2 overflow-x-auto px-2" data-testid="visio-fs-thumbs">
+                {fsOthers.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="w-24 flex-shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bt-accent)]"
+                    onClick={() => setSpotlightId(p.id)}
+                    aria-label={`Afficher ${p.name} en grand`}
+                    data-testid="visio-fs-thumb"
+                  >
+                    <CameraTile
+                      name={p.name}
+                      stream={streamFor(p)}
+                      isLocal={p.id === myUserId}
+                      micActive={p.isMicActive}
+                      isHost={p.isHost}
+                      avatarUrl={p.avatarUrl}
+                    />
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Champ commentaire : pleine largeur de la pile sur téléphone, ≤ 24 rem sur ordinateur. */}
+            {inputVisible && (
+              <div className="pointer-events-auto relative px-2 w-full" style={{ maxWidth: zone.inputLargeurMax }} data-testid="visio-calque-input">
+                {commentInputNode}
+              </div>
+            )}
+
+            {/* 🎵 Musique atteignable sans sortir du plein écran. */}
+            {audioNode && camFullscreen && (
+              <div className="pointer-events-none relative flex justify-center px-3" data-testid="visio-fs-audio">
+                <div className="pointer-events-auto w-full max-w-sm">{audioNode}</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

@@ -57,6 +57,7 @@ test('la marque se résout depuis REACT_APP_BRAND, Boosttribe par défaut', () =
 const FICHIERS_LIVE = [
   ['components', 'session', 'LiveVisioPanel.tsx'],
   ['components', 'session', 'VisioControlBar.tsx'],
+  ['components', 'session', 'LiveControls.tsx'],
   ['components', 'session', 'PrompteurOverlay.tsx'],
   ['components', 'session', 'TiroirPrompteur.tsx'],
   ['components', 'session', 'PanneauPrompteur.tsx'],
@@ -112,16 +113,24 @@ test('le bouton Prompteur ne dépend pas de la caméra : présent caméra coupé
   const barre = codeSeul(BARRE);
   const bloc = barre.slice(barre.indexOf('{onTogglePrompteur && ('), barre.indexOf('data-testid="visio-fs-prompteur"'));
   assert.ok(!bloc.includes('cameraOn'), 'aucune condition cameraOn autour du bouton plein écran');
-  const panel = codeSeul(PANEL);
-  const bloc2 = panel.slice(panel.indexOf('{onTogglePrompteur && ('), panel.indexOf('data-testid="visio-prompteur-toggle"'));
-  assert.ok(!bloc2.includes('cameraOn'), 'aucune condition cameraOn autour du bouton du panneau');
+  // Barre unique (28/09) : la commande Prompteur ne dépend que de sa bascule.
+  const lc = codeSeul(lire('components', 'session', 'LiveControls.tsx'));
+  assert.ok(lc.includes("if (onTogglePrompteur) candidats.push('prompteur');"), 'aucune condition cameraOn sur la commande');
+  const bloc2 = lc.slice(lc.indexOf("{enBarre('prompteur') && ("), lc.indexOf("'visio-prompteur-toggle'}"));
+  assert.ok(bloc2.length > 0 && !bloc2.includes('cameraOn'), 'aucune condition cameraOn autour du bouton du panneau');
 });
 
 test('plein écran : prompteur, tiroir et musique restent DANS le nœud plein écran', () => {
   const code = codeSeul(PANEL);
   const fs_ = code.slice(code.indexOf('camFullscreen ? ('), code.indexOf(') : spotlightP ? ('));
-  for (const attendu of ['<VisioControlBar', 'onTogglePrompteur={onTogglePrompteur}', '{prompteurNode}', '{prompteurTiroirNode}', 'data-testid="visio-fs-audio"']) {
+  for (const attendu of ['{prompteurNode}', '{prompteurTiroirNode}']) {
     assert.ok(fs_.includes(attendu), `plein écran contient ${attendu}`);
+  }
+  // Barre unique (28/09) : la barre et la musique sont dans la couche commune, DANS la
+  // zone caméra (cible du plein écran), rendues dans les deux modes.
+  const zone = code.slice(code.indexOf('ref={camAreaRef}'), code.indexOf('data-testid="visio-audio"'));
+  for (const attendu of ['<LiveControls', 'onTogglePrompteur={onTogglePrompteur}', 'data-testid="visio-fs-audio"', '{audioNode && camFullscreen && (']) {
+    assert.ok(zone.includes(attendu), `zone caméra contient ${attendu}`);
   }
 });
 

@@ -18,7 +18,8 @@ import { lire, codeSeul } from './lireSource.mjs';
 
 const PANEL = lire('components', 'session', 'RecordPanel.tsx');
 const TYPES = lire('components', 'session', 'RecordTypes.ts');
-const VISIO = lire('components', 'session', 'LiveVisioPanel.tsx');
+// Panneau + barre unique (LiveControls) : les boutons vivent dans la barre depuis le 28/09.
+const VISIO = lire('components', 'session', 'LiveVisioPanel.tsx') + lire('components', 'session', 'LiveControls.tsx');
 const MENU = lire('components', 'session', 'MenuActions.tsx');
 const CODE = codeSeul(PANEL);
 
@@ -32,8 +33,10 @@ test('contrat : états, capacité, qualités, résultat, rappels — exactement 
 
 // ── Entrée ⋮ + badge ─────────────────────────────────────────────────────────
 test('entrée : item ⋮ « Enregistrer » (Disc) après Diffuser, Arrêter (Square) en enregistrement, fermeture après clic', () => {
-  const items = VISIO.slice(VISIO.indexOf('<MenuActions'), VISIO.indexOf("id: 'quitter'"));
-  assert.ok(items.indexOf("id: 'broadcast'") < items.indexOf("id: 'record'"), 'après Diffuser en direct');
+  // « Diffuser » est une commande de la BARRE (elle ne descend dans ⋮ que faute de place,
+  // en tête du menu) : l'item Enregistrer (panneau) reste dans ⋮, avant Embellir.
+  const items = VISIO.slice(VISIO.indexOf('const items: MenuAction[]'), VISIO.indexOf("id: 'quitter'"));
+  assert.ok(items.indexOf('...itemsDebordement') < items.indexOf("id: 'record'"), 'après les commandes débordées (dont Diffuser)');
   assert.ok(items.indexOf("id: 'record'") < items.indexOf("id: 'embellir'"), 'avant Embellir');
   assert.ok(items.includes("testId: 'visio-record'"), 'data-testid conservé');
   assert.ok(items.includes("recordEtat === 'enregistrement' ? <Square"), 'icône Square quand ça tourne');
@@ -150,8 +153,9 @@ test('réservé à l’hôte : un spectateur ne voit pas le bouton', () => {
   const code = codeSeul(VISIO);
   const i = code.indexOf('data-testid="visio-record-direct"');
   const bloc = code.slice(Math.max(0, i - 1800), i);
-  assert.ok(/\{canManageStage && \(onRecordDirect \|\| onToggleRecord\) && \(/.test(bloc),
-    'le rendu est gardé par canManageStage');
+  assert.ok(/\{enBarre\('record'\) && \(/.test(bloc), 'rendu seulement si la commande est retenue');
+  assert.ok(/if \(canManageStage && \(onRecordDirect \|\| onToggleRecord\)\) candidats\.push\('record'\)/.test(code),
+    'la commande n’existe que pour qui gère la scène (canManageStage)');
 });
 
 test('l’état actif ne tient pas qu’à la couleur (accessibilité)', () => {

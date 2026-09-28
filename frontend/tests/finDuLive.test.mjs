@@ -78,10 +78,14 @@ test('structurel : les participants sont prévenus, et l’hôte a un vrai bouto
   assert.ok(page.includes(`event: EVENEMENT_LIVE_TERMINE`), 'le message part');
   assert.ok(page.includes(`.on('broadcast', { event: EVENEMENT_LIVE_TERMINE }`), 'et il est écouté');
   assert.ok(page.includes('data-testid="live-termine"'), 'un écran de fin, pas une image figée');
-  const panel = codeSeul(lire('components', 'session', 'LiveVisioPanel.tsx'));
+  // Barre unique (28/09) : le bouton vit dans LiveControls ; il est réservé à l'hôte
+  // PROPRIÉTAIRE (`estHote`) — un co-hôte gère la scène mais ne termine pas pour tous.
+  const panel = codeSeul(lire('components', 'session', 'LiveControls.tsx'));
   assert.ok(panel.includes('data-testid="visio-terminer-live"'), 'bouton visible dans la barre');
-  assert.ok(/\{canManageStage && onTerminerLive && \(/.test(panel), 'hôte uniquement');
+  assert.ok(panel.includes('const peutTerminer = !!onTerminerLive && (estHote ?? canManageStage);'), 'hôte uniquement');
+  assert.ok(panel.includes("if (peutTerminer) candidats.push('terminer');"), 'la commande n’existe que pour l’hôte');
   assert.ok(panel.includes('window.confirm('), 'une action irréversible demande confirmation');
+  assert.ok(codeSeul(lire('components', 'session', 'LiveVisioPanel.tsx')).includes('estHote={estHote}'), 'le panneau transmet estHote');
   assert.equal(EVENEMENT_LIVE_TERMINE, 'LIVE_ENDED');
 });
 

@@ -117,10 +117,14 @@ test('le panneau est PRIVÉ : rendu hors de la zone caméra, et jamais diffusé'
     'la seule réserve honnête est écrite, pas cachée');
 });
 
-test('réservé à l’hôte des DEUX côtés : bouton gardé, et panneau non rendu pour un spectateur', () => {
+test('réservé à l’hôte des DEUX côtés : aucun bouton dans la barre, et panneau non rendu pour un spectateur', () => {
+  // Refonte « barre Live unique » (28/09) : l'assistant vit DANS le panneau Prompteur,
+  // réservé à qui présente. La barre (vue par les spectateurs aussi) n'a donc plus AUCUN
+  // bouton assistant : rien à garder, rien qui puisse fuir chez un spectateur.
   const visio = codeSeul(lire('components', 'session', 'LiveVisioPanel.tsx'));
-  const i = visio.indexOf('data-testid="visio-assistant"');
-  assert.ok(i > 0 && /\{canManageStage && onToggleAssistant && \(/.test(visio.slice(i - 700, i)));
+  const barre = codeSeul(lire('components', 'session', 'LiveControls.tsx'));
+  assert.ok(!visio.includes('visio-assistant') && !barre.includes('visio-assistant'), 'aucun bouton assistant dans la barre');
+  assert.ok(!/onToggleAssistant/.test(barre), 'la barre ne reçoit même pas la bascule');
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   assert.ok(page.includes('const assistantNode: React.ReactNode = canShare ?'),
     'aucun panneau monté chez un spectateur');

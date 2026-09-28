@@ -41,7 +41,8 @@ test('l overlay reste visible EN PLEIN ÉCRAN', () => {
     'la branche plein écran rend le prompteur');
   assert.ok(code.includes('onTogglePrompteur={onTogglePrompteur}'),
     'la barre du plein écran reçoit la bascule');
-  assert.ok(BARRE.includes('visio-fs-prompteur'),
+  // Barre unique (28/09) : LiveControls, avec l'id historique du plein écran.
+  assert.ok(lire('components', 'session', 'LiveControls.tsx').includes("'visio-fs-prompteur'"),
     'un bouton Prompteur existe dans la barre du plein écran');
 });
 

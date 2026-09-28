@@ -17,7 +17,8 @@ import { lire, codeSeul } from './lireSource.mjs';
 
 const DRAWER = lire('components', 'session', 'BroadcastDrawer.tsx');
 const TYPES = lire('components', 'session', 'BroadcastTypes.ts');
-const VISIO = lire('components', 'session', 'LiveVisioPanel.tsx');
+// Panneau + barre unique (LiveControls) : les boutons vivent dans la barre depuis le 28/09.
+const VISIO = lire('components', 'session', 'LiveVisioPanel.tsx') + lire('components', 'session', 'LiveControls.tsx');
 const CODE = codeSeul(DRAWER);
 
 // ── Contrat ──────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ test('partage d’écran indisponible : bouton désactivé avec « Indisponible 
   assert.ok(VISIO.includes('disabled={!screenShareDisponible}'), 'désactivé');
   assert.ok(VISIO.includes("'Indisponible sur cet appareil'"), 'texte court');
   assert.ok(VISIO.includes("hidden sm:inline-flex opacity-40 cursor-not-allowed"), 'masqué sur mobile, grisé sur desktop');
-  assert.ok(VISIO.includes('data-testid="visio-camera-toggle"') && VISIO.includes('data-testid="visio-camera-flip"'), 'caméra / bascule intactes');
+  assert.ok(VISIO.includes("'visio-camera-toggle'") && VISIO.includes("testId: 'visio-camera-flip'"), 'caméra / bascule intactes');
 });
 
 // ── Tiroir ───────────────────────────────────────────────────────────────────

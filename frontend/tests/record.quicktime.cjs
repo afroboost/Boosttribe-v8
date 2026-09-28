@@ -11,8 +11,6 @@
  *   terrain       rien à l'antenne (câblage SessionPage corrigé) → fichier non vide attendu ;
  *   terrain-hook  rien à l'antenne + ANCIEN câblage → le hook doit passer en « erreur », jamais un 0 octet « prêt » ;
  *   opfs          scène à l'antenne, OPFS + « Enregistrer sur mon appareil » (téléchargement capturé) ;
- *   fsa           File System Access : le sélecteur (geste requis, non automatisable) est remplacé par un
- *                 handle OPFS injecté — même API createWritable()/close() ; le fichier est ramené sur le Bureau ;
  *   unmount       démontage du hook pendant l'enregistrement → le fichier doit être FERMÉ (non vide).
  *   resolution    PREUVE résolution affichée = résolution encodée (terrain 20/09 : panneau « 1920×1080 »,
  *                 ffprobe 1280×720). Query libre via QS (ex. QS='?antenne=0&resolution=session&source=720'
@@ -38,17 +36,7 @@ const URL_BASE = (process.env.URL_BASE || 'http://localhost:5181') + '/tests/.ha
   const p = await ctx.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('console', m.type(), m.text()); });
-  const q = scenario === 'terrain' ? '?antenne=0' : scenario === 'terrain-hook' ? '?antenne=0&fixAntenne=0' : scenario === 'fsa' ? '?fsa=1' : scenario === 'resolution' ? (process.env.QS || '') : '';
-  if (scenario === 'fsa') {
-    // Le sélecteur FSA exige un geste : on le remplace par un handle OPFS injecté (même API createWritable).
-    await p.addInitScript(() => {
-      window.showSaveFilePicker = async (o) => {
-        const root = await navigator.storage.getDirectory();
-        const dir = await root.getDirectoryHandle('qa-fsa', { create: true });
-        window.__fsaNom = o.suggestedName; return dir.getFileHandle(o.suggestedName, { create: true });
-      };
-    });
-  }
+  const q = scenario === 'terrain' ? '?antenne=0' : scenario === 'terrain-hook' ? '?antenne=0&fixAntenne=0' : scenario === 'resolution' ? (process.env.QS || '') : '';
   await p.addInitScript(() => {
     const MR = window.MediaRecorder; window.__recs = [];
     const W = function (stream, opts) { const r = new MR(stream, opts); window.__recs.push(r); try { const s = stream.getVideoTracks()[0].getSettings(); r.__settingsAuStart = { width: s.width, height: s.height }; } catch { r.__settingsAuStart = null; } r.addEventListener('stop', () => { r.__stoppedAt = performance.now(); }); r.addEventListener('dataavailable', (e) => { r.__chunks = (r.__chunks || 0) + 1; r.__bytes = (r.__bytes || 0) + e.data.size; }); return r; };
@@ -101,10 +89,7 @@ const URL_BASE = (process.env.URL_BASE || 'http://localhost:5181') + '/tests/.ha
   }
   console.log('MediaRecorder final', JSON.stringify(await p.evaluate(() => { const r = window.__recs[0]; return { state: r.state, chunks: r.__chunks || 0, bytes: r.__bytes || 0, stoppedAt: r.__stoppedAt }; })));
   const dest = path.join(os.homedir(), 'Desktop', process.env.NOM_SORTIE || `qa-${scenario}.mp4`);
-  if (scenario === 'fsa') {
-    const b64 = await p.evaluate(async () => { const root = await navigator.storage.getDirectory(); const d = await root.getDirectoryHandle('qa-fsa'); const h = await d.getFileHandle(window.__fsaNom); const f = await h.getFile(); const buf = new Uint8Array(await f.arrayBuffer()); let s = ''; for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000)); return { size: f.size, b64: btoa(s) }; });
-    fs.writeFileSync(dest, Buffer.from(b64.b64, 'base64')); console.log('fichier FSA (handle OPFS injecté) taille', b64.size, '→', dest);
-  } else if (res.etat === 'pret') {
+  if (res.etat === 'pret') {
     const [dl] = await Promise.all([p.waitForEvent('download', { timeout: 15000 }), p.click('[data-testid=record-save]')]);
     await dl.saveAs(dest); console.log('téléchargé', dl.suggestedFilename(), '→', dest, fs.statSync(dest).size, 'octets');
   }

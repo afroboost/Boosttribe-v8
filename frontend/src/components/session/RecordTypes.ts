@@ -32,6 +32,8 @@ export interface RecResultat {
   dejaEcrit: boolean;
   emplacement?: string;
   sauvegarderSurAppareil: () => Promise<void>;
+  /** `true` = export réussi (copie écrite ou téléchargement lancé) : confirmation, plus de bouton d'export. */
+  exporte?: boolean;
 }
 
 /** DÉFAUT B — un reste OPFS : `complet` = terminé mais jamais téléchargé ; `partiel` = navigateur arrêté brutalement. */

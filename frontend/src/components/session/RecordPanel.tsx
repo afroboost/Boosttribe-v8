@@ -76,6 +76,11 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
         <p className="text-sm font-medium text-white flex items-center gap-2">
           <Check className="w-4 h-4 text-emerald-300" /> {resultat.dejaEcrit ? 'Fichier enregistré' : 'Enregistrement prêt'}
         </p>
+        {resultat.exporte && (
+          <p className="text-xs text-emerald-200 flex items-center gap-2" role="status" data-testid="record-exporte">
+            <Check className="w-3.5 h-3.5 shrink-0" /> Enregistré sur votre appareil
+          </p>
+        )}
         <dl className="text-xs text-white/70 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           <dt className="text-white/45">Nom</dt><dd className="truncate" data-testid="record-nom">{resultat.dejaEcrit && resultat.emplacement ? resultat.emplacement : resultat.nom}</dd>
           <dt className="text-white/45">Durée</dt><dd className="tabular-nums">{formatDureeRec(resultat.dureeSec)}</dd>
@@ -90,7 +95,7 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
         )}
       </div>
     );
-    principal = resultat.dejaEcrit || resultat.tailleOctets <= 0 ? (
+    principal = resultat.dejaEcrit || resultat.exporte || resultat.tailleOctets <= 0 ? (
       <button type="button" onClick={() => { recorder.fermerResultat(); onClose(); }} className="w-full h-11 rounded-full bg-white/10 text-white text-sm font-semibold hover:bg-white/20" data-testid="record-done">
         Fermer
       </button>

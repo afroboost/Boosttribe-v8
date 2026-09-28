@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  bitratePour, classerRestesOpfs, CLE_PREF_AUTO, detecterCapacite, exportAutorise, lirePrefAuto, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
+  bitratePour, classerRestesOpfs, apresExport, CLE_PREF_AUTO, detecterCapacite, exportAutorise, lirePrefAuto, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
   nomFichier, optionsEnregistreur, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie, type ResteOpfs,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
@@ -42,6 +42,8 @@ export interface RecResultat {
   dejaEcrit: boolean;
   emplacement?: string;
   sauvegarderSurAppareil: () => Promise<void>;
+  /** `true` après un export réussi : le temporaire est retiré, le panneau confirme et ne propose plus l'export. */
+  exporte?: boolean;
 }
 
 export interface UseProgramRecorderReturn {
@@ -375,7 +377,13 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       const base = { nom, dureeSec: dureeMs / 1000, tailleOctets: fini.taille, resolution: libelleResolution(res), resolutionSource: res.source, format: capacite.codec };
       // Fichier FERMÉ (`terminer()` a abouti) et non vide (verdict) : seul cas où l'export est proposé.
       const fichierFerme = true;
-      const peutExporter = () => exportAutorise({ etat: etatRef.current, fichierFerme, taille: fini.taille });
+      let exporte = false;
+      const peutExporter = () => exportAutorise({ etat: etatRef.current, fichierFerme, taille: fini.taille, exporte });
+      // Issue de l'export → état affiché (confirmation / bouton) via la règle pure `apresExport`.
+      const noterIssue = (issue: 'ecrit' | 'telecharge' | 'annule') => {
+        const a = apresExport({ exporte }, issue); exporte = a.exporte;
+        if (!demonteRef.current && a.exporte) { setResultat((r) => (r && r.nom === nom ? { ...r, exporte: true } : r)); setAvis(a.message); }
+      };
       let resultat: RecResultat;
       if (strategieRef.current === 'opfs') {
         const ref = opfsRef.current;
@@ -383,13 +391,14 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
           if (!ref || !peutExporter()) return;
           const f: File = await ref.handle.getFile();
           const r = await exporterFichier(f, nom);
+          noterIssue(r);
           if (r === 'annule') return; // le temporaire reste : nouvel essai possible
           // Le temporaire est retiré une fois la copie écrite / le téléchargement lancé (le blob est déjà lu).
           setTimeout(() => { ref.dossier.removeEntry(ref.nom).catch(() => { /* déjà retiré */ }); }, r === 'ecrit' ? 0 : 15_000);
         } };
       } else {
         const blob = fini.blob as Blob;
-        resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => { if (peutExporter()) await exporterFichier(blob, nom); } };
+        resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => { if (peutExporter()) noterIssue(await exporterFichier(blob, nom)); } };
       }
       if (!demonteRef.current) { setResultat(resultat); setEtat('pret'); setAvis(verdict.message); }
     } catch (e) {

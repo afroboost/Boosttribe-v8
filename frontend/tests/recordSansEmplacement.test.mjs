@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  choisirStrategie, detecterCapacite, exportAutorise, lirePrefAuto, doitDemarrerAuto, etapesEnregistrement, CLE_PREF_AUTO,
+  choisirStrategie, detecterCapacite, exportAutorise, apresExport, lirePrefAuto, doitDemarrerAuto, etapesEnregistrement, CLE_PREF_AUTO,
 } from './.build/recordLogic.mjs';
 import { lire, codeSeul } from './lireSource.mjs';
 
@@ -122,4 +122,36 @@ test('panneau : case « Enregistrer dès le démarrage » liée à autoStart/set
   assert.ok(/recorder\.setAutoStart\??\.?\(/.test(PANEL));
   assert.ok(PANEL.includes('data-testid="record-auto"'));
   assert.equal(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(PANEL), false, 'aucun emoji');
+});
+
+// ── Suite : après un export RÉUSSI, jamais un bouton qui ne fait rien ────────
+test('apresExport : écrit / téléchargé → exporté, confirmation, plus de bouton ; annulé → bouton toujours là', () => {
+  for (const issue of ['ecrit', 'telecharge']) {
+    const r = apresExport({ exporte: false }, issue);
+    assert.equal(r.exporte, true, issue);
+    assert.equal(r.boutonExport, false, issue);
+    assert.equal(r.message, 'Enregistré sur votre appareil', issue);
+  }
+  assert.deepEqual(apresExport({ exporte: false }, 'annule'), { exporte: false, boutonExport: true, message: null });
+  // Déjà exporté (temporaire supprimé) : une annulation ultérieure ne ressuscite pas le bouton.
+  assert.equal(apresExport({ exporte: true }, 'annule').boutonExport, false);
+  assert.equal(apresExport({ exporte: true }, 'annule').exporte, true);
+});
+
+test('exportAutorise refuse un fichier déjà exporté (temporaire supprimé)', () => {
+  assert.equal(exportAutorise({ etat: 'pret', fichierFerme: true, taille: 10, exporte: true }), false);
+  assert.equal(exportAutorise({ etat: 'pret', fichierFerme: true, taille: 10, exporte: false }), true);
+});
+
+test('hook + panneau : l’issue de l’export met à jour le résultat ; confirmation affichée, bouton masqué', () => {
+  assert.match(HOOK, /apresExport\(/);
+  assert.match(HOOK, /setResultat\(\(r\) =>/);
+  assert.match(TYPES, /exporte\?: boolean/);
+  assert.ok(PANEL.includes('data-testid="record-exporte"'), 'confirmation');
+  assert.ok(/resultat\.exporte/.test(PANEL), 'panneau lit resultat.exporte');
+});
+
+test('banc QuickTime : plus de scénario fsa', () => {
+  const qt = lire('..', 'tests', 'record.quicktime.cjs');
+  assert.equal(/'fsa'|\?fsa=1|__fsaNom/.test(qt), false);
 });

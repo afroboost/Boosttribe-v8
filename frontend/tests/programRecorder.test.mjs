@@ -89,7 +89,8 @@ test('arrêt SPONTANÉ du MediaRecorder (pistes finies) : écouté hors de arret
 test('un fichier de 0 octet n’est jamais « prêt » : le temporaire est retiré et l’état passe en erreur', () => {
   const fin = hook.slice(hook.indexOf('async function finaliser'), hook.indexOf('async function finaliser') + 3000);
   assert.match(fin, /verdict\.etat === 'erreur'/);
-  assert.match(fin, /removeEntry|remove\(\)/, 'le fichier vide (OPFS ou FSA) est retiré');
+  assert.match(fin, /verdict\.etat === 'erreur'\) \{\s*await ecrivain\?\.supprimer\(\)/, 'le fichier vide est retiré dans la branche erreur');
+  assert.match(hook, /async supprimer\(\) \{ try \{ await dossier\.removeEntry\(nom\)/, 'supprimer() OPFS = removeEntry');
 });
 
 test('démontage pendant un enregistrement : le fichier est FERMÉ (close), pas seulement le recorder stoppé', () => {

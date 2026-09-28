@@ -83,9 +83,20 @@ export function etapesEnregistrement(capacite: Pick<RecCapacite, 'supporte' | 's
   return ['capture', 'finalisation', 'export'];
 }
 
-/** « Enregistrer sur mon appareil » n'est proposé/exécuté que sur un fichier FINALISÉ (fermé) et non vide. */
-export function exportAutorise(e: { etat: string; fichierFerme: boolean; taille: number }): boolean {
-  return e.etat === 'pret' && e.fichierFerme === true && e.taille > 0;
+/** « Enregistrer sur mon appareil » n'est proposé/exécuté que sur un fichier FINALISÉ (fermé), non vide et pas encore exporté. */
+export function exportAutorise(e: { etat: string; fichierFerme: boolean; taille: number; exporte?: boolean }): boolean {
+  return e.etat === 'pret' && e.fichierFerme === true && e.taille > 0 && e.exporte !== true;
+}
+
+/**
+ * Issue d'un export : `ecrit` (sélecteur, copie fermée), `telecharge` (téléchargement lancé), `annule`.
+ * Après un export réussi, le temporaire OPFS est retiré : le bouton disparaît (jamais un bouton qui ne
+ * fait rien) et une confirmation le remplace. Annulé : le bouton reste, sauf si c'était déjà exporté.
+ */
+export type IssueExport = 'ecrit' | 'telecharge' | 'annule';
+export function apresExport(etat: { exporte: boolean }, issue: IssueExport): { exporte: boolean; boutonExport: boolean; message: string | null } {
+  const exporte = etat.exporte || issue === 'ecrit' || issue === 'telecharge';
+  return { exporte, boutonExport: !exporte, message: exporte ? 'Enregistré sur votre appareil' : null };
 }
 
 /** Option « Enregistrer dès le démarrage » (préférence locale de l'hôte). */

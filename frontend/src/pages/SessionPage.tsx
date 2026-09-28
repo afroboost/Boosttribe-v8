@@ -26,7 +26,8 @@ import { usePeerAudio } from '@/hooks/usePeerAudio';
 import { useAudioMixer } from '@/hooks/useAudioMixer';
 import { useMicrophone } from '@/hooks/useMicrophone';
 import type { AudioState, SyncState, RepeatMode } from '@/hooks/useAudioSync';
-import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSharedMedia, saveSessionPrivacy, saveAccessMode } from '@/lib/supabaseClient';
+import { isSupabaseConfigured, deleteTracks, savePlaylist, loadPlaylist, saveSharedMedia, saveSessionPrivacy, saveAccessMode, lireAccessMode } from '@/lib/supabaseClient';
+import { droitsApresChoixEntree, sauvegardeConfirmee, type ModeEntree } from '@/lib/accesSession';
 import { AccessModeSelector, type AccessMode } from '@/components/session/AccessModeSelector';
 import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
@@ -562,6 +563,13 @@ const CreateSessionView: React.FC<CreateSessionViewProps> = ({ onCreateSession, 
     </Card>
   </div>
 );
+
+/** 28/09 — relit l'état d'accès RÉELLEMENT enregistré : mode (même source que /session/info) +
+ *  droits des invités (même règle que la lecture de la page). `null` si illisible. */
+async function lireAccesSession(sid: string): Promise<{ mode: string; acces: string | null } | null> {
+  const [{ data }, acces] = await Promise.all([getSessionAccessInfo(sid), lireAccessMode(sid)]);
+  return data ? { mode: data.mode, acces } : null;
+}
 
 export const SessionPage: React.FC = () => {
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>();
@@ -1578,16 +1586,15 @@ export const SessionPage: React.FC = () => {
   // 🚪 Le type d'accès (guest/account) est-il RÉSOLU depuis la DB ? Le gating paywall doit l'attendre
   //    (sinon course : accessInfo backend arrive avant, accessMode vaut 'account' par défaut → faux paywall).
   const [accessModeResolved, setAccessModeResolved] = useState<boolean>(() => !isSupabaseConfigured);
-  const [savingAccessMode, setSavingAccessMode] = useState(false);
-  const handleAccessMode = useCallback(async (mode: AccessMode) => {
-    setAccessMode(mode);
-    if (!sessionId) return;
-    setSavingAccessMode(true);
-    const ok = await saveAccessMode(sessionId, mode, user?.id); // ⚠️ vérifier le retour (échec silencieux avant)
-    setSavingAccessMode(false);
-    if (ok) showToast(mode === 'guest' ? 'Accès sans inscription activé' : 'Accès avec inscription activé', 'success');
-    else showToast('Échec d\'enregistrement du mode d\'accès — réessaie', 'error');
-  }, [sessionId, user?.id, showToast]);
+  // 28/09 : la modale « Mode d'accès » travaille en BROUILLON — rien n'est écrit avant
+  //   « Enregistrer », et « Annuler » n'écrit rien (avant : le clic sur une carte de droits
+  //   écrivait aussitôt en base, « Annuler » ne pouvait rien annuler).
+  const [accessDraft, setAccessDraft] = useState<AccessMode>('account');
+  const choixManuelDroitsRef = useRef(false);   // l'hôte a choisi les droits pendant CETTE ouverture
+  const choisirDroitsInvites = useCallback((mode: AccessMode) => {
+    choixManuelDroitsRef.current = true;
+    setAccessDraft(mode);
+  }, []);
   // Invité = mode guest ET pas l'hôte → pas de chat ni de visio (écoute/lecture seule).
   const isGuestRestricted = accessMode === 'guest' && !isHost;
   // 🚪 Sécurité : un invité ne doit jamais être en Live Visio (coupe la visio si le mode passe en 'guest').
@@ -2065,6 +2072,31 @@ export const SessionPage: React.FC = () => {
     });
   }, [isHost, accessInfo, sessionId]);
 
+  // Ouvrir la modale : le brouillon repart de l'état ENREGISTRÉ.
+  const ouvrirModeAcces = useCallback(() => {
+    if (accessInfo) {
+      setModeDraft({
+        mode: accessInfo.mode,
+        price: accessInfo.price_chf != null ? String(accessInfo.price_chf) : '',
+        capacity: accessInfo.capacity != null ? String(accessInfo.capacity) : '',
+      });
+    }
+    setAccessDraft(accessMode);
+    choixManuelDroitsRef.current = false;
+    setShowSessionSettings(true);
+  }, [accessInfo, accessMode]);
+  // Choisir le mode d'entrée : passer en « Gratuit par lien » propose l'ACCÈS VISIO par défaut,
+  //   sauf si l'hôte a déjà choisi les droits lui-même dans cette ouverture.
+  const choisirModeEntree = useCallback((nouveau: ModeEntree) => {
+    const ancien = modeDraft.mode;
+    setAccessDraft((droits) => droitsApresChoixEntree({ ancien, nouveau, droits, choixManuel: choixManuelDroitsRef.current }));
+    setModeDraft((d) => ({ ...d, mode: nouveau }));
+  }, [modeDraft.mode]);
+  // Annuler : on ferme, rien n'est écrit ; le brouillon sera réinitialisé à la prochaine ouverture.
+  const annulerModeAcces = useCallback(() => {
+    setShowSessionSettings(false);
+  }, []);
+
   const handleSaveMode = useCallback(async () => {
     if (!sessionId) return;
     setSavingMode(true);
@@ -2075,20 +2107,24 @@ export const SessionPage: React.FC = () => {
         price_chf: modeDraft.mode === 'paid' ? Number(modeDraft.price) : null,
         capacity: modeDraft.mode === 'paid' && modeDraft.capacity ? Number(modeDraft.capacity) : null,
       });
-      // 🚪 Persister AUSSI le type d'accès (guest/account) sur le MÊME bouton « Enregistrer »
-      //    (avant : commité seulement au clic de carte, échec silencieux possible). Contrôle du retour.
-      const accessOk = await saveAccessMode(sessionId, accessMode, user?.id);
-      if (ok && accessOk) {
+      // 🚪 Les deux réglages sur le MÊME « Enregistrer », puis RELECTURE : jamais de faux succès
+      //    (une RLS qui filtre ou une écriture backend perdue se voit ici).
+      const accessOk = ok ? await saveAccessMode(sessionId, accessDraft, user?.id) : false;
+      const relu = ok && accessOk ? await lireAccesSession(sessionId) : null;
+      if (ok && accessOk && sauvegardeConfirmee({ mode: modeDraft.mode, acces: accessDraft }, relu)) {
+        setAccessMode(accessDraft);
         showToast('Mode d\'accès enregistré', 'success');
         setShowSessionSettings(false);
         await refreshAccess();
       } else {
-        showToast(error || (!accessOk ? 'Échec d\'enregistrement du type d\'accès (colonne DB ?)' : 'Échec'), 'error');
+        showToast(!ok ? (error || 'Échec d\'enregistrement du mode d\'entrée')
+          : !accessOk ? 'Échec d\'enregistrement des droits des invités — rien n\'a changé pour eux'
+          : 'Enregistrement non confirmé à la relecture — réessaie', 'error');
       }
     } finally {
       setSavingMode(false);
     }
-  }, [sessionId, modeDraft, accessMode, user?.id, refreshAccess, showToast]);
+  }, [sessionId, modeDraft, accessDraft, user?.id, refreshAccess, showToast]);
 
   // Listen for remote mute commands (for participants)
   useEffect(() => {
@@ -4760,22 +4796,23 @@ export const SessionPage: React.FC = () => {
               <Ticket size={20} style={{ color: 'var(--bt-accent-2)' }} /> Mode d'accès de la session
             </h2>
             <p className="text-white/50 text-sm mb-4">Choisis comment les participants accèdent à ce live.</p>
+            <p className="text-white/80 text-sm mb-2">Mode d'entrée</p>
             <div className="space-y-2 mb-4">
               {(([
                 // 💳 Le libellé ne doit pas laisser croire à une vente : ce crédit va à la
                 //    PLATEFORME, jamais au coach (POST /credits/spend ne crédite personne).
                 //    Seul le mode « Payante (billet CHF) » rémunère, via wallet + payout.
-                { v: 'open', label: "Ouverte (crédits d'accès)", desc: "1 crédit d'accès par participant. Ces crédits vont à la plateforme, pas à toi." },
+                { v: 'open', label: 'Avec crédits', desc: 'Les participants utilisent 1 crédit pour entrer.' },
                 // 💳 « Payante (billet CHF) » réservée aux coachs en mode commission (argent via la plateforme).
                 //    En abonnement, le coach encaisse lui-même via son lien/QR privé → on masque l'option.
                 ...(coachPaymentType === 'commission'
                   ? [{ v: 'paid', label: 'Payante (billet CHF)', desc: 'Tu fixes un prix par place ; billet requis.' }]
                   : []),
-                { v: 'private', label: 'Privée (lien/QR)', desc: 'Invités gratuits via le lien — ils voient ta vidéo. Encaisse toi-même hors plateforme.' },
+                { v: 'private', label: 'Gratuit par lien / QR', desc: 'Aucun crédit ni compte requis pour les invités.' },
               ]) as { v: 'open' | 'paid' | 'private'; label: string; desc: string }[]).map((opt) => (
                 <button
                   key={opt.v}
-                  onClick={() => setModeDraft((d) => ({ ...d, mode: opt.v }))}
+                  onClick={() => choisirModeEntree(opt.v)}
                   className={`w-full text-left p-3 rounded-xl border transition-colors ${
                     modeDraft.mode === opt.v ? 'border-[var(--bt-accent)] bg-[rgb(var(--bt-accent-rgb)/0.1)]' : 'border-white/15 hover:bg-white/5'
                   }`}
@@ -4807,9 +4844,8 @@ export const SessionPage: React.FC = () => {
             )}
             {/* 🚪 Accès sans inscription (invité) OU avec inscription (chat + visio) */}
             <div className="mb-3">
-              <p className="text-white/80 text-sm mb-2">Type d'accès des participants</p>
-              <AccessModeSelector value={accessMode} onChange={handleAccessMode} />
-              {savingAccessMode && <p className="text-white/40 text-[11px] mt-1">Enregistrement…</p>}
+              <p className="text-white/80 text-sm mb-2">Droits des invités</p>
+              <AccessModeSelector value={accessDraft} onChange={choisirDroitsInvites} />
             </div>
             {/* 📣 Page promo / affiche partageable */}
             <button
@@ -4829,8 +4865,9 @@ export const SessionPage: React.FC = () => {
                 {savingMode ? 'Enregistrement…' : 'Enregistrer'}
               </button>
               <button
-                onClick={() => setShowSessionSettings(false)}
+                onClick={annulerModeAcces}
                 className="px-4 py-2.5 rounded-xl text-white/60 hover:text-white text-sm border border-white/15"
+                data-testid="annuler-mode-acces"
               >
                 Annuler
               </button>
@@ -5051,7 +5088,7 @@ export const SessionPage: React.FC = () => {
               {isHost && (
                 <Button
                   variant="outline" size="sm"
-                  onClick={() => { setShowSessionSettings(true); setSessionMenuOpen(false); }}
+                  onClick={() => { ouvrirModeAcces(); setSessionMenuOpen(false); }}
                   className="border-[rgb(var(--bt-accent-rgb)/0.4)] text-white/80 hover:bg-[rgb(var(--bt-accent-rgb)/0.15)] inline-flex items-center justify-center gap-1 w-full md:w-auto"
                   data-testid="session-access-mode"
                 >

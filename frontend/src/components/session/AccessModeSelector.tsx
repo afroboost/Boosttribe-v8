@@ -39,14 +39,15 @@ interface ModeOption {
 const OPTIONS: ModeOption[] = [
   {
     mode: 'guest',
-    label: 'Accès lecture seule',
-    desc: "Le public rejoint avec un prénom/nom, sans compte. Il écoute et regarde le lecteur — pas de chat, pas de vidéo.",
+    label: 'Écoute uniquement',
+    desc: 'Audio synchronisé uniquement. Pas de vidéo, pas de chat, pas de caméra ni micro.',
     Icon: UserX,
   },
   {
     mode: 'account',
-    label: 'Accès complet',
-    desc: 'Nom demandé (aucun compte à créer). Chat + vidéo du live.',
+    // 28/09 : on ne promet PAS le chat — écrire reste réservé aux membres Pro (audit).
+    label: 'Accès visio',
+    desc: 'L’invité voit le Live vidéo et peut demander à monter à l’écran. Caméra et micro après validation de l’hôte.',
     Icon: UserPlus,
   },
 ];
@@ -59,7 +60,7 @@ export function AccessModeSelector({ value, onChange, className }: AccessModeSel
   return (
     <div
       role="radiogroup"
-      aria-label="Mode d'accès à la session"
+      aria-label="Droits des invités"
       className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${className ?? ''}`}
     >
       {OPTIONS.map(({ mode, label, desc, Icon }) => {

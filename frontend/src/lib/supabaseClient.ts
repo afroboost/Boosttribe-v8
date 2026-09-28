@@ -728,6 +728,22 @@ export async function saveSessionPrivacy(sessionId: string, isPrivate: boolean):
  * Mode d'accès de la session (playlists.access_mode) : 'guest' (sans inscription, écoute/lecture seule —
  * pas de chat ni visio) ou 'account' (avec nom, accès complet chat + visio). Écriture host/co-hôte (RLS).
  */
+/**
+ * Relit le type d'accès RÉELLEMENT enregistré — même règle que SessionPage : la ligne la plus
+ * récente (updated_at desc) portant une valeur valide. `null` si illisible.
+ */
+export async function lireAccessMode(sessionId: string): Promise<'guest' | 'account' | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('playlists')
+    .select('access_mode, updated_at')
+    .eq('session_id', sessionId)
+    .order('updated_at', { ascending: false });
+  if (error || !Array.isArray(data)) return null;
+  const pick = (data as Array<{ access_mode?: string }>).find((r) => r.access_mode === 'guest' || r.access_mode === 'account');
+  return pick?.access_mode === 'guest' || pick?.access_mode === 'account' ? pick.access_mode : null;
+}
+
 export async function saveAccessMode(sessionId: string, mode: 'guest' | 'account', hostId?: string): Promise<boolean> {
   if (!supabase) return false;
   // ROBUSTE (persistance fiable même sans contrainte unique / avec doublons) : UPDATE si une ligne existe
@@ -741,8 +757,10 @@ export async function saveAccessMode(sessionId: string, mode: 'guest' | 'account
   if (existing && existing.length > 0) {
     const upd: Record<string, unknown> = { access_mode: mode, updated_at: new Date().toISOString() };
     if (hostId) upd.host_id = hostId; // revendique host_id si NULL (satisfait le WITH CHECK RLS)
-    const { error } = await supabase.from('playlists').update(upd).eq('session_id', sessionId);
-    return !error;
+    // 28/09 : compter les lignes RÉELLEMENT modifiées — une RLS qui filtre (USING) renvoie 0 ligne
+    //   SANS erreur : c'était un faux succès.
+    const { data: maj, error } = await supabase.from('playlists').update(upd).eq('session_id', sessionId).select('session_id');
+    return !error && Array.isArray(maj) && maj.length > 0;
   }
   const row: Record<string, unknown> = { session_id: sessionId, access_mode: mode, updated_at: new Date().toISOString() };
   if (hostId) row.host_id = hostId;

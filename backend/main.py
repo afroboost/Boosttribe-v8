@@ -975,12 +975,20 @@ async def get_promo(session_id: str):
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                                 params={"session_id": f"eq.{session_id}",
-                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format,promo_allow_access_requests,access_mode",
-                                        "limit": "1"})
+                                        "select": "promo_enabled,promo_media_url,promo_media_type,promo_description,promo_cta,promo_payment_link,promo_price,promo_format,promo_allow_access_requests,access_mode,updated_at",
+                                        # 28/09 : lecture DÉTERMINISTE (avant : limit=1 sans ordre → une
+                                        # ligne quelconque si doublons). Même règle que SessionPage.
+                                        "order": "updated_at.desc.nullslast",
+                                        "limit": "20"})
     rows = resp.json() if resp.status_code == 200 else []
     if not rows:
         raise HTTPException(status_code=404, detail="Session introuvable")
     r = rows[0]
+    # Type d'accès : la ligne la plus RÉCENTE portant une valeur valide (règle de SessionPage).
+    acces = next((x.get("access_mode") for x in rows if x.get("access_mode") in ("guest", "account")), "account")
+    # Mode d'entrée : la MÊME source que /session/info (get_session_row) — « private » = gratuit
+    # par lien, ce qui prime sur un ancien lien de paiement côté PromoPage.
+    mode = ((await get_session_row(session_id)) or {}).get("mode") or "open"
     return {
         "session_id": session_id,
         "enabled": bool(r.get("promo_enabled")),
@@ -993,7 +1001,8 @@ async def get_promo(session_id: str):
         "format": r.get("promo_format") or "9:16",
         "allow_access_requests": bool(r.get("promo_allow_access_requests")),
         # 🚪 Mode d'accès de la session : 'guest' (sans inscription → entrée directe) ou 'account' (défaut).
-        "access_mode": r.get("access_mode") or "account",
+        "access_mode": acces,
+        "mode": mode,
     }
 
 

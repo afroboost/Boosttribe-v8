@@ -792,7 +792,9 @@ export interface PromoConfig {
   price?: string | null;
   format?: '9:16' | '16:9' | null;  // cadrage de l'affiche/vidéo
   allow_access_requests?: boolean;  // autoriser « Demander l'accès » (sans payer)
-  access_mode?: 'guest' | 'account' | null;  // 'guest' = entrée directe sans inscription
+  access_mode?: 'guest' | 'account' | null;  // 'guest' = écoute uniquement ; 'account' = accès visio
+  /** Mode d'entrée (même source que /session/info) : 'private' = gratuit par lien, prime sur payment_link. */
+  mode?: 'open' | 'paid' | 'private' | null;
 }
 
 /** Participant : demande l'accès gratuit à une session payante (l'hôte approuve/refuse). */

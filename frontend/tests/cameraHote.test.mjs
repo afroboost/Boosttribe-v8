@@ -133,9 +133,12 @@ test('structurel : la course claimHost → jeton stage est fermée', () => {
 
 test('structurel : les libellés d’accès disent ce que le code fait', () => {
   const sel = codeSeul(lire('components', 'session', 'AccessModeSelector.tsx'));
-  assert.ok(sel.includes("label: 'Accès lecture seule'") && sel.includes("label: 'Accès complet'"));
+  // 28/09 : « Écoute uniquement » / « Accès visio » (droits des invités) — mêmes effets qu'avant.
+  assert.ok(sel.includes("label: 'Écoute uniquement'") && sel.includes("label: 'Accès visio'"));
   assert.ok(!sel.includes('Accès avec inscription'), 'aucune inscription n’est créée ici');
   const page = lire('pages', 'SessionPage.tsx');
-  assert.ok(page.includes("Ces crédits vont à la plateforme, pas à toi."),
-    'le mode crédits ne se présente plus comme une vente du coach');
+  assert.ok(page.includes("desc: 'Les participants utilisent 1 crédit pour entrer.'"),
+    'le mode crédits dit ce qu’il fait');
+  assert.ok(!/label: 'Avec crédits', desc: '[^']*(gagn|revenu|pour toi)/.test(page),
+    'le mode crédits ne se présente pas comme une vente du coach (le crédit va à la plateforme)');
 });

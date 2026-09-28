@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Loader2, Ticket, ArrowRight, Play, X } from 'lucide-react';
 import { getPromo, getVideoThumbnail, requestSessionAccess, getAccessRequestStatus, type PromoConfig } from '@/lib/paymentApi';
+import { promoPayante } from '@/lib/accesSession';
 import { isHttpUrl, videoEmbedUrl } from '@/lib/videoEmbed';
 
 // 🎨 Couleurs Afroboost
@@ -78,7 +79,9 @@ const PromoPage: React.FC = () => {
   // 💳 Flux PAIEMENT totalement SÉPARÉ du code de session : si le coach a configuré un lien de paiement,
   //    le bouton OUVRE CE LIEN (nouvel onglet) — jamais la validation de session (= « code inconnu »).
   const rawPaymentLink = (promo?.payment_link || '').trim();
-  const paidIntent = !!rawPaymentLink;
+  // 28/09 : une session « Gratuit par lien / QR » (mode private) est gratuite, même si un ancien
+  //   lien de paiement est resté enregistré (il n'est pas supprimé, seulement ignoré ici).
+  const paidIntent = promoPayante({ mode: promo?.mode, paymentLink: rawPaymentLink });
 
   const handleCta = () => {
     if (paidIntent) {

@@ -65,16 +65,20 @@ test('le panneau affiche l échec, il ne le garde pas pour lui', () => {
 /* ═════════════════ CAMÉRA — le prompteur ne doit rien lui prendre ═════════════════ */
 
 test('le bouton caméra n est JAMAIS sous l overlay du prompteur', () => {
+  // Refonte « barre Live unique » (28/09) : la barre vit DANS la zone caméra, en BAS,
+  // dans les deux modes. L'overlay du prompteur est ancré en HAUT (inset-x-0 top-0) ;
+  // la couche des commandes est rendue APRÈS lui et passe DEVANT (z plus grand).
   const code = codeSeul(PANEL);
-  // Hors plein écran : la barre de contrôle est rendue APRÈS la zone caméra, donc
-  // hors de portée d'un overlay ancré dans cette zone.
-  const finZone = code.indexOf('{!camFullscreen && prompteurTiroirNode}');
-  const boutonCam = code.indexOf('data-testid="visio-camera-toggle"');
-  assert.ok(finZone > 0 && boutonCam > finZone, 'le bouton caméra est hors de la zone caméra');
-  // En plein écran : la barre de contrôles passe DEVANT l'overlay (z plus grand).
+  const finPrompteur = code.indexOf('{!camFullscreen && prompteurTiroirNode}');
+  const barre = code.indexOf('<LiveControls');
+  assert.ok(finPrompteur > 0 && barre > finPrompteur, 'la barre est rendue après (au-dessus de) l’overlay');
+  assert.ok(code.includes('justify-end'), 'la couche des commandes est ancrée en bas');
+  assert.ok(codeSeul(lire('components', 'session', 'LiveControls.tsx')).includes("'visio-camera-toggle'"),
+    'le bouton caméra est dans la barre');
   const zOverlay = Number(/z-\[(\d+)\]/.exec(codeSeul(OVERLAY))[1]);
-  const zBarre = Number(/absolute z-\[(\d+)\]/.exec(codeSeul(lire('components', 'session', 'VisioControlBar.tsx')))[1]);
+  const zBarre = Number(/absolute z-\[(\d+)\]/.exec(code)[1]);
   assert.ok(zBarre > zOverlay, `la barre (${zBarre}) doit passer devant l’overlay (${zOverlay})`);
+  assert.ok(codeSeul(OVERLAY).includes('absolute inset-x-0 top-0'), 'l’overlay reste en haut');
 });
 
 test('l overlay laisse passer les clics : il ne capte que sa propre barre', () => {

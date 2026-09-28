@@ -1,13 +1,15 @@
 import React from 'react';
-import { Mic, MicOff, Video, VideoOff, Hand, Timer, Minimize2, ScrollText } from 'lucide-react';
+import { LiveControls } from '@/components/session/LiveControls';
 
 /**
- * 🎛️ Barre de contrôles VERTICALE (façon TikTok/Reels) ancrée à droite, réutilisée dans TOUS les
- *    plein écran (Live Visio ET vidéo partagée) : Micro, Caméra/scène, Prompteur, Interval, (Réduire).
- *    Le chat n'y est PLUS : la bulle « session-chat-launcher » (ChatPanel) est portée dans chaque plein
- *    écran et reste l'unique entrée — deux icônes chat à l'écran étaient un doublon (17/09).
- *    Boutons ronds, accent --bt-accent, safe-area. 100 % piloté par les props du parent (SessionPage)
- *    → aucun nouveau comportement, juste rendre les contrôles ATTEIGNABLES en plein écran.
+ * 🎛️ Adaptateur COMPATIBLE vers la barre unique `LiveControls`.
+ *
+ * Le Live Visio n'utilise plus ce composant : sa barre (vue normale ET plein écran caméra)
+ * est `LiveControls`, rendue une seule fois dans la zone caméra. Il reste pour le plein
+ * écran de la VIDÉO PARTAGÉE (SessionPage → `sharedVideoControlsNode`), dont le lecteur
+ * occupe déjà le bas de l'écran : on y rend la MÊME barre, en colonne à droite.
+ * API inchangée ; aucune logique ici, seulement des props transmises.
+ * Le chat n'y est pas : la bulle « session-chat-launcher » est l'unique entrée.
  */
 export interface VisioControlBarProps {
   micActive?: boolean;
@@ -20,133 +22,19 @@ export interface VisioControlBarProps {
   onStartTimer?: () => void;
   onToggleStageRequests?: () => void; // 🙋 gestion de scène (demandes de prise de caméra)
   stageRequestCount?: number;
-  // 📜 Prompteur — le texte SUR la vidéo doit pouvoir s'ouvrir et se fermer SANS quitter
-  //    le plein écran : sinon le coach doit sortir de son direct pour lire son script.
   onTogglePrompteur?: () => void;
   prompteurOuvert?: boolean;
-  onReduce?: () => void; // bouton « Réduire » (plein écran caméra) — optionnel
+  onReduce?: () => void;
 }
 
-const ROUND = 'w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors';
-const DARK = 'bg-black/50 text-white/90 hover:bg-black/70';
-const GREEN = 'bg-green-500/40 text-green-100 hover:bg-green-500/50';
-const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)]';
-
-export const VisioControlBar: React.FC<VisioControlBarProps> = ({
-  micActive, onToggleMic, cameraOn, canManageStage, onToggleCamera, onRequestStage,
-  stageRequestPending, onStartTimer,
-  onToggleStageRequests, stageRequestCount, onTogglePrompteur, prompteurOuvert, onReduce,
-}) => {
-  return (
-    <div
-      className="absolute z-[115] flex flex-col items-center gap-3 top-1/2 -translate-y-1/2"
-      style={{ right: 'max(0.75rem, env(safe-area-inset-right))' }}
-      data-testid="visio-fs-controls"
-    >
-      {/* 🎤 Micro (même handler que hors plein écran) */}
-      {onToggleMic && (
-        <button
-          onClick={onToggleMic}
-          className={`${ROUND} ${micActive ? GREEN : DARK}`}
-          title={micActive ? 'Couper le micro' : 'Activer le micro'}
-          aria-label={micActive ? 'Couper le micro' : 'Activer le micro'}
-          data-testid="visio-fs-mic"
-        >
-          {micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-        </button>
-      )}
-
-      {/* 🎥 Caméra / scène — hôte : on/off ; spectateur à l'écran : descendre ; spectateur : monter. */}
-      {onToggleCamera && (canManageStage ? (
-        <button
-          onClick={onToggleCamera}
-          className={`${ROUND} ${cameraOn ? ACCENT : DARK}`}
-          title={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-          aria-label={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-          data-testid="visio-fs-camera"
-        >
-          {cameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-        </button>
-      ) : cameraOn ? (
-        <button
-          onClick={onToggleCamera}
-          className={`${ROUND} ${ACCENT}`}
-          title="Descendre de la scène"
-          aria-label="Descendre de la scène"
-          data-testid="visio-fs-camera"
-        >
-          <VideoOff className="w-5 h-5" />
-        </button>
-      ) : onRequestStage ? (
-        <button
-          onClick={onRequestStage}
-          disabled={stageRequestPending}
-          className={`${ROUND} ${DARK} disabled:opacity-60`}
-          title={stageRequestPending ? 'Demande envoyée…' : 'Monter en vidéo'}
-          aria-label={stageRequestPending ? 'Demande envoyée' : 'Monter en vidéo'}
-          data-testid="visio-fs-stage"
-        >
-          <Hand className="w-5 h-5" />
-        </button>
-      ) : null)}
-
-      {/* 🙋 Demandes de scène (hôte/co-hôte) — badge = nombre en attente ; ouvre/ferme le panneau. */}
-      {canManageStage && onToggleStageRequests && (stageRequestCount ?? 0) > 0 && (
-        <button
-          onClick={onToggleStageRequests}
-          className={`${ROUND} ${ACCENT} relative`}
-          title="Demandes de prise de caméra"
-          aria-label="Demandes de scène"
-          data-testid="visio-fs-stage-requests"
-        >
-          <Hand className="w-5 h-5" />
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--bt-accent-2)] text-white text-[10px] font-bold flex items-center justify-center">
-            {(stageRequestCount ?? 0) > 9 ? '9+' : stageRequestCount}
-          </span>
-        </button>
-      )}
-
-      {/* 📜 Prompteur — bascule l'overlay de texte posé sur la caméra. Local au coach. */}
-      {onTogglePrompteur && (
-        <button
-          onClick={onTogglePrompteur}
-          className={`${ROUND} ${prompteurOuvert ? ACCENT : DARK}`}
-          title={prompteurOuvert ? 'Masquer le prompteur' : 'Afficher le prompteur'}
-          aria-label={prompteurOuvert ? 'Masquer le prompteur' : 'Afficher le prompteur'}
-          aria-pressed={!!prompteurOuvert}
-          data-testid="visio-fs-prompteur"
-        >
-          <ScrollText className="w-5 h-5" />
-        </button>
-      )}
-
-      {/* ⏱️ Interval training (hôte) */}
-      {onStartTimer && (
-        <button
-          onClick={onStartTimer}
-          className={`${ROUND} ${DARK}`}
-          title="Interval training"
-          aria-label="Interval training"
-          data-testid="visio-fs-timer"
-        >
-          <Timer className="w-5 h-5" />
-        </button>
-      )}
-
-      {/* 🔽 Réduire (sortir du plein écran caméra) */}
-      {onReduce && (
-        <button
-          onClick={onReduce}
-          className={`${ROUND} ${DARK}`}
-          title="Réduire"
-          aria-label="Quitter le plein écran"
-          data-testid="visio-camera-fs-reduce"
-        >
-          <Minimize2 className="w-5 h-5" />
-        </button>
-      )}
-    </div>
-  );
-};
+export const VisioControlBar: React.FC<VisioControlBarProps> = (props) => (
+  <LiveControls
+    pleinEcran
+    orientation="verticale"
+    className="absolute z-[115] top-1/2 -translate-y-1/2"
+    style={{ right: 'max(0.75rem, env(safe-area-inset-right))' }}
+    {...props}
+  />
+);
 
 export default VisioControlBar;

@@ -1,10 +1,10 @@
-import React, { useRef, useState } from 'react';
-import { Video, VideoOff, Mic, MicOff, LayoutGrid, Rows3, LogOut, Users, Hand, Maximize2, Minimize2, Timer, SwitchCamera, MonitorUp, MonitorX, ScrollText, SlidersHorizontal, X, RefreshCw, Sparkles, Clapperboard, Radio, Disc, Square } from 'lucide-react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
+import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
-import { VisioControlBar } from '@/components/session/VisioControlBar';
-import { MenuActions } from '@/components/session/MenuActions';
-import { libelleItemRecord, formatDureeRec, badgeVisible } from '@/lib/recordUi';
+import { LiveControls } from '@/components/session/LiveControls';
+import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
+import { zoneCommentaires } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -28,7 +28,8 @@ interface LiveVisioPanelProps {
   maxCameras: number;
   micActive: boolean;
   onToggleMic: () => void;
-  // Masque le bouton micro du panneau (ex. hôte : un seul micro, celui de l'en-tête de session).
+  /** @deprecated Ignorée : le micro est dans la barre unique pour TOUS (hôte compris).
+   *  Conservée pour compatibilité d'appel. */
   hideMicButton?: boolean;
   onToggleCamera: () => void;
   onLeaveLive: () => void;
@@ -91,7 +92,8 @@ interface LiveVisioPanelProps {
   /** 🔴 Terminer RÉELLEMENT le live (arrêt, annonce, statut public). Hôte seulement. */
   onTerminerLive?: () => void;
   onRecordDirect?: () => void;
-  /** 🤖 Souffleur privé de l'hôte — bouton rond + panneau rendu par le parent. */
+  /** 🤖 Souffleur privé de l'hôte. @deprecated plus de bouton dans la barre : l'assistant
+   *  vit DANS le panneau Prompteur (icône Prompteur). Props conservées pour compatibilité. */
   onToggleAssistant?: () => void;
   assistantOuvert?: boolean;
   assistantActif?: boolean;
@@ -124,15 +126,27 @@ interface LiveVisioPanelProps {
   //    Rendues dans le panneau ET dans le plein écran : changer de morceau ne doit pas
   //    obliger à sortir de la vue caméra.
   audioNode?: React.ReactNode;
+  /**
+   * 🔴 Hôte PROPRIÉTAIRE de la session : seul à voir « Terminer » (qui coupe le Live pour
+   * tous). Un co-hôte gère la scène mais ne termine pas : son ⋮ garde « Quitter ».
+   * Non fourni : repli sur `canManageStage` (ancien comportement).
+   */
+  estHote?: boolean;
+  // 💬 CALQUES LIVE posés SUR la vidéo, rendus DANS la zone caméra (donc aussi en plein
+  //    écran). Ordre de priorité de l'écran : 1) personnes en vidéo 2) commandes 3) chat
+  //    4) réactions. Tailles : `zoneCommentaires` (lib/liveControls).
+  /** Flux de commentaires, en bas à gauche au-dessus du champ. */
+  chatOverlayNode?: React.ReactNode;
+  /** Réactions / likes, colonne étroite à droite. */
+  reactionsNode?: React.ReactNode;
+  /** Champ « écrire un commentaire », juste au-dessus de la barre de commandes. */
+  commentInputNode?: React.ReactNode;
+  /** Commentaires masqués (flux + champ) — réglé depuis le menu ⋮. */
+  commentairesMasques?: boolean;
+  onToggleCommentaires?: () => void;
 }
 
 type Layout = 'grid' | 'spotlight';
-
-// Boutons ronds de la barre du bas — mêmes classes que la colonne plein écran (VisioControlBar).
-const ROUND = 'w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-colors';
-const DARK = 'bg-black/50 text-white/90 hover:bg-black/70';
-const GREEN = 'bg-green-500/40 text-green-100 hover:bg-green-500/50';
-const ACCENT = 'bg-[rgb(var(--bt-accent-rgb)/0.4)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.5)]';
 
 // 📷 Caméra INTÉGRÉE avant/arrière du téléphone (déjà couverte par le bouton flip) → à masquer du
 //    menu sur mobile pour ne garder que les VRAIES caméras externes (GoPro, reflex, USB, carte de capture).
@@ -149,7 +163,7 @@ function cleanCameraLabel(label: string, index: number): string {
 // Additif : ne touche PAS la vidéo partagée (qui reste affichée/synchronisée à sa place).
 export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   participants, myUserId, localStream, remoteCameras, cameraOn, activeCameraCount, maxCameras,
-  micActive, onToggleMic, hideMicButton = false, onToggleCamera, onLeaveLive,
+  micActive, onToggleMic, onToggleCamera, onLeaveLive,
   canManageStage = true, stageRequestPending = false, onRequestStage,
   spotlightId: spotlightIdProp, onSpotlightChange,
   onStartTimer, timerNode,
@@ -158,10 +172,11 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   onToggleScreenShare, screenSharing = false, screenSupported = false,
   embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
   broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
-  onTerminerLive, onRecordDirect, onToggleAssistant, assistantOuvert = false, assistantActif = false,
+  onTerminerLive, onRecordDirect,
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
-  connexionScene,
+  connexionScene, estHote,
+  chatOverlayNode, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
@@ -184,6 +199,22 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // Le conteneur de la zone caméras est TOUJOURS monté et visible → requestFullscreen fiable (aucun remontage des flux).
   const camAreaRef = useRef<HTMLDivElement>(null);
   const { fullscreen: camFullscreen, enter: enterCamFullscreen, exit: exitCamFullscreen } = useFullscreen(camAreaRef);
+  // 📏 Largeur RÉELLE de la zone caméra : décide ce qui tient dans la barre et la place du
+  //    chat. Mise à jour seulement si elle change (pas de setState à l'identique → pas de boucle).
+  const [largeurZone, setLargeurZone] = useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 1280));
+  useLayoutEffect(() => {
+    const el = camAreaRef.current;
+    if (!el) return;
+    const mesurer = () => {
+      const l = Math.round(el.getBoundingClientRect().width);
+      if (l > 0) setLargeurZone((p) => (p === l ? p : l));
+    };
+    mesurer();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(mesurer) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', mesurer);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', mesurer); };
+  }, [camFullscreen]);
   // 🔍 Agrandir (épingler) UNE caméra — action LOCALE (chacun choisit sur SON écran).
   // Contrôlé par le parent si fourni (persiste au remontage) ; sinon état interne (repli).
   const [spotlightInternal, setSpotlightInternal] = useState<string | null>(null);
@@ -236,6 +267,18 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // Plein écran caméra : la « grande » = celle épinglée, sinon la 1ʳᵉ ; les autres en bande de vignettes.
   const fsBig = spotlightP || participants[0] || null;
   const fsOthers = fsBig ? participants.filter((p) => p.id !== fsBig.id) : [];
+
+  // 💬 Place des calques (chat / champ / réactions) : fonction pure, testée.
+  const avecCalques = !!(chatOverlayNode || reactionsNode || commentInputNode);
+  const zone = zoneCommentaires({
+    largeur: largeurZone,
+    camerasActives: activeCameraCount,
+    pleinEcran: camFullscreen,
+    vignettes: camFullscreen && fsOthers.length > 0,
+    avecCalques,
+  });
+  const chatVisible = !!chatOverlayNode && !commentairesMasques;
+  const inputVisible = !!commentInputNode && !commentairesMasques;
 
   return (
     <div className="rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="live-visio-panel">
@@ -302,29 +345,15 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
       <div
         ref={camAreaRef}
         className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'relative p-3'}
+        /* Hors plein écran : sous les vignettes, la place de la barre (et du chat s'il y a
+           plusieurs caméras) — les personnes filmées ne sont jamais recouvertes. */
+        style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas})` }}
         data-testid="visio-camera-area"
       >
         {camFullscreen ? (
           /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
              bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
           <>
-            {/* 🎛️ Barre de contrôles verticale à droite (composant réutilisable, partagée avec le plein
-                écran de la vidéo partagée). Micro toujours accessible en plein écran (hôte inclus). */}
-            <VisioControlBar
-              micActive={micActive}
-              onToggleMic={onToggleMic}
-              cameraOn={cameraOn}
-              canManageStage={canManageStage}
-              onToggleCamera={onToggleCamera}
-              onRequestStage={onRequestStage}
-              stageRequestPending={stageRequestPending}
-              onStartTimer={onStartTimer && canManageStage ? onStartTimer : undefined}
-              onToggleStageRequests={onToggleStageRequests}
-              stageRequestCount={stageRequestCount}
-              onTogglePrompteur={onTogglePrompteur}
-              prompteurOuvert={prompteurOuvert}
-              onReduce={exitCamFullscreen}
-            />
             <div className="flex-1 min-h-0 flex items-center justify-center">
               {fsBig ? (
                 <CameraTile
@@ -343,42 +372,11 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                 <p className="text-white/50 text-sm">Aucune caméra allumée</p>
               )}
             </div>
-            {fsOthers.length > 0 && (
-              <div className="flex gap-2 overflow-x-auto p-2 bg-black/40">
-                {fsOthers.map((p) => (
-                  <button
-                    key={p.id}
-                    className="w-24 flex-shrink-0"
-                    onClick={() => setSpotlightId(p.id)}
-                    data-testid="visio-fs-thumb"
-                  >
-                    <CameraTile
-                      name={p.name}
-                      stream={streamFor(p)}
-                      isLocal={p.id === myUserId}
-                      micActive={p.isMicActive}
-                      isHost={p.isHost}
-                      avatarUrl={p.avatarUrl}
-                    />
-                  </button>
-                ))}
-              </div>
-            )}
             {timerNode}
             {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle. */}
             {prompteurNode}
             {/* ✍️ …et on peut l'ÉCRIRE là aussi, sans sortir du plein écran. */}
             {prompteurTiroirNode}
-            {/* 🎵 Musique atteignable sans sortir du plein écran, au-dessus de la safe-area. */}
-            {audioNode && (
-              <div
-                className="pointer-events-none absolute inset-x-0 z-[116] flex justify-center px-3"
-                style={{ bottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
-                data-testid="visio-fs-audio"
-              >
-                <div className="pointer-events-auto w-full max-w-sm">{audioNode}</div>
-              </div>
-            )}
           </>
         ) : spotlightP ? (
           /* 🔍 Vue agrandie : une grande caméra + les autres en miniatures (clic sur une miniature = l'agrandir) */
@@ -420,288 +418,137 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </span>
         )}
         {!camFullscreen && prompteurTiroirNode}
+
+        {/* 🎛️ COUCHE LIVE — UNE seule, dans les DEUX modes (le plein écran prend cette zone pour
+            cible, donc tout ce qui est ici le suit). Transparente aux clics, sauf ses éléments.
+            Du bas vers le haut : barre de commandes → musique (plein écran) → champ commentaire
+            → vignettes des invités (plein écran) → flux de chat (gauche) + réactions (droite).
+            z-[115] : au-dessus de l'overlay du prompteur (z-[112]), sous ses tiroirs (z-[140]). */}
+        <div
+          className="pointer-events-none absolute z-[115] inset-0 flex flex-col justify-end gap-2"
+          style={camFullscreen ? {
+            paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))',
+            paddingLeft: 'env(safe-area-inset-left)',
+            paddingRight: 'env(safe-area-inset-right)',
+          } : { paddingBottom: '0.25rem' }}
+          data-testid="visio-calques"
+          data-mobile={zone.mobile ? 'true' : 'false'}
+          data-reduit={zone.reduit ? 'true' : 'false'}
+        >
+          {/* Voile léger sous les commandes (plein écran : la vidéo va jusqu'en bas) — lisibilité
+              sans bandeau opaque. Hors plein écran, la barre a déjà sa place sous les vignettes. */}
+          {camFullscreen && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-40 max-h-full bg-gradient-to-t from-black/55 via-black/20 to-transparent" aria-hidden="true" />
+          )}
+
+          {/* 3) Chat (gauche) + 4) réactions (droite) — hauteur bornée, jamais sur les invités. */}
+          {(chatVisible || reactionsNode) && (
+            <div className="relative flex items-end justify-between gap-2 px-2 min-h-0" style={{ height: zone.chatHauteurMax }} data-testid="visio-calque-haut">
+              {chatVisible ? (
+                <div className="pointer-events-auto min-w-0 max-h-full overflow-hidden" style={{ width: '100%', maxWidth: zone.chatLargeurMax }} data-testid="visio-calque-chat">
+                  {chatOverlayNode}
+                </div>
+              ) : <span />}
+              {reactionsNode && (
+                <div className="pointer-events-auto shrink-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
+                  {reactionsNode}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 1) Invités en vignettes (plein écran) : taper = passe en grand. */}
+          {camFullscreen && fsOthers.length > 0 && (
+            <div className="pointer-events-auto relative flex gap-2 overflow-x-auto px-2" data-testid="visio-fs-thumbs">
+              {fsOthers.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className="w-24 flex-shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bt-accent)]"
+                  onClick={() => setSpotlightId(p.id)}
+                  aria-label={`Afficher ${p.name} en grand`}
+                  data-testid="visio-fs-thumb"
+                >
+                  <CameraTile
+                    name={p.name}
+                    stream={streamFor(p)}
+                    isLocal={p.id === myUserId}
+                    micActive={p.isMicActive}
+                    isHost={p.isHost}
+                    avatarUrl={p.avatarUrl}
+                  />
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Champ commentaire : pleine largeur sur téléphone, ≤ 24 rem à gauche sur ordinateur. */}
+          {inputVisible && (
+            <div className="pointer-events-auto relative px-2 w-full" style={{ maxWidth: zone.inputLargeurMax }} data-testid="visio-calque-input">
+              {commentInputNode}
+            </div>
+          )}
+
+          {/* 🎵 Musique atteignable sans sortir du plein écran. */}
+          {audioNode && camFullscreen && (
+            <div className="pointer-events-none relative flex justify-center px-3" data-testid="visio-fs-audio">
+              <div className="pointer-events-auto w-full max-w-sm">{audioNode}</div>
+            </div>
+          )}
+
+          {/* 2) LA barre de commandes — même composant en vue normale et en plein écran. */}
+          <LiveControls
+            pleinEcran={camFullscreen}
+            largeur={largeurZone}
+            className="relative self-center"
+            micActive={micActive}
+            onToggleMic={onToggleMic}
+            cameraOn={cameraOn}
+            canManageStage={canManageStage}
+            estHote={estHote}
+            onToggleCamera={onToggleCamera}
+            onRequestStage={onRequestStage}
+            stageRequestPending={stageRequestPending}
+            onToggleStageRequests={onToggleStageRequests}
+            stageRequestCount={stageRequestCount}
+            onFlipCamera={onFlipCamera}
+            peutBasculerCamera={videoDevices.length > 1}
+            onSources={onSelectCamera ? () => { onRefreshDevices?.(true); setCamMenuOpen((o) => !o); } : undefined}
+            sourcesOuvertes={camMenuOpen}
+            sourcesAvancees={!!sources}
+            onToggleScreenShare={onToggleScreenShare}
+            screenSharing={screenSharing}
+            screenSupported={screenSupported}
+            screenShareDisponible={screenShareDisponible}
+            onRecordDirect={onRecordDirect}
+            onToggleRecord={onToggleRecord}
+            recordOpen={recordOpen}
+            recordEtat={recordEtat}
+            recordDureeSec={recordDureeSec}
+            recordSupporte={recordSupporte}
+            recordMotif={recordMotif}
+            onTogglePrompteur={onTogglePrompteur}
+            prompteurOuvert={prompteurOuvert}
+            onToggleBroadcast={onToggleBroadcast}
+            broadcastOpen={broadcastOpen}
+            broadcastLive={broadcastLive}
+            onTerminerLive={onTerminerLive}
+            onStartTimer={onStartTimer}
+            onToggleStudio={onToggleStudio}
+            studioOpen={studioOpen}
+            embellirNode={embellirNode}
+            commentairesMasques={commentairesMasques}
+            onToggleCommentaires={onToggleCommentaires}
+            onLeaveLive={onLeaveLive}
+            onReduce={camFullscreen ? exitCamFullscreen : undefined}
+          />
+        </div>
       </div>
 
       {/* 🎵 Commandes musique — dans le panneau, juste sous les caméras. */}
       {audioNode && !camFullscreen && (
         <div className="px-3 pb-1" data-testid="visio-audio">{audioNode}</div>
       )}
-
-      {/* Barre de contrôle — UNE rangée d'icônes rondes, accessible au pouce sur mobile.
-          Épurée (17/09) : la vidéo domine ; ici seulement l'essentiel (micro si demandé, caméra,
-          bascule/partage) ; tout le secondaire vit dans le menu ⋮ (Sources, Prompteur, Interval,
-          Embellir, Quitter). « Plein écran » n'y est plus : la vignette porte déjà Agrandir. */}
-      <div className="flex items-center justify-center gap-3 px-3 py-2 border-t border-white/10 bg-black/20"
-        style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}>
-        {!hideMicButton && (
-          <button
-            onClick={onToggleMic}
-            className={`${ROUND} ${micActive ? GREEN : DARK}`}
-            title={micActive ? 'Couper le micro' : 'Activer le micro'}
-            aria-label={micActive ? 'Couper le micro' : 'Activer le micro'}
-            data-testid="visio-mic-toggle"
-          >
-            {micActive ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-          </button>
-        )}
-
-        {canManageStage ? (
-          /* Hôte / co-hôte : gère librement sa caméra */
-          <button
-            onClick={onToggleCamera}
-            className={`${ROUND} ${cameraOn ? ACCENT : DARK}`}
-            title={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-            aria-label={cameraOn ? 'Couper la caméra' : 'Allumer la caméra'}
-            data-testid="visio-camera-toggle"
-          >
-            {cameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-          </button>
-        ) : cameraOn ? (
-          /* Spectateur à l'écran : peut quitter la scène lui-même (reste VISIBLE, pas dans le menu) */
-          <button
-            onClick={onToggleCamera}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)] hover:bg-[rgb(var(--bt-accent-rgb)/0.35)] transition-colors"
-            data-testid="visio-leave-stage"
-          >
-            <VideoOff className="w-4 h-4" /> Quitter la scène
-          </button>
-        ) : stageRequestPending ? (
-          /* Spectateur : demande envoyée, en attente de validation */
-          <button
-            disabled
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-[rgb(var(--bt-accent-rgb)/0.15)] text-[rgb(var(--bt-accent-rgb)/0.7)] cursor-default"
-            data-testid="visio-request-pending"
-          >
-            <Hand className="w-4 h-4" /> Demande envoyée…
-          </button>
-        ) : (
-          /* Spectateur : demander à monter en vidéo */
-          <button
-            onClick={onRequestStage}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium bg-white/10 text-white/70 hover:bg-[rgb(var(--bt-accent-rgb)/0.25)] hover:text-[var(--bt-accent)] transition-colors"
-            data-testid="visio-request-stage"
-          >
-            <Hand className="w-4 h-4" /> Demander à monter en vidéo
-          </button>
-        )}
-
-        {/* Bascule rapide avant/arrière (mobile) quand ≥ 2 caméras — icône seule, ronde. */}
-        {canManageStage && onFlipCamera && videoDevices.length > 1 && (
-          <button
-            onClick={onFlipCamera}
-            className={`sm:hidden ${ROUND} ${DARK}`}
-            title="Changer de caméra (avant/arrière)"
-            aria-label="Changer de caméra (avant/arrière)"
-            data-testid="visio-camera-flip"
-          >
-            <SwitchCamera className="w-5 h-5" />
-          </button>
-        )}
-
-        {/* 🖥️ Partager l'écran — hôte/co-hôte, desktop (getDisplayMedia supporté). Réutilise l'existant. */}
-        {canManageStage && screenSupported && onToggleScreenShare && (
-          <button
-            onClick={screenShareDisponible ? onToggleScreenShare : undefined}
-            disabled={!screenShareDisponible}
-            className={`${screenShareDisponible ? '' : 'hidden sm:inline-flex opacity-40 cursor-not-allowed '}${ROUND} ${screenSharing ? ACCENT : DARK}`}
-            title={!screenShareDisponible ? 'Indisponible sur cet appareil' : screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
-            aria-label={!screenShareDisponible ? 'Partage d\'écran indisponible sur cet appareil' : screenSharing ? 'Arrêter le partage d\'écran' : 'Partager mon écran'}
-            aria-pressed={screenSharing}
-            aria-disabled={!screenShareDisponible}
-            data-testid="visio-screen-share"
-          >
-            {screenSharing ? <MonitorX className="w-5 h-5" /> : <MonitorUp className="w-5 h-5" />}
-          </button>
-        )}
-
-        {/* 🔴 ENREGISTRER — LA MÊME ACTION QUE DANS LE MENU ⋮, remontée à portée de pouce.
-            Ce bouton ne crée AUCUN enregistreur : il appelle `onToggleRecord`, exactement
-            comme l'item du menu, et lit le MÊME état (`recordEtat`). Une seule source de
-            vérité, un seul moteur (useSessionRecorder → useProgramRecorder), une seule
-            règle « rien à l'antenne → caméra du coach à l'antenne » (antennePourEnregistrer).
-            Réservé à l'hôte / co-hôte : un spectateur ne le voit pas.
-            L'état actif ne repose PAS sur la seule couleur — le bouton porte un point
-            clignotant, la durée, `aria-pressed` et un `aria-label` qui le dit. */}
-        {canManageStage && (onRecordDirect || onToggleRecord) && (
-          <button
-            type="button"
-            onClick={recordSupporte ? (onRecordDirect || onToggleRecord) : undefined}
-            disabled={!recordSupporte}
-            className={`relative ${ROUND} ${recordEtat === 'enregistrement' ? ACCENT : DARK}${recordSupporte ? '' : ' opacity-40 cursor-not-allowed'}`}
-            title={!recordSupporte ? (recordMotif || 'Enregistrement indisponible')
-              : recordEtat === 'enregistrement' ? `Arrêter l'enregistrement (${formatDureeRec(recordDureeSec)})`
-              : recordEtat === 'finalisation' ? 'Finalisation en cours…'
-              : 'Enregistrer'}
-            aria-label={!recordSupporte ? (recordMotif || 'Enregistrement indisponible')
-              : recordEtat === 'enregistrement' ? `Enregistrement en cours depuis ${formatDureeRec(recordDureeSec)} — arrêter`
-              : recordEtat === 'finalisation' ? 'Finalisation de l’enregistrement en cours'
-              : 'Démarrer l’enregistrement'}
-            aria-pressed={recordEtat === 'enregistrement'}
-            aria-disabled={!recordSupporte}
-            data-testid="visio-record-direct"
-            data-record-etat={recordEtat}
-          >
-            {recordEtat === 'enregistrement' ? <Square className="w-5 h-5" /> : <Disc className="w-5 h-5" />}
-            {recordEtat === 'enregistrement' && (
-              <span className="absolute -top-1 -right-1 flex items-center gap-0.5 px-1 rounded-full bg-[var(--bt-accent)] text-[8px] font-bold tracking-wide text-white leading-4 tabular-nums" data-testid="visio-record-direct-duree">
-                <span className="w-1 h-1 rounded-full bg-white animate-pulse" aria-hidden="true" />
-                {formatDureeRec(recordDureeSec)}
-              </span>
-            )}
-          </button>
-        )}
-
-        {/* 🤖 ASSISTANT IA — PRIVÉ. Réservé à l'hôte / co-hôte, comme le panneau qu'il ouvre :
-            le serveur refuse de toute façon un appelant qui n'est pas hôte (403). Il ne
-            diffuse rien, ne publie rien, et vit HORS de la zone caméra — donc hors du
-            Programme enregistré et hors des flux sociaux. */}
-        {canManageStage && onToggleAssistant && (
-          <button
-            type="button"
-            onClick={onToggleAssistant}
-            className={`${ROUND} ${assistantOuvert ? ACCENT : DARK}`}
-            title={assistantActif ? 'Assistant IA (activé) — visible par toi seul' : 'Assistant IA — visible par toi seul'}
-            aria-label={assistantActif ? 'Ouvrir l’assistant IA privé, actuellement activé' : 'Ouvrir l’assistant IA privé'}
-            aria-pressed={assistantOuvert}
-            data-testid="visio-assistant"
-          >
-            <Sparkles className="w-5 h-5" />
-          </button>
-        )}
-
-        {/* 📡 Diffuser en direct — icône ronde (mobile et desktop), fuchsia quand un direct tourne. */}
-        {canManageStage && onToggleBroadcast && (
-          <button
-            type="button"
-            onClick={onToggleBroadcast}
-            className={`relative ${ROUND} ${broadcastLive ? ACCENT : DARK}`}
-            title={broadcastLive ? 'En direct — gérer la diffusion' : 'Diffuser en direct'}
-            aria-label={broadcastLive ? 'En direct — gérer la diffusion' : 'Diffuser en direct'}
-            aria-pressed={broadcastOpen}
-            data-testid="visio-broadcast"
-            data-broadcast-live={broadcastLive ? 'true' : 'false'}
-          >
-            <Radio className="w-5 h-5" />
-            {broadcastLive && (
-              <span className="absolute -top-1 -right-1 px-1 rounded-full bg-[var(--bt-accent)] text-[8px] font-bold tracking-wide text-white leading-4" aria-hidden="true" data-testid="visio-broadcast-badge">LIVE</span>
-            )}
-          </button>
-        )}
-
-        {/* 🔴 TERMINER LE LIVE — visible, nommé, et à l'écart des bascules courantes.
-            Il était caché dans le menu ⋮ sous « Quitter le live », et ne quittait rien :
-            il fermait l'écran pendant que la caméra, la room et le statut public
-            continuaient. Une action irréversible mérite d'être vue — et de demander
-            confirmation avant de couper l'antenne. */}
-        {canManageStage && onTerminerLive && (
-          <button
-            type="button"
-            onClick={() => { if (window.confirm('Terminer le Live pour tout le monde ?')) onTerminerLive(); }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold transition-colors bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40"
-            title="Terminer le Live : arrête la diffusion et prévient tout le monde"
-            aria-label="Terminer le Live"
-            data-testid="visio-terminer-live"
-          >
-            <Square className="w-4 h-4" /> Terminer
-          </button>
-        )}
-
-        {/* 🎬 Studio — icône discrète, desktop seulement (sur mobile : item du menu ⋮ → tiroir). */}
-        {canManageStage && onToggleStudio && (
-          <button
-            type="button"
-            onClick={onToggleStudio}
-            className={`hidden lg:inline-flex ${ROUND} ${studioOpen ? ACCENT : DARK}`}
-            title={studioOpen ? 'Fermer le studio' : 'Studio'}
-            aria-label={studioOpen ? 'Fermer le studio' : 'Ouvrir le studio'}
-            aria-pressed={studioOpen}
-            data-testid="studio-toggle"
-          >
-            <Clapperboard className="w-5 h-5" />
-          </button>
-        )}
-
-        {/* ⋮ Actions secondaires. Les data-testid des anciens boutons sont conservés sur les items. */}
-        <MenuActions
-          buttonClassName={`${ROUND} ${DARK}`}
-          items={[
-            ...(canManageStage && onSelectCamera ? [{
-              id: 'sources',
-              label: sources ? 'Sources' : 'Caméra externe',
-              icon: sources ? <SlidersHorizontal className="w-5 h-5" /> : <SwitchCamera className="w-5 h-5" />,
-              onSelect: () => { onRefreshDevices?.(true); setCamMenuOpen((o) => !o); },
-              active: camMenuOpen,
-              testId: sources ? 'visio-sources' : 'visio-camera-menu',
-            }] : []),
-            ...(onTogglePrompteur ? [{
-              id: 'prompteur',
-              label: 'Prompteur',
-              icon: <ScrollText className="w-5 h-5" />,
-              onSelect: onTogglePrompteur,
-              active: prompteurOuvert,
-              testId: 'visio-prompteur-toggle',
-            }] : []),
-            ...(onStartTimer && canManageStage ? [{
-              id: 'interval',
-              label: 'Interval training',
-              icon: <Timer className="w-5 h-5" />,
-              onSelect: onStartTimer,
-              testId: 'visio-start-timer',
-            }] : []),
-            ...(onToggleStudio && canManageStage ? [{
-              id: 'studio',
-              label: 'Studio',
-              icon: <Clapperboard className="w-5 h-5" />,
-              onSelect: onToggleStudio,
-              active: studioOpen,
-              testId: 'visio-studio',
-            }] : []),
-            ...(onToggleBroadcast && canManageStage ? [{
-              id: 'broadcast',
-              label: broadcastLive ? 'En direct — gérer' : 'Diffuser en direct',
-              icon: <Radio className="w-5 h-5" />,
-              onSelect: onToggleBroadcast,
-              active: broadcastLive || broadcastOpen,
-              testId: 'visio-broadcast-item',
-            }] : []),
-            ...(onToggleRecord && canManageStage ? [{
-              id: 'record',
-              label: recordSupporte ? libelleItemRecord(recordEtat, recordDureeSec) : (recordMotif || 'Enregistrement indisponible'),
-              icon: recordEtat === 'enregistrement' ? <Square className="w-5 h-5" /> : <Disc className="w-5 h-5" />,
-              onSelect: recordSupporte ? onToggleRecord : () => {},
-              active: recordEtat === 'enregistrement' || recordOpen,
-              testId: 'visio-record',
-              fermeApres: true,
-              node: !recordSupporte ? (
-                <span className="flex-1 text-white/40 cursor-not-allowed" aria-disabled="true" data-testid="visio-record-indisponible">{recordMotif || 'Enregistrement indisponible'}</span>
-              ) : recordEtat === 'enregistrement' ? (
-                <span className="flex-1 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--bt-accent)] animate-pulse" aria-hidden="true" />
-                  <span>Enregistrement</span>
-                  <span className="tabular-nums text-white/70">{formatDureeRec(recordDureeSec)}</span>
-                  <span className="ml-auto text-xs text-white/50">Arrêter</span>
-                </span>
-              ) : undefined,
-            }] : []),
-            ...(embellirNode && canManageStage ? [{
-              id: 'embellir',
-              label: 'Embellir le visage',
-              icon: <Sparkles className="w-5 h-5" />,
-              onSelect: () => {},
-              node: embellirNode,
-              testId: 'visio-embellir',
-            }] : []),
-            {
-              id: 'quitter',
-              label: 'Quitter le live',
-              icon: <LogOut className="w-5 h-5" />,
-              onSelect: onLeaveLive,
-              danger: true,
-              testId: 'visio-leave',
-            },
-          ]}
-        />
-      </div>
 
       {/* 🎬 Studio — panneau (desktop) ou tiroir plein écran (mobile, `fixed` dans le nœud). Fermé = rien. */}
       {studioOpen && studioNode}

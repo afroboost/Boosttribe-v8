@@ -102,13 +102,15 @@ test('aucun prompteur, chat ou minuteur ne passe par le studio', () => {
   }
 });
 
-test('entrée : item « Studio » dans le menu ⋮ entre Interval et Embellir + icône ronde desktop', () => {
-  const barre = VISIO.slice(VISIO.indexOf('{/* Barre de contrôle'), VISIO.indexOf('{/* 🎛️ Avis caméra discret'));
+test('entrée : item « Studio » dans le menu ⋮ entre Interval et Embellir — une seule entrée', () => {
+  // Barre unique (28/09) : les commandes vivent dans LiveControls ; le Studio n'a plus
+  // d'icône ronde desktop en doublon (une fonction = un endroit) : seulement l'item ⋮.
+  const barre = lire('components', 'session', 'LiveControls.tsx');
   const ordre = ["id: 'interval'", "id: 'studio'", "id: 'embellir'"].map((k) => barre.indexOf(k));
   assert.ok(ordre.every((i) => i > 0) && ordre[0] < ordre[1] && ordre[1] < ordre[2], 'Interval → Studio → Embellir');
   assert.ok(barre.includes("testId: 'visio-studio'") && barre.includes('Clapperboard'), 'item Lucide Clapperboard');
-  assert.ok(barre.includes('data-testid="studio-toggle"') && barre.includes('hidden lg:inline-flex'), 'icône desktop seulement');
-  assert.ok(barre.includes('aria-pressed={studioOpen}'), 'état ouvert reflété');
+  assert.ok(!barre.includes('studio-toggle') && !VISIO.includes('studio-toggle'), 'plus d’icône Studio en doublon');
+  assert.ok(barre.includes('active: studioOpen'), 'état ouvert reflété (aria-checked de l’item)');
   assert.ok(VISIO.includes('studioNode?: React.ReactNode') && VISIO.includes('studioOpen?: boolean') && VISIO.includes('onToggleStudio?: () => void'), 'props exactes');
   // Les anciens data-testid restent en place.
   for (const id of ['visio-sources', 'visio-prompteur-toggle', 'visio-start-timer', 'visio-embellir', 'visio-leave', 'visio-camera-toggle', 'visio-camera-flip', 'visio-screen-share']) {

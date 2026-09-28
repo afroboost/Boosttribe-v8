@@ -186,6 +186,10 @@ function mesurer() {
   const calquesInput = [...document.querySelectorAll('[data-testid="visio-calque-input"]')];
   const champsTexte = [...document.querySelectorAll('input[aria-label="Écrire un commentaire"], input[placeholder="Écrire un commentaire…"]')].filter(visible);
   const pile = panel?.querySelector('[data-testid="visio-calques-bas"]') || null;
+  // 11. Messages du chat : zone de la liste (overlay) + boîte réelle des bulles.
+  const overlay = panel?.querySelector('[data-testid="live-chat-overlay"]') || null;
+  const bulles = overlay ? [...overlay.querySelectorAll('li')].filter(visible).map((e) => e.getBoundingClientRect()) : [];
+  const unionBulles = bulles.length ? { left: Math.min(...bulles.map((b) => b.left)), right: Math.max(...bulles.map((b) => b.right)), top: Math.min(...bulles.map((b) => b.top)), bottom: Math.max(...bulles.map((b) => b.bottom)) } : null;
   return {
     viewport: { w: innerWidth, h: innerHeight }, scrollWidth: document.documentElement.scrollWidth,
     pleinEcranNatif: !!document.fullscreenElement,
@@ -197,6 +201,7 @@ function mesurer() {
     calqueChat: r(calqueChat), nbMessages, voiles,
     nbCalquesInput: calquesInput.length, nbChampsTexte: champsTexte.length,
     calqueInput: r(calquesInput.find(visible) || calquesInput[0]), calqueInputVisible: calquesInput.some(visible), pile: r(pile),
+    chatOverlay: r(overlay), unionBulles, nbBulles: bulles.length,
     ecranZone: r(panel?.querySelector('[data-testid="scene-ecran"]')), coteZone: r(panel?.querySelector('[data-testid="scene-cote"]')),
     vignette: r(panel?.querySelector('[data-testid="scene-vignette"]')),
     vignetteContenu: panel?.querySelector('[data-testid="scene-vignette"]')?.getAttribute('data-contenu') || null,
@@ -310,6 +315,15 @@ function verifier(m, s, mode, actions) {
     ok('9-champ-centre', Math.abs(dc) <= 4, `écart au centre de la pile ${dc.toFixed(1)} px (champ ${fmt(m.calqueInput)} pile ${fmt(m.pile)})`);
   } else ok('9-champ-centre', false, 'champ ou pile absent');
   ok('9-champ-hors-barre', !chevauche(m.calqueInput, m.barre), `champ ${fmt(m.calqueInput)} barre ${fmt(m.barre)}`);
+  // 11. Messages du chat : centrés sur l'axe du champ, juste au-dessus, jamais sous la barre.
+  if (m.nbBulles > 0 && m.chatOverlay && m.calqueInput) {
+    const dcx = (m.chatOverlay.left + m.chatOverlay.w / 2) - (m.calqueInput.left + m.calqueInput.w / 2);
+    ok('11-chat-centre-sur-champ', Math.abs(dcx) <= 4, `écart ${dcx.toFixed(1)} px (chat ${fmt(m.chatOverlay)} champ ${fmt(m.calqueInput)})`);
+    ok('11-chat-au-dessus-du-champ', m.chatOverlay.bottom <= m.calqueInput.top - 8 + 0.5 && m.unionBulles.bottom <= m.calqueInput.top - 8 + 0.5,
+      `bas chat ${Math.round(m.chatOverlay.bottom)} / bas bulles ${Math.round(m.unionBulles.bottom)} / haut champ ${Math.round(m.calqueInput.top)}`);
+    ok('11-chat-hors-barre', !chevauche(m.chatOverlay, m.barre) && !(m.barre && m.unionBulles.right > m.barre.left), `chat ${fmt(m.chatOverlay)} bulles droite ${Math.round(m.unionBulles.right)} barre ${fmt(m.barre)}`);
+    ok('11-bulles-dans-la-zone', m.unionBulles.left >= m.chatOverlay.left - 1 && m.unionBulles.right <= m.chatOverlay.right + 1, `bulles [${Math.round(m.unionBulles.left)}, ${Math.round(m.unionBulles.right)}] zone [${Math.round(m.chatOverlay.left)}, ${Math.round(m.chatOverlay.right)}]`);
+  }
 
   // 10. pas de scroll horizontal = assertion 5 (conservée telle quelle).
   return res;
@@ -339,7 +353,7 @@ try {
         await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
         let m = null; let res = [];
         try {
-          await page.goto(`${BASE}?sc=${k}${AVEC_MEDIA ? '' : '&media=0'}${process.env.BANC_SEUL === '1' ? '&seul=1' : ''}${process.env.BANC_ECRAN === 'display' ? '' : '&ecran=canvas'}`, { waitUntil: 'load' });
+          await page.goto(`${BASE}?sc=${k}${AVEC_MEDIA ? '' : '&media=0'}${process.env.BANC_SEUL === '1' ? '&seul=1' : ''}${process.env.BANC_MSG ? `&msg=${process.env.BANC_MSG}` : ''}${process.env.BANC_ECRAN === 'display' ? '' : '&ecran=canvas'}`, { waitUntil: 'load' });
           await page.click('#demarrer');
           await page.waitForFunction(() => window.__pret || window.__erreur, null, { timeout: 15000 });
           const err = await page.evaluate(() => window.__erreur);

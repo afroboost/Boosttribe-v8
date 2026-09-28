@@ -853,23 +853,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             }}
             data-testid="visio-calques-bas"
           >
-            {/* 3) Chat (gauche) + 4) réactions (droite) — hauteur bornée, jamais sur les invités. */}
-            {(chatVisible || reactionsNode) && (
-              <div className="relative flex items-end justify-between gap-2 px-2 min-h-0" style={{ height: zone.chatHauteurMax }} data-testid="visio-calque-haut">
-                {chatVisible ? (
-                  <div className="pointer-events-none min-w-0 h-full overflow-hidden" style={{ width: '100%', maxWidth: zone.chatLargeurMax }} data-testid="visio-calque-chat">
-                    {chatOverlayNode}
-                  </div>
-                ) : <span />}
-                {reactionsNode && (
-                  <div className="pointer-events-none shrink-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
-                    {reactionsNode}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* 1) Invités en vignettes (plein écran) : taper = passe en grand. */}
+            {/* 1) Invités en vignettes (plein écran) : AU-DESSUS du chat — rien ne s'intercale entre
+                les messages et le champ. Taper = passe en grand. */}
             {camFullscreen && fsOthers.length > 0 && (
               <div className="pointer-events-auto relative flex gap-2 overflow-x-auto px-2" data-testid="visio-fs-thumbs">
                 {fsOthers.map((p) => (
@@ -891,6 +876,25 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                     />
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* 3) Messages du chat JUSTE AU-DESSUS du champ, dans le MÊME conteneur centré que lui
+                (même largeur `inputLargeurMax`, même marge) : une seule pile visuelle, même axe.
+                Aucun fond de bloc — seules les bulles ont un fond. 4) Réactions : à droite, hors
+                du flux (elles montent au-dessus du cœur), jamais sous la barre (droitePile). */}
+            {(chatVisible || reactionsNode) && (
+              <div className="relative flex flex-col justify-end min-h-0" style={{ height: zone.chatHauteurMax }} data-testid="visio-calque-haut">
+                {chatVisible && (
+                  <div className="pointer-events-none relative self-center px-2 w-full min-w-0 h-full overflow-hidden" style={{ maxWidth: zone.inputLargeurMax }} data-testid="visio-calque-chat">
+                    {chatOverlayNode}
+                  </div>
+                )}
+                {reactionsNode && (
+                  <div className="pointer-events-none absolute right-2 bottom-0 h-full flex flex-col justify-end" style={{ width: zone.reactionsLargeur }} data-testid="visio-calque-reactions">
+                    {reactionsNode}
+                  </div>
+                )}
               </div>
             )}
 

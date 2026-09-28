@@ -76,11 +76,20 @@ const participants = [
 ];
 
 const T0 = Date.now();
-const MESSAGES = [
+const TROIS = [
   { id: 'm1', userId: 'awa', name: 'Awa', text: 'Bravo coach !', ts: T0 - 30000 },
   { id: 'm2', userId: 'yann', name: 'Yann', text: "On voit bien l'écran", ts: T0 - 20000 },
   { id: 'm3', userId: 'hote', name: 'Coach Hôte', text: 'Merci à tous, on continue', ts: T0 - 10000 },
 ];
+// `?msg=0|1|3|long` : aucun message, un seul, trois (défaut), ou des messages très longs.
+const LONG = 'Super séance ce matin, merci pour les explications sur la respiration et le rythme, on continue comme ça toute la semaine avec le groupe !';
+const MESSAGES = (() => {
+  const v = params.get('msg') || '3';
+  if (v === '0') return [];
+  if (v === '1') return TROIS.slice(2);
+  if (v === 'long') return [{ ...TROIS[0], text: LONG }, { ...TROIS[2], text: LONG }];
+  return TROIS;
+})();
 
 const noop = () => {};
 

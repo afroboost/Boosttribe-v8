@@ -62,3 +62,19 @@ test('le chat du Live n’a plus de voile rectangulaire (aucun fond hors des bul
   assert.doesNotMatch(OVERLAY, /bg-gradient-to-|from-black\//, 'voile dégradé');
   assert.doesNotMatch(OVERLAY, /absolute inset-0[^"']*bg-/, 'boîte de fond pleine taille');
 });
+
+// ── 4) Messages du chat : UNE pile centrée — messages juste au-dessus du champ, même axe.
+//    Avant : chat ancré à gauche (chatLargeurMax, rangée justify-between) + champ centré.
+test('chat : même conteneur centré que le champ (inputLargeurMax), juste au-dessus', () => {
+  assert.match(PANNEAU, /data-testid="visio-calque-chat"[^>]*|visio-calque-chat/);
+  const bloc = PANNEAU.slice(PANNEAU.indexOf('data-testid="visio-calques-bas"'));
+  const iChat = bloc.indexOf('data-testid="visio-calque-chat"');
+  const iInput = bloc.indexOf('data-testid="visio-calque-input"');
+  const iThumbs = bloc.indexOf('data-testid="visio-fs-thumbs"');
+  assert.ok(iChat > 0 && iInput > iChat, 'chat avant le champ');
+  assert.ok(iThumbs < 0 || iThumbs < iChat, 'aucune vignette entre les messages et le champ');
+  const chatTag = bloc.slice(bloc.lastIndexOf('<div', iChat), iChat);
+  assert.match(chatTag, /maxWidth: zone\.inputLargeurMax/, 'même largeur que le champ');
+  assert.match(chatTag, /self-center|mx-auto/, 'centré comme le champ');
+  assert.doesNotMatch(chatTag, /bg-|backdrop-/, 'aucun fond de bloc (pas de rectangle)');
+});

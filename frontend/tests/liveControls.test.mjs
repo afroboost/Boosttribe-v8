@@ -300,11 +300,13 @@ test('slots rendus DANS camAreaRef, dans les DEUX modes (aucune condition camFul
     'aucun slot n’est réservé à un seul mode');
 });
 
-test('mise en page : barre à droite ; en bas à gauche le chat (+ réactions), puis le champ', () => {
+test('mise en page : barre à droite ; chat (+ réactions) centré au-dessus du champ, puis le champ', () => {
   const couche = PANEL.slice(PANEL.indexOf('data-testid="visio-calques-bas"'), PANEL.indexOf('{studioOpen && studioNode}'));
   const ordre = ['{chatOverlayNode}', '{reactionsNode}', '{commentInputNode}'].map((k) => couche.indexOf(k));
   assert.ok(ordre.every((i) => i > 0) && ordre[0] < ordre[1] && ordre[1] < ordre[2], 'chat + réactions, puis champ');
-  assert.ok(couche.includes('maxWidth: zone.chatLargeurMax') && couche.includes('height: zone.chatHauteurMax'), 'tailles du chat = zoneCommentaires');
+  // 28/09 : le chat partage la largeur du champ (même conteneur centré) — plus d'ancrage à gauche.
+  assert.ok(couche.includes('height: zone.chatHauteurMax'), 'hauteur du chat = zoneCommentaires');
+  assert.ok(!couche.includes('maxWidth: zone.chatLargeurMax'), 'plus de largeur de chat indépendante du champ');
   assert.ok(couche.includes('maxWidth: zone.inputLargeurMax'), 'largeur du champ = zoneCommentaires');
   assert.ok(couche.includes('width: zone.reactionsLargeur'), 'colonne des réactions = zoneCommentaires');
   assert.ok(couche.includes('data-testid="visio-fs-thumbs"'), 'vignettes des invités dans la pile : jamais sous le chat');

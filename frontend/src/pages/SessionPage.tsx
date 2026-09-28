@@ -65,7 +65,7 @@ import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import RecordPanel from '@/components/session/RecordPanel';
 import { useProgramRecorder } from '@/hooks/useProgramRecorder';
 import { antennePourEnregistrer } from '@/lib/recordLogic';
-import { EVENEMENT_LIVE_TERMINE, EVENEMENTS_DEPART, departDoitAnnoncer, sequenceFinDuLive } from '@/lib/finDuLive';
+import { EVENEMENT_LIVE_TERMINE, departDoitAnnoncer, sequenceFinDuLive } from '@/lib/finDuLive';
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
 import {
   doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique,
@@ -2991,16 +2991,19 @@ export const SessionPage: React.FC = () => {
     void terminerLive();
   }, [isHost, terminerLive]);
 
-  // Le départ n'est pas toujours un clic. Fermeture d'onglet, veille, rafraîchissement :
-  // le navigateur n'exécute AUCUN nettoyage React. `pagehide` est le seul point fiable.
+  // L'annonce de fin utilisée par « Terminer » / « Quitter » (étape `annoncer-fin`).
+  // 28/09 : elle N'EST PLUS branchée sur `pagehide` / `beforeunload`. Ces
+  // événements ne distinguent pas un rafraîchissement d'une fermeture : mesuré en
+  // production, recharger la page hôte TERMINAIT le live. La fermeture brutale est
+  // couverte par le battement (15 s) et la grâce serveur Afroboost (90 s) ; le
+  // rafraîchissement, lui, rejoint la même session et reprend ses battements.
   useEffect(() => {
     const annoncer = () => {
       if (!departDoitAnnoncer(canShare, embedStartedRef.current)) return;
       notifyEmbedSessionEnded({ sessionCode: sessionId || '', isHost: true });
     };
     annoncerFinRef.current = annoncer;
-    EVENEMENTS_DEPART.forEach((e) => window.addEventListener(e, annoncer));
-    return () => { EVENEMENTS_DEPART.forEach((e) => window.removeEventListener(e, annoncer)); };
+    return undefined;
   }, [canShare, sessionId]);
 
   const recordNode: React.ReactNode = (

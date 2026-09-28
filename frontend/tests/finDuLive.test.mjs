@@ -62,9 +62,13 @@ test('structurel : la fin est branchée, et sur les événements qui survivent �
   assert.ok(page.includes('videoMesh.stopCamera()') && page.includes('videoMesh.stopScreen()'));
   assert.ok(page.includes('setLiveMode(false)'), 'elle quitte la room');
   assert.ok(page.includes('notifyEmbedSessionEnded('), 'elle annonce la fin à Afroboost');
-  // LE point du bug : un nettoyage React ne s'exécute PAS quand on ferme l'onglet.
-  assert.ok(page.includes('EVENEMENTS_DEPART.forEach((e) => window.addEventListener(e, annoncer))'),
-    'la fin est aussi annoncée sur pagehide / beforeunload');
+  // 28/09 : `pagehide` / `beforeunload` ne distinguent PAS un rafraîchissement d'une
+  // fermeture. Mesuré en production : recharger la page hôte TERMINAIT le live.
+  // Depuis le battement (15 s) et la grâce serveur (90 s), la fermeture brutale
+  // s'éteint côté Afroboost sans ce signal ; le rafraîchissement, lui, se reconnecte.
+  assert.ok(!page.includes('window.addEventListener(e, annoncer)'),
+    'un rafraîchissement ne doit plus annoncer la fin du live');
+  assert.ok(page.includes('annoncerFinRef.current = annoncer'), '« Terminer » garde son annonce');
   assert.deepEqual([...EVENEMENTS_DEPART], ['pagehide', 'beforeunload']);
 });
 

@@ -2980,6 +2980,17 @@ export const SessionPage: React.FC = () => {
     }
   }, [recorder, screenSharing, videoMesh, canShare, sessionId, broadcastScreenState, hostMicActive]);
 
+  // 🚪 « Quitter le live » (menu ⋮). Mesuré le 28/09 : pour l'hôte, ce menu ne
+  //    fermait que la visio ; la page restait montée, aucun `ended` ne partait et
+  //    Afroboost affichait « EN DIRECT » pour rien. L'hôte qui quitte TERMINE :
+  //    même confirmation, même routine que le bouton « Terminer ». Un participant
+  //    ou un co-hôte, lui, part seul — il ne termine rien pour les autres.
+  const quitterLeLive = useCallback(() => {
+    if (!isHost) { setLiveMode(false); return; }
+    if (!window.confirm('Terminer le Live pour tout le monde ?')) return;
+    void terminerLive();
+  }, [isHost, terminerLive]);
+
   // Le départ n'est pas toujours un clic. Fermeture d'onglet, veille, rafraîchissement :
   // le navigateur n'exécute AUCUN nettoyage React. `pagehide` est le seul point fiable.
   useEffect(() => {
@@ -4237,7 +4248,7 @@ export const SessionPage: React.FC = () => {
       onToggleMic={handleLiveMicToggle}
       hideMicButton={isHost}
       onToggleCamera={handleToggleCamera}
-      onLeaveLive={() => setLiveMode(false)}
+      onLeaveLive={quitterLeLive}
       canManageStage={canShare}
       stageRequestPending={stageRequestPending}
       onRequestStage={handleRequestStage}

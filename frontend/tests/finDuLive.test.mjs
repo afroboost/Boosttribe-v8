@@ -79,3 +79,21 @@ test('structurel : les participants sont prévenus, et l’hôte a un vrai bouto
   assert.ok(panel.includes('window.confirm('), 'une action irréversible demande confirmation');
   assert.equal(EVENEMENT_LIVE_TERMINE, 'LIVE_ENDED');
 });
+
+test('structurel : « Quitter le live » de l’HÔTE termine vraiment le live (bug du 28/09)', () => {
+  // Mesuré en production le 28/09 : l'hôte « quitte » par le menu ⋮, la visio se
+  // ferme, la page reste montée — aucun `ended` ne part et Afroboost affiche
+  // « EN DIRECT » jusqu'au garde-fou. Avec le battement, la page aurait même
+  // continué à déclarer le live vivant. Pour l'hôte, quitter = terminer.
+  const page = codeSeul(lire('pages', 'SessionPage.tsx'));
+  assert.ok(!page.includes('onLeaveLive={() => setLiveMode(false)}'),
+    'le menu ⋮ ne doit plus seulement fermer la visio pour l’hôte');
+  assert.ok(page.includes('onLeaveLive={quitterLeLive}'), 'le menu passe par quitterLeLive');
+  assert.ok(page.includes('const quitterLeLive = useCallback'), 'une seule porte de sortie');
+  const corps = page.slice(page.indexOf('const quitterLeLive = useCallback'), page.indexOf('const quitterLeLive = useCallback') + 600);
+  assert.ok(corps.includes('if (!isHost)') && corps.includes('setLiveMode(false)'),
+    'un participant ou un co-hôte part seul, sans rien terminer pour les autres');
+  assert.ok(corps.includes("window.confirm('Terminer le Live pour tout le monde ?')"),
+    'même confirmation que le bouton Terminer');
+  assert.ok(corps.includes('terminerLive()'), 'l’hôte passe par LA routine de fin, pas une copie');
+});

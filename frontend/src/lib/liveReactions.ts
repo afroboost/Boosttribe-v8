@@ -85,6 +85,8 @@ export interface TamponReactions {
   /** Heure à laquelle `vider` enverra, ou null s'il n'y a rien en attente. */
   prochainVidage: () => number | null;
   enAttente: () => number;
+  /** Clics ajoutés mais pas encore partis, par type (copie). */
+  comptesEnAttente: () => Comptes;
 }
 
 export function creerTamponReactions({
@@ -127,6 +129,7 @@ export function creerTamponReactions({
     },
     prochainVidage,
     enAttente: () => nb,
+    comptesEnAttente: () => ({ ...comptes }),
   };
 }
 
@@ -188,6 +191,23 @@ export function synchroTotal(etat: EtatReactions, totalAnnonce: unknown): EtatRe
     if (v > t[k]) { t[k] = v; change = true; }
   }
   return change ? { ...etat, totaux: t } : etat;
+}
+
+/**
+ * Total que l'hôte peut annoncer : ses totaux MOINS ses propres clics encore en tampon.
+ * Ces clics partiront ensuite dans un lot que chaque récepteur AJOUTE ; s'ils figuraient déjà
+ * dans le total annoncé (aligné par max), ils seraient comptés deux fois — surplus observé en
+ * prod le 28/09 (+2, +4, +11 après une rafale de 20). Même référence si rien n'est en attente.
+ */
+export function totauxAnnoncables(totaux: Totaux, enAttente?: Comptes | null): Totaux {
+  if (!enAttente) return totaux;
+  let change = false;
+  const t: Totaux = { ...totaux };
+  for (const k of TYPES_REACTION) {
+    const n = entierPositif(enAttente[k]);
+    if (n > 0) { t[k] = Math.max(0, t[k] - n); change = true; }
+  }
+  return change ? t : totaux;
 }
 
 /** L'hôte annonce-t-il le total ? Au plus toutes les `periodeMs`, et seulement s'il a changé. */

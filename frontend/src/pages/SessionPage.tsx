@@ -4926,6 +4926,7 @@ export const SessionPage: React.FC = () => {
 
       {/* Header */}
       <header 
+        data-bt-entete
         className="sticky top-0 z-40 border-b border-white/10"
         style={{ 
           background: 'rgba(0, 0, 0, 0.8)',

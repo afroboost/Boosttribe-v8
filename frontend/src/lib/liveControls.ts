@@ -40,10 +40,17 @@ export const LARGEUR_PILULE = 212;
  * Ordre de PRIORITÉ : quand la place manque, on garde d'abord le début de la liste.
  * « Terminer » et la caméra passent avant tout : une action irréversible et la
  * commande qui fait exister le coach à l'écran ne se cherchent pas dans un menu.
+ * 28/09 (Bassi) : Terminer, Caméra, Micro, Scène, puis PLAY (s'il y a un média — sinon
+ * il n'est pas candidat et ne prend aucune place), puis le partage d'écran. Prompteur,
+ * demandes, diffusion, enregistrer, réduire descendent dans ⋮ quand la hauteur manque.
+ * Panneau compact (284 px = 4 places) : Terminer, Caméra, Micro, Play.
  */
 export const PRIORITE_COMMANDES: readonly CommandeId[] = [
-  'terminer', 'camera', 'scene', 'micro', 'reduire', 'record', 'lecture', 'prompteur', 'demandes', 'partage', 'diffusion',
+  'terminer', 'camera', 'micro', 'scene', 'lecture', 'partage', 'record', 'reduire', 'prompteur', 'demandes', 'diffusion',
 ];
+
+/** Toujours devant tout le reste, même devant une commande active. */
+const VITALES: readonly CommandeId[] = ['terminer', 'camera', 'micro', 'scene', 'lecture'];
 
 /** Ordre d'AFFICHAGE, de gauche à droite (ou de haut en bas en colonne). */
 export const ORDRE_COMMANDES: readonly CommandeId[] = [
@@ -67,19 +74,27 @@ export interface Repartition {
  * @param largeur   place utile dans l'axe (px) ; `Infinity` = pas de contrainte
  * @param largeurs  taille propre d'une commande si elle n'est pas un bouton rond
  * @param espace    gap entre boutons : ESPACE_BOUTONS (rangée, gap-2) ou ESPACE_COLONNE (gap-3)
+ * @param actives   commandes EN COURS (enregistrement, partage) : elles passent juste après
+ *                  les vitales (Terminer, Caméra, Micro, Scène, Play) — jamais devant Play.
  */
 export function repartirCommandes(
   candidats: readonly CommandeId[],
   largeur: number,
   largeurs: Partial<Record<CommandeId, number>> = {},
   espace: number = ESPACE_BOUTONS,
+  actives: readonly CommandeId[] = [],
 ): Repartition {
   const uniques = ORDRE_COMMANDES.filter((c) => candidats.includes(c));
   const place = (Number.isFinite(largeur) ? Math.max(0, largeur) : Number.MAX_SAFE_INTEGER)
     - MARGE_BARRE - TAILLE_BOUTON; // le bouton ⋮
   let utilise = 0;
   const gardees = new Set<CommandeId>();
-  for (const c of PRIORITE_COMMANDES) {
+  const priorite = [
+    ...VITALES,
+    ...actives.filter((c) => !VITALES.includes(c)),
+    ...PRIORITE_COMMANDES.filter((c) => !VITALES.includes(c) && !actives.includes(c)),
+  ];
+  for (const c of priorite) {
     if (!uniques.includes(c)) continue;
     const l = (largeurs[c] ?? TAILLE_BOUTON) + espace;
     if (utilise + l <= place) { gardees.add(c); utilise += l; }
@@ -88,6 +103,20 @@ export function repartirCommandes(
     barre: uniques.filter((c) => gardees.has(c)),
     menu: uniques.filter((c) => !gardees.has(c)),
   };
+}
+
+/**
+ * Plein écran : zone réellement libre. En plein écran NATIF (Fullscreen API), la scène est
+ * dans la couche supérieure du navigateur : tout l'écran. En REPLI CSS (API refusée, iOS,
+ * iframe), la scène `fixed` reste sous l'en-tête sticky de la page (contexte d'empilement
+ * de <main>) : elle commence donc SOUS son bord bas réel — la barre et le champ se calent
+ * sur ce qui est vraiment visible, au lieu de passer sous l'en-tête.
+ */
+export function zoneLibrePleinEcran(e: { viewportH: number; enteteBas: number; natif: boolean }): { haut: number; hauteur: number } {
+  const h = Number.isFinite(e.viewportH) ? Math.max(0, e.viewportH) : 0;
+  if (e.natif) return { haut: 0, hauteur: h };
+  const haut = Math.min(Math.max(0, Math.round(Number.isFinite(e.enteteBas) ? e.enteteBas : 0)), h);
+  return { haut, hauteur: h - haut };
 }
 
 /** Largeur sous laquelle on applique la mise en page « téléphone » (= breakpoint sm). */

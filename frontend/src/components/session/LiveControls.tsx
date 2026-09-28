@@ -150,11 +150,16 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
 
   const pilules = !vertical;
   // Colonne : contrainte par sa HAUTEUR (gap-3) ; rangée : par sa largeur (gap-2).
+  // Commandes EN COURS : elles restent visibles juste après les vitales (jamais devant Play).
+  const actives: CommandeId[] = [
+    ...(recordEtat === 'enregistrement' || recordEtat === 'finalisation' ? ['record' as const] : []),
+    ...(screenSharing ? ['partage' as const] : []),
+  ];
   const { barre, menu } = repartirCommandes(candidats, vertical ? hauteur : largeur, {
     camera: !canManageStage && pilules ? 150 : TAILLE_BOUTON,
     scene: pilules ? LARGEUR_PILULE : TAILLE_BOUTON,
     terminer: large ? 104 : TAILLE_BOUTON,
-  }, vertical ? ESPACE_COLONNE : ESPACE_BOUTONS);
+  }, vertical ? ESPACE_COLONNE : ESPACE_BOUTONS, actives);
   const enBarre = (c: CommandeId) => barre.includes(c);
 
   const libelleLecture = lecture?.enCours ? 'Mettre en pause' : 'Lire la musique';

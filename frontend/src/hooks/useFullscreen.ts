@@ -18,8 +18,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export function useFullscreen(
   targetRef: React.RefObject<HTMLElement | null>,
   opts?: { lockLandscape?: boolean },
-): { fullscreen: boolean; enter: () => void; exit: () => void; toggle: () => void } {
+): { fullscreen: boolean; natif: boolean; enter: () => void; exit: () => void; toggle: () => void } {
   const [fullscreen, setFullscreen] = useState(false);
+  // 28/09 : vrai seulement en plein écran NATIF (couche supérieure du navigateur). En repli
+  // CSS, l'appelant doit laisser la place à ce qui reste peint au-dessus (en-tête sticky).
+  const [natif, setNatif] = useState(false);
   const fullscreenRef = useRef(false);
   fullscreenRef.current = fullscreen;
   const wantLandscape = !!opts?.lockLandscape;
@@ -64,6 +67,7 @@ export function useFullscreen(
   useEffect(() => {
     const onFsChange = () => {
       const fsEl = document.fullscreenElement || (document as unknown as { webkitFullscreenElement?: Element }).webkitFullscreenElement;
+      setNatif(!!fsEl && fsEl === targetRef.current);
       if (!fsEl) {
         unlockOrientation();
         if (fullscreenRef.current) setFullscreen(false);
@@ -75,9 +79,9 @@ export function useFullscreen(
       document.removeEventListener('fullscreenchange', onFsChange);
       document.removeEventListener('webkitfullscreenchange', onFsChange as EventListener);
     };
-  }, [unlockOrientation]);
+  }, [unlockOrientation, targetRef]);
 
-  return { fullscreen, enter, exit, toggle };
+  return { fullscreen, natif, enter, exit, toggle };
 }
 
 export default useFullscreen;

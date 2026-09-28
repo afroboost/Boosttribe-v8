@@ -4,7 +4,7 @@ import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/Sou
 import { CameraTile } from '@/components/session/CameraTile';
 import { LiveControls, type LectureLive } from '@/components/session/LiveControls';
 import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
-import { zoneCommentaires, colonnesGrille, dispositionBarre, ancrageImage } from '@/lib/liveControls';
+import { zoneCommentaires, colonnesGrille, dispositionBarre, ancrageImage, zoneLibrePleinEcran } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import { FluxEcran } from '@/components/session/SceneRenderer';
@@ -229,7 +229,23 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // 🔍 Chantier A : VRAI plein écran d'UNE caméra (Fullscreen API + repli overlay iOS), orientation AUTO (pas de rotation forcée).
   // Le conteneur de la zone caméras est TOUJOURS monté et visible → requestFullscreen fiable (aucun remontage des flux).
   const camAreaRef = useRef<HTMLDivElement>(null);
-  const { fullscreen: camFullscreen, enter: enterCamFullscreen, exit: exitCamFullscreen } = useFullscreen(camAreaRef);
+  const { fullscreen: camFullscreen, natif: pleinEcranNatif, enter: enterCamFullscreen, exit: exitCamFullscreen } = useFullscreen(camAreaRef);
+  // 28/09 — plein écran de REPLI (API refusée : iframe, iOS) : la scène `fixed` reste sous
+  //   l'en-tête sticky de la page (contexte d'empilement de <main>). Au lieu de la recouvrir
+  //   (z-index), elle COMMENCE sous le bord bas réel de l'en-tête (`[data-bt-entete]`) :
+  //   la barre, le micro et le champ se calent sur la zone vraiment visible.
+  const [enteteBas, setEnteteBas] = useState(0);
+  useLayoutEffect(() => {
+    if (!camFullscreen || pleinEcranNatif) { setEnteteBas((p) => (p === 0 ? p : 0)); return; }
+    const mesurer = () => {
+      const b = Math.round(document.querySelector('[data-bt-entete]')?.getBoundingClientRect().bottom ?? 0);
+      setEnteteBas((p) => (p === b ? p : b));
+    };
+    mesurer();
+    window.addEventListener('resize', mesurer);
+    return () => window.removeEventListener('resize', mesurer);
+  }, [camFullscreen, pleinEcranNatif]);
+  const zoneRepli = zoneLibrePleinEcran({ viewportH: typeof window !== 'undefined' ? window.innerHeight : 0, enteteBas, natif: pleinEcranNatif });
   // 📜 ramenerBarre — ouvrir le Prompteur réserve de la place sous les caméras (le visage
   //    reste libre) : sur un écran court, la barre Live passait SOUS le bas de l'écran (mesuré
   //    en prod, 414/430 px). Une fonction = un endroit : la barre doit rester atteignable.
@@ -265,7 +281,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
     ro?.observe(el);
     window.addEventListener('resize', mesurer);
     return () => { ro?.disconnect(); window.removeEventListener('resize', mesurer); };
-  }, [camFullscreen]);
+  }, [camFullscreen, enteteBas]);
   // 🔍 Agrandir (épingler) UNE caméra — action LOCALE (chacun choisit sur SON écran).
   // Contrôlé par le parent si fourni (persiste au remontage) ; sinon état interne (repli).
   const [spotlightInternal, setSpotlightInternal] = useState<string | null>(null);
@@ -651,10 +667,11 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           Ce conteneur EST la cible du plein écran (chantier A) : en plein écran il devient une surface fixe noire. */}
       <div
         ref={camAreaRef}
-        className={camFullscreen ? 'fixed inset-0 z-[100] bg-black flex flex-col' : 'relative p-3'}
-        /* Hors plein écran : sous les vignettes, la place de la barre (et du chat s'il y a
-           plusieurs caméras) — les personnes filmées ne sont jamais recouvertes. */
-        style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`, paddingRight: `calc(0.25rem + ${zone.reserveDroite})` }}
+        className={camFullscreen ? 'fixed inset-x-0 bottom-0 z-[100] bg-black flex flex-col' : 'relative p-3'}
+        /* Plein écran : commence sous l'en-tête en repli CSS (zoneRepli). Hors plein écran :
+           sous les vignettes, la place de la barre (et du chat s'il y a plusieurs caméras) —
+           les personnes filmées ne sont jamais recouvertes. */
+        style={camFullscreen ? { top: zoneRepli.haut } : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`, paddingRight: `calc(0.25rem + ${zone.reserveDroite})` }}
         data-testid="visio-camera-area"
       >
         {/* 🎬 Film / écran partagé EN GRAND — place stable, AVANT la bascule plein écran. */}

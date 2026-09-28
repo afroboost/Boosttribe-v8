@@ -73,12 +73,9 @@ export function LiveChatOverlay({
       aria-hidden={masques || undefined}
       data-testid="live-chat-overlay"
     >
-      {/* Voile très léger : lisibilité sur vidéo claire, sans cacher l'image. */}
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 bg-gradient-to-t from-black/25 via-black/10 to-transparent"
-        style={{ WebkitMaskImage: FONDU, maskImage: FONDU }}
-      />
+      {/* 28/09 : plus de voile de fond. Ce dégradé était une boîte à bords francs (22rem ×
+          38 %), rendue même sans message → un rectangle en bas à gauche de la scène. La
+          lisibilité tient au textShadow et au fond arrondi de CHAQUE bulle. */}
       <ul
         className="relative flex flex-col justify-end gap-1.5 overflow-hidden min-h-0 px-2 pb-1"
         style={{ WebkitMaskImage: FONDU, maskImage: FONDU }}

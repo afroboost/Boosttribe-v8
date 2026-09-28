@@ -59,15 +59,6 @@ export function sequenceFinDuLive(e: EtatAvantFin): EtapeFin[] {
 /** Événement Realtime : l'hôte a terminé. Les participants l'apprennent par là. */
 export const EVENEMENT_LIVE_TERMINE = 'LIVE_ENDED';
 
-/**
- * Le départ n'est pas toujours un clic. Un onglet qu'on ferme, un téléphone qui se
- * met en veille, un rafraîchissement : le navigateur ne laisse alors que quelques
- * millisecondes, et surtout il n'exécute PAS les nettoyages React. C'est exactement
- * pour cela que le live restait allumé. `pagehide` est le seul événement fiable sur
- * iOS comme ailleurs ; `visibilitychange` vers `hidden` le complète.
- */
-export const EVENEMENTS_DEPART = ['pagehide', 'beforeunload'] as const;
-
 /** Faut-il annoncer la fin lors de ce départ ? Oui seulement si un live tournait. */
 export function departDoitAnnoncer(estHote: boolean, liveDemarre: boolean): boolean {
   return !!(estHote && liveDemarre);

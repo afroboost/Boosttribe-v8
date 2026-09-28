@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sequenceFinDuLive, departDoitAnnoncer, EVENEMENT_LIVE_TERMINE, EVENEMENTS_DEPART } from './.build/finDuLive.mjs';
+import { sequenceFinDuLive, departDoitAnnoncer, EVENEMENT_LIVE_TERMINE } from './.build/finDuLive.mjs';
 import { lire, codeSeul } from './lireSource.mjs';
 
 const TOUT = { enregistrementEnCours: true, partageEcranActif: true, cameraActive: true, microActif: true, estHote: true };
@@ -69,7 +69,8 @@ test('structurel : la fin est branchée, et sur les événements qui survivent �
   assert.ok(!page.includes('window.addEventListener(e, annoncer)'),
     'un rafraîchissement ne doit plus annoncer la fin du live');
   assert.ok(page.includes('annoncerFinRef.current = annoncer'), '« Terminer » garde son annonce');
-  assert.deepEqual([...EVENEMENTS_DEPART], ['pagehide', 'beforeunload']);
+  assert.ok(!/addEventListener\(\s*['"`](pagehide|beforeunload)['"`]/.test(page),
+    'aucun pagehide / beforeunload n’annonce la fin du live');
 });
 
 test('structurel : les participants sont prévenus, et l’hôte a un vrai bouton', () => {

@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bitratePour, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
-  nomFichier, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie,
+  nomFichier, optionsEnregistreur, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
 import { choisirResolution, type ResolutionProgramme } from '@/lib/programCompositor';
@@ -296,7 +296,8 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       const stream = o.programStream ?? (await o.demarrerProgramme());
       if (!stream || !stream.getVideoTracks().some((t) => t.readyState === 'live')) throw new Error('Programme indisponible : mettez une scène à l’antenne.');
       // 3. Un seul MediaRecorder, écriture par tranche d'une seconde.
-      const rec = new MediaRecorder(stream, { mimeType: capacite.mime, videoBitsPerSecond: debit.video, audioBitsPerSecond: debit.audio });
+      //    Une image clé par seconde (DÉFAUT A) : sans elle, le muxeur MP4 de Chrome ne livre rien avant l'arrêt à faible cadence → taille « 0 o ».
+      const rec = new MediaRecorder(stream, optionsEnregistreur(capacite.mime, debit));
       // 1re tranche non vide = l'en-tête du fichier (ftyp+moov / EBML+Tracks) : on y LIT la résolution que ffprobe lira,
       // et on mesure la piste en secours. Lecture seule (arrayBuffer d'une copie), le morceau est écrit tel quel.
       const ext = capacite.extension; let premiereTranche = true;

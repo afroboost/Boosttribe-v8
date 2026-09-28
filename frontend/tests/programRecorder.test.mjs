@@ -140,3 +140,10 @@ test('lecture de l’en-tête : module pur, sans DOM ni réseau, sans dépendanc
   for (const mot of ['document', 'window', 'fetch(', 'navigator']) assert.equal(lecteur.includes(mot), false, mot);
   assert.match(lecteur, /export function resolutionFichier\(u8: Uint8Array, extension: 'mp4' \| 'webm'\)/);
 });
+
+// ── DÉFAUT A : taille à 0 pendant l'enregistrement (MP4 Chrome : pas de tranche sans image clé) ──
+test('A — le seul MediaRecorder reçoit les options pures (image clé chaque seconde)', () => {
+  assert.equal((hook.match(/new MediaRecorder\(/g) || []).length, 1);
+  assert.match(hook, /new MediaRecorder\(stream, optionsEnregistreur\(capacite\.mime, debit\)\)/);
+  assert.match(logique, /videoKeyFrameIntervalDuration: IMAGE_CLE_MS/);
+});

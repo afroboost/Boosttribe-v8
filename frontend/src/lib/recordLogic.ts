@@ -97,6 +97,29 @@ export function bitratePour(qualite: RecQualite): { video: number; audio: number
     : { video: 4_500_000, audio: 128_000 };
 }
 
+/**
+ * DÉFAUT A (terrain 28/09 : « ● Enregistrement 00:00:19 · 0 o » tout du long, 732 Ko à l'arrêt).
+ * Mesuré dans le vrai Chrome 153 : le muxeur MP4 ne livre une tranche (`dataavailable`) qu'à chaque
+ * IMAGE CLÉ (un fragment moof/mdat), et l'encodeur n'en pose qu'environ toutes les 100 images : ~3,4 s
+ * à 30 i/s, AUCUNE avant l'arrêt à 5 i/s ou 1 i/s (compositeur peu actif, onglet en arrière-plan).
+ * `timeslice` seul ne suffit donc pas. Une image clé par seconde (`videoKeyFrameIntervalDuration`,
+ * Chrome ; ignoré ailleurs) → une tranche par seconde → la taille affichée suit l'écriture réelle.
+ * Même conteneur, mêmes codecs, même débit : seule la cadence des images clés change (GOP 1 s, standard
+ * du direct), ce qui rend aussi un fichier coupé net lisible jusqu'à sa dernière seconde écrite.
+ */
+export const IMAGE_CLE_MS = 1000;
+
+export interface OptionsEnregistreur {
+  mimeType: string;
+  videoBitsPerSecond: number;
+  audioBitsPerSecond: number;
+  videoKeyFrameIntervalDuration: number;
+}
+
+export function optionsEnregistreur(mime: string, debit: { video: number; audio: number }): OptionsEnregistreur {
+  return { mimeType: mime, videoBitsPerSecond: debit.video, audioBitsPerSecond: debit.audio, videoKeyFrameIntervalDuration: IMAGE_CLE_MS };
+}
+
 export function qualiteParDefaut(cap: RecCapacite): RecQualite {
   return cap.qualites[0] ?? '720p';
 }

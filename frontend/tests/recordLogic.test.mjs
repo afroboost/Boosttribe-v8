@@ -204,3 +204,24 @@ test('libellé : « 1280 × 720 » (espaces autour du ×, valeurs entières)', (
   assert.equal(libelleResolution({ largeur: 1920, hauteur: 1080 }), '1920 × 1080');
   assert.equal(libelleResolution({ largeur: 1279.6, hauteur: 719.5 }), '1280 × 720');
 });
+
+// ── DÉFAUT A (terrain 28/09) : « ● Enregistrement 00:00:19 · 0 o » pendant tout l'enregistrement ──
+// Mesuré dans le vrai Chrome 153 : le muxeur MP4 ne livre une tranche qu'à chaque IMAGE CLÉ (fragment
+// moof/mdat), et l'encodeur n'en pose une que toutes les ~100 images. À 30 i/s : une tranche toutes les
+// ~3,4 s ; à 5 i/s : AUCUNE tranche avant l'arrêt (12 s) ; à 1 i/s : rien non plus. `timeslice` seul ne
+// suffit donc pas : sans image clé périodique, `ondataavailable` ne vient pas et la taille reste à 0.
+import { optionsEnregistreur, IMAGE_CLE_MS } from './.build/recordLogic.mjs';
+
+test('A — options du MediaRecorder : une image clé par seconde (tranche MP4 livrée chaque seconde)', () => {
+  const o = optionsEnregistreur('video/mp4;codecs=avc1.42E01E,mp4a.40.2', { video: 8_000_000, audio: 128_000 });
+  assert.equal(IMAGE_CLE_MS, 1000);
+  assert.equal(o.videoKeyFrameIntervalDuration, IMAGE_CLE_MS);
+  assert.equal(o.mimeType, 'video/mp4;codecs=avc1.42E01E,mp4a.40.2');
+  assert.equal(o.videoBitsPerSecond, 8_000_000);
+  assert.equal(o.audioBitsPerSecond, 128_000);
+});
+
+test('A — mêmes codecs, même débit : seule la cadence des images clés change (fichier toujours MP4/WebM identique)', () => {
+  const o = optionsEnregistreur('video/webm;codecs=vp9,opus', bitratePour('720p'));
+  assert.deepEqual(Object.keys(o).sort(), ['audioBitsPerSecond', 'mimeType', 'videoBitsPerSecond', 'videoKeyFrameIntervalDuration']);
+});

@@ -103,3 +103,11 @@ test('structure : clic simple = palette (plus d’appui long), 6 icônes lucide,
   assert.doesNotMatch(comp, /\p{Extended_Pictographic}/u);
   for (const t of SIX) assert.match(comp, new RegExp(`\\b${t}:`), `libellé / icône pour ${t}`);
 });
+
+// Terrain 28/09 (prod, desktop) : la palette est en `absolute` dans le bouton de 44 px ;
+// sans largeur propre, sa grille 3×2 était comprimée à 44 px et ses icônes débordaient
+// sur la barre verticale. Elle doit prendre sa largeur de contenu et s'ouvrir vers la GAUCHE.
+test('palette : largeur de contenu (w-max), ancrée à droite, ouverte vers la gauche', () => {
+  const src = lire('components', 'session', 'LiveReactionOverlay.tsx');
+  assert.match(src, /absolute bottom-full right-0[^"]*\bw-max\b[^"]*grid grid-cols-3/);
+});

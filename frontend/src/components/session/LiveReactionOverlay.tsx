@@ -164,7 +164,7 @@ export function LiveReactionButton({ onReagir, total, types = ['like'], classNam
           ref={paletteRef}
           role="menu"
           aria-label="Choisir une réaction"
-          className="absolute bottom-full right-0 z-20 mb-2 grid grid-cols-3 gap-1.5 rounded-2xl border border-white/15 bg-black/55 p-1.5 backdrop-blur-md"
+          className="absolute bottom-full right-0 z-20 mb-2 w-max grid grid-cols-3 gap-1.5 rounded-2xl border border-white/15 bg-black/55 p-1.5 backdrop-blur-md"
         >
           {types.map((t) => {
             const I = ICONES_REACTION[t] ?? Heart;

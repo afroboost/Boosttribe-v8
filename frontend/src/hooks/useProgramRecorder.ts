@@ -6,20 +6,21 @@
  * recevrait. Aucune 2ᵉ composition, aucun 2ᵉ mixeur, aucune 2ᵉ beauté ; le
  * prompteur et l'interface n'y sont pas par construction (Phase 3).
  *
- * RÈGLE ABSOLUE : la vidéo ne part JAMAIS vers un serveur. Trois destinations,
- * toutes locales, décidées par `recordLogic.detecterCapacite` :
- *  - `fsa`     : fichier choisi par l'hôte AVANT le démarrage, écrit au fil de l'eau ;
- *  - `opfs`    : fichier temporaire du navigateur écrit au fil de l'eau, téléchargé à l'arrêt ;
+ * RÈGLE ABSOLUE : la vidéo ne part JAMAIS vers un serveur. Capture locale, décidée par
+ * `recordLogic.detecterCapacite`, SANS aucune boîte de dialogue (UX REC 28/09) :
+ *  - `opfs`    : fichier temporaire du navigateur écrit au fil de l'eau ;
  *  - `memoire` : morceaux en RAM (durée limitée, avertissement).
+ * Le choix de l'emplacement (`showSaveFilePicker`, sinon téléchargement) n'arrive qu'à
+ * l'EXPORT, sur un fichier finalisé et non vide (`exportAutorise`) : plus de fichier 0 octet.
  *
  * Chaque `dataavailable` (toutes les secondes) est écrit immédiatement : la
- * RAM ne grandit pas avec la durée en `fsa`/`opfs`. Un seul `MediaRecorder`
+ * RAM ne grandit pas avec la durée en `opfs`. Un seul `MediaRecorder`
  * par enregistrement : les changements de scène ne touchent pas la piste
  * (le compositeur redessine dans le même canvas) → un seul fichier continu.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  bitratePour, classerRestesOpfs, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
+  bitratePour, classerRestesOpfs, CLE_PREF_AUTO, detecterCapacite, exportAutorise, lirePrefAuto, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
   nomFichier, optionsEnregistreur, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie, type ResteOpfs,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
@@ -59,6 +60,9 @@ export interface UseProgramRecorderReturn {
   restes: ResteOpfs[];
   recupererReste: (r: ResteOpfs) => Promise<void>;
   supprimerReste: (r: ResteOpfs) => Promise<void>;
+  /** Option « Enregistrer dès le démarrage » (localStorage `bt_rec_auto`). Le déclenchement est fait par la page (`doitDemarrerAuto`). */
+  autoStart: boolean;
+  setAutoStart: (v: boolean) => void;
 }
 
 export const AVIS_ARRIERE_PLAN = 'Live Visio en arrière-plan : vidéo réduite à 1 image/s (le son continue). Gardez Live Visio visible pendant l’enregistrement pour conserver une vidéo fluide.';
@@ -106,7 +110,7 @@ export function lireEnvironnement(): EnvEnregistrement {
   };
 }
 
-/** Écrivain abstrait : même interface pour FSA, OPFS et mémoire. */
+/** Écrivain abstrait : même interface pour OPFS et mémoire. */
 interface Ecrivain {
   ecrire(chunk: Blob): Promise<void>;
   /** Réécrit `octets` à une position absolue (correction de durée WebM). */
@@ -115,19 +119,6 @@ interface Ecrivain {
   abandonner(): Promise<void>;
   /** Retire le fichier (après `terminer()`), pour ne jamais laisser un fichier VIDE sur l'appareil. */
   supprimer(): Promise<void>;
-}
-
-async function ecrivainFsa(handle: any): Promise<Ecrivain> {
-  const w = await handle.createWritable({ keepExistingData: false });
-  let pos = 0;
-  return {
-    async ecrire(chunk) { await w.write(chunk); pos += chunk.size; },
-    async corriger(position, octets) { await w.write({ type: 'write', position, data: octets }); },
-    async terminer() { await w.close(); const f = await handle.getFile(); return { taille: f.size, fichier: f }; },
-    async abandonner() { try { await w.abort(); } catch { /* déjà fermé */ } },
-    // FileSystemFileHandle.remove() : Chrome ≥ 110 ; ailleurs le fichier vide reste, mais l'hôte est prévenu.
-    async supprimer() { try { if (typeof handle.remove === 'function') await handle.remove(); } catch { /* verrouillé : on laisse */ } },
-  };
 }
 
 async function ecrivainOpfs(nom: string): Promise<{ ecrivain: Ecrivain; handle: any; dossier: any }> {
@@ -187,28 +178,61 @@ function telecharger(blobOuFichier: Blob, nom: string): void {
   setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 10_000);
 }
 
+/**
+ * EXPORT d'un fichier FINALISÉ (UX REC) : c'est ICI, et seulement ici, que l'hôte choisit l'emplacement.
+ * `showSaveFilePicker` si le navigateur l'offre (copie écrite puis FERMÉE : le fichier n'existe sur le
+ * disque que complet), sinon téléchargement. Annulation = rien (le temporaire reste pour un nouvel essai) ;
+ * sélecteur refusé (iframe sans délégation, politique) = téléchargement.
+ */
+async function exporterFichier(source: Blob, nom: string): Promise<'ecrit' | 'telecharge' | 'annule'> {
+  const win: any = typeof window !== 'undefined' ? window : {};
+  if (typeof win.showSaveFilePicker === 'function') {
+    const ext = /\.mp4$/i.test(nom) ? 'mp4' : 'webm';
+    let handle: any = null;
+    try {
+      handle = await win.showSaveFilePicker({
+        suggestedName: nom,
+        types: [{ description: ext === 'mp4' ? 'Vidéo MP4' : 'Vidéo WebM', accept: { [ext === 'mp4' ? 'video/mp4' : 'video/webm']: [`.${ext}`] } }],
+      });
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') return 'annule';
+      handle = null; // refusé ici : repli téléchargement
+    }
+    if (handle) {
+      const w = await handle.createWritable();
+      try { await w.write(source); } catch (e) { try { await w.abort(); } catch { /* déjà fermé */ } throw e; }
+      await w.close();
+      return 'ecrit';
+    }
+  }
+  telecharger(source, nom);
+  return 'telecharge';
+}
+
 export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramRecorderReturn {
   const capacite = useMemo(() => detecterCapacite(lireEnvironnement()), []);
   const [qualite, setQualite] = useState<RecQualite>(() => qualiteParDefaut(capacite));
   const [etat, setEtat] = useState<RecEtat>('inactif');
+  const etatRef = useRef<RecEtat>('inactif'); etatRef.current = etat;
   const [dureeSec, setDureeSec] = useState(0);
   const [tailleOctets, setTailleOctets] = useState(0);
   const [resultat, setResultat] = useState<RecResultat | null>(null);
   const [avis, setAvis] = useState<string | null>(null);
   const [restes, setRestes] = useState<ResteOpfs[]>([]);
+  const [autoStart, setAutoStartEtat] = useState<boolean>(() => {
+    try { return lirePrefAuto(window.localStorage.getItem(CLE_PREF_AUTO)); } catch { return false; }
+  });
+  const setAutoStart = useCallback((v: boolean) => {
+    setAutoStartEtat(v);
+    try { if (v) window.localStorage.setItem(CLE_PREF_AUTO, '1'); else window.localStorage.removeItem(CLE_PREF_AUTO); } catch { /* stockage bloqué : préférence de la session seulement */ }
+  }, []);
   const verrouRef = useRef<(() => void) | null>(null);
   const libererVerrou = useCallback(() => { verrouRef.current?.(); verrouRef.current = null; }, []);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const ecrivainRef = useRef<Ecrivain | null>(null);
   const opfsRef = useRef<{ handle: any; dossier: any; nom: string } | null>(null);
-  const fsaNomRef = useRef<string | null>(null);
-  // QA Phase 4 : la stratégie EFFECTIVE de l'enregistrement en cours. `capacite.strategie` dit ce que le
-  // navigateur SAIT faire ; mais `showSaveFilePicker` peut être refusé au moment du geste (iframe sans
-  // délégation — afroboost.com/live embarque BoostTribe —, contexte sans geste utilisateur, politique
-  // d'entreprise). Avant : l'appel échouait, `setEtat('inactif')`, et l'hôte ne voyait RIEN. Désormais :
-  // toute erreur autre qu'une annulation replie sur l'OPFS (fichier temporaire + « Enregistrer sur mon
-  // appareil ») ; une annulation volontaire est dite en une ligne.
+  // Stratégie EFFECTIVE de l'enregistrement en cours (OPFS ou mémoire — jamais de sélecteur à la capture).
   const strategieRef = useRef<RecStrategie>(capacite.strategie);
   const debutRef = useRef<number>(0);
   const tailleRef = useRef<number>(0);
@@ -280,30 +304,10 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       } else if (capacite.strategie === 'memoire') {
         setAvis(`Écriture progressive indisponible ici : limite d’environ ${minutesMaxMemoire(q, lireEnvironnement().memoireGo)} min en mémoire.`);
       }
-      // 1. Destination — AVANT la première image, pour que rien ne soit perdu.
+      // 1. Destination — AVANT la première image, pour que rien ne soit perdu. AUCUNE boîte de dialogue :
+      //    le choix de l'emplacement n'arrive qu'à l'export, sur le fichier finalisé.
       strategieRef.current = capacite.strategie;
-      if (capacite.strategie === 'fsa') {
-        try {
-          const handle = await (window as any).showSaveFilePicker({
-            suggestedName: nom,
-            types: [{ description: capacite.extension === 'mp4' ? 'Vidéo MP4' : 'Vidéo WebM', accept: { [capacite.extension === 'mp4' ? 'video/mp4' : 'video/webm']: [`.${capacite.extension}`] } }],
-          });
-          ecrivainRef.current = await ecrivainFsa(handle);
-          fsaNomRef.current = handle.name || nom;
-        } catch (e) {
-          if ((e as Error)?.name === 'AbortError') {
-            // Annulation volontaire du sélecteur : on le dit, on ne devine rien.
-            setAvis('Enregistrement annulé : aucun emplacement choisi.'); setEtat('inactif'); nettoyer(); return;
-          }
-          const opfsPossible = typeof (navigator as any).storage?.getDirectory === 'function';
-          if (!opfsPossible) throw e;
-          // Sélecteur refusé (iframe, sans geste, politique) → écriture progressive OPFS à la place.
-          strategieRef.current = 'opfs';
-          const { ecrivain, handle, dossier } = await ecrivainOpfs(nom);
-          ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom }; verrouRef.current = prendreVerrou(nom);
-          setAvis('Le choix du dossier n’est pas disponible ici : le fichier sera proposé au téléchargement à l’arrêt.');
-        }
-      } else if (capacite.strategie === 'opfs') {
+      if (capacite.strategie === 'opfs') {
         const { ecrivain, handle, dossier } = await ecrivainOpfs(nom);
         ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom }; verrouRef.current = prendreVerrou(nom);
       } else {
@@ -334,7 +338,8 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     } catch (e) {
       const msg = (e as Error)?.name === 'AbortError' ? null : `Impossible de démarrer : ${(e as Error).message}`;
       setAvis(msg); setEtat('inactif');
-      await ecrivainRef.current?.abandonner(); nettoyer(); libererVerrou();
+      // Aucun fichier 0 octet laissé : l'entrée OPFS créée pour cet essai est retirée.
+      await ecrivainRef.current?.abandonner(); await ecrivainRef.current?.supprimer(); opfsRef.current = null; nettoyer(); libererVerrou();
     }
   }, [capacite, etat, o, pousserEcriture, nettoyer, libererVerrou]);
 
@@ -366,23 +371,25 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       // Résolution AFFICHÉE = l'en-tête écrit (ce que ffprobe lit), secours = la piste (1re tranche, puis
       // finalisation), dernier recours = la valeur demandée (dite comme telle par `resolutionSource`).
       const res = resolutionEncodee(await enteteRef.current, [resolutionPisteRef.current, mesurerPiste(rec.stream)], resolutionEffectiveRef.current);
-      const nom = fsaNomRef.current || opfsRef.current?.nom || nomFichier(new Date(), capacite.extension);
+      const nom = opfsRef.current?.nom || nomFichier(new Date(), capacite.extension);
       const base = { nom, dureeSec: dureeMs / 1000, tailleOctets: fini.taille, resolution: libelleResolution(res), resolutionSource: res.source, format: capacite.codec };
+      // Fichier FERMÉ (`terminer()` a abouti) et non vide (verdict) : seul cas où l'export est proposé.
+      const fichierFerme = true;
+      const peutExporter = () => exportAutorise({ etat: etatRef.current, fichierFerme, taille: fini.taille });
       let resultat: RecResultat;
-      if (strategieRef.current === 'fsa') {
-        resultat = { ...base, dejaEcrit: true, emplacement: nom, sauvegarderSurAppareil: async () => { /* déjà sur le disque */ } };
-      } else if (strategieRef.current === 'opfs') {
+      if (strategieRef.current === 'opfs') {
         const ref = opfsRef.current;
         resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => {
-          if (!ref) return;
+          if (!ref || !peutExporter()) return;
           const f: File = await ref.handle.getFile();
-          telecharger(f, nom);
-          // Le temporaire est retiré une fois le téléchargement lancé (le blob est déjà lu par le navigateur).
-          setTimeout(() => { ref.dossier.removeEntry(ref.nom).catch(() => { /* déjà retiré */ }); }, 15_000);
+          const r = await exporterFichier(f, nom);
+          if (r === 'annule') return; // le temporaire reste : nouvel essai possible
+          // Le temporaire est retiré une fois la copie écrite / le téléchargement lancé (le blob est déjà lu).
+          setTimeout(() => { ref.dossier.removeEntry(ref.nom).catch(() => { /* déjà retiré */ }); }, r === 'ecrit' ? 0 : 15_000);
         } };
       } else {
         const blob = fini.blob as Blob;
-        resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => { telecharger(blob, nom); } };
+        resultat = { ...base, dejaEcrit: false, sauvegarderSurAppareil: async () => { if (peutExporter()) await exporterFichier(blob, nom); } };
       }
       if (!demonteRef.current) { setResultat(resultat); setEtat('pret'); setAvis(verdict.message); }
     } catch (e) {
@@ -473,7 +480,9 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
   const recupererReste = useCallback(async (r: ResteOpfs) => {
     const dossier = await dossierOpfs(); if (!dossier) return;
     const handle = await dossier.getFileHandle(r.source);
-    telecharger(await handle.getFile(), r.nom);
+    const f: File = await handle.getFile();
+    if (f.size <= 0) return;
+    if ((await exporterFichier(f, r.nom)) === 'annule') return;
     setRestes((l) => l.filter((x) => x.source !== r.source));
     // Même règle que « Enregistrer sur mon appareil » : le temporaire est retiré une fois le téléchargement lancé.
     setTimeout(() => { dossier.removeEntry(r.source).catch(() => undefined); }, 15_000);
@@ -485,7 +494,7 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     setRestes((l) => l.filter((x) => x.source !== r.source));
   }, []);
 
-  return { etat, capacite, qualite, choisirQualite, dureeSec, tailleOctets, demarrer, arreter, resultat, avis, fermerResultat, restes, recupererReste, supprimerReste };
+  return { etat, capacite, qualite, choisirQualite, dureeSec, tailleOctets, demarrer, arreter, resultat, avis, fermerResultat, restes, recupererReste, supprimerReste, autoStart, setAutoStart };
 }
 
 async function dossierOpfs(): Promise<any | null> {

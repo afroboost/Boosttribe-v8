@@ -10,8 +10,9 @@ import { formatDureeRec, formatTaille, libelleFormat, libelleReste, libelleVideo
  * - la vidéo reste dominante : fermé = rien de rendu ; ouvert = un seul geste principal ;
  * - la source est le Programme (compositeur Phase 3) : l'UI ne choisit que la qualité ;
  * - le fichier est LOCAL : ce panneau ne connaît ni serveur, ni upload — seulement le hook ;
- * - « Enregistrement prêt » propose « Enregistrer sur mon appareil », sauf si le fichier a déjà
- *   été écrit directement (File System Access) : alors « Fichier enregistré » + son nom.
+ * - « Démarrer » capture IMMÉDIATEMENT (aucun choix d'emplacement) ; « Enregistrement prêt » propose
+ *   ensuite « Enregistrer sur mon appareil » (choix de l'emplacement si le navigateur l'offre) ;
+ * - option « Enregistrer dès le démarrage » : case liée à `autoStart` (déclenchement fait par la page).
  */
 interface RecordPanelProps {
   recorder: RecorderLike;
@@ -89,7 +90,7 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
         )}
       </div>
     );
-    principal = resultat.dejaEcrit ? (
+    principal = resultat.dejaEcrit || resultat.tailleOctets <= 0 ? (
       <button type="button" onClick={() => { recorder.fermerResultat(); onClose(); }} className="w-full h-11 rounded-full bg-white/10 text-white text-sm font-semibold hover:bg-white/20" data-testid="record-done">
         Fermer
       </button>
@@ -180,6 +181,19 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
           </div>
         </div>
         <p className="text-xs text-white/45" data-testid="record-format">Format : {libelleFormat(capacite)} · 30 i/s</p>
+        {recorder.setAutoStart && (
+          <label className="flex items-center gap-2 text-xs text-white/70 cursor-pointer select-none" data-testid="record-auto">
+            <input
+              type="checkbox"
+              checked={!!recorder.autoStart}
+              onChange={(e) => recorder.setAutoStart?.(e.target.checked)}
+              disabled={occupe}
+              className="w-4 h-4 rounded accent-[var(--bt-accent)]"
+              data-testid="record-auto-input"
+            />
+            <span>Enregistrer dès le démarrage</span>
+          </label>
+        )}
         {avis && (
           <p className="text-xs text-amber-200/90 flex items-start gap-2" role="status" data-testid="record-avis">
             <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{avis}</span>

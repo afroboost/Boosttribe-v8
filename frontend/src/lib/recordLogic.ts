@@ -4,9 +4,9 @@
  * Rien ici ne touche au DOM ni au réseau : ces fonctions décident de la
  * stratégie d'écriture, du codec, du nom de fichier, des débits et des replis,
  * à partir de ce que le navigateur DIT savoir faire. Le pipeline (hook) ne fait
- * qu'exécuter ces décisions. Aucune vidéo ne part vers un serveur : la seule
- * destination est le disque de l'hôte (File System Access), le stockage privé
- * du navigateur (OPFS, puis téléchargement) ou, en dernier recours, la mémoire.
+ * qu'exécuter ces décisions. Aucune vidéo ne part vers un serveur : la capture
+ * s'écrit dans le stockage privé du navigateur (OPFS) ou, en dernier recours, en
+ * mémoire ; le disque de l'hôte n'est touché qu'à l'export, après finalisation.
  */
 
 export type RecQualite = '720p' | '1080p';
@@ -61,19 +61,42 @@ export function estIOS(userAgent: string): boolean {
 }
 
 /**
- * Stratégie d'écriture, du plus sûr au moins sûr :
- *  1. File System Access (`showSaveFilePicker`) : le fichier est choisi AVANT
- *     l'enregistrement et écrit au fil de l'eau → rien à télécharger à la fin,
- *     et un crash laisse sur le disque tout ce qui a été écrit.
- *  2. OPFS : fichier temporaire privé du navigateur, écrit au fil de l'eau,
- *     téléchargé à l'arrêt. Un crash laisse le temporaire (reprise possible).
- *  3. Mémoire : les morceaux restent en RAM — borné, à éviter pour un long live.
+ * Stratégie de CAPTURE (UX REC, 28/09) — « Enregistrer » démarre IMMÉDIATEMENT, sans aucune boîte de
+ * dialogue. Avant, `showSaveFilePicker` s'ouvrait AU DÉMARRAGE et créait un fichier de 0 octet sur le
+ * disque de l'hôte (laissé tel quel si le Programme échouait ensuite). Désormais :
+ *  1. OPFS écrivable (`createWritable`) : fichier temporaire privé écrit au fil de l'eau ; un crash
+ *     laisse le temporaire (reprise possible) ;
+ *  2. sinon mémoire (Safari : OPFS sans `createWritable`) — borné, avertissement.
+ * Le choix de l'emplacement (`showSaveFilePicker`) n'arrive qu'à l'EXPORT, après finalisation.
+ * `fsa` reste dans le type (contrat UI) mais n'est plus jamais choisi pour la capture.
  */
 export function choisirStrategie(env: EnvEnregistrement): RecStrategie {
   if (!env.mediaRecorder) return 'aucune';
-  if (env.showSaveFilePicker) return 'fsa';
-  if (env.opfs) return 'opfs';
+  if (env.opfs && env.opfsWritable) return 'opfs';
   return 'memoire';
+}
+
+/** Étapes d'un enregistrement, dans l'ordre : la capture d'abord, le choix d'emplacement éventuel n'existe qu'à l'export. */
+export type EtapeEnregistrement = 'capture' | 'finalisation' | 'export';
+export function etapesEnregistrement(capacite: Pick<RecCapacite, 'supporte' | 'strategie'>): EtapeEnregistrement[] {
+  if (!capacite.supporte || capacite.strategie === 'aucune') return [];
+  return ['capture', 'finalisation', 'export'];
+}
+
+/** « Enregistrer sur mon appareil » n'est proposé/exécuté que sur un fichier FINALISÉ (fermé) et non vide. */
+export function exportAutorise(e: { etat: string; fichierFerme: boolean; taille: number }): boolean {
+  return e.etat === 'pret' && e.fichierFerme === true && e.taille > 0;
+}
+
+/** Option « Enregistrer dès le démarrage » (préférence locale de l'hôte). */
+export const CLE_PREF_AUTO = 'bt_rec_auto';
+export function lirePrefAuto(raw: string | null | undefined): boolean {
+  return raw === '1';
+}
+
+/** Démarrage automatique : uniquement au démarrage du live, pour l'hôte, enregistreur inactif et supporté. */
+export function doitDemarrerAuto(e: { auto: boolean; evenement: string; estHote: boolean; recEtat: string; supporte: boolean }): boolean {
+  return e.auto === true && e.evenement === 'live_demarre' && e.estHote === true && e.recEtat === 'inactif' && e.supporte === true;
 }
 
 export function detecterCapacite(env: EnvEnregistrement): RecCapacite {

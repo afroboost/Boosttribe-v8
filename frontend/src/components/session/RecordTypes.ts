@@ -28,7 +28,7 @@ export interface RecResultat {
   /** `fichier` = lue dans l'en-tête écrit ; `piste` = mesurée sur la piste ; `demandee` = secours (aucune mesure). */
   resolutionSource?: 'fichier' | 'piste' | 'demandee';
   format: string;
-  /** `true` = déjà écrit sur le disque (File System Access) : rien à télécharger. */
+  /** `true` = déjà écrit sur le disque : rien à exporter. Depuis UX REC (aucun sélecteur à la capture), toujours `false` côté hook. */
   dejaEcrit: boolean;
   emplacement?: string;
   sauvegarderSurAppareil: () => Promise<void>;
@@ -58,4 +58,7 @@ export interface RecorderLike {
   restes?: ResteLike[];
   recupererReste?: (r: ResteLike) => Promise<void>;
   supprimerReste?: (r: ResteLike) => Promise<void>;
+  /** Option « Enregistrer dès le démarrage » (préférence locale `bt_rec_auto`). Optionnels : absents = case masquée. */
+  autoStart?: boolean;
+  setAutoStart?: (v: boolean) => void;
 }

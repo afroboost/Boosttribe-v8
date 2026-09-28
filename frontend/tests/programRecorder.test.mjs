@@ -33,8 +33,11 @@ test('un seul MediaRecorder, tranche de 1 s, chaque morceau écrit immédiatemen
   assert.match(hook, /await ecrivain\.ecrire\(data\)/);
 });
 
-test('trois destinations locales et rien d’autre : File System Access, OPFS, mémoire', () => {
-  assert.match(hook, /showSaveFilePicker\(/);
+test('destinations locales et rien d’autre : capture OPFS ou mémoire ; File System Access seulement à l’export', () => {
+  const d = hook.slice(hook.indexOf('const demarrer = '), hook.indexOf('async function finaliser('));
+  assert.equal(d.includes('showSaveFilePicker('), false, 'aucun sélecteur au démarrage');
+  const ex = hook.slice(hook.indexOf('async function exporterFichier('));
+  assert.match(ex, /showSaveFilePicker\(/);
   assert.match(hook, /storage\.getDirectory\(\)/);
   assert.match(hook, /ecrivainMemoire\(/);
   assert.match(logique, /'fsa' \| 'opfs' \| 'memoire' \| 'aucune'/);

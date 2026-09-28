@@ -12,9 +12,9 @@ const CHROME = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Chrome/128.0';
 const ANDROID = 'Mozilla/5.0 (Linux; Android 14; SM-S928B) Chrome/128.0 Mobile';
 const IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Safari/605.1';
 
-test('Chrome desktop récent : File System Access + H.264/AAC mp4', () => {
+test('Chrome desktop récent : capture OPFS (JAMAIS fsa, même avec showSaveFilePicker) + H.264/AAC mp4', () => {
   const c = detecterCapacite({ mediaRecorder: true, isTypeSupported: supporte('video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/webm;codecs=vp9,opus'), showSaveFilePicker: true, opfs: true, opfsWritable: true, userAgent: CHROME });
-  assert.equal(c.supporte, true); assert.equal(c.strategie, 'fsa'); assert.equal(c.extension, 'mp4'); assert.equal(c.codec, 'H.264 + AAC');
+  assert.equal(c.supporte, true); assert.equal(c.strategie, 'opfs'); assert.equal(c.extension, 'mp4'); assert.equal(c.codec, 'H.264 + AAC');
   assert.deepEqual(c.qualites, ['1080p', '720p']); assert.equal(c.mobile, false); assert.equal(qualiteParDefaut(c), '1080p');
 });
 
@@ -34,9 +34,9 @@ test('Android Chrome : OPFS, mobile, 720p par défaut mais 1080p proposé', () =
   assert.deepEqual(c.qualites, ['720p', '1080p']); assert.equal(qualiteParDefaut(c), '720p');
 });
 
-test('iOS Safari : OPFS + mp4 (H.264/AAC natif)', () => {
+test('iOS Safari : OPFS sans createWritable → mémoire + mp4 (H.264/AAC natif)', () => {
   const c = detecterCapacite({ mediaRecorder: true, isTypeSupported: supporte('video/mp4'), showSaveFilePicker: false, opfs: true, opfsWritable: false, userAgent: IOS });
-  assert.equal(c.strategie, 'opfs'); assert.equal(c.extension, 'mp4'); assert.equal(c.mobile, true);
+  assert.equal(c.strategie, 'memoire'); assert.equal(c.extension, 'mp4'); assert.equal(c.mobile, true);
 });
 
 test('navigateur ancien sans MediaRecorder : non supporté, motif clair', () => {

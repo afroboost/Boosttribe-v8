@@ -62,7 +62,7 @@ import SceneRenderer from '@/components/session/SceneRenderer';
 import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import RecordPanel from '@/components/session/RecordPanel';
 import { useProgramRecorder } from '@/hooks/useProgramRecorder';
-import { antennePourEnregistrer } from '@/lib/recordLogic';
+import { antennePourEnregistrer, doitDemarrerAuto } from '@/lib/recordLogic';
 import { EVENEMENT_LIVE_TERMINE, departDoitAnnoncer, sequenceFinDuLive } from '@/lib/finDuLive';
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
 import { LiveChatOverlay } from '@/components/session/LiveChatOverlay';
@@ -2825,6 +2825,21 @@ export const SessionPage: React.FC = () => {
     detecterInterrompus: isHost,
   });
   const [recordOpen, setRecordOpen] = useState(false);
+  // ⏺️ « Enregistrer dès le démarrage » : le Live démarre pour l'enregistrement quand la caméra de
+  //    l'hôte est RÉELLEMENT diffusée (sinon il n'y a rien à enregistrer). Une seule fois par session
+  //    (front montant) ; dépendances primitives uniquement (jamais l'objet `recorder`).
+  const recAutoFaitRef = useRef(false);
+  const recAuto = !!recorder.autoStart;
+  const recEtat = recorder.etat;
+  const recSupporte = recorder.capacite.supporte;
+  useEffect(() => {
+    if (recAutoFaitRef.current || !cameraDiffusee) return;
+    if (!doitDemarrerAuto({ auto: recAuto, evenement: 'live_demarre', estHote: isHost, recEtat, supporte: recSupporte })) return;
+    recAutoFaitRef.current = true;
+    setRecordOpen(true);
+    void recorder.demarrer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraDiffusee, recAuto, recEtat, recSupporte, isHost]);
   // ═══ 📝 LE PROMPTEUR DE L'HÔTE — trois sources, un seul écran ═══════════════════
   //
   //  Règle unique, et tout le reste en découle : l'IA PROPOSE, l'HÔTE DÉCIDE. Rien de
@@ -4290,7 +4305,7 @@ export const SessionPage: React.FC = () => {
     />
   ) : null;
   const liveReactionButtonNode = (
-    <LiveReactionButton onReagir={reactions.reagir} total={reactions.total} types={['like', 'bravo', 'feu']} />
+    <LiveReactionButton onReagir={reactions.reagir} total={reactions.total} types={['like', 'bravo', 'feu', 'pouce', 'main', 'rire']} />
   );
   const liveCommentInputNode = chatLiveAutorise ? (
     <LiveCommentInput

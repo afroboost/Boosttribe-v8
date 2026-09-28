@@ -117,6 +117,8 @@ export function bornerVignette(
 export const MARGE_VIGNETTE_PX = 8;
 /** Plancher de largeur (px) — sauf scène minuscule : 45 % de sa largeur. */
 export const VIGNETTE_MIN_PX = 140;
+/** Plancher absolu de la vignette caméra (banc réel 28/09 : 111 px à 360 px, trop petit). */
+export const VIGNETTE_PLANCHER_ABSOLU_PX = 124; // 120 px d’IMAGE visibles + bordure 2 × 1 px (+ marge)
 /** Plafond de largeur : 40 % de la scène. */
 export const VIGNETTE_MAX = 0.4;
 
@@ -154,7 +156,7 @@ export function placementVignette(e: EntreePlacement): PlacementVignette {
   const rd = Math.max(0, Number.isFinite(e.reserveDroitePx) ? (e.reserveDroitePx as number) : 0);
   const rb = Math.max(0, Number.isFinite(e.reserveBasPx) ? (e.reserveBasPx as number) : 0);
   const taille = e.taille && e.taille > 0 ? e.taille : PIP_TAILLE;
-  const plancher = Math.min(VIGNETTE_MIN_PX, 0.45 * L);
+  const plancher = Math.min(VIGNETTE_MIN_PX, Math.max(VIGNETTE_PLANCHER_ABSOLU_PX, 0.45 * L)); // banc réel : jamais sous 124 px de cadre (360 px → scène 250 px)
   let largeur = Math.max(Math.min(taille * L, VIGNETTE_MAX * L), plancher);
   // 1) Jamais plus grande que la scène elle-même.
   largeur = Math.min(largeur, L - 2 * m, ((H - 2 * m) * 16) / 9);

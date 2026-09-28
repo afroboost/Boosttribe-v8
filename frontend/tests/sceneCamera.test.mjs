@@ -54,10 +54,11 @@ test('scène portrait 360×640 : dans la scène', () => {
   assert.ok(p.largeur >= 120, `largeur ${p.largeur}`);
 });
 
-test('taille : 28 % de la scène, bornée [min(140, 45 %) ; 40 %]', () => {
+test('taille : 28 % de la scène, bornée [min(140, max(124, 45 %)) ; 40 %]', () => {
   assert.ok(Math.abs(placementVignette({ largeurScene: 1000, hauteurScene: 800 }).largeur - 280) < 1e-6, '28 %');
   assert.equal(placementVignette({ largeurScene: 400, hauteurScene: 800 }).largeur, 140, 'plancher 140 px');
-  assert.ok(Math.abs(placementVignette({ largeurScene: 200, hauteurScene: 800 }).largeur - 90) < 1e-6, 'petite scène : 45 %');
+  assert.ok(Math.abs(placementVignette({ largeurScene: 200, hauteurScene: 800 }).largeur - 124) < 1e-6, 'petite scène : plancher 124 px (120 px d’image)');
+  assert.ok(Math.abs(placementVignette({ largeurScene: 100, hauteurScene: 800 }).largeur - 84) < 1e-6, 'scène minuscule : le cadre prime (100 - 2 × 8 px de marge)');
   assert.ok(Math.abs(placementVignette({ largeurScene: 1000, hauteurScene: 800, taille: 0.9 }).largeur - 400) < 1e-6, 'plafond 40 %');
 });
 
@@ -167,4 +168,12 @@ test('côte à côte et anti-miroir branchés dans la scène', () => {
   // La caméra n'est JAMAIS masquée par l'anti-miroir : la règle ne vit que dans la branche écran.
   const branche = PANEL.slice(PANEL.indexOf('const contenuDe = '), PANEL.indexOf('const choixDisposition'));
   assert.ok(branche.indexOf('apercuEcranLocal(') < branche.indexOf("c === 'camera'"), 'anti-miroir limité à l écran');
+});
+
+// Banc réel (Chromium, vraie piste caméra) : à 360 px en vue normale, la scène fait ~247 px
+// et la vignette tombait à 111 px (45 %). Plancher : jamais sous 120 px tant que la scène le permet.
+test('vignette : jamais sous 120 px sur une scène étroite (247 px de large)', () => {
+  const p = placementVignette({ largeurScene: 247, hauteurScene: 139, reserveDroitePx: 0, reserveBasPx: 0 });
+  assert.ok(p.largeur >= 120, `largeur ${p.largeur}`);
+  assert.ok(p.x >= 0 && p.x + p.largeur <= 247 && p.y + p.hauteur <= 139, JSON.stringify(p));
 });

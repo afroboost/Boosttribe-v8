@@ -49,6 +49,22 @@ function BoiteVideo({ box, media }: { box: SceneBox; media: MediaStream | MediaS
   );
 }
 
+/**
+ * 🖥️ Écran partagé posé dans la scène du Live (LiveVisioPanel) : un flux, rien d'autre — le
+ * même branchement que les boîtes ci-dessus. Détache sans jamais arrêter la piste.
+ * `muted` : c'est MON écran (anti-écho) ; celui de l'hôte garde son son.
+ */
+export function FluxEcran({ stream, muted, className = '' }: { stream: MediaStream; muted?: boolean; className?: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.srcObject !== stream) el.srcObject = stream;
+    el.play().catch(() => { /* autoplay : relancé au prochain geste */ });
+  }, [stream]);
+  return <video ref={ref} autoPlay playsInline muted={muted} controls={false} className={`bg-black object-contain pointer-events-none ${className}`} />;
+}
+
 const SceneRenderer: React.FC<SceneRendererProps> = ({ boxes, resolveMedia, zone, ratio = '16 / 9', className = '' }) => (
   <div data-studio-zone={zone} className={`relative w-full overflow-hidden rounded-lg bg-black ${className}`} style={{ aspectRatio: ratio }}>
     {boxes.length === 0 && (

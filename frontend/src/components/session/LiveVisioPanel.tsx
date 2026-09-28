@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
-import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw } from 'lucide-react';
+import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, PictureInPicture2, Columns2, SquareUser } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { LiveControls } from '@/components/session/LiveControls';
@@ -7,6 +7,12 @@ import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
 import { zoneCommentaires, colonnesGrille, dispositionBarre, ancrageImage } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
+import { PIP_TAILLE } from '@/lib/studioScenes';
+import { FluxEcran } from '@/components/session/SceneRenderer';
+import {
+  contenuScenePrincipale, dispositionsPartage, bornerVignette, DISPOSITION_DEFAUT, VIGNETTE_DEFAUT,
+  type ContenuScene, type DispositionPartage,
+} from '@/lib/sceneLive';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 
 export interface VisioParticipant {
@@ -144,7 +150,32 @@ interface LiveVisioPanelProps {
   /** Commentaires masqués (flux + champ) — réglé depuis le menu ⋮. */
   commentairesMasques?: boolean;
   onToggleCommentaires?: () => void;
+  // 🎬 SCÈNE DE CONTENU (lib/sceneLive) : un film ou un écran partagé passe EN GRAND dans la
+  //    scène, les personnes en vignettes. Rien n'est publié : chacun voit ce contenu sur son écran.
+  /** Un film (média partagé) est actif. */
+  filmActif?: boolean;
+  /** Rend l'UNIQUE lecteur du film (SharedMediaPlayer) — fonction : le nœud est bâti plus bas
+   *  dans la page. Jamais deux lecteurs : la page ne le rend hors scène que si le Live est fermé. */
+  rendreFilm?: () => React.ReactNode;
+  /** Écran partagé à montrer dans la scène (le sien ou celui de l'hôte) ; null = aucun. */
+  ecranStream?: MediaStream | null;
+  /** C'est MON écran : muet (anti-écho). */
+  ecranLocal?: boolean;
 }
+
+const DISPOSITIONS: Record<DispositionPartage, { titre: string; Icone: React.ComponentType<{ className?: string }> }> = {
+  screen_full: { titre: 'Écran seul', Icone: Monitor },
+  screen_coach: { titre: 'Écran en grand, caméra en vignette', Icone: PictureInPicture2 },
+  coach_screen: { titre: 'Caméra en grand, écran en vignette', Icone: SquareUser },
+  screen_split: { titre: 'Côte à côte', Icone: Columns2 },
+};
+
+/** « 3.75rem » → 60 ; « 12px » → 12. */
+const enPx = (v: string): number => {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n)) return 0;
+  return v.trim().endsWith('rem') ? n * 16 : n;
+};
 
 type Layout = 'grid' | 'spotlight';
 
@@ -177,6 +208,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, audioNode,
   connexionScene, estHote,
   chatOverlayNode, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
+  filmActif = false, rendreFilm, ecranStream = null, ecranLocal = false,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
   // 🎥 Menu de sélection caméra (repliable) — toujours accessible pour l'hôte/co-hôte.
@@ -281,12 +313,37 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   );
 
   // Participant actuellement agrandi (s'il est toujours présent), + les autres en miniatures.
-  const spotlightP = spotlightId ? participants.find((p) => p.id === spotlightId) || null : null;
+  const spotlightChoisi = spotlightId ? participants.find((p) => p.id === spotlightId) || null : null;
+
+  // 🎬 SCÈNE DE CONTENU — film / écran partagé en grand (arbitre pur, lib/sceneLive).
+  //    La personne « caméra » de la scène : celle épinglée, sinon l'hôte à l'image, sinon la
+  //    1ʳᵉ à l'image. Aucune → la tuile « Caméra coupée » ne prend JAMAIS la place du contenu.
+  const [disposition, setDisposition] = useState<DispositionPartage>(DISPOSITION_DEFAUT);
+  const [vignette, setVignette] = useState(VIGNETTE_DEFAUT);
+  const sceneBoxRef = useRef<HTMLDivElement>(null);
+  const glisse = useRef<{ dx: number; dy: number } | null>(null);
+  const filmPresent = filmActif && !!rendreFilm;
+  const modeContenu = filmPresent || !!ecranStream;
+  const personneScene = (spotlightChoisi && streamFor(spotlightChoisi) ? spotlightChoisi : null)
+    || participants.find((p) => p.isHost && !!streamFor(p))
+    || participants.find((p) => !!streamFor(p)) || null;
+  const arbitrage = contenuScenePrincipale({
+    cameraActive: !!personneScene, filmActif: filmPresent, partageActif: !!ecranStream, disposition,
+  });
+  const personneDansScene = modeContenu && personneScene
+    && (arbitrage.principal === 'camera' || arbitrage.cote === 'camera' || arbitrage.incrustation === 'camera')
+    ? personneScene : null;
+  // Les autres personnes : en vignettes, sous la scène (ou dans la pile du plein écran).
+  const personnesVignettes = modeContenu ? participants.filter((p) => p.id !== personneDansScene?.id) : [];
+
+  // Hors contenu : vue agrandie / grille historiques. En contenu : ces branches ne rendent rien.
+  const spotlightP = modeContenu ? null : spotlightChoisi;
   const otherParticipants = spotlightP ? participants.filter((p) => p.id !== spotlightP.id) : [];
+  const personnesGrille = modeContenu ? [] : participants;
 
   // Plein écran caméra : la « grande » = celle épinglée, sinon la 1ʳᵉ ; les autres en bande de vignettes.
   const fsBig = spotlightP || participants[0] || null;
-  const fsOthers = fsBig ? participants.filter((p) => p.id !== fsBig.id) : [];
+  const fsOthers = modeContenu ? personnesVignettes : (fsBig ? participants.filter((p) => p.id !== fsBig.id) : []);
 
   // 💬 Place des calques (chat / champ / réactions) : fonction pure, testée.
   const avecCalques = !!(chatOverlayNode || reactionsNode || commentInputNode);
@@ -308,7 +365,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // Ratio lu sur la piste (width/height, sinon aspectRatio) ; inconnu → bord de la scène.
   // Borné pour laisser au moins 340 px (chat + barre) à droite de l'ancre.
   const ratioImage = (() => {
-    if (!camFullscreen || !fsBig) return 0;
+    if (!camFullscreen || !fsBig || modeContenu) return 0;
     try {
       const st = streamFor(fsBig)?.getVideoTracks()[0]?.getSettings();
       return st?.width && st?.height ? st.width / st.height : (st?.aspectRatio || 0);
@@ -321,6 +378,141 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   const droitePile = gaucheCalques > 0 ? `max(${gaucheCalques}px, ${droiteCalques})` : droiteCalques;
   const chatVisible = !!chatOverlayNode && !commentairesMasques;
   const inputVisible = !!commentInputNode && !commentairesMasques;
+
+  // 🎬 La vignette se GLISSE (souris / doigt) : position normalisée 0..1, bornée au cadre ; en
+  //    plein écran, la barre verticale est posée sur l'image → la borne droite recule d'autant.
+  const reserveDroitePx = camFullscreen ? enPx(zone.reserveDroite) + 12 : 0;
+  const deplacerVignette = (e: React.PointerEvent<HTMLDivElement>) => {
+    const box = sceneBoxRef.current?.getBoundingClientRect();
+    const g = glisse.current;
+    if (!box || !g || box.width <= 0 || box.height <= 0) return;
+    const pip = e.currentTarget.getBoundingClientRect();
+    const suivante = bornerVignette(
+      { x: (e.clientX - g.dx - box.left) / box.width, y: (e.clientY - g.dy - box.top) / box.height },
+      { hauteur: pip.height / box.height, reserveDroite: reserveDroitePx / box.width },
+    );
+    setVignette((p) => (p.x === suivante.x && p.y === suivante.y ? p : suivante));
+  };
+  const tuileScene = (p: VisioParticipant) => (
+    <CameraTile
+      name={p.name}
+      stream={streamFor(p)}
+      isLocal={p.id === myUserId}
+      micActive={p.isMicActive}
+      isHost={p.isHost}
+      avatarUrl={p.avatarUrl}
+      large
+      className="w-full h-full rounded-none border-0"
+      hideMicBadge={p.id === myUserId}
+    />
+  );
+  const contenuDe = (c: ContenuScene, classe: string) => {
+    if (c === 'ecran' && ecranStream) return <FluxEcran stream={ecranStream} muted={ecranLocal} className={`w-full h-full ${classe}`} />;
+    if (c === 'camera' && personneScene) return tuileScene(personneScene);
+    return null;
+  };
+  const choixDisposition = ecranStream && !filmPresent ? dispositionsPartage({ camera: !!personneScene }) : [];
+  // Disposition du partage — LOCALE (chacun choisit sur son écran), discrète. Hors plein écran :
+  // une rangée SOUS l'image (elle ne cache ni l'écran ni la vignette) ; en plein écran : en haut
+  // au centre, bornée à `droiteCalques` → jamais sous la barre verticale.
+  const barreDispositions = choixDisposition.length > 0 ? (
+          <div className={camFullscreen ? 'pointer-events-none absolute top-2 left-2 z-20 flex justify-center' : 'flex justify-center'} style={camFullscreen ? { right: droiteCalques } : undefined}>
+            <div role="toolbar" aria-label="Disposition de l'écran partagé" className="pointer-events-auto flex items-center gap-1 p-1 rounded-full bg-black/60 backdrop-blur" data-testid="scene-dispositions">
+              {choixDisposition.length > 1 && choixDisposition.map((d) => {
+                const { titre, Icone } = DISPOSITIONS[d];
+                const actif = arbitrage.disposition === d;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setDisposition(d)}
+                    aria-label={titre}
+                    aria-pressed={actif}
+                    title={titre}
+                    className={`w-10 h-10 inline-flex items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bt-accent)] ${actif ? 'bg-[var(--bt-accent)] text-white' : 'text-white/75 hover:text-white hover:bg-white/10'}`}
+                    data-testid={`scene-disposition-${d}`}
+                  >
+                    <Icone className="w-5 h-5" />
+                  </button>
+                );
+              })}
+              <button
+                type="button"
+                onClick={camFullscreen ? exitCamFullscreen : enterCamFullscreen}
+                aria-label={camFullscreen ? 'Réduire' : 'Agrandir'}
+                title={camFullscreen ? 'Réduire' : 'Agrandir'}
+                className="w-10 h-10 inline-flex items-center justify-center rounded-full text-white/75 hover:text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--bt-accent)]"
+                data-testid="scene-agrandir"
+              >
+                {camFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+              </button>
+            </div>
+          </div>
+  ) : null;
+  const sceneContenu = (
+    <div
+      className={camFullscreen ? 'relative flex-1 min-h-0 flex flex-col' : 'space-y-2'}
+      data-testid="scene-live"
+      data-principal={arbitrage.principal}
+      data-disposition={arbitrage.disposition ?? ''}
+    >
+      <div
+        ref={sceneBoxRef}
+        className={`relative w-full overflow-hidden rounded-xl bg-black ${camFullscreen ? 'flex-1 min-h-0 rounded-none' : arbitrage.principal === 'film' ? '' : 'aspect-video'}`}
+        data-testid="scene-principale"
+      >
+        {/* Le FILM : toujours la 1ʳᵉ place de la scène (même parent en vue normale et en plein
+            écran) → l'unique lecteur n'est jamais remonté, VIDEO_SYNC n'est jamais relancé. */}
+        {filmPresent && (
+          <div className={camFullscreen ? 'absolute inset-0 flex items-center justify-center overflow-auto' : 'relative w-full'} data-testid="scene-film">
+            <div className="w-full">{rendreFilm?.()}</div>
+          </div>
+        )}
+        {arbitrage.principal === 'ecran' && (
+          <div className={`absolute inset-y-0 left-0 ${arbitrage.cote ? 'w-1/2' : 'w-full'}`} data-testid="scene-ecran">
+            {contenuDe('ecran', '')}
+          </div>
+        )}
+        {arbitrage.principal === 'camera' && personneDansScene && (
+          <div className="absolute inset-0" data-testid="scene-camera">{tuileScene(personneDansScene)}</div>
+        )}
+        {arbitrage.cote && (
+          <div className="absolute inset-y-0 right-0 w-1/2 border-l border-white/10" data-testid="scene-cote">
+            {contenuDe(arbitrage.cote, '')}
+          </div>
+        )}
+        {arbitrage.incrustation && (
+          <div
+            role="group"
+            aria-label="Vignette : glisser pour la déplacer"
+            className="absolute z-10 overflow-hidden rounded-lg border border-white/25 bg-black shadow-lg shadow-black/50 cursor-grab active:cursor-grabbing touch-none select-none"
+            style={{ left: `${vignette.x * 100}%`, top: `${vignette.y * 100}%`, width: `${PIP_TAILLE * 100}%`, aspectRatio: '16 / 9' }}
+            onPointerDown={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              glisse.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+              try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+            }}
+            onPointerMove={deplacerVignette}
+            onPointerUp={() => { glisse.current = null; }}
+            onPointerCancel={() => { glisse.current = null; }}
+            data-testid="scene-vignette"
+            data-contenu={arbitrage.incrustation}
+          >
+            {contenuDe(arbitrage.incrustation, '')}
+          </div>
+        )}
+        {camFullscreen && barreDispositions}
+      </div>
+      {!camFullscreen && barreDispositions}
+      {!camFullscreen && personnesVignettes.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-1" data-testid="scene-vignettes">
+          {personnesVignettes.map((p) => (
+            <div key={p.id} className="w-24 sm:w-32 flex-shrink-0">{tileFor(p)}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="rounded-2xl border border-[rgb(var(--bt-accent-rgb)/0.25)] bg-[rgba(20,20,25,0.95)] overflow-hidden" data-testid="live-visio-panel">
@@ -392,11 +584,13 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         style={camFullscreen ? undefined : { minHeight: zone.hauteurMin, paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`, paddingRight: `calc(0.25rem + ${zone.reserveDroite})` }}
         data-testid="visio-camera-area"
       >
+        {/* 🎬 Film / écran partagé EN GRAND — place stable, AVANT la bascule plein écran. */}
+        {modeContenu && sceneContenu}
         {camFullscreen ? (
           /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
              bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
           <>
-            <div className="flex-1 min-h-0 flex items-center justify-center">
+            {!modeContenu && (<div className="flex-1 min-h-0 flex items-center justify-center">
               {fsBig ? (
                 <CameraTile
                   name={fsBig.name}
@@ -413,7 +607,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               ) : (
                 <p className="text-white/50 text-sm">Aucune caméra allumée</p>
               )}
-            </div>
+            </div>)}
             {timerNode}
             {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle.
                 Borné à gauche de la barre verticale : aucune ligne sous un bouton. */}
@@ -450,13 +644,13 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
         ) : layout === 'grid' ? (
           /* Colonnes selon la largeur de la ZONE (colonne desktop ≈ 384 px), pas de l'écran. */
           <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${colonnesGrille(largeurZone, participants.length)}, minmax(0, 1fr))` }}>
-            {participants.map((p) => (
+            {personnesGrille.map((p) => (
               <div key={p.id}>{tileFor(p)}</div>
             ))}
           </div>
         ) : (
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {participants.map((p) => (
+            {personnesGrille.map((p) => (
               <div key={p.id} className="w-32 sm:w-40 flex-shrink-0">
                 {tileFor(p)}
               </div>

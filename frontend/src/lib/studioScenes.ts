@@ -17,7 +17,7 @@ export type SourceKind = 'coach' | 'coach2' | 'participant' | 'screen';
 /** coach2 : id = deviceId de la caméra secondaire ; participant : id = identité LiveKit. */
 export interface StudioSourceRef { kind: SourceKind; id?: string; label: string }
 
-export type SceneType = 'coach_full' | 'participant_full' | 'split_50' | 'pip' | 'screen_coach' | 'cam1' | 'cam2';
+export type SceneType = 'coach_full' | 'participant_full' | 'split_50' | 'pip' | 'screen_coach' | 'cam1' | 'cam2' | 'screen_full';
 export type PipPosition = 'tl' | 'tr' | 'bl' | 'br';
 
 export interface StudioScene {
@@ -50,6 +50,15 @@ export const SCENE_TEMPLATES: SceneTemplate[] = [
   { type: 'cam2', label: 'Caméra 2', icon: 'video', needs: ['coach2'] },
 ];
 
+/**
+ * Écran seul, plein cadre. Hors de la liste A → G (le panneau Studio n'en propose pas le
+ * bouton) : c'est la scène de REPLI de « Écran + coach » quand la caméra s'éteint pendant
+ * le partage — sans elle, le repli tombait sur la caméra coupée et l'écran disparaissait.
+ */
+export const SCENE_ECRAN_SEUL: SceneTemplate = { type: 'screen_full', label: 'Écran seul', icon: 'monitor', needs: ['screen'] };
+const modeleDe = (type: SceneType): SceneTemplate | undefined =>
+  SCENE_TEMPLATES.find((t) => t.type === type) ?? (type === 'screen_full' ? SCENE_ECRAN_SEUL : undefined);
+
 const aSource = (sources: StudioSourceRef[], kind: SourceKind, id?: string): StudioSourceRef | undefined =>
   sources.find((s) => s.kind === kind && (id === undefined || s.id === id));
 
@@ -71,7 +80,7 @@ export function construireScene(
   sources: StudioSourceRef[],
   opts?: { participantId?: string; pip?: PipPosition; cam2Id?: string },
 ): StudioScene | null {
-  const modele = SCENE_TEMPLATES.find((t) => t.type === type);
+  const modele = modeleDe(type);
   if (!modele) return null;
   const coach = aSource(sources, 'coach');
   const participant = opts?.participantId ? aSource(sources, 'participant', opts.participantId) : aSource(sources, 'participant');
@@ -95,6 +104,8 @@ export function construireScene(
       return coach && participant
         ? { ...base, id: `pip:${participant.id ?? ''}:${pip}`, primarySource: participant, secondarySource: coach, layout: { kind: 'pip', pip } }
         : null;
+    case 'screen_full':
+      return screen ? { ...base, id: 'screen_full', primarySource: screen, secondarySource: null, layout: { kind: 'full' } } : null;
     case 'screen_coach':
       return screen && coach
         ? { ...base, id: `screen_coach:${pip}`, primarySource: screen, secondarySource: coach, layout: { kind: 'pip', pip } }
@@ -191,17 +202,19 @@ function remplacerParticipant(scene: StudioScene, id: string): StudioScene {
  * participant parti, caméra 2 débranchée) — QA Phase 4 : sans elle, le compositeur peignait du
  * NOIR à la place de l'écran et le fichier/les participants recevaient un cadre vide.
  * Règle unique, pure : on redescend vers la scène la plus simple encore satisfaite.
- *   screen_coach → coach_full · participant_full / split_50 / pip → coach_full · cam2 → cam1 → coach_full.
+ *   screen_coach → screen_full (écran encore là) → coach_full · participant_full / split_50 / pip → coach_full · cam2 → cam1 → coach_full.
  * Renvoie `null` si la scène est encore valide (rien à faire) ou si aucun repli n'est possible.
  */
 export function sceneDeRepli(scene: StudioScene, sources: StudioSourceRef[]): StudioScene | null {
   const kinds = new Set(sources.map((s) => s.kind));
   const ids = new Set(sources.map((s) => `${s.kind}:${s.id ?? ''}`));
-  const requis = SCENE_TEMPLATES.find((t) => t.type === scene.type)?.needs ?? [];
+  const requis = modeleDe(scene.type)?.needs ?? [];
   const sourceOk = (ref: StudioSourceRef | null) => !ref || (ref.id ? ids.has(`${ref.kind}:${ref.id}`) : kinds.has(ref.kind));
   const valide = requis.every((k) => kinds.has(k)) && sourceOk(scene.primarySource) && sourceOk(scene.secondarySource);
   if (valide) return null;
-  const ordre: SceneType[] = scene.type === 'cam2' ? ['cam1', 'coach_full'] : ['coach_full'];
+  // L'écran encore là mais plus la caméra : on garde l'écran (screen_full) plutôt que la caméra coupée.
+  const ordre: SceneType[] = scene.type === 'cam2' ? ['cam1', 'coach_full']
+    : scene.type === 'screen_coach' ? ['screen_full', 'coach_full'] : ['coach_full'];
   for (const t of ordre) {
     const r = construireScene(t, sources, { pip: scene.layout.pip });
     if (r) return r;

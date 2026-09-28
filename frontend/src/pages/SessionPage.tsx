@@ -18,7 +18,6 @@ import { useTheme } from '@/context/ThemeContext';
 import { useSocket } from '@/context/SocketContext';
 import { useI18n, LanguageSelector } from '@/context/I18nContext';
 import { WaitingRoomScreen } from '@/components/session/WaitingRoomScreen';
-import { ScreenShareView } from '@/components/session/ScreenShareView';
 import { AccessRequestsPanel, AccessRequest } from '@/components/session/AccessRequestsPanel';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ui/Toast';
@@ -101,8 +100,7 @@ import {
   getPawapayConfig, claimPendingAccess,
   type SessionAccessInfo, type PawapayConfig,
 } from '@/lib/paymentApi';
-import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone, Square, ScrollText } from 'lucide-react';
-import { DraggableWindow } from '@/components/session/DraggableWindow';
+import { Maximize2, Minimize2, Coins, Ticket, SkipBack, SkipForward, Play, Pause, Smartphone, Square, ScrollText, MonitorUp } from 'lucide-react';
 import { indexSuivant, aUnePisteSuivante, indexPrecedent, aUnePistePrecedente, actionPrecedent } from '@/lib/playlistNav';
 
 // LocalStorage key for nickname
@@ -684,7 +682,6 @@ export const SessionPage: React.FC = () => {
     try { localStorage.setItem('bt_visio_timer_cfg', JSON.stringify(cfg)); } catch { /* ignore */ }
   }, []);
   // 🎥 Chantier B : voir les caméras PAR-DESSUS la vidéo partagée (mobile, hors plein écran).
-  const [showMobileCameras, setShowMobileCameras] = useState(false);
   const [isSyncActive, setIsSyncActive] = useState(false); // État de synchronisation Cloud
   const [hostIsPlaying, setHostIsPlaying] = useState(false); // 🔄 Sync Play/Pause
   
@@ -1382,6 +1379,10 @@ export const SessionPage: React.FC = () => {
   const [mobileTab, setMobileTab] = useState<'player' | 'controls'>('player');
   const [screenSharing, setScreenSharing] = useState(false); // 🖥️ l'hôte/co-hôte partage son écran
   const [remoteScreenActive, setRemoteScreenActive] = useState(false); // un AUTRE partage son écran
+  // 🎬 L'écran de l'hôte est DÉJÀ dans la scène studio à l'antenne (donc dans la « caméra »
+  //    publiée) : le participant ne l'affiche pas une seconde fois dans la scène du Live.
+  const [ecranDansProgrammeDistant, setEcranDansProgrammeDistant] = useState(false);
+  const ecranDansProgrammeRef = useRef(false);
   // 🎥 UNE CAMÉRA DIFFUSE-T-ELLE DANS CETTE SESSION ? (signal brut, reçu par Realtime)
   //    Le partage d'écran avait déjà son annonce (`SCREEN_SHARE_STATE`) ; la caméra n'en
   //    avait AUCUNE. Les participants restaient donc hors de la room et ne recevaient rien.
@@ -1468,7 +1469,7 @@ export const SessionPage: React.FC = () => {
   const screenStreamRef = useRef<MediaStream | null>(null);
   const broadcastScreenState = useCallback((active: boolean) => {
     if (sessionId && supabase && isSupabaseConfigured) {
-      supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'SCREEN_SHARE_STATE', payload: { active } });
+      supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event: 'SCREEN_SHARE_STATE', payload: { active, dansProgramme: active && ecranDansProgrammeRef.current } });
     }
   }, [sessionId]);
   const handleToggleScreenShare = useCallback(async () => {
@@ -2403,8 +2404,9 @@ export const SessionPage: React.FC = () => {
       // 🖥️ partage écran : le participant active son Peer visio pour recevoir le flux
       .on('broadcast', { event: 'SCREEN_SHARE_STATE' }, (payload) => {
         if (isHostRef.current || !payload.payload) return;
-        const p = payload.payload as { active?: boolean };
+        const p = payload.payload as { active?: boolean; dansProgramme?: boolean };
         setRemoteScreenActive(!!p.active);
+        setEcranDansProgrammeDistant(!!p.active && !!p.dansProgramme);
       })
       // 🎥 caméra d'un diffuseur : même mécanisme, pour la CAMÉRA cette fois. On tient un
       //    registre `userId → dernier battement` plutôt qu'un simple booléen : plusieurs
@@ -2767,6 +2769,15 @@ export const SessionPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, programmeALAntenne, programmeVersParticipants, programme.actif]);
   useEffect(() => { if (programme.avis) showToast(programme.avis, 'warning'); }, [programme.avis, showToast]);
+  // 🎬 L'écran est-il DANS la scène à l'antenne (publiée à la place de la caméra) ? Les
+  //    participants le sauront par SCREEN_SHARE_STATE et ne le montreront pas en double.
+  const ecranDansProgramme = isHost && programmeALAntenne && programmeVersParticipants
+    && studio.boxesProgram.some((b) => b.source.kind === 'screen');
+  useEffect(() => {
+    if (ecranDansProgrammeRef.current === ecranDansProgramme) return;
+    ecranDansProgrammeRef.current = ecranDansProgramme;
+    if (screenSharing) broadcastScreenState(true);
+  }, [ecranDansProgramme, screenSharing, broadcastScreenState]);
 
   // 📡 « Diffuser en direct » (multistream) — contrat pour le panneau Broadcast ; rien ne part
   //    tant que l'hôte ne démarre pas. Les réseaux reçoivent le PROGRAMME, jamais la caméra brute.
@@ -4375,8 +4386,16 @@ export const SessionPage: React.FC = () => {
       onToggleCommentaires={() => setCommentairesMasques((m) => !m)}
       connexionScene={videoMesh.connexion}
       audioNode={miniAudioControlNode}
+      // 🎬 Film et écran partagé EN GRAND dans la scène (les personnes en vignettes).
+      //    Le lecteur est une FONCTION : son nœud (unique) est bâti plus bas.
+      filmActif={shareMode !== 'audio' && !!sharedMedia}
+      rendreFilm={() => sharedMediaNode}
+      ecranStream={videoMesh.localScreen ?? (videoMesh.remoteScreen && !ecranDansProgrammeDistant ? videoMesh.remoteScreen.stream : null)}
+      ecranLocal={!!videoMesh.localScreen}
     />
   );
+  // Le Live est ouvert : le film vit DANS sa scène ; sinon (écoute seule) à sa place d'origine.
+  const filmDansLaScene = liveMode && !!sessionId;
 
   // 🐛 BUG 4 : MÊME barre de contrôles Visio, injectée dans le plein écran de la VIDÉO partagée
   //    (Micro/Caméra/Scène/Interval/Chat). Réutilise exactement les handlers/états ci-dessus.
@@ -4496,6 +4515,27 @@ export const SessionPage: React.FC = () => {
       onSendGroup={handleSendGroupMessage}
       onSendPrivate={handleSendPrivateMessage}
       onDeleteGroup={handleDeleteGroupMessage}
+    />
+  ) : null;
+
+  // 🎬 L'UNIQUE lecteur du film (ref + émetteur VIDEO_SYNC uniques). Rendu dans la scène du
+  //    Live (`rendreFilm`) quand le Live est ouvert, à sa place d'origine sinon — jamais deux.
+  const sharedMediaNode = (shareMode !== 'audio' && sharedMedia) ? (
+    <SharedMediaPlayer
+      ref={sharedMediaPlayerRef}
+      media={sharedMedia}
+      isHost={canShare}
+      onState={canShare ? handleMediaState : undefined}
+      remote={!canShare ? remoteMediaState : null}
+      onClose={canShare ? handleCloseMedia : undefined}
+      mediaVolume={mixerState.musicVolume}
+      micActive={hostMicActive}
+      maxSeconds={isFree ? 30 : Infinity}
+      onEnlargedChange={setVideoEnlarged}
+      chatNode={chatPanelNode}
+      liveCamerasNode={liveCamerasNode}
+      timerNode={visioTimerReminderNode}
+      controlsNode={canShare ? sharedVideoControlsNode : undefined}
     />
   ) : null;
 
@@ -5337,38 +5377,24 @@ export const SessionPage: React.FC = () => {
               </div>
             )}
 
-            {/* 🖥️ Partage d'écran en direct (au-dessus du média partagé) */}
-            {videoMesh.localScreen && (
-              <div className="bt-tab-diffusion">
-                <ScreenShareView stream={videoMesh.localScreen} isLocal onStop={handleToggleScreenShare} />
-              </div>
-            )}
-            {!videoMesh.localScreen && videoMesh.remoteScreen && (
-              <div className="bt-tab-diffusion">
-                <ScreenShareView stream={videoMesh.remoteScreen.stream} hostName="l'hôte" />
+            {/* 🖥️ L'écran partagé vit dans la SCÈNE du Live. Live fermé : on le dit, et on y mène. */}
+            {!filmDansLaScene && (videoMesh.localScreen || videoMesh.remoteScreen) && (
+              <div className="bt-tab-diffusion flex items-center justify-between gap-2 flex-wrap px-3 py-2 rounded-xl bg-white/5 border border-white/10" data-testid="ecran-dans-le-live">
+                <span className="flex items-center gap-1.5 text-white/70 text-sm">
+                  <MonitorUp className="w-4 h-4 text-[var(--bt-accent)]" />
+                  {videoMesh.localScreen ? 'Ton écran est partagé : il s’affiche dans le Live.' : 'L’hôte partage son écran : il s’affiche dans le Live.'}
+                </span>
+                {peutRegarderLaVideo && sessionId && (
+                  <button onClick={() => setLiveMode(true)} className="min-h-[40px] px-3 py-1.5 rounded-lg text-white text-xs font-medium inline-flex items-center gap-1.5" style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }} data-testid="ecran-ouvrir-live">
+                    <Video className="w-4 h-4" /> Ouvrir le Live
+                  </button>
+                )}
               </div>
             )}
 
-            {/* E : Média partagé (vidéo/image/lien) — affiché UNIQUEMENT hors mode audio */}
-            {shareMode !== 'audio' && sharedMedia && (
-              <div className="bt-tab-diffusion">
-              <SharedMediaPlayer
-                ref={sharedMediaPlayerRef}
-                media={sharedMedia}
-                isHost={canShare}
-                onState={canShare ? handleMediaState : undefined}
-                remote={!canShare ? remoteMediaState : null}
-                onClose={canShare ? handleCloseMedia : undefined}
-                mediaVolume={mixerState.musicVolume}
-                micActive={hostMicActive}
-                maxSeconds={isFree ? 30 : Infinity}
-                onEnlargedChange={setVideoEnlarged}
-                chatNode={chatPanelNode}
-                liveCamerasNode={liveCamerasNode}
-                timerNode={visioTimerReminderNode}
-                controlsNode={canShare ? sharedVideoControlsNode : undefined}
-              />
-              </div>
+            {/* E : Média partagé (vidéo/image/lien) — hors mode audio. Live ouvert : dans sa scène. */}
+            {!filmDansLaScene && sharedMediaNode && (
+              <div className="bt-tab-diffusion">{sharedMediaNode}</div>
             )}
 
             {/* E + item 6 : Panneau de partage (Audio | Vidéo | Image | Lien) — hôte + co-animateurs.
@@ -6100,26 +6126,8 @@ export const SessionPage: React.FC = () => {
         />
       )}
 
-      {/* 🎥 Chantier B : sur mobile, quand une vidéo est partagée ET que le Live est actif (hors plein écran),
-          un bouton ouvre les caméras dans une fenêtre flottante PAR-DESSUS la vidéo. En plein écran, les caméras
-          sont déjà injectées dans le lecteur (liveCamerasNode) → on ne l'affiche donc pas en double. */}
-      {!isDesktop && liveMode && sessionId && sharedMedia && shareMode !== 'audio' && !videoEnlarged && (
-        <>
-          <button
-            onClick={() => setShowMobileCameras((v) => !v)}
-            className="fixed bottom-24 right-4 z-[95] flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-semibold text-white shadow-lg"
-            style={{ background: 'linear-gradient(135deg,var(--bt-accent),var(--bt-accent-2))' }}
-            data-testid="mobile-see-cameras"
-          >
-            <Video className="w-4 h-4" /> {showMobileCameras ? 'Masquer' : 'Voir'} les caméras
-          </button>
-          {showMobileCameras && (
-            <DraggableWindow title="Caméras live" storageKey="bt_visio_over_video_pos" defaultWidth={240} zClass="z-[96]">
-              {liveCamerasNode}
-            </DraggableWindow>
-          )}
-        </>
-      )}
+      {/* 🎥 Chantier B (bouton « Voir les caméras » par-dessus la vidéo) : retiré — Live ouvert, le
+          film est DANS la scène et les caméras sont déjà ses vignettes. */}
 
       {/* 💬 Lanceur + panneau de CHAT — au niveau page SAUF quand la vidéo est agrandie (alors il est
           rendu À L'INTÉRIEUR du plein écran de la vidéo, cf. SharedMediaPlayer chatNode). */}

@@ -18,7 +18,7 @@ export interface StudioSourceRef {
   label: string;
 }
 
-export type SceneType = 'coach_full' | 'participant_full' | 'split_50' | 'pip' | 'screen_coach' | 'cam1' | 'cam2';
+export type SceneType = 'coach_full' | 'participant_full' | 'split_50' | 'pip' | 'screen_coach' | 'cam1' | 'cam2' | 'screen_full';
 
 export type PipPosition = 'tl' | 'tr' | 'bl' | 'br';
 

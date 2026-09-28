@@ -2792,6 +2792,8 @@ export const SessionPage: React.FC = () => {
     resolutionProgramme: (q) => programme.changerResolution(q === '1080p' ? RESOLUTION_1080P : RESOLUTION_720P),
     fpsProgramme: programme.stats.fps,
     arrierePlanProgramme: programme.stats.arrierePlan,
+    // DÉFAUT B : l'hôte seul retrouve un enregistrement interrompu / jamais téléchargé (OPFS) dans le panneau.
+    detecterInterrompus: isHost,
   });
   const [recordOpen, setRecordOpen] = useState(false);
   // ═══ 📝 LE PROMPTEUR DE L'HÔTE — trois sources, un seul écran ═══════════════════

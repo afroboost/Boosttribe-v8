@@ -147,3 +147,18 @@ test('A — le seul MediaRecorder reçoit les options pures (image clé chaque s
   assert.match(hook, /new MediaRecorder\(stream, optionsEnregistreur\(capacite\.mime, debit\)\)/);
   assert.match(logique, /videoKeyFrameIntervalDuration: IMAGE_CLE_MS/);
 });
+
+// ── DÉFAUT B : enregistrement interrompu — détecté, proposé à l'hôte seul, verrou pendant l'écriture ──
+const panneau = readFileSync(new URL('../src/components/session/RecordPanel.tsx', import.meta.url), 'utf8');
+test('B — l’enregistrement OPFS en cours tient un verrou Web Locks (jamais proposé comme « interrompu » par un autre onglet)', () => {
+  assert.match(hook, /navigator as any\)\.locks/);
+  assert.match(hook, /VERROU_PREFIXE/);
+  assert.match(hook, /classerRestesOpfs\(/);
+});
+test('B — détection réservée à l’hôte, à l’ouverture de la page, et affichée dans le panneau', () => {
+  assert.match(hook, /detecterInterrompus\?: boolean/);
+  assert.match(sessionPage, /detecterInterrompus: isHost/);
+  assert.match(panneau, /data-testid="record-interrompu"/);
+  assert.match(panneau, /record-interrompu-save/);
+  assert.match(panneau, /record-interrompu-delete/);
+});

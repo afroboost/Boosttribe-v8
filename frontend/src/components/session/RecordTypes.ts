@@ -34,6 +34,14 @@ export interface RecResultat {
   sauvegarderSurAppareil: () => Promise<void>;
 }
 
+/** DÉFAUT B — un reste OPFS : `complet` = terminé mais jamais téléchargé ; `partiel` = navigateur arrêté brutalement. */
+export interface ResteLike {
+  source: string;
+  nom: string;
+  taille: number;
+  nature: 'complet' | 'partiel';
+}
+
 export interface RecorderLike {
   etat: RecEtat;
   capacite: RecCapacite;
@@ -46,4 +54,8 @@ export interface RecorderLike {
   resultat: RecResultat | null;
   avis: string | null;
   fermerResultat: () => void;
+  /** DÉFAUT B — optionnels : absents = rien à proposer. */
+  restes?: ResteLike[];
+  recupererReste?: (r: ResteLike) => Promise<void>;
+  supprimerReste?: (r: ResteLike) => Promise<void>;
 }

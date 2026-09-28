@@ -288,3 +288,47 @@ export function resolutionEncodee(
 export function libelleResolution(r: { largeur: number; hauteur: number }): string {
   return `${Math.round(r.largeur)} × ${Math.round(r.hauteur)}`;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * DÉFAUT B — ENREGISTREMENT INTERROMPU (OPFS). Ce qui est RÉELLEMENT récupérable,
+ * mesuré dans le vrai Chrome 153 (28/09) :
+ *  - `createWritable()` écrit dans « <nom>.crswap » ; <nom> reste à 0 octet jusqu'à close() ;
+ *  - rechargement / fermeture de l'onglet : Chrome JETTE le .crswap → rien à récupérer
+ *    (seul reste <nom> à 0 octet, retiré) ;
+ *  - arrêt brutal du navigateur (crash, kill, coupure) : le .crswap SURVIT, MP4 fragmenté
+ *    lisible jusqu'à la dernière tranche écrite (ffprobe : 3,7 s sur 5) → « partiel » ;
+ *  - <nom> non vide = enregistrement terminé et fermé mais jamais téléchargé (« Fermer »
+ *    sans « Enregistrer sur mon appareil ») → « complet ».
+ * FSA : le fichier est chez l'hôte (hors de portée) ; mémoire : perdu. Ni l'un ni l'autre ici.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export interface EntreeOpfs { nom: string; taille: number }
+export interface ResteOpfs {
+  /** Nom de l'entrée dans le dossier OPFS (peut finir par .crswap). */
+  source: string;
+  /** Nom proposé au téléchargement (.mp4 / .webm). */
+  nom: string;
+  taille: number;
+  nature: 'complet' | 'partiel';
+}
+
+const SWAP = '.crswap';
+const estVideo = (nom: string) => /\.(mp4|webm)$/i.test(nom);
+
+/**
+ * `verrouilles` = noms (sans .crswap) des enregistrements EN COURS (verrou Web Locks tenu, dans cet
+ * onglet ou un autre) : jamais proposés, jamais supprimés.
+ */
+export function classerRestesOpfs(entrees: EntreeOpfs[], verrouilles: string[]): { recuperables: ResteOpfs[]; aSupprimer: string[] } {
+  const recuperables: ResteOpfs[] = [];
+  const aSupprimer: string[] = [];
+  const actifs = new Set(verrouilles);
+  for (const e of entrees) {
+    const swap = e.nom.endsWith(SWAP);
+    const base = swap ? e.nom.slice(0, -SWAP.length) : e.nom;
+    if (!estVideo(base) || actifs.has(base)) continue;
+    if (e.taille <= 0) { aSupprimer.push(e.nom); continue; }
+    recuperables.push({ source: e.nom, nom: base, taille: e.taille, nature: swap ? 'partiel' : 'complet' });
+  }
+  return { recuperables, aSupprimer };
+}

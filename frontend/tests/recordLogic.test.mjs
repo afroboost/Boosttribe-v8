@@ -225,3 +225,42 @@ test('A — mêmes codecs, même débit : seule la cadence des images clés chan
   const o = optionsEnregistreur('video/webm;codecs=vp9,opus', bitratePour('720p'));
   assert.deepEqual(Object.keys(o).sort(), ['audioBitsPerSecond', 'mimeType', 'videoBitsPerSecond', 'videoKeyFrameIntervalDuration']);
 });
+import { classerRestesOpfs } from './.build/recordLogic.mjs';
+
+// ── DÉFAUT B : restes OPFS après une interruption ─────────────────────────────────────────────────
+// Mesuré (Chrome 153) : `createWritable()` écrit dans « <nom>.crswap » ; le fichier <nom> reste à 0 octet
+// jusqu'à close(). Rechargement / fermeture d'onglet → Chrome JETTE le .crswap (rien à récupérer).
+// Arrêt brutal du navigateur (crash, kill) → le .crswap SURVIT : MP4 fragmenté lisible jusqu'à la
+// dernière tranche (ffprobe : 3,7 s sur 5). Un fichier <nom> non vide = enregistrement terminé, jamais
+// téléchargé (« Fermer » sans « Enregistrer sur mon appareil ») : complet.
+test('B — classement : complet, partiel (.crswap), vides à retirer', () => {
+  const r = classerRestesOpfs([
+    { nom: 'Afroboost-Live-2026-09-28-1000.mp4', taille: 5_000_000 },
+    { nom: 'Afroboost-Live-2026-09-28-1100.mp4', taille: 0 },
+    { nom: 'Afroboost-Live-2026-09-28-1100.mp4.crswap', taille: 131_480 },
+    { nom: 'Afroboost-Live-2026-09-28-1200.mp4', taille: 0 },
+  ], []);
+  assert.deepEqual(r.recuperables, [
+    { source: 'Afroboost-Live-2026-09-28-1000.mp4', nom: 'Afroboost-Live-2026-09-28-1000.mp4', taille: 5_000_000, nature: 'complet' },
+    { source: 'Afroboost-Live-2026-09-28-1100.mp4.crswap', nom: 'Afroboost-Live-2026-09-28-1100.mp4', taille: 131_480, nature: 'partiel' },
+  ]);
+  assert.deepEqual(r.aSupprimer.sort(), ['Afroboost-Live-2026-09-28-1100.mp4', 'Afroboost-Live-2026-09-28-1200.mp4']);
+});
+
+test('B — un enregistrement EN COURS (verrou tenu, cet onglet ou un autre) n’est jamais proposé ni supprimé', () => {
+  const r = classerRestesOpfs([
+    { nom: 'Afroboost-Live-2026-09-28-1300.mp4', taille: 0 },
+    { nom: 'Afroboost-Live-2026-09-28-1300.mp4.crswap', taille: 900_000 },
+  ], ['Afroboost-Live-2026-09-28-1300.mp4']);
+  assert.deepEqual(r, { recuperables: [], aSupprimer: [] });
+});
+
+test('B — .crswap vide retiré ; fichier étranger au format ignoré ; .webm reconnu', () => {
+  const r = classerRestesOpfs([
+    { nom: 'a.mp4.crswap', taille: 0 },
+    { nom: 'notes.txt', taille: 10 },
+    { nom: 'b.webm', taille: 20 },
+  ], []);
+  assert.deepEqual(r.recuperables, [{ source: 'b.webm', nom: 'b.webm', taille: 20, nature: 'complet' }]);
+  assert.deepEqual(r.aSupprimer, ['a.mp4.crswap']);
+});

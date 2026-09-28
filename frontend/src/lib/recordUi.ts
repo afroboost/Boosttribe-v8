@@ -60,3 +60,9 @@ export function libelleVideoResultat(resolution: string, format: string): string
   const codec = (format || '').trim();
   return codec ? `${resolution} · ${codec}` : resolution;
 }
+
+/** DÉFAUT B — « Enregistrement interrompu détecté » : un reste OPFS récupérable, dit sans promettre plus que le fichier. */
+export function libelleReste(r: { nom: string; taille: number; nature: 'complet' | 'partiel' }): { titre: string; detail: string } {
+  if (r.nature === 'complet') return { titre: 'Enregistrement non sauvegardé', detail: `${r.nom} · ${formatTaille(r.taille)}` };
+  return { titre: 'Enregistrement interrompu', detail: `${r.nom} · ${formatTaille(r.taille)} · jusqu’à la dernière seconde écrite` };
+}

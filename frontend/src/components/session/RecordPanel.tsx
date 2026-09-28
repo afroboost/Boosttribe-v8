@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
-import { Disc, Square, Download, Check, X, AlertTriangle, RotateCw, Loader2 } from 'lucide-react';
+import { Disc, Square, Download, Check, X, AlertTriangle, RotateCw, Loader2, Trash2 } from 'lucide-react';
 import type { RecorderLike, RecQualite } from '@/components/session/RecordTypes';
-import { formatDureeRec, formatTaille, libelleFormat, libelleVideoResultat, motifIndisponible } from '@/lib/recordUi';
+import { formatDureeRec, formatTaille, libelleFormat, libelleReste, libelleVideoResultat, motifIndisponible } from '@/lib/recordUi';
 
 /**
  * ⏺ « Enregistrer le Programme » — mini panneau (desktop) / tiroir plein écran (mobile).
@@ -132,8 +132,34 @@ export const RecordPanel: React.FC<RecordPanelProps> = ({ recorder, open, onClos
   } else {
     // inactif / preparation : choix de la qualité + format + avis, puis Démarrer.
     const propositions = QUALITES.filter((q) => capacite.qualites.includes(q));
+    // DÉFAUT B — restes OPFS (hôte seulement : le hook ne les cherche que pour lui). Deux gestes, les seuls sûrs.
+    const restes = recorder.restes || [];
     corps = (
       <div className="py-3 space-y-3">
+        {restes.length > 0 && (
+          <div className="rounded-xl border border-amber-300/30 bg-amber-300/5 p-3 space-y-2" data-testid="record-interrompu">
+            <p className="text-xs font-semibold text-amber-200 flex items-center gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Enregistrement interrompu détecté
+            </p>
+            {restes.map((r) => {
+              const l = libelleReste(r);
+              return (
+                <div key={r.source} className="space-y-1.5">
+                  <p className="text-xs text-white/80">{l.titre}</p>
+                  <p className="text-[11px] text-white/50 break-all">{l.detail}</p>
+                  <div className="flex items-center gap-2">
+                    <button type="button" onClick={() => { void recorder.recupererReste?.(r); }} className="flex-1 h-9 rounded-full bg-[var(--bt-accent)] text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5" data-testid="record-interrompu-save">
+                      <Download className="w-3.5 h-3.5" /> Enregistrer sur mon appareil
+                    </button>
+                    <button type="button" onClick={() => { if (window.confirm('Supprimer définitivement cet enregistrement ?')) void recorder.supprimerReste?.(r); }} aria-label="Supprimer" className="h-9 px-3 rounded-full bg-white/10 text-white/80 text-xs hover:bg-white/20 inline-flex items-center gap-1.5" data-testid="record-interrompu-delete">
+                      <Trash2 className="w-3.5 h-3.5" /> Supprimer
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div>
           <p className="text-xs text-white/45 mb-1.5">Qualité</p>
           <div className="inline-flex rounded-full bg-white/5 p-0.5" role="radiogroup" aria-label="Qualité" data-testid="record-qualites">

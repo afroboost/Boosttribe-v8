@@ -19,14 +19,14 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  bitratePour, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
-  nomFichier, optionsEnregistreur, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie,
+  bitratePour, classerRestesOpfs, detecterCapacite, doitReplier720, estimerEspace, formaterTaille, libelleResolution, minutesMaxMemoire,
+  nomFichier, optionsEnregistreur, qualiteParDefaut, resolutionEncodee, verdictFinalisation, type EnvEnregistrement, type EtatRepli, type MesurePiste, type RecCapacite, type RecQualite, type RecStrategie, type ResteOpfs,
 } from '@/lib/recordLogic';
 import { dureeEnUnites, encoderDuree, preparerEnteteWebm } from '@/lib/webmDuree';
 import { choisirResolution, type ResolutionProgramme } from '@/lib/programCompositor';
 import { resolutionFichier } from '@/lib/resolutionFichier';
 
-export type { RecQualite, RecStrategie, RecCapacite } from '@/lib/recordLogic';
+export type { RecQualite, RecStrategie, RecCapacite, ResteOpfs } from '@/lib/recordLogic';
 export type RecEtat = 'inactif' | 'preparation' | 'enregistrement' | 'finalisation' | 'pret' | 'erreur';
 
 export interface RecResultat {
@@ -55,6 +55,10 @@ export interface UseProgramRecorderReturn {
   resultat: RecResultat | null;
   avis: string | null;
   fermerResultat: () => void;
+  /** DÉFAUT B — restes OPFS d'un enregistrement interrompu / jamais téléchargé (hôte seulement, lus à l'ouverture). */
+  restes: ResteOpfs[];
+  recupererReste: (r: ResteOpfs) => Promise<void>;
+  supprimerReste: (r: ResteOpfs) => Promise<void>;
 }
 
 export const AVIS_ARRIERE_PLAN = 'Live Visio en arrière-plan : vidéo réduite à 1 image/s (le son continue). Gardez Live Visio visible pendant l’enregistrement pour conserver une vidéo fluide.';
@@ -68,10 +72,23 @@ export interface UseProgramRecorderOptions {
   /** true quand l'onglet est masqué : le Programme tourne à 1 i/s (Worker, seule cadence que Chrome horodate), la garde de performance
    *  est suspendue — le repli 720p (basé sur `fpsProgramme`) ne doit alors PAS se déclencher. */
   arrierePlanProgramme?: boolean;
+  /** DÉFAUT B — true pour l'HÔTE : cherche à l'ouverture les enregistrements interrompus (OPFS). Jamais pour un participant. */
+  detecterInterrompus?: boolean;
 }
 
 const OPFS_DOSSIER = 'afroboost-enregistrements';
 const TIMESLICE_MS = 1000;
+/** Verrou Web Locks tenu pendant un enregistrement OPFS : un autre onglet ne le prend jamais pour un reste « interrompu ». */
+const VERROU_PREFIXE = 'afroboost-rec:';
+
+/** Prend le verrou `afroboost-rec:<nom>` (non bloquant) ; renvoie de quoi le libérer. Sans Web Locks : rien. */
+function prendreVerrou(nom: string): () => void {
+  const locks: any = (navigator as any).locks;
+  if (typeof locks?.request !== 'function') return () => undefined;
+  let liberer: () => void = () => undefined; let libere = false;
+  locks.request(VERROU_PREFIXE + nom, () => new Promise<void>((res) => { liberer = res; if (libere) res(); })).catch(() => undefined);
+  return () => { libere = true; liberer(); };
+}
 
 /** Ce que le navigateur sait faire — lu une fois, sans rien ouvrir. */
 export function lireEnvironnement(): EnvEnregistrement {
@@ -178,6 +195,9 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
   const [tailleOctets, setTailleOctets] = useState(0);
   const [resultat, setResultat] = useState<RecResultat | null>(null);
   const [avis, setAvis] = useState<string | null>(null);
+  const [restes, setRestes] = useState<ResteOpfs[]>([]);
+  const verrouRef = useRef<(() => void) | null>(null);
+  const libererVerrou = useCallback(() => { verrouRef.current?.(); verrouRef.current = null; }, []);
 
   const recRef = useRef<MediaRecorder | null>(null);
   const ecrivainRef = useRef<Ecrivain | null>(null);
@@ -280,12 +300,12 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
           // Sélecteur refusé (iframe, sans geste, politique) → écriture progressive OPFS à la place.
           strategieRef.current = 'opfs';
           const { ecrivain, handle, dossier } = await ecrivainOpfs(nom);
-          ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom };
+          ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom }; verrouRef.current = prendreVerrou(nom);
           setAvis('Le choix du dossier n’est pas disponible ici : le fichier sera proposé au téléchargement à l’arrêt.');
         }
       } else if (capacite.strategie === 'opfs') {
         const { ecrivain, handle, dossier } = await ecrivainOpfs(nom);
-        ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom };
+        ecrivainRef.current = ecrivain; opfsRef.current = { handle, dossier, nom }; verrouRef.current = prendreVerrou(nom);
       } else {
         ecrivainRef.current = ecrivainMemoire(capacite.mime);
       }
@@ -314,9 +334,9 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     } catch (e) {
       const msg = (e as Error)?.name === 'AbortError' ? null : `Impossible de démarrer : ${(e as Error).message}`;
       setAvis(msg); setEtat('inactif');
-      await ecrivainRef.current?.abandonner(); nettoyer();
+      await ecrivainRef.current?.abandonner(); nettoyer(); libererVerrou();
     }
-  }, [capacite, etat, o, pousserEcriture, nettoyer]);
+  }, [capacite, etat, o, pousserEcriture, nettoyer, libererVerrou]);
 
   /**
    * Finalise l'enregistrement de `rec` : attend le dernier morceau, corrige la durée WebM, FERME le
@@ -339,7 +359,7 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       const verdict = verdictFinalisation({ octets: fini.taille, arretDemande, dureeSec: dureeMs / 1000 });
       if (verdict.etat === 'erreur') {
         await ecrivain?.supprimer();
-        opfsRef.current = null;
+        opfsRef.current = null; libererVerrou();
         if (!demonteRef.current) { setAvis(verdict.message); setEtat('erreur'); setResultat(null); }
         return;
       }
@@ -367,7 +387,8 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
       if (!demonteRef.current) { setResultat(resultat); setEtat('pret'); setAvis(verdict.message); }
     } catch (e) {
       if (!demonteRef.current) { setAvis(`Finalisation impossible : ${(e as Error).message}`); setEtat('erreur'); }
-    } finally { nettoyer(); finalisationRef.current = null; }
+      libererVerrou(); // le fichier reste : il sera proposé comme « interrompu » à la prochaine ouverture
+    } finally { nettoyer(); finalisationRef.current = null; if (demonteRef.current) libererVerrou(); }
   }
 
   const arreter = useCallback(async () => {
@@ -439,28 +460,61 @@ export function useProgramRecorder(o: UseProgramRecorderOptions): UseProgramReco
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fermerResultat = useCallback(() => { setResultat(null); setEtat('inactif'); setDureeSec(0); setTailleOctets(0); }, []);
+  const fermerResultat = useCallback(() => { setResultat(null); setEtat('inactif'); setDureeSec(0); setTailleOctets(0); libererVerrou(); }, [libererVerrou]);
 
-  return { etat, capacite, qualite, choisirQualite, dureeSec, tailleOctets, demarrer, arreter, resultat, avis, fermerResultat };
+  // DÉFAUT B — à l'ouverture (hôte seulement, avant tout enregistrement de cet onglet) : restes OPFS.
+  useEffect(() => {
+    if (!o.detecterInterrompus) return;
+    let vivant = true;
+    void enregistrementsInterrompus().then((r) => { if (vivant) setRestes(r); });
+    return () => { vivant = false; };
+  }, [o.detecterInterrompus]);
+
+  const recupererReste = useCallback(async (r: ResteOpfs) => {
+    const dossier = await dossierOpfs(); if (!dossier) return;
+    const handle = await dossier.getFileHandle(r.source);
+    telecharger(await handle.getFile(), r.nom);
+    setRestes((l) => l.filter((x) => x.source !== r.source));
+    // Même règle que « Enregistrer sur mon appareil » : le temporaire est retiré une fois le téléchargement lancé.
+    setTimeout(() => { dossier.removeEntry(r.source).catch(() => undefined); }, 15_000);
+  }, []);
+
+  const supprimerReste = useCallback(async (r: ResteOpfs) => {
+    const dossier = await dossierOpfs();
+    if (dossier) await dossier.removeEntry(r.source).catch(() => undefined);
+    setRestes((l) => l.filter((x) => x.source !== r.source));
+  }, []);
+
+  return { etat, capacite, qualite, choisirQualite, dureeSec, tailleOctets, demarrer, arreter, resultat, avis, fermerResultat, restes, recupererReste, supprimerReste };
 }
 
-/** Reprise après crash (OPFS) : liste les temporaires laissés par une session interrompue. */
-export async function enregistrementsInterrompus(): Promise<{ nom: string; taille: number; recuperer: () => Promise<void>; oublier: () => Promise<void> }[]> {
+async function dossierOpfs(): Promise<any | null> {
   const nav: any = navigator;
-  if (typeof nav.storage?.getDirectory !== 'function') return [];
+  if (typeof nav.storage?.getDirectory !== 'function') return null;
+  try { return await (await nav.storage.getDirectory()).getDirectoryHandle(OPFS_DOSSIER, { create: false }); } catch { return null; }
+}
+
+/**
+ * DÉFAUT B — restes OPFS récupérables (voir `classerRestesOpfs` pour ce que Chrome laisse réellement).
+ * Exclut les enregistrements EN COURS (verrou Web Locks tenu, cet onglet ou un autre) ; retire les
+ * entrées vides (fichier jamais fermé après un rechargement : son .crswap a été jeté par Chrome).
+ */
+export async function enregistrementsInterrompus(): Promise<ResteOpfs[]> {
+  const dossier = await dossierOpfs(); if (!dossier) return [];
   try {
-    const root = await nav.storage.getDirectory();
-    const dossier = await root.getDirectoryHandle(OPFS_DOSSIER, { create: false });
-    const out: { nom: string; taille: number; recuperer: () => Promise<void>; oublier: () => Promise<void> }[] = [];
+    let verrouilles: string[] = [];
+    try {
+      const q = await (navigator as any).locks?.query?.();
+      verrouilles = (q?.held || []).map((l: any) => String(l.name || '')).filter((n: string) => n.startsWith(VERROU_PREFIXE)).map((n: string) => n.slice(VERROU_PREFIXE.length));
+    } catch { /* sans Web Locks : aucun verrou connu */ }
+    const entrees: { nom: string; taille: number }[] = [];
     for await (const [nom, handle] of dossier.entries()) {
       if (handle.kind !== 'file') continue;
-      const f: File = await handle.getFile();
-      if (f.size === 0) { await dossier.removeEntry(nom).catch(() => undefined); continue; }
-      out.push({ nom, taille: f.size,
-        recuperer: async () => { telecharger(await handle.getFile(), nom); },
-        oublier: async () => { await dossier.removeEntry(nom); } });
+      try { entrees.push({ nom, taille: (await handle.getFile()).size }); } catch { /* illisible (verrouillé) : ignoré */ }
     }
-    return out;
+    const { recuperables, aSupprimer } = classerRestesOpfs(entrees, verrouilles);
+    for (const nom of aSupprimer) await dossier.removeEntry(nom).catch(() => undefined);
+    return recuperables;
   } catch { return []; }
 }
 

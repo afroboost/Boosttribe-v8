@@ -164,3 +164,13 @@ test('l’état actif ne tient pas qu’à la couleur (accessibilité)', () => {
   assert.ok(/animate-pulse/.test(bloc), 'un repère visuel non chromatique');
   assert.ok(/aria-disabled=\{!recordSupporte\}/.test(bloc), 'l’indisponibilité est dite');
 });
+
+
+// ── DÉFAUT B : « Enregistrement interrompu détecté » — libellés purs ──
+import { libelleReste } from './.build/recordUi.mjs';
+test('B — libellé d’un reste : complet (non sauvegardé) vs partiel (interrompu), taille lisible', () => {
+  assert.deepEqual(libelleReste({ nom: 'x.mp4', taille: 5_242_880, nature: 'complet' }), { titre: 'Enregistrement non sauvegardé', detail: 'x.mp4 · 5.0 Mo' });
+  const p = libelleReste({ nom: 'y.mp4', taille: 750_000, nature: 'partiel' });
+  assert.equal(p.titre, 'Enregistrement interrompu');
+  assert.match(p.detail, /^y\.mp4 · 732 Ko · jusqu’à la dernière seconde écrite$/);
+});

@@ -2737,7 +2737,8 @@ export const SessionPage: React.FC = () => {
     screenShareActive: videoMesh.screenOn,
     localScreen: videoMesh.localScreen,
   });
-  const studioMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches;
+  // Réactif au redimensionnement (rotation, fenêtre) : même source que `isDesktop`.
+  const studioMobile = !isDesktop;
   // 🎬 PHASE 3 — programStream : la scène PROGRAMME devient un flux A/V (compositeur canvas +
   //    bus audio programme). Deux consommateurs : Live Visio (la piste vidéo remplace la caméra
   //    publiée, drapeau `programmeVersParticipants`, ON par défaut dès qu'une scène est à l'antenne)
@@ -4309,7 +4310,10 @@ export const SessionPage: React.FC = () => {
 
   const liveVisioNode = (
     <LiveVisioPanel
-      participants={participants.map((p) => ({
+      // Vidéo prioritaire : la grille ne montre que les personnes À L'ÉCRAN (hôte, soi-même,
+      // caméra active). Les spectateurs sans caméra n'y posent plus une vignette vide chacun.
+      participants={participants.filter((p) => p.isHost || p.isCurrentUser || p.id === socket.userId
+        || videoMesh.remoteCameras.some((c) => c.userId === p.id)).map((p) => ({
         id: p.id,
         name: p.name,
         avatarUrl: p.avatarUrl,

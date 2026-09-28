@@ -112,7 +112,13 @@ export function useLiveReactions({
     const tampon = tamponRef.current;
     if (!tampon) return;
     try { navigator.vibrate?.(10); } catch { /* pas de vibreur */ }
-    ajouterBulles(type, 1); // animation locale IMMÉDIATE, même si l'envoi est tronqué
+    // Animation locale IMMÉDIATE, même si l'envoi est tronqué. Mouvement réduit : jamais
+    // plus d'une bulle à l'écran, même en tapant 20 fois (le compteur, lui, avance).
+    if (reducedRef.current) {
+      setBulles((prev) => (prev.length ? prev : [{ id: `r${compteurBulle.current}`, type, index: compteurBulle.current++ }]));
+    } else {
+      ajouterBulles(type, 1);
+    }
     if (tampon.ajouter(type, Date.now())) {
       commit(ajouterLocal(etatRef.current, type));
       planifierVidage();

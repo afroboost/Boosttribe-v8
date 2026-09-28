@@ -53,6 +53,23 @@ test('le texte est en HAUT et ne masque pas tout le cadre', () => {
   assert.ok(code.includes('pointer-events-none'), 'le texte ne vole pas les clics de la vidéo');
 });
 
+test('sur mobile, bande + barre restent DANS la zone caméra ; desktop inchangé', () => {
+  // Mesuré en prod (390x844, 412x915, 430x932) : la bande suit `26vh`, pas la zone
+  // caméra (~206-229 px) ; bande + barre (86 px sur 2 lignes) débordaient et
+  // recouvraient caméra / enregistrer / Terminer. Plafond relatif à la zone caméra
+  // (ancêtre `relative`) moins la place de la barre, SOUS lg seulement.
+  const code = codeSeul(OVERLAY);
+  assert.ok(code.includes('max-h-[calc(100%-6rem)]'),
+    'sous lg, la bande est plafonnée à la zone caméra moins la barre');
+  assert.ok(code.includes('lg:max-h-none'),
+    'à partir de lg (isDesktop), aucun plafond : rendu desktop identique');
+  assert.ok(code.includes("barre && 'max-h-[calc(100%-6rem)] lg:max-h-none'"),
+    'le plafond ne vaut que lorsque la barre est affichée (/studio intact)');
+  // La hauteur demandée reste la valeur inline : le plafond ne fait que la borner.
+  assert.ok(code.includes('style={{ height: hauteur }}'));
+  assert.ok(code.includes('absolute inset-x-0 top-full mt-1.5'), 'la barre reste sous la bande');
+});
+
 test('l overlay ne peut PAS entrer dans le flux des participants', () => {
   const code = codeSeul(OVERLAY);
   for (const interdit of [

@@ -77,8 +77,18 @@ export const PrompteurOverlay = forwardRef<PrompteurHandle, PrompteurOverlayProp
     // `pointer-events-none` : le texte flotte AU-DESSUS de la vidéo sans jamais lui
     // voler un clic (agrandir une vignette, épingler une caméra restent atteignables).
     // Seule la petite barre réactive les événements, pour elle-même.
+    //
+    // PLAFOND MOBILE (< lg). La hauteur demandée par le Live dépend de `vh`, pas de la
+    // zone caméra : sur un téléphone haut (390×844, 412×915, 430×932, mesuré en prod),
+    // la bande (219-240 px) dépassait déjà la zone (206-229 px), et la barre accrochée
+    // dessous (86 px sur deux lignes + 6 px) recouvrait caméra / enregistrer / Terminer.
+    // Le pourcentage se résout contre la zone caméra (ancêtre `relative`, ou `fixed`
+    // en plein écran) : 100 % − 6rem laisse la place de la barre, qui reste DANS la
+    // zone. À partir de lg (= isDesktop de la page), aucun plafond : rendu inchangé.
+    // Sans barre (/studio), rien ne change non plus.
     <div
-      className="pointer-events-none absolute inset-x-0 top-0 z-[112]"
+      className={['pointer-events-none absolute inset-x-0 top-0 z-[112]',
+        barre && 'max-h-[calc(100%-6rem)] lg:max-h-none'].filter(Boolean).join(' ')}
       style={{ height: hauteur }}
       data-testid="prompteur-overlay"
     >

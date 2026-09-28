@@ -16,6 +16,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { placementVignette, decoupeCoteACote, apercuEcranLocal } from './.build/sceneLive.mjs';
+import * as S2 from './.build/sceneLive.mjs';
 import { zoneCommentaires, ORDRE_COMMANDES, PRIORITE_COMMANDES, repartirCommandes, ESPACE_COLONNE } from './.build/liveControls.mjs';
 import { lire, codeSeul } from './lireSource.mjs';
 
@@ -176,4 +177,25 @@ test('vignette : jamais sous 120 px sur une scène étroite (247 px de large)', 
   const p = placementVignette({ largeurScene: 247, hauteurScene: 139, reserveDroitePx: 0, reserveBasPx: 0 });
   assert.ok(p.largeur >= 120, `largeur ${p.largeur}`);
   assert.ok(p.x >= 0 && p.x + p.largeur <= 247 && p.y + p.hauteur <= 139, JSON.stringify(p));
+});
+
+// ═══ 28/09 — règle du mode par défaut (demande de Bassi) ═══════════════════════════
+// Caméra + partage : on arrive TOUJOURS en « écran + caméra en vignette ». « Écran seul »
+// n'existe que choisi explicitement, et ne survit pas à la fin du partage.
+test('défaut : caméra active + partage → écran principal + caméra en vignette', () => {
+  const a = S2.contenuScenePrincipale({ cameraActive: true, filmActif: false, partageActif: true, disposition: null });
+  assert.equal(a.disposition, 'screen_coach');
+  assert.equal(a.incrustation, 'camera');
+});
+
+const PANNEAU = codeSeul(lire('components', 'session', 'LiveVisioPanel.tsx'));
+
+test('un NOUVEAU partage repart du mode par défaut (un « écran seul » choisi avant ne survit pas)', () => {
+  assert.match(PANNEAU, /const idPartage = ecranStream\?\.id \?\? null;/);
+  assert.match(PANNEAU, /useEffect\(\(\) => \{ if \(idPartage\) setDisposition\(DISPOSITION_DEFAUT\); \}, \[idPartage\]\);/);
+});
+
+test('« écran seul » avec caméra active : la scène le DIT (caméra hors de l’image)', () => {
+  assert.match(PANNEAU, /data-testid="scene-camera-hors-programme"/);
+  assert.match(PANNEAU, /arbitrage\.disposition === 'screen_full' && !!personneScene/);
 });

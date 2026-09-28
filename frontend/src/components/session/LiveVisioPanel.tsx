@@ -1,5 +1,5 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
-import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { LiveControls, type LectureLive } from '@/components/session/LiveControls';
@@ -318,6 +318,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   //    La personne « caméra » de la scène : celle épinglée, sinon l'hôte à l'image, sinon la
   //    1ʳᵉ à l'image. Aucune → la tuile « Caméra coupée » ne prend JAMAIS la place du contenu.
   const [disposition, setDisposition] = useState<DispositionPartage>(DISPOSITION_DEFAUT);
+  // 28/09 : chaque NOUVEAU partage repart du mode par défaut (écran + caméra en vignette) —
+  //   un « écran seul » choisi pendant un partage précédent ne s'impose jamais au suivant.
+  const idPartage = ecranStream?.id ?? null;
+  useEffect(() => { if (idPartage) setDisposition(DISPOSITION_DEFAUT); }, [idPartage]);
   // Position GLISSÉE de la vignette, en fraction de la scène ; null = coin bas-droit par défaut.
   const [vignette, setVignette] = useState<{ x: number; y: number } | null>(null);
   const sceneBoxRef = useRef<HTMLDivElement>(null);
@@ -565,6 +569,12 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </div>
         )}
         {camFullscreen && barreDispositions}
+        {/* « Écran seul » choisi alors que la caméra est allumée : on le DIT (elle n'est pas à l'image). */}
+        {arbitrage.disposition === 'screen_full' && !!personneScene && (
+          <div className={`pointer-events-none absolute left-2 z-20 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[11px] text-white/85 backdrop-blur ${camFullscreen ? 'top-16' : 'top-2'}`} role="status" data-testid="scene-camera-hors-programme">
+            <VideoOff className="w-3.5 h-3.5" aria-hidden="true" /> Écran seul : votre caméra n’est pas à l’image
+          </div>
+        )}
       </div>
       {!camFullscreen && barreDispositions}
       {!camFullscreen && personnesVignettes.length > 0 && (

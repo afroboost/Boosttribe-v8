@@ -121,20 +121,26 @@ export async function notifyEmbedSessionStarted(contexte: { sessionCode?: string
   try { if (jti) sessionStorage.setItem(CONSUMED_KEY, jti); } catch { /* ignore */ }
 
   if (!ok) {
-    postToParent({ type: 'bt:session-ended', jti, ...detail });
+    postToParent({ type: 'bt:session-ended', jti, ...detail, reason: 'consume_refused' });
     return;
   }
   _liveAnnonce = true;
   postToParent({ type: 'bt:session-started', jti, ...detail });
 }
 
+/**
+ * Motif d'une fin de session — OBSERVABILITÉ seulement (28/09 : une fin de live est arrivée
+ * côté serveur sans que personne sache d'où). Afroboost le recopie dans son journal.
+ */
+export type MotifFin = 'host_terminate' | 'host_leave' | 'page_unmount' | 'consume_refused';
+
 /** Fin de session (no-op hors mode embed) → informe le parent afroboost. */
-export function notifyEmbedSessionEnded(contexte: { sessionCode?: string | null; isHost?: boolean } = {}): void {
+export function notifyEmbedSessionEnded(contexte: { sessionCode?: string | null; isHost?: boolean; reason?: MotifFin } = {}): void {
   const token = getStored(TOKEN_KEY);
   _liveAnnonce = false;           // fin annoncée : plus aucun battement ne doit partir
   if (!token) return;
   const jti = getStored(JTI_KEY) || '';
-  postToParent({ type: 'bt:session-ended', jti, session_code: String(contexte.sessionCode || ''), is_host: !!contexte.isHost });
+  postToParent({ type: 'bt:session-ended', jti, session_code: String(contexte.sessionCode || ''), is_host: !!contexte.isHost, reason: contexte.reason || 'unknown' });
 }
 
 /**

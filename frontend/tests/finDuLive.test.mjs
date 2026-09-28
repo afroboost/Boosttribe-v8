@@ -104,5 +104,6 @@ test('structurel : « Quitter le live » de l’HÔTE termine vraiment le live (
     'un participant ou un co-hôte part seul, sans rien terminer pour les autres');
   assert.ok(corps.includes("window.confirm('Terminer le Live pour tout le monde ?')"),
     'même confirmation que le bouton Terminer');
-  assert.ok(corps.includes('terminerLive()'), 'l’hôte passe par LA routine de fin, pas une copie');
+  // 28/09 bis : la routine reçoit le motif `host_leave` (observabilité), c'est toujours la même.
+  assert.ok(corps.includes("terminerLive('host_leave')"), 'l’hôte passe par LA routine de fin, pas une copie');
 });

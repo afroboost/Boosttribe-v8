@@ -39,7 +39,7 @@ import type { RemoteMediaState, SharedMediaPlayerHandle } from '@/components/ses
 import { MediaShareControls } from '@/components/session/MediaShareControls';
 import type { ShareMode } from '@/components/session/MediaShareControls';
 import { SessionSocial } from '@/components/session/SessionSocial';
-import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded, notifyEmbedHeartbeat, BATTEMENT_HOTE_MS } from '@/lib/embedApi';
+import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded, notifyEmbedHeartbeat, BATTEMENT_HOTE_MS, type MotifFin } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { usePrompteur } from '@/hooks/usePrompteur';
@@ -1917,7 +1917,7 @@ export const SessionPage: React.FC = () => {
 
   // Fin de session (démontage de la page) → informe afroboost, seulement si le live avait démarré.
   useEffect(() => {
-    return () => { if (embedStartedRef.current) notifyEmbedSessionEnded({ sessionCode: embedContexteRef.current.sessionCode || '', isHost: !!embedContexteRef.current.isHost }); };
+    return () => { if (embedStartedRef.current) notifyEmbedSessionEnded({ sessionCode: embedContexteRef.current.sessionCode || '', isHost: !!embedContexteRef.current.isHost, reason: 'page_unmount' }); };
   }, []);
 
   // 💓 Signe de vie de l'hôte, tant qu'il diffuse. C'est le SEUL mécanisme qui
@@ -2956,8 +2956,9 @@ export const SessionPage: React.FC = () => {
   //  prévenir AVANT de quitter la room (après, le canal est fermé), annoncer la fin en
   //  DERNIER (avant, on déclarerait terminé un live qui diffuse encore).
   const [liveTermine, setLiveTermine] = useState(false);
-  const annoncerFinRef = useRef<() => void>(() => {});
-  const terminerLive = useCallback(async () => {
+  const annoncerFinRef = useRef<(motif: MotifFin) => void>(() => {});
+  // `motif` : observabilité seulement — il suit l'annonce de fin, il ne change aucune étape.
+  const terminerLive = useCallback(async (motif: MotifFin = 'host_terminate') => {
     const etapes = sequenceFinDuLive({
       enregistrementEnCours: recorder.etat === 'enregistrement',
       partageEcranActif: screenSharing,
@@ -2983,7 +2984,7 @@ export const SessionPage: React.FC = () => {
           broadcastScreenState(false);
         } else if (etape === 'couper-micro') hostMicCtrlRef.current?.toggle();
         else if (etape === 'quitter-room') setLiveMode(false);   // `active` retombe → room.disconnect()
-        else if (etape === 'annoncer-fin') annoncerFinRef.current();
+        else if (etape === 'annoncer-fin') annoncerFinRef.current(motif);
         else if (etape === 'retour-ecran') setLiveTermine(true);
       } catch { /* une étape qui échoue n'empêche pas les suivantes : on veut TOUT couper */ }
     }
@@ -2997,7 +2998,7 @@ export const SessionPage: React.FC = () => {
   const quitterLeLive = useCallback(() => {
     if (!isHost) { setLiveMode(false); return; }
     if (!window.confirm('Terminer le Live pour tout le monde ?')) return;
-    void terminerLive();
+    void terminerLive('host_leave');
   }, [isHost, terminerLive]);
 
   // L'annonce de fin utilisée par « Terminer » / « Quitter » (étape `annoncer-fin`).
@@ -3007,9 +3008,9 @@ export const SessionPage: React.FC = () => {
   // couverte par le battement (15 s) et la grâce serveur Afroboost (90 s) ; le
   // rafraîchissement, lui, rejoint la même session et reprend ses battements.
   useEffect(() => {
-    const annoncer = () => {
+    const annoncer = (motif: MotifFin) => {
       if (!departDoitAnnoncer(canShare, embedStartedRef.current)) return;
-      notifyEmbedSessionEnded({ sessionCode: sessionId || '', isHost: true });
+      notifyEmbedSessionEnded({ sessionCode: sessionId || '', isHost: true, reason: motif });
     };
     annoncerFinRef.current = annoncer;
     return undefined;
@@ -4343,7 +4344,7 @@ export const SessionPage: React.FC = () => {
       recordSupporte={recorder.capacite.supporte}
       recordMotif={recorder.capacite.motif}
       onToggleRecord={() => setRecordOpen((o) => !o)}
-      onTerminerLive={() => { void terminerLive(); }}
+      onTerminerLive={() => { void terminerLive('host_terminate'); }}
       onRecordDirect={() => {
         // Le bouton rond DÉCLENCHE, il n'ouvre pas un panneau : c'est tout l'intérêt.
         // Même moteur, mêmes garde-fous (`demarrerProgramme` applique « rien à l'antenne

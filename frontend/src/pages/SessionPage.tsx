@@ -32,6 +32,7 @@ import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
+import { usePlaceStable } from '@/components/session/SceneRenderer';
 import { IntervalTimer, type IntervalRun, type IntervalConfig, type IntervalTimerHandle, type IntervalTickInfo } from '@/components/session/IntervalTimer';
 import { IntervalConfigModal } from '@/components/session/IntervalConfigModal';
 import type { RemoteMediaState, SharedMediaPlayerHandle } from '@/components/session/SharedMediaPlayer';
@@ -848,6 +849,10 @@ export const SessionPage: React.FC = () => {
   const musicWasPlayingRef = useRef(false);
   // 🎬 Média partagé (vidéo/YouTube/Vimeo) piloté par le MÊME compteur : pause à la parole, reprise au silence.
   const sharedMediaPlayerRef = useRef<SharedMediaPlayerHandle | null>(null);
+  // 🎬 Conteneur DOM stable de l'UNIQUE lecteur : il se DÉPLACE entre la scène du Live et sa
+  //    place d'origine ; le lecteur, rendu par portail, n'est jamais remonté (sinon l'hôte
+  //    repartait de 0 et VIDEO_SYNC ramenait tous les participants au début).
+  const { hote: hoteFilm, placer: placerFilm } = usePlaceStable('w-full');
   const sharedMediaWasPlayingRef = useRef(false);
 
   // Réveille le contexte mixeur que la libération du micro a pu suspendre (changement de périphérique OS),
@@ -4389,7 +4394,7 @@ export const SessionPage: React.FC = () => {
       // 🎬 Film et écran partagé EN GRAND dans la scène (les personnes en vignettes).
       //    Le lecteur est une FONCTION : son nœud (unique) est bâti plus bas.
       filmActif={shareMode !== 'audio' && !!sharedMedia}
-      rendreFilm={() => sharedMediaNode}
+      rendreFilm={() => <div ref={placerFilm} className="w-full" />}
       ecranStream={videoMesh.localScreen ?? (videoMesh.remoteScreen && !ecranDansProgrammeDistant ? videoMesh.remoteScreen.stream : null)}
       ecranLocal={!!videoMesh.localScreen}
     />
@@ -4520,7 +4525,7 @@ export const SessionPage: React.FC = () => {
 
   // 🎬 L'UNIQUE lecteur du film (ref + émetteur VIDEO_SYNC uniques). Rendu dans la scène du
   //    Live (`rendreFilm`) quand le Live est ouvert, à sa place d'origine sinon — jamais deux.
-  const sharedMediaNode = (shareMode !== 'audio' && sharedMedia) ? (
+  const sharedMediaNode = (shareMode !== 'audio' && sharedMedia && hoteFilm) ? createPortal(
     <SharedMediaPlayer
       ref={sharedMediaPlayerRef}
       media={sharedMedia}
@@ -4536,7 +4541,8 @@ export const SessionPage: React.FC = () => {
       liveCamerasNode={liveCamerasNode}
       timerNode={visioTimerReminderNode}
       controlsNode={canShare ? sharedVideoControlsNode : undefined}
-    />
+    />,
+    hoteFilm,
   ) : null;
 
   return (
@@ -5394,7 +5400,7 @@ export const SessionPage: React.FC = () => {
 
             {/* E : Média partagé (vidéo/image/lien) — hors mode audio. Live ouvert : dans sa scène. */}
             {!filmDansLaScene && sharedMediaNode && (
-              <div className="bt-tab-diffusion">{sharedMediaNode}</div>
+              <div className="bt-tab-diffusion" ref={placerFilm} />
             )}
 
             {/* E + item 6 : Panneau de partage (Audio | Vidéo | Image | Lien) — hôte + co-animateurs.
@@ -6134,6 +6140,10 @@ export const SessionPage: React.FC = () => {
       {/* 🐛 BUG 3 : chat porté dans l'élément plein écran (visio) s'il y en a un → visible/utilisable
           par-dessus le plein écran ; sinon dans body (comportement inchangé). Rendu inside video plein écran = SharedMediaPlayer. */}
       {!videoEnlarged && fsChatPortalTarget && createPortal(chatPanelNode, fsChatPortalTarget)}
+
+      {/* 🎬 L'UNIQUE lecteur du film, rendu ICI une fois pour toutes (portail vers son conteneur
+          stable, déplacé entre la scène du Live et sa place d'origine). */}
+      {sharedMediaNode}
 
       {/* 🤖 LE SOUFFLEUR — rendu ICI, à la racine de la page et en `position: fixed`.
           C'est un choix, pas un hasard : il vit volontairement HORS de `camAreaRef`, la

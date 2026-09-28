@@ -9,7 +9,8 @@
  * traitée par « Embellir » quand actif, caméra secondaire, écran) ou la piste distante d'un
  * participant. Attache / détache au montage / démontage, sans jamais arrêter une piste.
  */
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { deplacerSansCouper } from '@/lib/sceneLive';
 import type { SceneBox, StudioSourceRef } from '@/lib/studioScenes';
 
 export interface SceneRendererProps {
@@ -63,6 +64,40 @@ export function FluxEcran({ stream, muted, className = '' }: { stream: MediaStre
     el.play().catch(() => { /* autoplay : relancé au prochain geste */ });
   }, [stream]);
   return <video ref={ref} autoPlay playsInline muted={muted} controls={false} className={`bg-black object-contain pointer-events-none ${className}`} />;
+}
+
+/**
+ * 🎬 UN composant, PLUSIEURS places, AUCUN remontage. Renvoie un conteneur DOM créé une seule
+ * fois (`hote`, cible d'un portail) et un ref-callback (`placer`) à poser sur chaque
+ * emplacement possible. L'emplacement monté reçoit le conteneur ; quand il disparaît, le
+ * conteneur part au parking (caché) AVANT que React ne retire l'emplacement — l'iframe ou la
+ * vidéo n'est donc jamais sortie du document, et `moveBefore` conserve son état.
+ */
+export function usePlaceStable(classe = ''): { hote: HTMLDivElement | null; placer: (el: HTMLDivElement | null) => (() => void) | undefined } {
+  const [hote] = useState<HTMLDivElement | null>(() => {
+    if (typeof document === 'undefined') return null;
+    const d = document.createElement('div');
+    d.className = classe;
+    return d;
+  });
+  const parking = useRef<HTMLDivElement | null>(null);
+  useEffect(() => () => { parking.current?.remove(); parking.current = null; }, []);
+  const placer = useCallback((el: HTMLDivElement | null) => {
+    if (!el || !hote) return undefined;
+    deplacerSansCouper(hote, el);
+    return () => {
+      if (hote.parentNode !== el) return;           // déjà parti vers un autre emplacement
+      if (!parking.current) {
+        const p = document.createElement('div');
+        p.setAttribute('aria-hidden', 'true');
+        p.style.cssText = 'position:fixed;width:0;height:0;overflow:hidden;';
+        document.body.appendChild(p);
+        parking.current = p;
+      }
+      deplacerSansCouper(hote, parking.current);
+    };
+  }, [hote]);
+  return { hote, placer };
 }
 
 const SceneRenderer: React.FC<SceneRendererProps> = ({ boxes, resolveMedia, zone, ratio = '16 / 9', className = '' }) => (

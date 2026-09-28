@@ -110,3 +110,38 @@ export function bornerVignette(
     y: borne(p.y, marge, 1 - hauteur - marge, VIGNETTE_DEFAUT.y),
   };
 }
+
+/* ───────────── Déplacer l'UNIQUE lecteur sans le couper ───────────── */
+
+/** Un média du lecteur (<video>, <audio>) — juste ce qu'il faut pour le relancer. */
+interface MediaLecteur { paused: boolean; play: () => unknown }
+/** Le conteneur du lecteur (nœud DOM créé une fois). */
+export interface NoeudDeplacable { parentNode: unknown; querySelectorAll?: (sel: string) => ArrayLike<MediaLecteur> }
+/** L'emplacement d'arrivée (scène du Live, place d'origine, parking). */
+export interface CibleDeplacement {
+  appendChild: (n: never) => unknown;
+  /** DOM « atomic move » (Chrome 133+) : ni l'iframe ne se recharge, ni la vidéo ne s'arrête. */
+  moveBefore?: (n: never, ref: null) => unknown;
+}
+
+/**
+ * Déplace le conteneur du lecteur vers `cible` SANS le remonter : le composant React reste
+ * le même (portail), seul son nœud DOM change de parent. `moveBefore` conserve tout (iframe
+ * YouTube / Vimeo comprises) ; sinon `appendChild`, et un média qui JOUAIT et s'est arrêté au
+ * passage est relancé — à sa position : aucune position fausse n'est émise.
+ */
+export function deplacerSansCouper(noeud: NoeudDeplacable, cible: CibleDeplacement): 'deja' | 'moveBefore' | 'appendChild' {
+  if (noeud.parentNode === cible) return 'deja';
+  const medias = Array.from(noeud.querySelectorAll?.('video, audio') ?? []);
+  const enLecture = medias.filter((m) => !m.paused);
+  let voie: 'moveBefore' | 'appendChild' = 'appendChild';
+  let deplace = false;
+  if (typeof cible.moveBefore === 'function') {
+    try { cible.moveBefore(noeud as never, null); voie = 'moveBefore'; deplace = true; } catch { /* nœud hors document : repli */ }
+  }
+  if (!deplace) cible.appendChild(noeud as never);
+  for (const m of enLecture) {
+    if (m.paused) { try { const r = m.play() as Promise<void> | undefined; r?.catch?.(() => { /* geste requis */ }); } catch { /* ignore */ } }
+  }
+  return voie;
+}

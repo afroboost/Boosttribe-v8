@@ -13,7 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  contenuScenePrincipale, dispositionsPartage, bornerVignette, VIGNETTE_DEFAUT,
+  contenuScenePrincipale, dispositionsPartage, bornerVignette, VIGNETTE_DEFAUT, deplacerSansCouper,
 } from './.build/sceneLive.mjs';
 import { construireScene, sceneDeRepli, layoutBoxes, PIP_TAILLE, PIP_MARGE } from './.build/studioScenes.mjs';
 import { lire, codeSeul } from './lireSource.mjs';
@@ -106,12 +106,53 @@ test('SessionPage : plus de bloc « Votre partage d écran » séparé', () => {
   assert.ok(!PAGE.includes('<ScreenShareView'), 'l écran vit dans la scène du Live');
 });
 
-test('SessionPage : UN SEUL lecteur de film, rendu dans la scène', () => {
+test('SessionPage : UN SEUL lecteur de film, JAMAIS remonté quand le Live s ouvre / se ferme', () => {
   assert.equal((PAGE.match(/<SharedMediaPlayer\b/g) || []).length, 1, 'une seule occurrence');
-  assert.ok(/const sharedMediaNode = [\s\S]{0,120}<SharedMediaPlayer/.test(PAGE), 'un nœud unique');
-  assert.ok(PAGE.includes('rendreFilm={() => sharedMediaNode}'), 'passé à la scène du Live');
-  // Hors Live (écoute seule), le MÊME nœud reste à sa place — jamais les deux à la fois.
-  assert.ok(PAGE.includes('{!filmDansLaScene && sharedMediaNode && ('), 'hors scène seulement si le Live est fermé');
+  // Rendu UNE fois, par portail, dans un conteneur DOM créé une fois : sa place dans l'arbre
+  // React ne change jamais → aucun remontage (sinon l'hôte repartait de 0 et VIDEO_SYNC
+  // ramenait tout le monde au début).
+  assert.ok(/const sharedMediaNode = [\s\S]{0,160}createPortal\(\s*<SharedMediaPlayer/.test(PAGE), 'portail vers le conteneur stable');
+  assert.ok(PAGE.includes('const { hote: hoteFilm, placer: placerFilm } = usePlaceStable('), 'conteneur créé une fois');
+  assert.equal((PAGE.match(/\{sharedMediaNode\}/g) || []).length, 1, 'le portail est rendu à UN seul endroit');
+  const racine = PAGE.slice(PAGE.lastIndexOf('{sharedMediaNode}') - 120, PAGE.lastIndexOf('{sharedMediaNode}'));
+  assert.ok(!racine.includes('filmDansLaScene') && !racine.includes('liveMode'), 'ni le Live ni la scène ne conditionnent le portail');
+  // Ce qui change de place, c'est le conteneur DOM (déplacé), pas le composant.
+  assert.ok(PAGE.includes('rendreFilm={() => <div ref={placerFilm}'), 'emplacement dans la scène');
+  assert.ok(PAGE.includes('{!filmDansLaScene && sharedMediaNode && ('), 'emplacement d origine si le Live est fermé');
+  assert.ok(/!filmDansLaScene && sharedMediaNode && \(\s*<div className="bt-tab-diffusion" ref=\{placerFilm\}/.test(PAGE));
+});
+
+/* Faux nœuds DOM : de quoi prouver le déplacement sans navigateur. */
+function faux({ moveBefore = true, casseMoveBefore = false, pauseAuDeplacement = false } = {}) {
+  const video = { paused: false, plays: 0, play() { this.plays++; this.paused = false; return Promise.resolve(); } };
+  const noeud = { parentNode: null, querySelectorAll: () => [video] };
+  const appels = [];
+  const cible = {
+    appendChild(n) { appels.push('appendChild'); n.parentNode = cible; if (pauseAuDeplacement) video.paused = true; },
+  };
+  if (moveBefore) cible.moveBefore = (n) => {
+    if (casseMoveBefore) throw new Error('HierarchyRequestError');
+    appels.push('moveBefore'); n.parentNode = cible; if (pauseAuDeplacement) video.paused = true;
+  };
+  return { video, noeud, cible, appels };
+}
+
+test('deplacerSansCouper : moveBefore (état conservé) si le navigateur le sait', () => {
+  const f = faux();
+  assert.equal(deplacerSansCouper(f.noeud, f.cible), 'moveBefore');
+  assert.deepEqual(f.appels, ['moveBefore']);
+  assert.equal(deplacerSansCouper(f.noeud, f.cible), 'deja', 'déjà en place : rien');
+});
+
+test('deplacerSansCouper : repli appendChild, et un film EN LECTURE reprend s il a été mis en pause', () => {
+  const f = faux({ casseMoveBefore: true, pauseAuDeplacement: true });
+  assert.equal(deplacerSansCouper(f.noeud, f.cible), 'appendChild');
+  assert.equal(f.video.plays, 1, 'relancé');
+  assert.equal(f.video.paused, false);
+  const g = faux({ moveBefore: false, pauseAuDeplacement: true });
+  g.video.paused = true; // déjà en pause avant : on n'y touche pas
+  deplacerSansCouper(g.noeud, g.cible);
+  assert.equal(g.video.plays, 0, 'un film en pause reste en pause');
 });
 
 test('LiveVisioPanel : film et écran rendus DANS la zone caméra, arbitrés par sceneLive', () => {

@@ -43,6 +43,10 @@ import { SessionSocial } from '@/components/session/SessionSocial';
 import { isEmbedMode, notifyEmbedSessionStarted, notifyEmbedSessionEnded, notifyEmbedHeartbeat, BATTEMENT_HOTE_MS, type MotifFin } from '@/lib/embedApi';
 import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
+import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
+import { LivePromoBanner } from '@/components/session/LivePromoBanner';
+import { LivePromoParticipantModal } from '@/components/session/LivePromoParticipantModal';
+import { LivePromoHostModal } from '@/components/session/LivePromoHostModal';
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
@@ -1385,6 +1389,11 @@ export const SessionPage: React.FC = () => {
   // N'altère rien de l'audio/mixeur/synchro existants : purement additif.
   const MAX_VISIO_CAMERAS = 10; // 🎥 scène LiveKit : 10 publishers max
   const [liveMode, setLiveMode] = useState(false);
+  // 📣 PROMO PARTICIPANT (V1) — couche ADDITIONNELLE : elle lit l'état serveur et n'émet que sur
+  //    son propre canal ; elle ne pilote ni started, ni heartbeat, ni ended.
+  const livePromo = useLivePromo(sessionId || undefined, liveMode, isHost, user?.id);
+  const [promoParticipantOuvert, setPromoParticipantOuvert] = useState(false);
+  const [promoHoteOuvert, setPromoHoteOuvert] = useState(false);
   // 📱 MOBILE UNIQUEMENT : 4 onglets. Le contenu est MASQUÉ/AFFICHÉ en CSS (jamais démonté) ;
   //    le desktop (≥1024px) n'est PAS affecté (la règle CSS est sous @media max-width:1023px).
   // 📱 Mobile : 2 onglets seulement (moins de scroll). « player » = Lecteur & Playlist (contenu
@@ -3026,6 +3035,9 @@ export const SessionPage: React.FC = () => {
   const annoncerFinRef = useRef<(motif: MotifFin) => void>(() => {});
   // `motif` : observabilité seulement — il suit l'annonce de fin, il ne change aucune étape.
   const terminerLive = useCallback(async (motif: MotifFin = 'host_terminate') => {
+    // 📣 La promo dépend du Live, jamais l'inverse : on l'arrête sans rien attendre, la séquence
+    //    de fin ci-dessous reste EXACTEMENT la même.
+    livePromo.arreterSiActive('fin_live');
     const etapes = sequenceFinDuLive({
       enregistrementEnCours: recorder.etat === 'enregistrement',
       partageEcranActif: screenSharing,
@@ -3055,7 +3067,7 @@ export const SessionPage: React.FC = () => {
         else if (etape === 'retour-ecran') setLiveTermine(true);
       } catch { /* une étape qui échoue n'empêche pas les suivantes : on veut TOUT couper */ }
     }
-  }, [recorder, screenSharing, videoMesh, canShare, sessionId, broadcastScreenState, hostMicActive]);
+  }, [recorder, screenSharing, videoMesh, canShare, sessionId, broadcastScreenState, hostMicActive, livePromo.arreterSiActive]);
 
   // 🚪 « Quitter le live » (menu ⋮). Mesuré le 28/09 : pour l'hôte, ce menu ne
   //    fermait que la visio ; la page restait montée, aucun `ended` ne partait et
@@ -4293,6 +4305,34 @@ export const SessionPage: React.FC = () => {
   // 💬 CHAT LIVE posé SUR la vidéo (plus de grande carte) + ❤️ réactions flottantes.
   //    Mêmes messages, même transport (CHAT_GROUP) que le ChatPanel : seule la présentation change.
   const chatLiveAutorise = !!sessionId && !isGuestRestricted;
+  // 📣 PROMO PARTICIPANT — la bannière diffusée (chez tous), ou pour l'hôte la pastille discrète
+  //    « Promo en attente (n) ». Les deux fenêtres (participant / hôte) vivent dans le MÊME nœud,
+  //    donc DANS la zone caméra : elles restent visibles en plein écran.
+  const promoAtraiter = livePromo.enAttente + livePromo.listeHote.filter((p) => p.status === 'ready').length;
+  const promoRafraichirEtSignaler = () => { livePromo.rafraichir(); livePromo.signaler(); };
+  const livePromoNode = (livePromo.active || (isHost && promoAtraiter > 0) || promoParticipantOuvert || promoHoteOuvert) ? (
+    <>
+      {livePromo.active ? (
+        <LivePromoBanner promo={livePromo.active} decalageMs={livePromo.decalageMs} estHote={isHost}
+          onArreter={isHost ? () => { if (window.confirm('Arrêter la promo maintenant ?')) livePromo.arreterSiActive('arret_hote'); } : undefined} />
+      ) : (isHost && promoAtraiter > 0) ? (
+        <button type="button" onClick={() => setPromoHoteOuvert(true)}
+          className="mx-auto flex min-h-[36px] items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white backdrop-blur"
+          data-testid="live-promo-pastille">
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--bt-accent)]" aria-hidden="true" /> Promo en attente ({promoAtraiter})
+        </button>
+      ) : null}
+      {promoParticipantOuvert && sessionId && livePromo.config ? (
+        <LivePromoParticipantModal sessionId={sessionId} offres={livePromo.config.offres} devise={livePromo.config.currency}
+          mesDemandes={livePromo.mesDemandes} onFermer={() => setPromoParticipantOuvert(false)} onEnvoye={promoRafraichirEtSignaler} />
+      ) : null}
+      {promoHoteOuvert ? (
+        <LivePromoHostModal liste={livePromo.listeHote} devise={livePromo.config?.currency || 'CHF'}
+          onFermer={() => setPromoHoteOuvert(false)} onChange={promoRafraichirEtSignaler} />
+      ) : null}
+    </>
+  ) : null;
+
   const liveChatOverlayNode = chatLiveAutorise ? (
     <LiveChatOverlay
       messages={groupMessages}
@@ -4397,6 +4437,10 @@ export const SessionPage: React.FC = () => {
       prompteurOuvert={assistantOuvert}
       onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}
       chatOverlayNode={liveChatOverlayNode}
+      promoNode={livePromoNode}
+      onFaireMaPromo={(!isHost && user && livePromo.config?.enabled && livePromo.config.offres.length > 0)
+        ? () => setPromoParticipantOuvert(true) : undefined}
+      promoHote={(isHost && livePromo.config?.enabled) ? { enAttente: livePromo.enAttente, onOuvrir: () => setPromoHoteOuvert(true) } : undefined}
       commentInputNode={liveCommentInputNode}
       reactionsNode={liveReactionsNode}
       commentairesMasques={commentairesMasques}

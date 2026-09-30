@@ -3225,6 +3225,12 @@ async def stripe_webhook(request: Request):
                     await _create_ticket_from_session(obj, meta, event.get("id"))
                 except Exception as exc:  # noqa: BLE001
                     logger.error("billet création échouée (session=%s): %s", meta.get("session_id"), exc)
+            # 📣 PROMO PARTICIPANT LIVE : payée → prête à diffuser ; net crédité à l'hôte (idempotent).
+            if meta.get("kind") == "live_promo":
+                try:
+                    await _lp_paiement_confirme(obj, meta)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("promo live paiement non enregistré (promo=%s): %s", meta.get("promo_id"), exc)
             # 💎 ABONNEMENT COACH « Illimité » (mode subscription) → enregistre l'abo actif.
             if meta.get("kind") == "coach_sub" and user_id:
                 try:
@@ -3242,6 +3248,12 @@ async def stripe_webhook(request: Request):
                         "stripe_subscription_id": obj.get("subscription"),
                     },
                 )
+
+        elif etype in ("checkout.session.expired", "checkout.session.async_payment_failed"):
+            # 📣 Paiement de promo abandonné / échoué → aucune diffusion possible (le participant peut réessayer).
+            _lp_meta = obj.get("metadata") or {}
+            if _lp_meta.get("kind") == "live_promo":
+                await _lp_paiement_echoue(obj, _lp_meta)
 
         elif etype in ("customer.subscription.created", "customer.subscription.updated"):
             sub_id = obj.get("id")
@@ -4507,3 +4519,400 @@ async def embed_session_started(body: EmbedTokenBody):
     result = await notify_afroboost_session_started(body.token or "")
     result["jti"] = payload.get("jti")
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# 📣 PROMO PARTICIPANT PENDANT LE LIVE (V1) — règles pures dans live_promo.py.
+#
+# Argent : EXACTEMENT le chemin de la billetterie — Checkout Stripe du compte plateforme,
+# `compute_commission` (taux admin, offre de lancement, Coach Illimité), portefeuille de
+# l'hôte crédité du NET par `wallet_add` (idempotent par `ref`). Jamais de débit avant que
+# l'hôte ait ACCEPTÉ ; une demande refusée ne crée aucun paiement. Aucun remboursement
+# automatique (V1). Réservé aux hôtes en mode COMMISSION (`hote_eligible`).
+# Le Live ne dépend JAMAIS de la promo : aucune de ces routes ne touche started/heartbeat/ended.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+import live_promo as _lp
+
+LP_TABLE = "live_promos"
+
+
+class LivePromoConfigBody(BaseModel):
+    session_id: str
+    enabled: Optional[bool] = None
+    offres: Optional[List[Dict[str, Any]]] = None
+
+
+class LivePromoRequestBody(BaseModel):
+    session_id: str
+    offre_id: str
+    titre: str
+    texte: Optional[str] = ""
+    media_url: Optional[str] = None
+    lien: Optional[str] = None
+
+
+class LivePromoDecisionBody(BaseModel):
+    decision: str
+
+
+class LivePromoStopBody(BaseModel):
+    raison: Optional[str] = None
+
+
+def _lp_refus(e: Exception) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(e))
+
+
+async def _lp_session(session_id: str) -> Dict[str, Any]:
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                             params={"session_id": f"eq.{session_id}",
+                                     "select": "session_id,host_id,live_promo_enabled,live_promo_offres"})
+    rows = r.json() if r.status_code == 200 else []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Session introuvable")
+    return rows[0]
+
+
+async def _lp_eligible(host_id: Optional[str]) -> bool:
+    return bool(host_id) and _lp.hote_eligible(await get_coach_payment_type(host_id))
+
+
+async def _lp_lire(filtre: Dict[str, str], ordre: str = "requested_at.desc", limite: int = 100) -> List[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{SUPABASE_URL}/rest/v1/{LP_TABLE}", headers=_service_headers(),
+                             params={**filtre, "select": "*", "order": ordre, "limit": str(limite)})
+    return r.json() if r.status_code == 200 else []
+
+
+async def _lp_une(promo_id: str) -> Dict[str, Any]:
+    try:
+        uuid.UUID(str(promo_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Promo introuvable")
+    rows = await _lp_lire({"id": f"eq.{promo_id}"}, limite=1)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Promo introuvable")
+    return rows[0]
+
+
+async def _lp_maj(promo_id: str, depuis: List[str], patch: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Mise à jour CONDITIONNELLE (status IN depuis) : deux requêtes concurrentes ne
+    peuvent pas franchir la même transition deux fois. Renvoie la ligne, ou None."""
+    patch = {**patch, "updated_at": _lp.maintenant().isoformat()}
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.patch(f"{SUPABASE_URL}/rest/v1/{LP_TABLE}",
+                               headers=_service_headers({"Prefer": "return=representation"}),
+                               params={"id": f"eq.{promo_id}", "status": f"in.({','.join(depuis)})"}, json=patch)
+    rows = r.json() if r.status_code == 200 else []
+    return rows[0] if rows else None
+
+
+async def _lp_hote(promo_or_session_host: Optional[str], user: Dict[str, Any]) -> None:
+    if not promo_or_session_host or user.get("id") != promo_or_session_host:
+        raise HTTPException(status_code=403, detail="Réservé à l'hôte de la session")
+
+
+async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Fin automatique à ends_at : la ligne passe « completed » à la première lecture après."""
+    if _lp.est_terminee(p):
+        fini = await _lp_maj(p["id"], [_lp.BROADCASTING],
+                             {"status": _lp.COMPLETED, "actual_duration_seconds": int(p.get("duration_seconds") or 0)})
+        return fini or {**p, "status": _lp.COMPLETED}
+    return p
+
+
+@app.get("/live-promo/config/{session_id}")
+async def live_promo_config(session_id: str):
+    """Ce que voit un participant : promo activée ? tarifs ACTIFS. `eligible` = hôte en mode commission."""
+    s = await _lp_session(session_id)
+    eligible = await _lp_eligible(s.get("host_id"))
+    actif = eligible and s.get("live_promo_enabled") is True
+    return {"eligible": eligible, "enabled": actif, "currency": _lp.DEVISE,
+            "offres": _lp.offres_actives(s.get("live_promo_offres")) if actif else []}
+
+
+@app.get("/live-promo/host-config/{session_id}")
+async def live_promo_host_config(session_id: str, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    s = await _lp_session(session_id)
+    await _lp_hote(s.get("host_id"), user)
+    try:
+        offres = _lp.valider_offres(s.get("live_promo_offres"))
+    except _lp.RegleRefusee:
+        offres = []
+    return {"eligible": await _lp_eligible(s.get("host_id")), "enabled": s.get("live_promo_enabled") is True,
+            "offres": offres, "currency": _lp.DEVISE}
+
+
+@app.post("/live-promo/config")
+async def live_promo_save_config(body: LivePromoConfigBody, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    s = await _lp_session(body.session_id)
+    await _lp_hote(s.get("host_id"), user)
+    if not await _lp_eligible(s.get("host_id")):
+        raise HTTPException(status_code=403, detail="Les promotions payantes sont réservées au mode commission.")
+    patch: Dict[str, Any] = {}
+    if body.enabled is not None:
+        patch["live_promo_enabled"] = bool(body.enabled)
+    if body.offres is not None:
+        try:
+            patch["live_promo_offres"] = _lp.valider_offres(body.offres)
+        except _lp.RegleRefusee as e:
+            raise _lp_refus(e)
+    if patch and not await upsert_playlist_fields(body.session_id, patch):
+        raise HTTPException(status_code=500, detail="Enregistrement impossible")
+    return {"ok": True, **{k.replace("live_promo_", ""): v for k, v in patch.items()}}
+
+
+@app.post("/live-promo/media")
+async def live_promo_media(file: UploadFile = File(...), session_id: str = Form(...),
+                           authorization: Optional[str] = Header(default=None)):
+    """Image de la promo (participant). IMAGES RASTER seulement (jamais SVG/HTML), 8 Mo max."""
+    user = await get_user_from_token(authorization)
+    s = await _lp_session(session_id)
+    if not (s.get("live_promo_enabled") is True and await _lp_eligible(s.get("host_id"))):
+        raise HTTPException(status_code=403, detail="Promotions non ouvertes pour ce Live")
+    types = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    ext = types.get(ct)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Image JPEG, PNG ou WebP uniquement")
+    data = await file.read()
+    if not data or len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image vide ou trop lourde (8 Mo max)")
+    chemin = f"live-promos/{session_id}/{user.get('id')}-{uuid.uuid4().hex[:10]}.{ext}"
+    async with httpx.AsyncClient(timeout=60) as client:
+        up = await client.post(f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{chemin}",
+                               headers={"apikey": SUPABASE_SERVICE_ROLE_KEY,
+                                        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                                        "Content-Type": ct, "x-upsert": "false"}, content=data)
+    if up.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Envoi de l'image échoué")
+    return {"url": f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{chemin}"}
+
+
+def _lp_prefixe_media(session_id: str) -> str:
+    return f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/live-promos/{session_id}/"
+
+
+@app.post("/live-promo/requests")
+async def live_promo_request(body: LivePromoRequestBody, authorization: Optional[str] = Header(default=None)):
+    """Le participant ENVOIE sa demande : aucun paiement ici."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    s = await _lp_session(body.session_id)
+    if not (s.get("live_promo_enabled") is True and await _lp_eligible(s.get("host_id"))):
+        raise HTTPException(status_code=403, detail="Promotions non ouvertes pour ce Live")
+    if uid == s.get("host_id"):
+        raise HTTPException(status_code=400, detail="L'hôte ne peut pas acheter sa propre promo")
+    try:
+        d = _lp.valider_demande(body.model_dump(), s.get("live_promo_offres"), _lp_prefixe_media(body.session_id))
+    except _lp.RegleRefusee as e:
+        raise _lp_refus(e)
+    ouvertes = await _lp_lire({"session_id": f"eq.{body.session_id}", "participant_id": f"eq.{uid}",
+                               "status": f"in.({','.join(_lp.OUVERTS)})"}, limite=1)
+    if ouvertes:
+        raise HTTPException(status_code=409, detail="Tu as déjà une promo en cours pour ce Live")
+    meta = user.get("user_metadata") or {}
+    row = {**d, "session_id": body.session_id, "host_id": s.get("host_id"), "participant_id": uid,
+           "participant_name": _lp.texte_propre(meta.get("full_name") or (user.get("email") or "").split("@")[0], 60),
+           "status": _lp.REQUESTED}
+    cree = await _lp_inserer(row)
+    if not cree:
+        raise HTTPException(status_code=500, detail="Demande non enregistrée")
+    return {"ok": True, "promo": cree}
+
+
+async def _lp_inserer(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(f"{SUPABASE_URL}/rest/v1/{LP_TABLE}",
+                              headers=_service_headers({"Prefer": "return=representation"}), json=row)
+    rows = r.json() if r.status_code in (200, 201) else []
+    return rows[0] if rows else None
+
+
+@app.get("/live-promo/mine/{session_id}")
+async def live_promo_mine(session_id: str, authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    rows = await _lp_lire({"session_id": f"eq.{session_id}", "participant_id": f"eq.{user.get('id')}"}, limite=20)
+    return {"promos": [await _lp_cloturer_si_expiree(p) for p in rows]}
+
+
+@app.get("/live-promo/host/{session_id}")
+async def live_promo_host_list(session_id: str, authorization: Optional[str] = Header(default=None)):
+    """File d'attente + historique de CETTE session (hôte uniquement)."""
+    user = await get_user_from_token(authorization)
+    s = await _lp_session(session_id)
+    await _lp_hote(s.get("host_id"), user)
+    rows = await _lp_lire({"session_id": f"eq.{session_id}"}, limite=100)
+    return {"promos": [await _lp_cloturer_si_expiree(p) for p in rows]}
+
+
+@app.post("/live-promo/requests/{promo_id}/decision")
+async def live_promo_decision(promo_id: str, body: LivePromoDecisionBody,
+                              authorization: Optional[str] = Header(default=None)):
+    user = await get_user_from_token(authorization)
+    p = await _lp_une(promo_id)
+    await _lp_hote(p.get("host_id"), user)
+    vers = {"accept": _lp.ACCEPTED, "reject": _lp.REJECTED}.get(body.decision)
+    if not vers:
+        raise HTTPException(status_code=400, detail="Décision invalide")
+    maj = await _lp_maj(promo_id, [_lp.REQUESTED], {"status": vers, "decided_at": _lp.maintenant().isoformat()})
+    if not maj:
+        raise HTTPException(status_code=409, detail="Cette demande a déjà été traitée")
+    return {"ok": True, "promo": maj}
+
+
+@app.post("/live-promo/requests/{promo_id}/pay")
+async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(default=None)):
+    """Checkout Stripe EXISTANT (compte plateforme), seulement APRÈS acceptation de l'hôte.
+    Double clic : même tentative → même clé d'idempotence Stripe → même session."""
+    if not await apply_stripe_key():
+        raise HTTPException(status_code=500, detail="Stripe non configuré")
+    user = await get_user_from_token(authorization)
+    p = await _lp_une(promo_id)
+    if p.get("participant_id") != user.get("id"):
+        raise HTTPException(status_code=403, detail="Cette promo n'est pas la tienne")
+    if p.get("status") not in _lp.PAYABLES:
+        raise HTTPException(status_code=409, detail="Paiement impossible dans l'état actuel")
+    if not await _lp_eligible(p.get("host_id")):
+        raise HTTPException(status_code=403, detail="Promotions payantes indisponibles pour cet hôte")
+    tentative = int(p.get("checkout_attempt") or 0)
+    if p.get("status") == _lp.PAYMENT_PENDING and p.get("stripe_session_id"):
+        try:
+            ancienne = stripe.checkout.Session.retrieve(p["stripe_session_id"])
+            if ancienne.get("status") == "open" and ancienne.get("url"):
+                return {"url": ancienne["url"]}
+        except Exception:  # noqa: BLE001
+            pass
+        tentative += 1
+    elif p.get("status") == _lp.PAYMENT_FAILED:
+        tentative += 1
+    prix = float(p.get("price_chf") or 0)
+    comm = await compute_commission(prix, p.get("host_id"))
+    session = stripe.checkout.Session.create(
+        mode="payment",
+        line_items=[{"price_data": {"currency": "chf", "unit_amount": round(prix * 100),
+                                    "product_data": {"name": f"Promo Live — {int(p.get('duration_seconds') or 0)} s"}},
+                     "quantity": 1}],
+        success_url=f"{FRONTEND_URL}/session/{p['session_id']}?promo=success",
+        cancel_url=f"{FRONTEND_URL}/session/{p['session_id']}?promo=canceled",
+        client_reference_id=user.get("id"),
+        customer_email=user.get("email"),
+        metadata={"kind": "live_promo", "promo_id": p["id"], "session_id": p["session_id"],
+                  "coach_user_id": p.get("host_id"), "price_chf": str(prix),
+                  "commission_chf": str(comm["commission_chf"]), "commission_percent": str(comm["percent"])},
+        idempotency_key=f"live-promo-{p['id']}-{tentative}",
+    )
+    maj = await _lp_maj(p["id"], list(_lp.PAYABLES),
+                        {"status": _lp.PAYMENT_PENDING, "stripe_session_id": session.id, "checkout_attempt": tentative})
+    if not maj:
+        raise HTTPException(status_code=409, detail="Paiement impossible dans l'état actuel")
+    return {"url": session.url}
+
+
+async def _lp_paiement_confirme(obj: Dict[str, Any], meta: Dict[str, Any]) -> None:
+    """Webhook checkout.session.completed (kind=live_promo). Idempotent : la transition
+    PAYMENT_PENDING/… → READY ne passe qu'une fois ; le portefeuille est crédité par
+    `wallet_add` avec la ref `live_promo:<id>` (une seule écriture, même rejoué)."""
+    if obj.get("payment_status") not in ("paid", None):
+        return
+    promo_id = str(meta.get("promo_id") or "")
+    prix = float(meta.get("price_chf") or 0)
+    commission = float(meta.get("commission_chf") or 0)
+    net = round(prix - commission, 2)
+    ref = f"live_promo:{promo_id}"
+    maj = await _lp_maj(promo_id, [_lp.PAYMENT_PENDING, _lp.PAYMENT_FAILED, _lp.ACCEPTED], {
+        "status": _lp.READY, "paid_at": _lp.maintenant().isoformat(),
+        "stripe_session_id": obj.get("id"), "stripe_payment_intent": obj.get("payment_intent"),
+        "commission_percent": float(meta.get("commission_percent") or 0), "commission_chf": commission,
+        "net_chf": net, "wallet_ref": ref})
+    coach = meta.get("coach_user_id")
+    if maj and coach and net > 0:
+        await wallet_add(coach, net, "live_promo", ref, True)
+
+
+async def _lp_paiement_echoue(obj: Dict[str, Any], meta: Dict[str, Any]) -> None:
+    await _lp_maj(str(meta.get("promo_id") or ""), [_lp.PAYMENT_PENDING], {"status": _lp.PAYMENT_FAILED})
+
+
+@app.post("/live-promo/requests/{promo_id}/start")
+async def live_promo_start(promo_id: str, authorization: Optional[str] = Header(default=None)):
+    """DIFFUSER MAINTENANT : le SERVEUR fixe started_at / ends_at. Une seule à la fois par session."""
+    user = await get_user_from_token(authorization)
+    p = await _lp_une(promo_id)
+    await _lp_hote(p.get("host_id"), user)
+    for autre in await _lp_lire({"session_id": f"eq.{p['session_id']}", "status": f"eq.{_lp.BROADCASTING}"}, limite=5):
+        autre = await _lp_cloturer_si_expiree(autre)
+        if autre.get("status") == _lp.BROADCASTING:
+            raise HTTPException(status_code=409, detail="Une promo est déjà en cours de diffusion")
+    debut, fin = _lp.fenetre_diffusion(int(p.get("duration_seconds") or 0))
+    maj = await _lp_maj(promo_id, [_lp.READY], {"status": _lp.BROADCASTING, "started_at": debut, "ends_at": fin})
+    if not maj:
+        raise HTTPException(status_code=409, detail="Cette promo n'est pas prête (paiement non confirmé ?)")
+    return {"ok": True, "promo": _lp.vue_publique(maj), "server_now": _lp.maintenant().isoformat()}
+
+
+@app.post("/live-promo/requests/{promo_id}/stop")
+async def live_promo_stop(promo_id: str, body: LivePromoStopBody, authorization: Optional[str] = Header(default=None)):
+    """Arrêt par l'hôte (ou fin du Live) : stopped_early + durée réellement diffusée.
+    AUCUN remboursement automatique (V1) — la situation reste lisible dans l'historique."""
+    user = await get_user_from_token(authorization)
+    p = await _lp_une(promo_id)
+    await _lp_hote(p.get("host_id"), user)
+    p = await _lp_cloturer_si_expiree(p)
+    if p.get("status") != _lp.BROADCASTING:
+        return {"ok": True, "promo": p}
+    maj = await _lp_maj(promo_id, [_lp.BROADCASTING], {
+        "status": _lp.STOPPED_EARLY, "stopped_at": _lp.maintenant().isoformat(), "stopped_by": user.get("id"),
+        "actual_duration_seconds": _lp.duree_reellement_diffusee(p.get("started_at"), int(p.get("duration_seconds") or 0)),
+        "stop_reason": _lp.texte_propre(body.raison, 120) or None})
+    return {"ok": True, "promo": maj or p}
+
+
+@app.get("/live-promo/active/{session_id}")
+async def live_promo_active(session_id: str):
+    """La promo diffusée dans CETTE session (lecture publique : c'est une annonce visible de tous),
+    avec l'heure du serveur pour que chaque client calcule le MÊME temps restant."""
+    if not SESSION_ID_RE.match(session_id or ""):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    rows = await _lp_lire({"session_id": f"eq.{session_id}", "status": f"eq.{_lp.BROADCASTING}"},
+                          ordre="started_at.desc", limite=1)
+    promo = None
+    if rows:
+        p = await _lp_cloturer_si_expiree(rows[0])
+        if p.get("status") == _lp.BROADCASTING:
+            promo = _lp.vue_publique(p)
+    return {"promo": promo, "server_now": _lp.maintenant().isoformat()}
+
+
+@app.get("/live-promo/health")
+async def live_promo_health():
+    """Preuve de migration SANS donnée : la table et les colonnes existent-elles ? (deux booléens)."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        t = await client.get(f"{SUPABASE_URL}/rest/v1/{LP_TABLE}", headers=_service_headers(),
+                             params={"select": "id", "limit": "0"})
+        c = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                             params={"select": "live_promo_enabled,live_promo_offres", "limit": "0"})
+    return {"table": t.status_code == 200, "colonnes": c.status_code == 200}
+
+
+@app.on_event("startup")
+async def _lp_migration():
+    """Schéma de la promo Live (AJOUT PUR, idempotent) via pg-meta, comme social_destinations.
+    Échec = avertissement ; les routes répondent alors « non ouvertes », le Live n'est pas touché."""
+    async def _run():
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(f"{SUPABASE_URL}/pg/query", headers=_service_headers(),
+                                      json={"query": _lp.SQL_SCHEMA})
+            if r.status_code < 300:
+                logger.info("[LIVE-PROMO] schéma vérifié (live_promos + colonnes playlists, sauvegarde faite)")
+            else:
+                logger.warning("[LIVE-PROMO] migration refusée par pg-meta : HTTP %s", r.status_code)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[LIVE-PROMO] migration impossible : %s", type(exc).__name__)
+    asyncio.create_task(_run())

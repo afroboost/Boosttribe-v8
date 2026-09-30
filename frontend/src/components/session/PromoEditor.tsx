@@ -4,6 +4,7 @@ import RawCropper from 'react-easy-crop';
 import 'react-easy-crop/react-easy-crop.css';
 import { X, Upload, Loader2, Copy, Check, Image as ImageIcon, Video, ArrowRight, Ticket, Play } from 'lucide-react';
 import { getPromo, savePromo, uploadPromoMedia, claimHost, getVideoThumbnail } from '@/lib/paymentApi';
+import { LivePromoTarifs } from '@/components/session/LivePromoTarifs'; // 📣 promo participants (hôtes commission)
 import { isHttpUrl, videoEmbedUrl } from '@/lib/videoEmbed';
 import { useToast } from '@/components/ui/Toast';
 
@@ -266,6 +267,8 @@ export const PromoEditor: React.FC<PromoEditorProps> = ({ sessionId, onClose }) 
                 className="w-full py-2.5 rounded-xl text-white font-semibold disabled:opacity-60" style={{ background: AFRO.gradient }}>
                 {saving ? 'Enregistrement…' : 'Enregistrer la page promo'}
               </button>
+              {/* 📣 Section SÉPARÉE : ne touche à aucun réglage de la page promo ci-dessus. */}
+              <LivePromoTarifs sessionId={sessionId} />
             </div>
 
             {/* APERÇU EN DIRECT (tel que vu par le participant) */}

@@ -16,7 +16,7 @@ export type StripeInterval = 'month' | 'year';
 // par tous les appels concurrents.
 let _tokenInFlight: Promise<string | null> | null = null;
 
-async function getAccessToken(forceRefresh = false): Promise<string | null> {
+export async function getAccessToken(forceRefresh = false): Promise<string | null> {
   // Un refresh est déjà en cours → on le réutilise (sauf si on EXIGE un token tout frais).
   if (_tokenInFlight && !forceRefresh) return _tokenInFlight;
   const run = (async () => {

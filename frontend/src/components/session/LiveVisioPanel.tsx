@@ -142,6 +142,12 @@ interface LiveVisioPanelProps {
   //    4) réactions. Tailles : `zoneCommentaires` (lib/liveControls).
   /** Flux de commentaires, en bas à gauche au-dessus du champ. */
   chatOverlayNode?: React.ReactNode;
+  /** 📣 Promo participant diffusée (ou, pour l'hôte, la pastille « Promo en attente ») :
+   *  rendue dans la pile bas, AU-DESSUS du chat — jamais sous la barre, jamais sur le champ. */
+  promoNode?: React.ReactNode;
+  /** 📣 Items ⋮ : « Faire ma promo » (participant) / « Promotions live » (hôte). */
+  onFaireMaPromo?: () => void;
+  promoHote?: { enAttente: number; onOuvrir: () => void };
   /** Réactions / likes, colonne étroite à droite. */
   reactionsNode?: React.ReactNode;
   /** Champ « écrire un commentaire », juste au-dessus de la barre de commandes. */
@@ -206,7 +212,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, lecture,
   connexionScene, estHote,
-  chatOverlayNode, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
+  chatOverlayNode, promoNode, onFaireMaPromo, promoHote, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
   filmActif = false, rendreFilm, ecranStream = null, ecranLocal = false,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
@@ -841,6 +847,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             onLeaveLive={onLeaveLive}
             onReduce={camFullscreen ? exitCamFullscreen : undefined}
             lecture={lecture}
+            onFaireMaPromo={onFaireMaPromo}
+            promoHote={promoHote}
           />
 
           {/* Pile bas-gauche : chat, invités, champ, musique — à gauche de la barre. */}
@@ -880,6 +888,14 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                 ))}
               </div>
             )}
+
+            {/* 📣 Promo participant : centrée, au-dessus des commentaires, dans la pile (donc à gauche
+                de la barre et au-dessus du champ). Largeur bornée ; rien quand aucune promo. */}
+            {promoNode ? (
+              <div className="pointer-events-auto relative self-center px-2 w-full min-w-0" style={{ maxWidth: 'min(30rem, 100%)' }} data-testid="visio-calque-promo">
+                {promoNode}
+              </div>
+            ) : null}
 
             {/* 3) Messages du chat JUSTE AU-DESSUS du champ, dans le MÊME conteneur centré que lui
                 (même largeur `inputLargeurMax`, même marge) : une seule pile visuelle, même axe.

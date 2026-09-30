@@ -1,6 +1,6 @@
 import React from 'react';
 import { Mic, MicOff, Video, VideoOff, Hand, Minimize2, MonitorUp, MonitorX, ScrollText, Power, SwitchCamera, SlidersHorizontal } from 'lucide-react';
-import { Timer, Clapperboard, Sparkles, Disc, Square, LogOut, MessageSquareOff, MessageSquare, Users, Radio } from 'lucide-react';
+import { Timer, Clapperboard, Sparkles, Disc, Square, LogOut, MessageSquareOff, MessageSquare, Users, Radio, Megaphone } from 'lucide-react';
 import { Play, Pause, SkipBack, SkipForward, Music } from 'lucide-react';
 import { MenuActions, type MenuAction } from '@/components/session/MenuActions';
 import { libelleItemRecord, formatDureeRec } from '@/lib/recordUi';
@@ -82,6 +82,10 @@ export interface LiveControlsProps {
   onToggleCommentaires?: () => void;
 
   onLeaveLive?: () => void;
+  /** 📣 Participant : « Faire ma promo » (item ⋮, jamais une icône de la colonne). */
+  onFaireMaPromo?: () => void;
+  /** 📣 Hôte : « Promotions live (n) » (item ⋮). */
+  promoHote?: { enAttente: number; onOuvrir: () => void };
   onReduce?: () => void;
 
   /**
@@ -121,7 +125,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   onToggleBroadcast, broadcastOpen = false, broadcastLive = false,
   onTerminerLive, onStartTimer, onToggleStudio, studioOpen = false, embellirNode,
   commentairesMasques = false, onToggleCommentaires,
-  onLeaveLive, onReduce, lecture,
+  onLeaveLive, onReduce, lecture, onFaireMaPromo, promoHote,
 }) => {
   const vertical = orientation === 'verticale';
   // Écran large (≥ 640 px) : décide du partage d'écran « indisponible » visible (desktop).
@@ -279,6 +283,22 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
       testId: 'visio-toggle-commentaires',
     }] : []),
     ...itemsDebordement.filter((i) => i.danger),
+    ...(onFaireMaPromo ? [{
+      id: 'promo-participant',
+      label: 'Faire ma promo',
+      icon: <Megaphone className="w-5 h-5" />,
+      onSelect: onFaireMaPromo,
+      testId: 'visio-faire-ma-promo',
+      fermeApres: true,
+    }] : []),
+    ...(promoHote ? [{
+      id: 'promo-hote',
+      label: promoHote.enAttente > 0 ? `Promotions live (${promoHote.enAttente})` : 'Promotions live',
+      icon: <Megaphone className="w-5 h-5" />,
+      onSelect: promoHote.onOuvrir,
+      testId: 'visio-promo-hote',
+      fermeApres: true,
+    }] : []),
     ...(onLeaveLive ? [{
       id: 'quitter',
       label: 'Quitter le live',

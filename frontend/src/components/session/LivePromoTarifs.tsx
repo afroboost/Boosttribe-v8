@@ -9,7 +9,7 @@ import { promoConfigHote, promoEnregistrerConfig } from '@/lib/livePromoApi';
  * Aucun tarif imposé : l'hôte crée, modifie, désactive, supprime ses durées/prix.
  */
 export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
-  const [etat, setEtat] = useState<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string } | null>(null);
+  const [etat, setEtat] = useState<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean } | null>(null);
   const [message, setMessage] = useState('');
   const [occupe, setOccupe] = useState(false);
   useEffect(() => {
@@ -37,6 +37,13 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
                className="h-4 w-4 accent-[var(--bt-accent)]" data-testid="live-promo-activer" />
         Autoriser les promotions payantes pendant ce Live
       </label>
+      {etat.paiement_reel === false ? (
+        /* Super-admin hors mode commission : aucune destination d'argent n'existe (règle des billets). */
+        <p className="text-xs text-amber-200/90" data-testid="live-promo-mode-test">
+          Mode test super-admin : le paiement réel n’est pas disponible pour ce compte (hors mode commission).
+          Tu peux tester la demande, la validation et la diffusion, sans argent.
+        </p>
+      ) : null}
       {etat.enabled ? (
         <div className="space-y-2">
           <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 text-[11px] text-white/50"><span>Durée (s)</span><span>Prix ({etat.currency})</span><span>Actif</span><span /></div>

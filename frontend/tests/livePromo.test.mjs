@@ -67,3 +67,14 @@ test('la bannière vit dans la pile du Live, au-dessus du chat (jamais sous la b
   const pile = p.slice(p.indexOf('data-testid="visio-calques-bas"'));
   assert.ok(pile.indexOf('visio-calque-promo') > 0 && pile.indexOf('visio-calque-promo') < pile.indexOf('visio-calque-haut'));
 });
+
+test('hotfix super-admin : section visible si le serveur dit eligible ; mode test sans argent explicite', () => {
+  const t = src('components/session/LivePromoTarifs.tsx');
+  assert.match(t, /if \(!etat \|\| !etat\.eligible\) return null;/);               // la visibilité vient du SERVEUR
+  assert.doesNotMatch(t, /artboost|@gmail|isAdmin/);                                // aucun e-mail / rôle deviné côté écran
+  assert.match(t, /etat\.paiement_reel === false \?/);
+  const h = src('components/session/LivePromoHostModal.tsx');
+  assert.match(h, /!paiementReel && s === 'accepted' \? \['tester'\]/);
+  const p = src('components/session/LivePromoParticipantModal.tsx');
+  assert.match(p, /\{paiementReel && peutPayer\(enCours\.status\) \?/);            // jamais « Payer » en Live de test
+});

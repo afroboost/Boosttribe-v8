@@ -49,6 +49,7 @@ HOTE_C = "11111111-1111-1111-1111-111111111111"     # hôte en mode commission
 HOTE_A = "22222222-2222-2222-2222-222222222222"     # hôte en mode abonnement
 PART = "33333333-3333-3333-3333-333333333333"
 PART2 = "44444444-4444-4444-4444-444444444444"
+ADMIN = "55555555-5555-5555-5555-555555555555"     # LE super-admin (ADMIN_EMAILS), compte hors commission
 OFFRES = [{"id": "o15", "duree_s": 15, "prix": 5}, {"id": "o30", "duree_s": 30, "prix": 10},
           {"id": "o60", "duree_s": 60, "prix": 20}, {"id": "off", "duree_s": 90, "prix": 25, "actif": False}]
 
@@ -60,6 +61,7 @@ class Monde:
             "liveA": {"session_id": "liveA", "host_id": HOTE_C, "live_promo_enabled": True, "live_promo_offres": OFFRES},
             "liveB": {"session_id": "liveB", "host_id": HOTE_C, "live_promo_enabled": True, "live_promo_offres": OFFRES},
             "liveAbo": {"session_id": "liveAbo", "host_id": HOTE_A, "live_promo_enabled": True, "live_promo_offres": OFFRES},
+            "liveAdmin": {"session_id": "liveAdmin", "host_id": ADMIN, "live_promo_enabled": False, "live_promo_offres": []},
         }
         self.promos = {}
         self.wallet = []            # (uid, delta, reason, ref)
@@ -68,7 +70,8 @@ class Monde:
         self.stripe_crees = 0
         self.users = {"t-hote": {"id": HOTE_C, "email": "h@x.ch"}, "t-abo": {"id": HOTE_A, "email": "a@x.ch"},
                       "t-part": {"id": PART, "email": "p@x.ch", "user_metadata": {"full_name": "Léa Martin"}},
-                      "t-part2": {"id": PART2, "email": "q@x.ch"}}
+                      "t-part2": {"id": PART2, "email": "q@x.ch"},
+                      "t-admin": {"id": ADMIN, "email": "contact.artboost@gmail.com"}}
         self.installer()
 
     def installer(self):
@@ -146,6 +149,9 @@ class Monde:
             def retrieve(sid):
                 return {"status": "expired", "url": None}
 
+        async def hote_admin(uid):
+            return uid == ADMIN
+        m._lp_hote_super_admin = hote_admin
         m.get_user_from_token = user
         m._lp_session = session
         m.get_coach_payment_type = ptype
@@ -378,3 +384,53 @@ def test_schema_ajout_pur_idempotent_avec_sauvegarde():
     assert "add column if not exists live_promo_enabled" in sql and "create table if not exists public.live_promos" in sql
     for interdit in ("drop ", "delete ", "update ", "truncate"):
         assert interdit not in sql
+
+
+# ─── HOTFIX : le super-admin voit, configure, modère et teste (sans règle d'argent inventée) ───
+def test_super_admin_voit_et_configure_sa_session(w):
+    cfg = w.appel(w.m.live_promo_host_config, "liveAdmin", authorization="Bearer t-admin")
+    assert cfg["eligible"] is True and cfg["mode"] == "super_admin" and cfg["paiement_reel"] is False
+    body = w.m.LivePromoConfigBody(session_id="liveAdmin", enabled=True, offres=[{"duree_s": 15, "prix": 5}, {"duree_s": 30, "prix": 10}])
+    w.appel(w.m.live_promo_save_config, body, authorization="Bearer t-admin")
+    pub = w.appel(w.m.live_promo_config, "liveAdmin")
+    assert pub["enabled"] is True and len(pub["offres"]) == 2 and pub["paiement_reel"] is False   # « Faire ma promo » disponible
+
+
+def test_super_admin_parcours_de_test_sans_argent(w):
+    w.appel(w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveAdmin", enabled=True,
+            offres=[{"id": "t30", "duree_s": 30, "prix": 10}]), authorization="Bearer t-admin")
+    p = w.demander(sid="liveAdmin", offre="t30")
+    w.appel(w.m.live_promo_decision, p["id"], w.m.LivePromoDecisionBody(decision="accept"), authorization="Bearer t-admin")
+    assert err(w, w.m.live_promo_pay, p["id"], authorization="Bearer t-part") == 409        # paiement réel fermé
+    w.appel(w.m.live_promo_test_ready, p["id"], authorization="Bearer t-admin")
+    assert w.promos[p["id"]]["status"] == LP.READY and w.promos[p["id"]]["test_sans_paiement"] is True
+    w.appel(w.m.live_promo_start, p["id"], authorization="Bearer t-admin")
+    assert w.appel(w.m.live_promo_active, "liveAdmin")["promo"]["id"] == p["id"]
+    assert w.stripe_crees == 0 and w.wallet == []                                            # AUCUN argent
+
+
+def test_test_sans_paiement_interdit_ailleurs(w):
+    pid = w.demander()["id"]                                                                 # hôte commission
+    w.appel(w.m.live_promo_decision, pid, w.m.LivePromoDecisionBody(decision="accept"), authorization="Bearer t-hote")
+    assert err(w, w.m.live_promo_test_ready, pid, authorization="Bearer t-hote") == 403     # pas super-admin
+    assert w.appel(w.m.live_promo_config, "liveA")["paiement_reel"] is True                  # commission inchangé
+
+
+def test_hote_abonnement_ordinaire_toujours_refuse(w):
+    cfg = w.appel(w.m.live_promo_host_config, "liveAbo", authorization="Bearer t-abo")
+    assert cfg["eligible"] is False and cfg["mode"] is None
+    assert err(w, w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveAbo", enabled=True),
+               authorization="Bearer t-abo") == 403
+    assert w.appel(w.m.live_promo_config, "liveAbo")["enabled"] is False
+
+
+def test_super_admin_ne_gere_que_SA_session(w):
+    assert err(w, w.m.live_promo_host_list, "liveA", authorization="Bearer t-admin") == 403
+
+
+def test_mode_promo_pur():
+    assert LP.mode_promo("commission", False) == "commission"
+    assert LP.mode_promo("commission", True) == "commission"       # super-admin EN commission : paiement réel
+    assert LP.mode_promo("subscription", True) == "super_admin"
+    assert LP.mode_promo("subscription", False) is None
+    assert "test_sans_paiement boolean" in LP.SQL_SCHEMA and "drop " not in LP.SQL_SCHEMA.lower()

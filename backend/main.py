@@ -4576,8 +4576,28 @@ async def _lp_session(session_id: str) -> Dict[str, Any]:
     return rows[0]
 
 
+async def _lp_hote_super_admin(host_id: str) -> bool:
+    """L'hôte est-il LE super-admin existant (ADMIN_EMAILS) ? E-mail lu côté serveur
+    (API admin GoTrue, service role) — jamais une donnée venue du navigateur."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{host_id}", headers=_service_headers())
+        return r.status_code == 200 and _is_admin_email(r.json() or {})
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _lp_mode(host_id: Optional[str]) -> Optional[str]:
+    if not host_id:
+        return None
+    ptype = await get_coach_payment_type(host_id)
+    if _lp.hote_eligible(ptype):
+        return _lp.MODE_COMMISSION
+    return _lp.mode_promo(ptype, await _lp_hote_super_admin(host_id))
+
+
 async def _lp_eligible(host_id: Optional[str]) -> bool:
-    return bool(host_id) and _lp.hote_eligible(await get_coach_payment_type(host_id))
+    return (await _lp_mode(host_id)) is not None
 
 
 async def _lp_lire(filtre: Dict[str, str], ordre: str = "requested_at.desc", limite: int = 100) -> List[Dict[str, Any]]:
@@ -4628,9 +4648,10 @@ async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
 async def live_promo_config(session_id: str):
     """Ce que voit un participant : promo activée ? tarifs ACTIFS. `eligible` = hôte en mode commission."""
     s = await _lp_session(session_id)
-    eligible = await _lp_eligible(s.get("host_id"))
-    actif = eligible and s.get("live_promo_enabled") is True
-    return {"eligible": eligible, "enabled": actif, "currency": _lp.DEVISE,
+    mode = await _lp_mode(s.get("host_id"))
+    actif = mode is not None and s.get("live_promo_enabled") is True
+    return {"eligible": mode is not None, "enabled": actif, "currency": _lp.DEVISE,
+            "paiement_reel": _lp.paiement_reel_possible(mode),
             "offres": _lp.offres_actives(s.get("live_promo_offres")) if actif else []}
 
 
@@ -4643,8 +4664,9 @@ async def live_promo_host_config(session_id: str, authorization: Optional[str] =
         offres = _lp.valider_offres(s.get("live_promo_offres"))
     except _lp.RegleRefusee:
         offres = []
-    return {"eligible": await _lp_eligible(s.get("host_id")), "enabled": s.get("live_promo_enabled") is True,
-            "offres": offres, "currency": _lp.DEVISE}
+    mode = await _lp_mode(s.get("host_id"))
+    return {"eligible": mode is not None, "mode": mode, "paiement_reel": _lp.paiement_reel_possible(mode),
+            "enabled": s.get("live_promo_enabled") is True, "offres": offres, "currency": _lp.DEVISE}
 
 
 @app.post("/live-promo/config")
@@ -4778,8 +4800,9 @@ async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(de
         raise HTTPException(status_code=403, detail="Cette promo n'est pas la tienne")
     if p.get("status") not in _lp.PAYABLES:
         raise HTTPException(status_code=409, detail="Paiement impossible dans l'état actuel")
-    if not await _lp_eligible(p.get("host_id")):
-        raise HTTPException(status_code=403, detail="Promotions payantes indisponibles pour cet hôte")
+    if not _lp.paiement_reel_possible(await _lp_mode(p.get("host_id"))):
+        # Super-admin hors commission : aucune destination financière n'existe (règle des billets).
+        raise HTTPException(status_code=409, detail="Paiement réel indisponible pour ce Live (mode test de l'hôte)")
     tentative = int(p.get("checkout_attempt") or 0)
     if p.get("status") == _lp.PAYMENT_PENDING and p.get("stripe_session_id"):
         try:
@@ -4839,6 +4862,23 @@ async def _lp_paiement_echoue(obj: Dict[str, Any], meta: Dict[str, Any]) -> None
     await _lp_maj(str(meta.get("promo_id") or ""), [_lp.PAYMENT_PENDING], {"status": _lp.PAYMENT_FAILED})
 
 
+@app.post("/live-promo/requests/{promo_id}/test-ready")
+async def live_promo_test_ready(promo_id: str, authorization: Optional[str] = Header(default=None)):
+    """TEST SANS ARGENT (super-admin hôte, hors mode commission) : accepted -> ready.
+    Aucun Stripe, aucun portefeuille, marqué `test_sans_paiement` dans l'historique."""
+    user = await get_user_from_token(authorization)
+    p = await _lp_une(promo_id)
+    await _lp_hote(p.get("host_id"), user)
+    if not _is_admin_email(user):
+        raise HTTPException(status_code=403, detail="Réservé au super-admin")
+    if not _lp.test_sans_paiement_possible(await _lp_mode(p.get("host_id")), p.get("status")):
+        raise HTTPException(status_code=409, detail="Test sans paiement impossible ici")
+    maj = await _lp_maj(promo_id, [_lp.ACCEPTED], {"status": _lp.READY, "test_sans_paiement": True})
+    if not maj:
+        raise HTTPException(status_code=409, detail="Cette promo n'est plus acceptée")
+    return {"ok": True, "promo": maj}
+
+
 @app.post("/live-promo/requests/{promo_id}/start")
 async def live_promo_start(promo_id: str, authorization: Optional[str] = Header(default=None)):
     """DIFFUSER MAINTENANT : le SERVEUR fixe started_at / ends_at. Une seule à la fois par session."""
@@ -4894,7 +4934,7 @@ async def live_promo_health():
     """Preuve de migration SANS donnée : la table et les colonnes existent-elles ? (deux booléens)."""
     async with httpx.AsyncClient(timeout=10) as client:
         t = await client.get(f"{SUPABASE_URL}/rest/v1/{LP_TABLE}", headers=_service_headers(),
-                             params={"select": "id", "limit": "0"})
+                             params={"select": "id,test_sans_paiement", "limit": "0"})
         c = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                              params={"select": "live_promo_enabled,live_promo_offres", "limit": "0"})
     return {"table": t.status_code == 200, "colonnes": c.status_code == 200}

@@ -4324,11 +4324,13 @@ export const SessionPage: React.FC = () => {
       ) : null}
       {promoParticipantOuvert && sessionId && livePromo.config ? (
         <LivePromoParticipantModal sessionId={sessionId} offres={livePromo.config.offres} devise={livePromo.config.currency}
-          mesDemandes={livePromo.mesDemandes} onFermer={() => setPromoParticipantOuvert(false)} onEnvoye={promoRafraichirEtSignaler} />
+          mesDemandes={livePromo.mesDemandes} onFermer={() => setPromoParticipantOuvert(false)} onEnvoye={promoRafraichirEtSignaler}
+          paiementReel={livePromo.config.paiement_reel !== false} />
       ) : null}
       {promoHoteOuvert ? (
         <LivePromoHostModal liste={livePromo.listeHote} devise={livePromo.config?.currency || 'CHF'}
-          onFermer={() => setPromoHoteOuvert(false)} onChange={promoRafraichirEtSignaler} />
+          onFermer={() => setPromoHoteOuvert(false)} onChange={promoRafraichirEtSignaler}
+          paiementReel={livePromo.config?.paiement_reel !== false} />
       ) : null}
     </>
   ) : null;

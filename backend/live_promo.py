@@ -182,6 +182,32 @@ def hote_eligible(payment_type: Optional[str]) -> bool:
     return payment_type == "commission"
 
 
+# Mode de la promo pour un hôte donné. « commission » : parcours complet, paiement réel.
+# « super_admin » (hotfix 30/09) : le super-admin EXISTANT (ADMIN_EMAILS) voit, configure,
+# modère et diffuse ; mais s'il n'est pas en mode commission, AUCUNE destination financière
+# n'existe pour lui (même règle que les billets payants, /session/configure) : le paiement
+# réel reste fermé, seul un test SANS ARGENT (accepted -> ready) lui est ouvert.
+MODE_COMMISSION = "commission"
+MODE_SUPER_ADMIN = "super_admin"
+
+
+def mode_promo(payment_type: Optional[str], hote_est_super_admin: bool) -> Optional[str]:
+    if hote_eligible(payment_type):
+        return MODE_COMMISSION
+    if hote_est_super_admin:
+        return MODE_SUPER_ADMIN
+    return None
+
+
+def paiement_reel_possible(mode: Optional[str]) -> bool:
+    return mode == MODE_COMMISSION
+
+
+def test_sans_paiement_possible(mode: Optional[str], statut: str) -> bool:
+    """Seul chemin vers READY sans paiement : super-admin hors commission, demande ACCEPTÉE."""
+    return mode == MODE_SUPER_ADMIN and statut == ACCEPTED
+
+
 def vue_publique(promo: Dict[str, Any], t: Optional[datetime] = None) -> Dict[str, Any]:
     """Ce que TOUS les participants reçoivent d'une promo diffusée (aucune donnée de paiement)."""
     return {"id": promo.get("id"), "title": promo.get("title") or "", "body": promo.get("body") or "",
@@ -238,4 +264,5 @@ create index if not exists live_promos_session_idx on public.live_promos(session
 create index if not exists live_promos_participant_idx on public.live_promos(participant_id);
 create unique index if not exists live_promos_une_diffusion on public.live_promos(session_id) where status = 'broadcasting';
 alter table public.live_promos enable row level security;
+alter table public.live_promos add column if not exists test_sans_paiement boolean not null default false;
 """

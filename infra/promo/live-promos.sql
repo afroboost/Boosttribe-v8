@@ -52,3 +52,4 @@ create index if not exists live_promos_session_idx on public.live_promos(session
 create index if not exists live_promos_participant_idx on public.live_promos(participant_id);
 create unique index if not exists live_promos_une_diffusion on public.live_promos(session_id) where status = 'broadcasting';
 alter table public.live_promos enable row level security;
+alter table public.live_promos add column if not exists test_sans_paiement boolean not null default false;

@@ -8,9 +8,11 @@ import { promoDemander, promoEnvoyerImage, promoPayer, type PromoLigne } from '@
  * 1) un tarif fixé par l'hôte ; 2) image + titre + texte + lien facultatif ; 3) envoi.
  * AUCUN paiement à l'envoi : l'hôte accepte d'abord, puis « Payer » ouvre le Checkout existant.
  */
-export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemandes, onFermer, onEnvoye }: {
+export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemandes, onFermer, onEnvoye, paiementReel = true }: {
   sessionId: string; offres: OffrePromo[]; devise: string; mesDemandes: PromoLigne[];
   onFermer: () => void; onEnvoye: () => void;
+  /** false = Live de test du super-admin : aucun paiement ne peut être proposé. */
+  paiementReel?: boolean;
 }) {
   const enCours = mesDemandes.find((p) => ['requested', 'accepted', 'payment_pending', 'payment_failed', 'ready', 'broadcasting'].includes(p.status));
   const [offre, setOffre] = useState(offres[0]?.id || '');
@@ -57,7 +59,10 @@ export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemand
             <p className="text-sm font-semibold">{enCours.title}</p>
             <p className="text-sm text-white/70" data-testid="live-promo-statut">{libelleStatut(enCours.status)}</p>
             {enCours.status === 'ready' ? <p className="text-xs text-white/55">L’hôte choisit le moment de la diffusion.</p> : null}
-            {peutPayer(enCours.status) ? (
+            {!paiementReel && enCours.status === 'accepted' ? (
+              <p className="text-xs text-white/55" data-testid="live-promo-test-sans-paiement">Live de test : aucun paiement ne t’est demandé.</p>
+            ) : null}
+            {paiementReel && peutPayer(enCours.status) ? (
               <button type="button" onClick={() => payer(enCours.id)} disabled={occupe}
                       className="w-full min-h-[44px] rounded-xl font-semibold text-white disabled:opacity-60"
                       style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}

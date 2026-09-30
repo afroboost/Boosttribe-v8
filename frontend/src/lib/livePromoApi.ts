@@ -23,9 +23,9 @@ export interface PromoLigne { id: string; status: string; title: string; body?: 
   actual_duration_seconds?: number | null; started_at?: string | null; ends_at?: string | null; stop_reason?: string | null }
 
 export const promoConfig = (sid: string) =>
-  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string }>(`/live-promo/config/${encodeURIComponent(sid)}`, {}, false);
+  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; paiement_reel?: boolean }>(`/live-promo/config/${encodeURIComponent(sid)}`, {}, false);
 export const promoConfigHote = (sid: string) =>
-  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string }>(`/live-promo/host-config/${encodeURIComponent(sid)}`);
+  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean }>(`/live-promo/host-config/${encodeURIComponent(sid)}`);
 export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[]) =>
   appel<{ ok: boolean }>('/live-promo/config', json({ session_id: sid, enabled, offres }));
 export const promoActive = (sid: string) =>
@@ -37,6 +37,8 @@ export const promoDemander = (corps: { session_id: string; offre_id: string; tit
 export const promoDecider = (id: string, decision: 'accept' | 'reject') =>
   appel<{ promo: PromoLigne }>(`/live-promo/requests/${id}/decision`, json({ decision }));
 export const promoPayer = (id: string) => appel<{ url: string }>(`/live-promo/requests/${id}/pay`, json({}));
+/** Super-admin hors mode commission : prêt SANS paiement (test, aucun argent). */
+export const promoPretSansPaiement = (id: string) => appel<{ promo: PromoLigne }>(`/live-promo/requests/${id}/test-ready`, json({}));
 export const promoDiffuser = (id: string) =>
   appel<{ promo: PromoPublique; server_now: string }>(`/live-promo/requests/${id}/start`, json({}));
 export const promoArreter = (id: string, raison?: string) =>

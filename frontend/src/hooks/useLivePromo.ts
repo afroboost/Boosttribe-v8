@@ -15,7 +15,7 @@ import { promoActive, promoConfig, promoListeHote, promoMesDemandes, promoArrete
 const RELECTURE_MS = 15000;
 
 export interface EtatLivePromo {
-  config: { eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string } | null;
+  config: { eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; paiement_reel?: boolean } | null;
   active: PromoPublique | null;
   decalageMs: number;
   mesDemandes: PromoLigne[];

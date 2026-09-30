@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
 import { ExternalLink, Megaphone, X } from 'lucide-react';
 import { actionsHote, libelleStatut, lienDecouvrir } from '@/lib/livePromo';
-import { promoArreter, promoDecider, promoDiffuser, type PromoLigne } from '@/lib/livePromoApi';
+import { promoArreter, promoDecider, promoDiffuser, promoPretSansPaiement, type PromoLigne } from '@/lib/livePromoApi';
 
 /**
  * 📣 PROMOTIONS LIVE — la file de l'hôte (aperçu, Refuser / Accepter, Diffuser maintenant,
  * Arrêter) et l'historique compact de la session. Chaque action est revalidée par le serveur.
  */
-export function LivePromoHostModal({ liste, devise, onFermer, onChange }: {
+export function LivePromoHostModal({ liste, devise, onFermer, onChange, paiementReel = true }: {
   liste: PromoLigne[]; devise: string; onFermer: () => void; onChange: () => void;
+  /** false = super-admin hors commission : « Préparer sans paiement (test) » sur une demande acceptée. */
+  paiementReel?: boolean;
 }) {
   const [occupe, setOccupe] = useState('');
   const [erreur, setErreur] = useState('');
@@ -21,13 +23,16 @@ export function LivePromoHostModal({ liste, devise, onFermer, onChange }: {
       else if (action === 'refuser') await promoDecider(p.id, 'reject');
       else if (action === 'diffuser') await promoDiffuser(p.id);
       else if (action === 'arreter') await promoArreter(p.id, 'arret_hote');
+      else if (action === 'tester') await promoPretSansPaiement(p.id);
       onChange();
     } catch (e) { setErreur((e as Error).message); }
     setOccupe('');
   };
-  const libelle: Record<string, string> = { accepter: 'Accepter', refuser: 'Refuser', diffuser: 'Diffuser maintenant', arreter: 'Arrêter la promo' };
-  const aTraiter = liste.filter((p) => actionsHote(p.status).length > 0);
-  const historique = liste.filter((p) => actionsHote(p.status).length === 0);
+  const libelle: Record<string, string> = { accepter: 'Accepter', refuser: 'Refuser', diffuser: 'Diffuser maintenant', arreter: 'Arrêter la promo', tester: 'Préparer sans paiement (test)' };
+  // Super-admin hors commission : une demande ACCEPTÉE peut être préparée SANS argent (test).
+  const actions = (s: string) => [...actionsHote(s), ...(!paiementReel && s === 'accepted' ? ['tester'] : [])];
+  const aTraiter = liste.filter((p) => actions(p.status).length > 0);
+  const historique = liste.filter((p) => actions(p.status).length === 0);
   return (
     <div className="fixed inset-0 z-[160] flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4" onClick={onFermer}>
       <div className="w-full sm:max-w-lg max-h-[88vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-white/10 bg-[#15151b] p-4 text-white"
@@ -56,7 +61,7 @@ export function LivePromoHostModal({ liste, devise, onFermer, onChange }: {
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap justify-end gap-2">
-                {actionsHote(p.status).map((a) => (
+                {actions(p.status).map((a) => (
                   <button key={a} type="button" disabled={!!occupe} onClick={() => agir(p, a)}
                           className={`min-h-[40px] rounded-xl px-4 text-sm font-semibold disabled:opacity-50 ${a === 'refuser' || a === 'arreter' ? 'border border-white/20 text-white/85' : 'text-white'}`}
                           style={a === 'refuser' || a === 'arreter' ? undefined : { background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}

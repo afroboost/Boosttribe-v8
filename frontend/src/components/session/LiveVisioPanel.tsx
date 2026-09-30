@@ -4,7 +4,7 @@ import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/Sou
 import { CameraTile } from '@/components/session/CameraTile';
 import { LiveControls, type LectureLive } from '@/components/session/LiveControls';
 import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
-import { zoneCommentaires, colonnesGrille, dispositionBarre, ancrageImage, zoneLibrePleinEcran } from '@/lib/liveControls';
+import { zoneCommentaires, colonnesGrille, dispositionBarre, cadrePrompteur, ancrageImage, zoneLibrePleinEcran } from '@/lib/liveControls';
 import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import { FluxEcran } from '@/components/session/SceneRenderer';
@@ -380,6 +380,8 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   //    prompteur s'arrêtent avant elle (`droiteCalques`) — rien ne passe sous un bouton.
   const barre = dispositionBarre({ largeur: largeurZone, hauteur: hauteurZone, pleinEcran: camFullscreen });
   const droiteCalques = camFullscreen ? `calc(${zone.reserveDroite} + env(safe-area-inset-right))` : zone.reserveDroite;
+  // 📜 Fix mobile 30/09 : le prompteur est CENTRÉ dans la vidéo (réserve symétrique sous 1024 px).
+  const prompteurCadre = cadrePrompteur({ largeur: largeurZone, droite: droiteCalques });
   // Plein écran : l'image est `object-contain` centrée. Sur grand écran, une image portrait
   // ou 4:3 laisse des bandes noires : chat + champ s'ancrent au bord gauche de l'IMAGE.
   // Ratio lu sur la piste (width/height, sinon aspectRatio) ; inconnu → bord de la scène.
@@ -701,7 +703,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             {timerNode}
             {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle.
                 Borné à gauche de la barre verticale : aucune ligne sous un bouton. */}
-            <div className="pointer-events-none absolute inset-y-0 left-0" style={{ right: droiteCalques }} data-testid="visio-prompteur-texte">
+            <div className="pointer-events-none absolute inset-y-0" style={{ left: prompteurCadre.gauche, right: prompteurCadre.droite }} data-testid="visio-prompteur-texte">
               {prompteurNode}
             </div>
             {/* ✍️ …et on peut l'ÉCRIRE là aussi, sans sortir du plein écran. Jamais sur le
@@ -748,7 +750,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </div>
         )}
         {/* Hors plein écran aussi : le texte se lit SUR l'aperçu, jamais à côté (ni sous la barre). */}
-        <div className="pointer-events-none absolute inset-y-0 left-0" style={{ right: droiteCalques }}>
+        <div className="pointer-events-none absolute inset-y-0" style={{ left: prompteurCadre.gauche, right: prompteurCadre.droite }} data-testid="visio-prompteur-texte-normal">
           {!camFullscreen && prompteurNode}
         </div>
         {/* ⏺ Badge discret « ● REC 00:12:34 » — seule trace de l'enregistrement sur la vidéo. */}

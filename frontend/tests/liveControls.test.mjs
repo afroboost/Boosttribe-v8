@@ -364,5 +364,6 @@ test('QA : Prompteur ouvert — place réservée hors plein écran, hors du cent
   assert.ok(PANEL.includes('paddingBottom: `calc(0.75rem + ${zone.reserveBas} + ${zone.reservePrompteur})`'));
   assert.ok(PANEL.includes('data-testid="visio-prompteur-place"'), 'le panneau vit dans une place bornée');
   assert.ok(PANEL.includes("largeurZone < 1024 ? 'left-0 top-1/2' : 'left-1/2 top-0'"), 'plein écran : jamais sur le centre de l’image (visage)');
-  assert.ok((PANEL.match(/right: droiteCalques/g) || []).length >= 4, 'tiroir (deux modes) et texte du prompteur (deux modes) ne recouvrent pas la colonne de la barre');
+  // Fix mobile 30/09 : le texte du prompteur est borné par `prompteurCadre.droite` (= la même réserve, voir cadrePrompteur).
+  assert.ok((PANEL.match(/right: (droiteCalques|prompteurCadre\.droite)/g) || []).length >= 4, 'tiroir (deux modes) et texte du prompteur (deux modes) ne recouvrent pas la colonne de la barre');
 });

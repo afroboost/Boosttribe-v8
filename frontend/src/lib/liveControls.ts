@@ -137,6 +137,23 @@ export interface DispositionBarre {
 export const RESERVE_DROITE = '3.75rem';
 
 /**
+ * 📜 Cadre horizontal du PROMPTEUR sur la vidéo (fix mobile 30/09).
+ *
+ * AVANT : le texte allait du bord gauche jusqu'à la réserve de la barre (`droite`) ; sa
+ * colonne se centrait donc dans l'espace RESTANT, soit ~30 px à gauche du centre de la
+ * vidéo — un décalage visible, et différent selon la largeur du téléphone.
+ * MAINTENANT, sous `SEUIL_PROMPTEUR_SYMETRIQUE` : la MÊME réserve des deux côtés. Le
+ * texte est centré dans la vidéo quelle que soit la largeur (320 → 430 px et au-delà),
+ * et jamais sous la barre, qui reste à droite, à sa place. Au-dessus du seuil
+ * (ordinateur), rien ne change : bord gauche, réserve à droite.
+ */
+export const SEUIL_PROMPTEUR_SYMETRIQUE = 1024;
+export function cadrePrompteur(e: { largeur: number; droite: string }): { gauche: string; droite: string } {
+  if ((e.largeur || 0) < SEUIL_PROMPTEUR_SYMETRIQUE) return { gauche: e.droite, droite: e.droite };
+  return { gauche: '0px', droite: e.droite };
+}
+
+/**
  * 🎛️ Barre v2 (28/09) : la barre du Live est une COLONNE À DROITE de la vidéo, sur
  * téléphone comme sur ordinateur, en vue normale comme en plein écran. En bas, elle
  * disputait la place au chat et au champ, et poussait tout vers le haut (sur la vidéo).

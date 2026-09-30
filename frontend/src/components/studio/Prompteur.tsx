@@ -142,7 +142,7 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
       role="region"
       aria-label="Texte du prompteur"
       data-testid="prompteur-zone"
-      className={`overflow-y-auto overscroll-contain ${className}`}
+      className={`overflow-y-auto overflow-x-hidden overscroll-contain ${className}`}
       style={{
         // Dégradé haut/bas : la ligne en cours reste au centre du regard.
         maskImage: 'linear-gradient(to bottom, transparent 0, #000 12%, #000 88%, transparent 100%)',
@@ -157,7 +157,9 @@ export const Prompteur = forwardRef<PrompteurHandle, PrompteurProps>(function Pr
       ) : null) : (
         <p
           data-testid="prompteur-texte"
-          className="text-white text-center font-medium whitespace-pre-wrap break-words px-4"
+          /* Fix mobile 30/09 : `overflow-wrap: anywhere` — même en très grande police, un mot
+             trop long passe à la ligne au lieu de déborder (sous la barre du Live). */
+          className="text-white text-center font-medium whitespace-pre-wrap break-words [overflow-wrap:anywhere] px-4"
           style={{ fontSize: `${tailleTexte}px`, lineHeight: 1.45, paddingTop: prise, paddingBottom: chute }}
         >
           {texte}

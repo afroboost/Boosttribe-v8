@@ -148,11 +148,15 @@ export const PrompteurOverlay = forwardRef<PrompteurHandle, PrompteurOverlayProp
              Sur un écran court (téléphone couché, petite fenêtre), elle remonte jusqu'à
              cette barre-ci. On lui réserve donc sa colonne — mesuré à 360, 412 et 430 px —
              et on autorise le retour à la ligne plutôt que le chevauchement. */
-          className="pointer-events-none absolute inset-x-0 top-full mt-1.5 flex justify-center pl-3"
-          style={{ paddingRight: 'max(4.25rem, env(safe-area-inset-right))' }}
+          /* Fix mobile 30/09 : le Live borne DÉJÀ ce prompteur avant la barre (réserve
+             symétrique sous 1024 px, `cadrePrompteur`). Sur téléphone, la seconde réserve
+             de 4,25 rem ne faisait que comprimer la barre sur 3 lignes : retirée. À partir
+             de lg, rendu inchangé. `max-w-full` + retour à la ligne : jamais de débordement. */
+          className="pointer-events-none absolute inset-x-0 top-full mt-1.5 flex justify-center px-1
+                     lg:pl-3 lg:pr-[max(4.25rem,env(safe-area-inset-right))]"
         >
         <div
-          className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5
+          className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1.5
                      rounded-2xl bg-black/40 px-2 py-1.5 backdrop-blur-sm"
           data-testid="prompteur-overlay-barre"
         >

@@ -310,7 +310,7 @@ test('mise en page : barre à droite ; chat (+ réactions) centré au-dessus du 
   assert.ok(couche.includes('maxWidth: zone.inputLargeurMax'), 'largeur du champ = zoneCommentaires');
   assert.ok(couche.includes('width: zone.reactionsLargeur'), 'colonne des réactions = zoneCommentaires');
   assert.ok(couche.includes('data-testid="visio-fs-thumbs"'), 'vignettes des invités dans la pile : jamais sous le chat');
-  assert.ok(PANEL.includes('camerasActives: Math.max(activeCameraCount, participants.length)') && PANEL.includes('vignettes: camFullscreen && fsOthers.length > 0'),
+  assert.ok(PANEL.includes('camerasActives: Math.max(activeCameraCount, participants.length)') && PANEL.includes('vignettes: camFullscreen && modeContenu && fsOthers.length > 0'),
     'le chat rapetisse avec les invités');
 });
 

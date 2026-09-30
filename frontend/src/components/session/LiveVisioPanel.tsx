@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
+import { VignetteFlottante } from '@/components/session/VignetteFlottante'; // 🪟 UNE vignette flottante (scène + participants)
 import { LiveControls, type LectureLive } from '@/components/session/LiveControls';
 import { formatDureeRec, badgeVisible } from '@/lib/recordUi';
 import { zoneCommentaires, colonnesGrille, dispositionBarre, cadrePrompteur, ancrageImage, zoneLibrePleinEcran } from '@/lib/liveControls';
@@ -9,7 +10,7 @@ import type { RecEtat } from '@/components/session/RecordTypes';
 import { useFullscreen } from '@/hooks/useFullscreen';
 import { FluxEcran } from '@/components/session/SceneRenderer';
 import {
-  contenuScenePrincipale, dispositionsPartage, placementVignette, decoupeCoteACote, apercuEcranLocal, DISPOSITION_DEFAUT,
+  contenuScenePrincipale, dispositionsPartage, placementVignette, decoupeCoteACote, apercuEcranLocal, DISPOSITION_DEFAUT, VIGNETTE_MAX_REDIM,
   type ContenuScene, type DispositionPartage,
 } from '@/lib/sceneLive';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
@@ -346,8 +347,11 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   useEffect(() => { if (idPartage) setDisposition(DISPOSITION_DEFAUT); }, [idPartage]);
   // Position GLISSÉE de la vignette, en fraction de la scène ; null = coin bas-droit par défaut.
   const [vignette, setVignette] = useState<{ x: number; y: number } | null>(null);
+  const [tailleVignette, setTailleVignette] = useState<number | undefined>(undefined);
   const sceneBoxRef = useRef<HTMLDivElement>(null);
-  const glisse = useRef<{ dx: number; dy: number } | null>(null);
+  // 🪟 Plein écran caméra : position / taille LOCALES de chaque vignette participant, par identité
+  //    (jamais par rang : un départ ou une arrivée ne permute rien). Aucun serveur, aucune piste.
+  const [flottantes, setFlottantes] = useState<{ [idParticipant: string]: { position: { x: number; y: number }; taille?: number } }>({});
   const filmPresent = filmActif && !!rendreFilm;
   const modeContenu = filmPresent || !!ecranStream;
   const personneScene = (spotlightChoisi && streamFor(spotlightChoisi) ? spotlightChoisi : null)
@@ -378,7 +382,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
     // QA 28/09 : une vignette « caméra coupée » se recouvre aussi — toute vignette compte.
     camerasActives: Math.max(activeCameraCount, participants.length),
     pleinEcran: camFullscreen,
-    vignettes: camFullscreen && fsOthers.length > 0,
+    vignettes: camFullscreen && modeContenu && fsOthers.length > 0,
     avecCalques,
     prompteurOuvert: prompteurOuvert && !!prompteurTiroirNode,
   });
@@ -438,25 +442,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // (paddingRight) → 0 ; en plein écran, la scène va jusqu'au bord → 60.
   const reserveDroitePx = Math.max(0, enPx(zone.reserveDroite) - geoScene.droiteLibre);
   // En plein écran, la rangée des invités (vignettes ~54 px) s'ajoute au-dessus du champ.
-  const reserveBasPx = Math.max(0, (inputVisible ? 64 : 8) + (camFullscreen && fsOthers.length > 0 ? 64 : 0) - geoScene.dessous);
-  const placeVignette = placementVignette({
-    largeurScene: geoScene.largeur, hauteurScene: geoScene.hauteur, reserveDroitePx, reserveBasPx, position: vignette,
-  });
+  const reserveBasPx = Math.max(0, (inputVisible ? 64 : 8) + (camFullscreen && modeContenu && fsOthers.length > 0 ? 64 : 0) - geoScene.dessous);
+  // 🎬 La vignette se GLISSE et se REDIMENSIONNE (VignetteFlottante) : coin haut-gauche et
+  //    largeur retenus en FRACTION de la scène, re-bornés à chaque rendu (placementVignette).
   const decoupe = decoupeCoteACote({ largeur: geoScene.largeur, hauteur: geoScene.hauteur });
-
-  // 🎬 La vignette se GLISSE (souris / doigt) : on retient le coin haut-gauche en FRACTION de la
-  //    scène, déjà borné par `placementVignette` — et re-borné à chaque rendu (redimensionnement).
-  const deplacerVignette = (e: React.PointerEvent<HTMLDivElement>) => {
-    const box = sceneBoxRef.current?.getBoundingClientRect();
-    const g = glisse.current;
-    if (!box || !g || box.width <= 0 || box.height <= 0) return;
-    const p = placementVignette({
-      largeurScene: box.width, hauteurScene: box.height, reserveDroitePx, reserveBasPx,
-      position: { x: (e.clientX - g.dx - box.left) / box.width, y: (e.clientY - g.dy - box.top) / box.height },
-    });
-    const suivante = { x: p.x / box.width, y: p.y / box.height };
-    setVignette((v) => (v && v.x === suivante.x && v.y === suivante.y ? v : suivante));
-  };
   const tuileScene = (p: VisioParticipant) => (
     <CameraTile
       name={p.name}
@@ -573,24 +562,24 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           </div>
         )}
         {arbitrage.incrustation && (
-          <div
-            role="group"
-            aria-label="Vignette : glisser pour la déplacer"
-            className="absolute z-10 overflow-hidden rounded-lg border border-white/25 bg-black shadow-lg shadow-black/50 cursor-grab active:cursor-grabbing touch-none select-none"
-            style={{ left: placeVignette.x, top: placeVignette.y, width: placeVignette.largeur, height: placeVignette.hauteur }}
-            onPointerDown={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              glisse.current = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-              try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+          <VignetteFlottante
+            largeurScene={geoScene.largeur}
+            hauteurScene={geoScene.hauteur}
+            reserveDroitePx={reserveDroitePx}
+            reserveBasPx={reserveBasPx}
+            position={vignette}
+            taille={tailleVignette}
+            redimensionnable
+            onChange={(v) => {
+              setVignette((o) => (o && o.x === v.position.x && o.y === v.position.y ? o : v.position));
+              setTailleVignette((t) => (t === v.taille ? t : v.taille));
             }}
-            onPointerMove={deplacerVignette}
-            onPointerUp={() => { glisse.current = null; }}
-            onPointerCancel={() => { glisse.current = null; }}
-            data-testid="scene-vignette"
-            data-contenu={arbitrage.incrustation}
+            sceneRef={sceneBoxRef}
+            testId="scene-vignette"
+            dataContenu={arbitrage.incrustation}
           >
             {contenuDe(arbitrage.incrustation, '')}
-          </div>
+          </VignetteFlottante>
         )}
         {camFullscreen && barreDispositions}
         {/* « Écran seul » choisi alors que la caméra est allumée : on le DIT (elle n'est pas à l'image). */}
@@ -706,6 +695,53 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                 <p className="text-white/50 text-sm">Aucune caméra allumée</p>
               )}
             </div>)}
+            {/* 🪟 Caméras des AUTRES personnes : vignettes flottantes (glisser, poignée = taille,
+                ⛶ ou double-clic = en grand). Bornées hors barre verticale et hors champ commentaire. */}
+            {!modeContenu && fsOthers.map((p, i) => {
+              const base = placementVignette({ largeurScene: largeurZone, hauteurScene: hauteurZone,
+                reserveDroitePx: enPx(zone.reserveDroite), reserveBasPx: inputVisible ? 64 : 8 });
+              const parDefaut = largeurZone > 0 && hauteurZone > 0
+                ? { x: base.x / largeurZone, y: Math.max(0, base.y - i * (base.hauteur + 8)) / hauteurZone } : null;
+              const etat = flottantes[p.id];
+              return (
+                <VignetteFlottante
+                  key={p.id}
+                  largeurScene={largeurZone}
+                  hauteurScene={hauteurZone}
+                  reserveDroitePx={enPx(zone.reserveDroite)}
+                  reserveBasPx={inputVisible ? 64 : 8}
+                  position={etat?.position ?? parDefaut}
+                  taille={etat?.taille}
+                  tailleMax={VIGNETTE_MAX_REDIM}
+                  redimensionnable
+                  onChange={(v) => setFlottantes((f) => ({ ...f, [p.id]: v }))}
+                  sceneRef={camAreaRef}
+                  onAgrandir={() => setSpotlightId(p.id)}
+                  testId="visio-fs-vignette"
+                  dataContenu={p.id}
+                  ariaLabel={`Caméra de ${p.name} : glisser pour déplacer`}
+                >
+                  <CameraTile
+                    name={p.name}
+                    stream={streamFor(p)}
+                    isLocal={p.id === myUserId}
+                    micActive={p.isMicActive}
+                    isHost={p.isHost}
+                    avatarUrl={p.avatarUrl}
+                    className="w-full h-full rounded-none border-0"
+                  />
+                </VignetteFlottante>
+              );
+            })}
+            {/* 🔍 Une personne agrandie : « Réduire » rend la grande vue par défaut. */}
+            {!modeContenu && spotlightP && (
+              <button type="button" onClick={() => setSpotlightId(null)}
+                className="absolute left-3 z-20 inline-flex items-center gap-1.5 rounded-lg bg-black/60 px-2.5 py-1.5 text-xs text-white/90 hover:bg-black/80"
+                style={{ top: 'calc(0.75rem + env(safe-area-inset-top))' }}
+                data-testid="visio-fs-reduire-vignette">
+                <Minimize2 size={14} /> Réduire
+              </button>
+            )}
             {timerNode}
             {/* 📜 Le texte reste SUR la vidéo en plein écran : c'est justement là qu'on parle.
                 Borné à gauche de la barre verticale : aucune ligne sous un bouton. */}
@@ -865,7 +901,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           >
             {/* 1) Invités en vignettes (plein écran) : AU-DESSUS du chat — rien ne s'intercale entre
                 les messages et le champ. Taper = passe en grand. */}
-            {camFullscreen && fsOthers.length > 0 && (
+            {camFullscreen && modeContenu && fsOthers.length > 0 && (
               <div className="pointer-events-auto relative flex gap-2 overflow-x-auto px-2" data-testid="visio-fs-thumbs">
                 {fsOthers.map((p) => (
                   <button

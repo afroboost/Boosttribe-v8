@@ -155,10 +155,12 @@ test('champ commentaire : centré en bas, 36 rem max sur ordinateur, pleine larg
 /* ───────────────────────── structure de la scène ───────────────────────── */
 
 test('la vignette est placée en PIXELS par placementVignette, re-mesurée au redimensionnement', () => {
-  const scene = PANEL.slice(PANEL.indexOf('const deplacerVignette = '), PANEL.indexOf('data-testid="live-visio-panel"'));
-  assert.ok(PANEL.includes('placementVignette('));
+  // 30/09 : la vignette de scène passe par le composant UNIQUE VignetteFlottante (qui la place en pixels).
+  const scene = PANEL.slice(PANEL.indexOf('const decoupe = decoupeCoteACote('), PANEL.indexOf('data-testid="live-visio-panel"'));
+  const VIGNETTE = lire('components', 'session', 'VignetteFlottante.tsx');
+  assert.ok(PANEL.includes('placementVignette(') && VIGNETTE.includes('placementVignette('));
   assert.ok(!scene.includes('aspectRatio: \'16 / 9\'') && !/left: `\$\{vignette\.x \* 100\}%`/.test(scene), 'plus de pourcentages');
-  assert.ok(scene.includes('left: placeVignette.x') && scene.includes('height: placeVignette.hauteur'));
+  assert.ok(scene.includes('<VignetteFlottante') && VIGNETTE.includes('left: place.x') && VIGNETTE.includes('height: place.hauteur'));
   assert.ok(PANEL.includes('const scene = sceneBoxRef.current;') && PANEL.includes('ro?.observe(scene)'), 'la scène est observée (ResizeObserver)');
 });
 

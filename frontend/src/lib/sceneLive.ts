@@ -133,6 +133,21 @@ export interface EntreePlacement {
   position?: { x: number; y: number } | null;
   /** Largeur visée, en fraction de la scène (défaut : celle du studio, 28 %). */
   taille?: number;
+  /** Plafond de largeur (fraction) — défaut VIGNETTE_MAX (40 %). Les vignettes redimensionnables
+   *  des participants (plein écran) montent jusqu'à VIGNETTE_MAX_REDIM. */
+  tailleMax?: number;
+}
+
+/** Plafond des vignettes que l'hôte REDIMENSIONNE à la main (poignée) : 60 % de la scène. */
+export const VIGNETTE_MAX_REDIM = 0.6;
+
+/** Poignée de redimensionnement : la nouvelle largeur (fraction de la scène) depuis le bord gauche
+ *  de la vignette jusqu'au doigt / curseur. Le bornage (plancher, plafond, ratio 16:9, scène,
+ *  barre, champ) reste celui de `placementVignette`. */
+export function tailleDepuisPoignee(e: { largeurScene: number; gaucheVignettePx: number; pointeurPx: number }): number {
+  const L = e.largeurScene;
+  if (!(L > 0)) return PIP_TAILLE;
+  return Math.max(0.05, Math.min(1, (e.pointeurPx - e.gaucheVignettePx) / L));
 }
 
 export interface PlacementVignette { x: number; y: number; largeur: number; hauteur: number }
@@ -157,7 +172,8 @@ export function placementVignette(e: EntreePlacement): PlacementVignette {
   const rb = Math.max(0, Number.isFinite(e.reserveBasPx) ? (e.reserveBasPx as number) : 0);
   const taille = e.taille && e.taille > 0 ? e.taille : PIP_TAILLE;
   const plancher = Math.min(VIGNETTE_MIN_PX, Math.max(VIGNETTE_PLANCHER_ABSOLU_PX, 0.45 * L)); // banc réel : jamais sous 124 px de cadre (360 px → scène 250 px)
-  let largeur = Math.max(Math.min(taille * L, VIGNETTE_MAX * L), plancher);
+  const plafond = e.tailleMax && e.tailleMax > 0 ? Math.min(e.tailleMax, 1) : VIGNETTE_MAX;
+  let largeur = Math.max(Math.min(taille * L, plafond * L), plancher);
   // 1) Jamais plus grande que la scène elle-même.
   largeur = Math.min(largeur, L - 2 * m, ((H - 2 * m) * 16) / 9);
   // 2) Hors barre et hors champ, tant que ça ne l'écrase pas sous son plancher.

@@ -135,8 +135,10 @@ export const MenuActions: React.FC<MenuActionsProps> = ({ items, buttonClassName
           ref={menuRef}
           role="menu"
           aria-label={label}
-          className="fixed z-[140] min-w-[220px] max-w-[calc(100vw-1rem)] p-1.5 rounded-2xl border border-white/10 bg-[#0b0b10]/95 backdrop-blur-md shadow-2xl shadow-black/50"
-          style={{ bottom: pos.bottom, right: pos.right }}
+          /* Écran court (téléphone couché, participant) : le menu ne sort jamais par le haut —
+             il se borne à la place visible au-dessus de son ancrage et DÉFILE. */
+          className="fixed z-[140] min-w-[220px] max-w-[calc(100vw-1rem)] p-1.5 rounded-2xl border border-white/10 bg-[#0b0b10]/95 backdrop-blur-md shadow-2xl shadow-black/50 overflow-y-auto overscroll-contain"
+          style={{ bottom: pos.bottom, right: pos.right, maxHeight: `calc(100dvh - ${pos.bottom}px - 0.5rem - env(safe-area-inset-top))` }}
           data-testid="visio-menu-liste"
         >
           {normaux.map(rendre)}

@@ -1395,8 +1395,14 @@ export const SessionPage: React.FC = () => {
   // Propriétaire de CETTE session (host_id en base) — jamais le rôle global (admin, coach) :
   //    un coach ou le super-admin qui rejoint le Live d'un AUTRE hôte y est participant, et peut
   //    donc faire sa promo. Tant que host_id n'est pas encore chargé : repli sur isHost.
-  const estProprietaireSession = sessionHostId ? (!!user?.id && user.id === sessionHostId) : isHost;
+  // 01/10 : la réponse du SERVEUR (`est_hote` : identité vérifiée vs host_id de CETTE session) fait foi ;
+  //    sans elle, host_id lu en base ; en dernier recours seulement isHost (qui vaut vrai pour un admin
+  //    partout — un super-admin participant perdait « Faire ma promo » quand host_id était illisible).
+  const [estHoteServeur, setEstHoteServeur] = useState<boolean | null>(null);
+  const estProprietaireSession = estHoteServeur ?? (sessionHostId ? (!!user?.id && user.id === sessionHostId) : isHost);
   const livePromo = useLivePromo(sessionId || undefined, liveMode, estProprietaireSession, user?.id);
+  const estHoteConfig = livePromo.config?.est_hote;
+  useEffect(() => { setEstHoteServeur(typeof estHoteConfig === 'boolean' ? estHoteConfig : null); }, [estHoteConfig]);
   const [promoParticipantOuvert, setPromoParticipantOuvert] = useState(false);
   const [promoHoteOuvert, setPromoHoteOuvert] = useState(false);
   // 📱 MOBILE UNIQUEMENT : 4 onglets. Le contenu est MASQUÉ/AFFICHÉ en CSS (jamais démonté) ;

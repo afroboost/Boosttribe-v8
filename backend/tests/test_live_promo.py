@@ -121,6 +121,12 @@ class Monde:
             W.sessions[sid].update(patch)
             return True
 
+        async def enregistrer_config(sid, patch):   # 01/10 : UPDATE de la/des ligne(s) de la session
+            if sid not in W.sessions:
+                return 0
+            W.sessions[sid].update(patch)
+            return 1
+
         async def wallet_add(uid, delta, reason, ref, rev):
             if ref in W.refs:
                 return
@@ -159,6 +165,7 @@ class Monde:
         m._lp_maj = maj
         m._lp_inserer = inserer
         m.upsert_playlist_fields = upsert
+        m._lp_enregistrer_config = enregistrer_config
         m.wallet_add = wallet_add
         m.compute_commission = comm
         m.apply_stripe_key = cle

@@ -4,12 +4,12 @@ import type { OffrePromo, PromoPublique } from '@/lib/livePromo';
 
 const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 
-async function appel<T>(chemin: string, init: RequestInit = {}, auth = true): Promise<T> {
+async function appel<T>(chemin: string, init: RequestInit = {}, auth: boolean | 'si-connecte' = true): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
   if (auth) {
-    const t = await getAccessToken();
-    if (!t) throw new Error('Connecte-toi pour continuer');
-    headers.Authorization = `Bearer ${t}`;
+    const t = await getAccessToken().catch(() => null);
+    if (!t && auth === true) throw new Error('Connecte-toi pour continuer');
+    if (t) headers.Authorization = `Bearer ${t}`;
   }
   const res = await fetch(`${API_URL}${chemin}`, { ...init, headers });
   const data = await res.json().catch(() => ({}));
@@ -22,8 +22,9 @@ export interface PromoLigne { id: string; status: string; title: string; body?: 
   external_url?: string | null; participant_name?: string; duration_seconds: number; price_chf: number;
   actual_duration_seconds?: number | null; started_at?: string | null; ends_at?: string | null; stop_reason?: string | null }
 
+// 01/10 : jeton joint SI connecté → `est_hote` dit par le serveur (identité vs host_id de CETTE session).
 export const promoConfig = (sid: string) =>
-  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; paiement_reel?: boolean }>(`/live-promo/config/${encodeURIComponent(sid)}`, {}, false);
+  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; paiement_reel?: boolean; est_hote?: boolean | null }>(`/live-promo/config/${encodeURIComponent(sid)}`, {}, 'si-connecte');
 export const promoConfigHote = (sid: string) =>
   appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean }>(`/live-promo/host-config/${encodeURIComponent(sid)}`);
 export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[]) =>

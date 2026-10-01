@@ -81,7 +81,7 @@ test('hotfix super-admin : section visible si le serveur dit eligible ; mode tes
 
 test('« Faire ma promo » : propriété de CETTE session, jamais le rôle global (coach / admin)', () => {
   const s = src('pages/SessionPage.tsx');
-  assert.match(s, /const estProprietaireSession = sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost;/);
+  assert.match(s, /const estProprietaireSession = estHoteServeur \?\? \(sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost\);/);   // 01/10 : serveur d'abord
   const ligne = s.slice(s.indexOf('const estProprietaireSession'), s.indexOf('const [promoParticipantOuvert'));
   assert.doesNotMatch(ligne.replace(/\/\/.*$/gm, ''), /isAdmin|isCoach|role/);                 // aucun rôle global
   assert.match(s, /useLivePromo\(sessionId \|\| undefined, liveMode, estProprietaireSession, user\?\.id\)/);
@@ -123,4 +123,22 @@ test('cas réel de visibilité (coach global non-hôte, super-admin non-hôte) :
   assert.equal(visible(actif, 'hoteA', 'membre', false), true);                 // membre
   assert.equal(visible(actif, 'hoteA', 'hoteA', true), false);                  // vrai hôte
   assert.equal(visible(prod, 'hoteA', 'coachB', true), false);                  // ⇒ la cause : la config de la session
+});
+
+test('01/10 — visibilité « Faire ma promo » : hôte de CETTE session dit par le serveur, jamais le rôle global', () => {
+  const s = src('pages/SessionPage.tsx');
+  assert.match(s, /const estProprietaireSession = estHoteServeur \?\? \(sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost\);/);
+  assert.match(s, /useEffect\(\(\) => \{ setEstHoteServeur\(typeof estHoteConfig === 'boolean' \? estHoteConfig : null\); \}, \[estHoteConfig\]\);/);
+  assert.match(s, /onFaireMaPromo=\{\(!estProprietaireSession && user && livePromo\.config\?\.enabled && livePromo\.config\.offres\.length > 0\)/);
+  const api = src('lib/livePromoApi.ts');
+  assert.match(api, /`\/live-promo\/config\/\$\{encodeURIComponent\(sid\)\}`, \{\}, 'si-connecte'\)/);
+  // Modèle de la règle (mêmes entrées que SessionPage) — isHost vaut VRAI pour un admin partout.
+  const prop = (estHoteServeur, hostId, userId, isHost) => estHoteServeur ?? (hostId ? userId === hostId : isHost);
+  const visible = (cfg, ...a) => !prop(...a) && cfg.enabled && cfg.offres.length > 0;
+  const actif = { enabled: true, offres: [{ id: 'o', duree_s: 30, prix: 10 }] };
+  assert.equal(visible(actif, true, 'A', 'A', true), false);                 // A : vrai hôte
+  assert.equal(visible(actif, false, 'A', 'membre', false), true);           // B : membre
+  assert.equal(visible(actif, false, 'A', 'coachB', false), true);           // C : coach global non-hôte
+  assert.equal(visible(actif, false, null, 'admin', true), true);            // D : super-admin, host_id illisible
+  assert.equal(visible({ enabled: false, offres: [] }, false, 'A', 'membre', false), false); // E : désactivée
 });

@@ -4574,11 +4574,28 @@ async def _lp_session(session_id: str) -> Dict[str, Any]:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
                              params={"session_id": f"eq.{session_id}",
-                                     "select": "session_id,host_id,live_promo_enabled,live_promo_offres"})
+                                     "select": "session_id,host_id,live_promo_enabled,live_promo_offres",
+                                     "order": "updated_at.desc.nullslast"})
     rows = r.json() if r.status_code == 200 else []
     if not rows:
         raise HTTPException(status_code=404, detail="Session introuvable")
-    return rows[0]
+    # 01/10 : `playlists` peut porter des DOUBLONS pour une session (cf. saveAccessMode) — la ligne qui
+    # fait foi est la plus récente qui porte un host_id (jamais une ligne orpheline prise au hasard).
+    return next((x for x in rows if x.get("host_id")), rows[0])
+
+
+async def _lp_enregistrer_config(session_id: str, patch: Dict[str, Any]) -> int:
+    """01/10 — Écrit la config promo sur TOUTES les lignes de la session (UPDATE, jamais ON CONFLICT :
+    sans contrainte unique sur session_id, l'upsert répondait 400/42P10 → « Enregistrement impossible »).
+    Renvoie le nombre de lignes réellement modifiées (-1 = erreur)."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.patch(f"{SUPABASE_URL}/rest/v1/playlists",
+                               headers=_service_headers({"Prefer": "return=representation"}),
+                               params={"session_id": f"eq.{session_id}"}, json=patch)
+    if r.status_code not in (200, 204):
+        logger.warning("[LIVE-PROMO] config session=%s refusée par la base : HTTP %s", session_id, r.status_code)
+        return -1
+    return len(r.json() or []) if r.status_code == 200 and r.content else 0
 
 
 async def _lp_hote_super_admin(host_id: str) -> bool:
@@ -4650,12 +4667,20 @@ async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.get("/live-promo/config/{session_id}")
-async def live_promo_config(session_id: str):
-    """Ce que voit un participant : promo activée ? tarifs ACTIFS. `eligible` = hôte en mode commission."""
+async def live_promo_config(session_id: str, authorization: Optional[str] = Header(default=None)):
+    """Ce que voit un participant : promo activée ? tarifs ACTIFS. `eligible` = hôte en mode commission.
+    01/10 : `est_hote` = CE compte est-il l'hôte de CETTE session (identité serveur vs host_id) — jamais
+    un rôle global ; None sans jeton valide (la lecture reste publique)."""
     s = await _lp_session(session_id)
     mode = await _lp_mode(s.get("host_id"))
     actif = mode is not None and s.get("live_promo_enabled") is True
-    return {"eligible": mode is not None, "enabled": actif, "currency": _lp.DEVISE,
+    est_hote: Optional[bool] = None
+    if authorization:
+        try:
+            est_hote = (await get_user_from_token(authorization)).get("id") == s.get("host_id")
+        except HTTPException:
+            est_hote = None
+    return {"eligible": mode is not None, "enabled": actif, "currency": _lp.DEVISE, "est_hote": est_hote,
             "paiement_reel": _lp.paiement_reel_possible(mode),
             "offres": _lp.offres_actives(s.get("live_promo_offres")) if actif else []}
 
@@ -4689,8 +4714,15 @@ async def live_promo_save_config(body: LivePromoConfigBody, authorization: Optio
             patch["live_promo_offres"] = _lp.valider_offres(body.offres)
         except _lp.RegleRefusee as e:
             raise _lp_refus(e)
-    if patch and not await upsert_playlist_fields(body.session_id, patch):
-        raise HTTPException(status_code=500, detail="Enregistrement impossible")
+    if patch:
+        n = await _lp_enregistrer_config(body.session_id, patch)
+        if n <= 0:
+            raise HTTPException(status_code=500, detail="Enregistrement impossible")
+        # Preuve : on RELIT ce que lira le participant ; un écart = échec dit, jamais un faux succès.
+        relu = await _lp_session(body.session_id)
+        if any(relu.get(k) != v for k, v in patch.items()):
+            logger.warning("[LIVE-PROMO] config session=%s non confirmée à la relecture", body.session_id)
+            raise HTTPException(status_code=500, detail="Enregistrement non confirmé — réessayez")
     return {"ok": True, **{k.replace("live_promo_", ""): v for k, v in patch.items()}}
 
 

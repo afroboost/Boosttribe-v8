@@ -4349,10 +4349,15 @@ export const SessionPage: React.FC = () => {
   const livePromoNode = ((estProprietaireSession && promoAtraiter > 0 && !livePromo.active) || promoParticipantOuvert || promoHoteOuvert) ? (
     <>
       {livePromo.active ? null : (estProprietaireSession && promoAtraiter > 0) ? (
-        <button type="button" onClick={() => setPromoHoteOuvert(true)}
-          className="mx-auto flex min-h-[36px] items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white backdrop-blur"
+        /* 01/10 : bien VISIBLE (taille, contraste, zone tactile confortable) ; une brève animation rejoue
+           SEULEMENT quand le nombre change (key = nombre), jamais en boucle. */
+        <button key={promoAtraiter} type="button" onClick={() => setPromoHoteOuvert(true)}
+          className="mx-auto flex min-h-[48px] items-center gap-2.5 rounded-full border-2 border-white/90 px-5 py-2 text-base font-bold text-white shadow-2xl shadow-black/60 animate-[bounce_0.6s_ease-out_2]"
+          style={{ background: 'var(--bt-accent)' }}
+          aria-live="polite" aria-label={`Promo en attente : ${promoAtraiter}`}
           data-testid="live-promo-pastille">
-          <span className="h-1.5 w-1.5 rounded-full bg-[var(--bt-accent)]" aria-hidden="true" /> Promo en attente ({promoAtraiter})
+          <span className="h-3 w-3 rounded-full bg-white ring-4 ring-white/40" aria-hidden="true" />
+          Promo en attente ({promoAtraiter})
         </button>
       ) : null}
       {promoParticipantOuvert && sessionId && livePromo.config ? (

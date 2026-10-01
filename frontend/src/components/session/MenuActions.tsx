@@ -1,5 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { MoreVertical } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { cibleSuperposition, placerMenu } from '@/lib/superposition';
 
 /**
  * ⋮ Menu des actions SECONDAIRES du live (hôte).
@@ -54,9 +56,8 @@ export const MenuActions: React.FC<MenuActionsProps> = ({ items, buttonClassName
     const placer = () => {
       const btn = btnRef.current; if (!btn) return;
       const r = btn.getBoundingClientRect();
-      const largeur = menuRef.current?.offsetWidth ?? 220;
-      const bottom = Math.max(8, Math.round(window.innerHeight - r.top + 8));
-      const right = Math.min(Math.max(8, Math.round(window.innerWidth - r.right)), Math.max(8, window.innerWidth - largeur - 8));
+      const { bottom, right } = placerMenu({ largeurFenetre: window.innerWidth, hauteurFenetre: window.innerHeight,
+        boutonHaut: r.top, boutonDroite: r.right, largeurMenu: menuRef.current?.offsetWidth ?? 220 });
       setPos((p) => (p.bottom === bottom && p.right === right ? p : { bottom, right }));
     };
     placer();
@@ -130,7 +131,7 @@ export const MenuActions: React.FC<MenuActionsProps> = ({ items, buttonClassName
       >
         <MoreVertical className="w-5 h-5" />
       </button>
-      {open && (
+      {open && cibleSuperposition() && createPortal(
         <div
           ref={menuRef}
           role="menu"
@@ -144,7 +145,8 @@ export const MenuActions: React.FC<MenuActionsProps> = ({ items, buttonClassName
           {normaux.map(rendre)}
           {dangers.length > 0 && normaux.length > 0 && <div className="my-1 h-px bg-white/10" role="separator" />}
           {dangers.map(rendre)}
-        </div>
+        </div>,
+        cibleSuperposition() as HTMLElement,
       )}
     </>
   );

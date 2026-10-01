@@ -1,4 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { cibleSuperposition } from '@/lib/superposition';
 import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff, Video } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
@@ -1001,8 +1003,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
       {/* 🎬 Studio — panneau (desktop) ou tiroir plein écran (mobile, `fixed` dans le nœud). Fermé = rien. */}
       {studioOpen && studioNode}
 
-      {/* 📡 Tiroir « Diffuser en direct » (fixed dans le nœud : panneau desktop ou plein écran mobile). Fermé = rien. */}
-      {broadcastOpen && broadcastNode}
+      {/* 📡 Tiroir « Diffuser en direct » — PORTAIL (élément plein écran, sinon body) : hors de la
+          zone caméra il était invisible en plein écran natif → « rien ne se passe » au clic. */}
+      {broadcastOpen && broadcastNode && cibleSuperposition() && createPortal(broadcastNode, cibleSuperposition() as HTMLElement)}
 
       {/* ⏺ Panneau « Enregistrer le Programme » (fixed dans le nœud). Fermé = rien. */}
       {recordOpen && recordNode}

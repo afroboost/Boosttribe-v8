@@ -39,7 +39,8 @@ test('barre : icône Radio « Diffuser en direct », aria-label + tooltip, fuchs
   assert.ok(VISIO.includes('${broadcastLive ? ACCENT : DARK}'), 'fuchsia (ACCENT = var(--bt-accent)) quand un direct tourne');
   assert.ok(VISIO.includes('aria-pressed={broadcastOpen}'), 'état ouvert exposé');
   assert.ok(VISIO.includes("testId: 'visio-broadcast-item'"), 'item du menu ⋮');
-  assert.ok(VISIO.includes('{broadcastOpen && broadcastNode}'), 'tiroir monté seulement si ouvert');
+  // 01/10 : toujours monté seulement si ouvert, mais en PORTAIL (visible en plein écran natif).
+  assert.ok(VISIO.includes('{broadcastOpen && broadcastNode && cibleSuperposition() && createPortal(broadcastNode'), 'tiroir monté seulement si ouvert');
   const propsBloc = VISIO.slice(VISIO.indexOf('interface LiveVisioPanelProps'), VISIO.indexOf('type Layout'));
   for (const p of ['broadcastNode?: React.ReactNode', 'broadcastOpen?: boolean', 'broadcastLive?: boolean', 'onToggleBroadcast?: () => void', 'screenShareDisponible?: boolean']) assert.ok(propsBloc.includes(p), p);
 });

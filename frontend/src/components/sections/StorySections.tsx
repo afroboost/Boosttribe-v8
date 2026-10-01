@@ -13,6 +13,18 @@ const TONES: Record<Tone, { bg: string; title: string; body: string; panelBg: st
   dark: { bg: "#000000", title: "#F5F5F7", body: "#A1A1A6", panelBg: "#1C1C1E", panelBorder: "rgba(255,255,255,0.10)", icon: "#FFFFFF" },
 };
 
+// 01/10 — Teinte d'un chapitre DÉRIVÉE de sa position (alternance), quel que soit le nombre de
+// chapitres. Cause de la page noire du 01/10 : un tableau fixe de 4 teintes pour 5 chapitres →
+// TONES[undefined].bg → exception au rendu de TOUTE la page d'accueil.
+const toneDuChapitre = (i: number): Tone => (i % 2 === 0 ? "light" : "dark");
+
+// Repli sûr : une teinte inconnue est SIGNALÉE (console) mais ne fait plus tomber la page.
+const teinte = (tone: Tone): (typeof TONES)[Tone] => {
+  const c = TONES[tone];
+  if (!c) console.error(`[StorySections] teinte inconnue : ${String(tone)} — repli sur « dark »`);
+  return c ?? TONES.dark;
+};
+
 interface Chapter {
   eyebrow: string;
   title: React.ReactNode;
@@ -61,7 +73,7 @@ const CHAPTERS: Chapter[] = [
 
 // Visuel d'un chapitre — panneau monochrome tonal + icône XXL + motif « onde » (accent discret).
 const ChapterVisual: React.FC<{ icon: Chapter["icon"]; tone: Tone; accent: string }> = ({ icon: Icon, tone, accent }) => {
-  const c = TONES[tone];
+  const c = teinte(tone);
   return (
     <div
       className="relative mx-auto w-full max-w-3xl aspect-video rounded-[28px] overflow-hidden flex items-center justify-center"
@@ -84,7 +96,7 @@ const ChapterVisual: React.FC<{ icon: Chapter["icon"]; tone: Tone; accent: strin
 
 // Une section plein écran, centrée (composition façon page produit Apple).
 const ChapterSection: React.FC<{ chapter: Chapter; tone: Tone; accent: string }> = ({ chapter, tone, accent }) => {
-  const c = TONES[tone];
+  const c = teinte(tone);
   return (
     <section className="min-h-screen flex flex-col items-center justify-center px-6 py-24" style={{ background: c.bg }}>
       <div className="w-full max-w-5xl mx-auto text-center">
@@ -106,13 +118,12 @@ export const StorySections: React.FC = () => {
   const accent = colors.primary;
   const revealRef = useReveal<HTMLDivElement>();
 
-  // La hero est BLANCHE → on démarre en NOIR, puis on alterne.
-  const tones: Tone[] = ["light", "dark", "light", "dark"];
+  // Alternance clair / sombre, dans l'ordre d'origine (clair, sombre, clair, sombre…).
 
   return (
     <div ref={revealRef}>
       {CHAPTERS.map((ch, i) => (
-        <ChapterSection key={i} chapter={ch} tone={tones[i]} accent={accent} />
+        <ChapterSection key={i} chapter={ch} tone={toneDuChapitre(i)} accent={accent} />
       ))}
 
       {/* Bande cinématique — carrousel plein-largeur sur NOIR (si images en admin) */}

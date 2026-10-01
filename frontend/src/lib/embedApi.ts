@@ -7,6 +7,7 @@
 // ⚠️ Le secret partagé reste 100% côté backend — ce module ne manipule QUE le jeton signé opaque.
 import { supabase } from '@/lib/supabaseClient';
 import type { EmailOtpType } from '@supabase/supabase-js';
+import { memeCompte, sessionEtrangere } from '@/lib/identiteEmbed';
 
 const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 // Origine EXPLICITE de la page parente afroboost — cible de tous les postMessage (jamais '*').
@@ -61,6 +62,9 @@ export async function verifyEmbedToken(token: string): Promise<EmbedVerifyResult
     // Connexion automatique via le lien magique généré par le backend (aucun email envoyé).
     const login = (data as { login?: Record<string, string> }).login || {};
     if (supabase) {
+      // 🔐 Une session restée ouverte pour un AUTRE compte est fermée d'abord (jamais d'héritage).
+      const avant = (await supabase.auth.getSession()).data.session?.user?.email;
+      if (sessionEtrangere(login.email, avant)) await supabase.auth.signOut({ scope: 'local' });
       const type = (login.type as EmailOtpType) || 'magiclink';
       let signedIn = false;
       if (login.token_hash) {
@@ -70,6 +74,12 @@ export async function verifyEmbedToken(token: string): Promise<EmbedVerifyResult
       // Repli : OTP par email si le token_hash a échoué ou est absent.
       if (!signedIn && login.email && login.email_otp) {
         await supabase.auth.verifyOtp({ email: login.email, token: login.email_otp, type: 'email' });
+      }
+      // 🔐 On ne continue QUE sous le compte annoncé par Afroboost.
+      const apres = (await supabase.auth.getSession()).data.session?.user?.email;
+      if (!memeCompte(login.email, apres)) {
+        if (apres) await supabase.auth.signOut({ scope: 'local' });
+        return { ok: false, error: 'Connexion à votre compte impossible. Rafraîchissez depuis afroboost.com.' };
       }
     }
 

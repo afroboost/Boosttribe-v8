@@ -141,6 +141,24 @@ export function useBroadcast(o: UseBroadcastOptions): UseBroadcastReturn {
     setDirectAutorise(false);
   }, []);
 
+  // 🔐 01/10 : changement de compte dans ce navigateur → on oublie l'état affiché et on relit LE
+  //    SERVEUR sous le nouveau jeton (jamais l'affichage du compte précédent). Clé = identifiant
+  //    (primitive) : le rafraîchissement horaire du jeton ne relance rien.
+  useEffect(() => {
+    if (!supabase || !o.enabled) return undefined;
+    let compte: string | null | undefined;
+    const { data } = supabase.auth.onAuthStateChange((_evt, session) => {
+      const id = session?.user?.id ?? null;
+      if (compte !== undefined && id !== compte) {
+        dispatch({ type: 'oublier' });
+        setDirectAutorise(false);
+        if (id) refresh();
+      }
+      compte = id;
+    });
+    return () => { data.subscription.unsubscribe(); };
+  }, [o.enabled, refresh]);
+
   useEffect(() => {
     if (!o.enabled || !o.room) return;
     let annule = false;

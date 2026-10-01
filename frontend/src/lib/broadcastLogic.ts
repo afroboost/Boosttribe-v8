@@ -122,6 +122,7 @@ export interface StatutServeur {
 
 export type ActionBroadcast =
   | { type: 'comptes'; comptes: ComptesServeur }
+  | { type: 'oublier' }   // 🔐 changement de compte : rien du compte précédent ne reste affiché
   | { type: 'select'; platform: Plateforme; on: boolean }
   | { type: 'start'; maintenant: number }
   | { type: 'statut'; statut: StatutServeur; maintenant: number }
@@ -142,6 +143,8 @@ export function destinationsADemarrer(e: EtatBroadcast): Plateforme[] {
 
 export function broadcastReducer(e: EtatBroadcast, a: ActionBroadcast): EtatBroadcast {
   switch (a.type) {
+    case 'oublier':
+      return BROADCAST_INITIAL;
     case 'comptes':
       return {
         ...e,

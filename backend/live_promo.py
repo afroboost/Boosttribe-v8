@@ -200,7 +200,11 @@ def mode_promo(payment_type: Optional[str], hote_est_super_admin: bool) -> Optio
 
 
 def paiement_reel_possible(mode: Optional[str]) -> bool:
-    return mode == MODE_COMMISSION
+    """01/10 (partie B) : le super-admin UNIQUE, HÔTE de sa session, encaisse aussi réellement — même
+    pipeline que le mode commission (Stripe plateforme → compute_commission → wallet_add de l'hôte).
+    Le mode est TOUJOURS calculé depuis l'hôte de la session (jamais l'appelant) : un super-admin
+    participant chez un coach n'y gagne aucun droit financier. Abonnement ordinaire : None, inchangé."""
+    return mode in (MODE_COMMISSION, MODE_SUPER_ADMIN)
 
 
 def test_sans_paiement_possible(mode: Optional[str], statut: str) -> bool:

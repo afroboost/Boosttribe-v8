@@ -396,24 +396,48 @@ def test_schema_ajout_pur_idempotent_avec_sauvegarde():
 # ─── HOTFIX : le super-admin voit, configure, modère et teste (sans règle d'argent inventée) ───
 def test_super_admin_voit_et_configure_sa_session(w):
     cfg = w.appel(w.m.live_promo_host_config, "liveAdmin", authorization="Bearer t-admin")
-    assert cfg["eligible"] is True and cfg["mode"] == "super_admin" and cfg["paiement_reel"] is False
+    assert cfg["eligible"] is True and cfg["mode"] == "super_admin" and cfg["paiement_reel"] is True    # 01/10 : paiement RÉEL
     body = w.m.LivePromoConfigBody(session_id="liveAdmin", enabled=True, offres=[{"duree_s": 15, "prix": 5}, {"duree_s": 30, "prix": 10}])
     w.appel(w.m.live_promo_save_config, body, authorization="Bearer t-admin")
     pub = w.appel(w.m.live_promo_config, "liveAdmin")
-    assert pub["enabled"] is True and len(pub["offres"]) == 2 and pub["paiement_reel"] is False   # « Faire ma promo » disponible
+    assert pub["enabled"] is True and len(pub["offres"]) == 2 and pub["paiement_reel"] is True    # « Faire ma promo » + Payer
 
 
-def test_super_admin_parcours_de_test_sans_argent(w):
+def test_super_admin_hote_paiement_reel_pipeline_existant(w):
+    """01/10 PARTIE B : le super-admin HÔTE de SA session encaisse réellement — même pipeline que le
+    mode commission (Stripe plateforme → compute_commission → wallet_add), crédit UNE fois."""
     w.appel(w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveAdmin", enabled=True,
             offres=[{"id": "t30", "duree_s": 30, "prix": 10}]), authorization="Bearer t-admin")
     p = w.demander(sid="liveAdmin", offre="t30")
+    assert err(w, w.m.live_promo_pay, p["id"], authorization="Bearer t-part") == 409        # pas avant acceptation
+    assert w.stripe_crees == 0 and w.wallet == []
     w.appel(w.m.live_promo_decision, p["id"], w.m.LivePromoDecisionBody(decision="accept"), authorization="Bearer t-admin")
-    assert err(w, w.m.live_promo_pay, p["id"], authorization="Bearer t-part") == 409        # paiement réel fermé
-    w.appel(w.m.live_promo_test_ready, p["id"], authorization="Bearer t-admin")
-    assert w.promos[p["id"]]["status"] == LP.READY and w.promos[p["id"]]["test_sans_paiement"] is True
+    assert w.stripe_crees == 0 and w.wallet == []                                            # accepter ne débite rien
+    url = w.appel(w.m.live_promo_pay, p["id"], authorization="Bearer t-part")["url"]
+    assert url and w.stripe_crees == 1
+    meta = next(x for x in w.stripe_cles.values() if x.meta["promo_id"] == p["id"]).meta
+    assert meta["coach_user_id"] == ADMIN and meta["kind"] == "live_promo"                    # destination = l'HÔTE de la session
+    w.webhook_paye(p["id"]); w.webhook_paye(p["id"])                                         # webhook rejoué
+    assert w.promos[p["id"]]["status"] == LP.READY and not w.promos[p["id"]].get("test_sans_paiement")
+    assert w.wallet == [(ADMIN, 8.5, "live_promo", f"live_promo:{p['id']}")]                 # brut 10, commission 1.5, net 8.5 — une fois
     w.appel(w.m.live_promo_start, p["id"], authorization="Bearer t-admin")
     assert w.appel(w.m.live_promo_active, "liveAdmin")["promo"]["id"] == p["id"]
-    assert w.stripe_crees == 0 and w.wallet == []                                            # AUCUN argent
+
+
+def test_super_admin_hote_refus_zero_paiement(w):
+    w.appel(w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveAdmin", enabled=True,
+            offres=[{"id": "t30", "duree_s": 30, "prix": 10}]), authorization="Bearer t-admin")
+    p = w.demander(sid="liveAdmin", offre="t30")
+    w.appel(w.m.live_promo_decision, p["id"], w.m.LivePromoDecisionBody(decision="reject"), authorization="Bearer t-admin")
+    assert err(w, w.m.live_promo_pay, p["id"], authorization="Bearer t-part") == 409
+    assert w.promos[p["id"]]["status"] == LP.REJECTED and w.stripe_crees == 0 and w.wallet == []
+
+
+def test_super_admin_participant_chez_un_coach_aucun_droit_financier(w):
+    w.users["t-admin"] = {"id": ADMIN, "email": "contact.artboost@gmail.com"}
+    pid = _prete(w, jeton="Bearer t-admin")                                                  # le super-admin PAIE comme participant
+    assert w.wallet == [(HOTE_C, 8.5, "live_promo", f"live_promo:{pid}")]                     # l'argent va au coach hôte
+    assert err(w, w.m.live_promo_start, pid, authorization="Bearer t-admin") == 403          # aucune main sur la promo du coach
 
 
 def test_test_sans_paiement_interdit_ailleurs(w):
@@ -440,6 +464,8 @@ def test_mode_promo_pur():
     assert LP.mode_promo("commission", True) == "commission"       # super-admin EN commission : paiement réel
     assert LP.mode_promo("subscription", True) == "super_admin"
     assert LP.mode_promo("subscription", False) is None
+    assert LP.paiement_reel_possible("commission") and LP.paiement_reel_possible("super_admin")   # 01/10
+    assert not LP.paiement_reel_possible(None)
     assert "test_sans_paiement boolean" in LP.SQL_SCHEMA and "drop " not in LP.SQL_SCHEMA.lower()
 
 

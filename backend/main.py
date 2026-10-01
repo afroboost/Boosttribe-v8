@@ -4940,8 +4940,8 @@ async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(de
     if p.get("status") not in _lp.PAYABLES:
         raise HTTPException(status_code=409, detail="Paiement impossible dans l'état actuel")
     if not _lp.paiement_reel_possible(await _lp_mode(p.get("host_id"))):
-        # Super-admin hors commission : aucune destination financière n'existe (règle des billets).
-        raise HTTPException(status_code=409, detail="Paiement réel indisponible pour ce Live (mode test de l'hôte)")
+        # Hôte ni en commission ni super-admin : aucune destination financière (règle des billets).
+        raise HTTPException(status_code=409, detail="Paiement réel indisponible pour ce Live")
     tentative = int(p.get("checkout_attempt") or 0)
     if p.get("status") == _lp.PAYMENT_PENDING and p.get("stripe_session_id"):
         try:

@@ -209,16 +209,17 @@ def test_tarif_creation_relecture_modification_activation_suppression():
     assert lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))["offres"] == []
 
 
-def test_super_admin_en_mode_test_enregistre_ses_tarifs():
+def test_super_admin_hote_enregistre_ses_tarifs():
     m, pg = monde([{"session_id": SID, "host_id": HOTE, "live_promo_enabled": False, "live_promo_offres": []}])
 
     async def ptype(uid):
         return "subscription"                    # hors commission…
 
     async def admin(uid):
-        return uid == HOTE                       # …mais super-admin → mode test (aucun paiement réel)
+        return uid == HOTE                       # …mais super-admin → mode super_admin (paiement réel depuis 01/10)
     m.get_coach_payment_type, m._lp_hote_super_admin = ptype, admin
     _sauver(m, [{"id": "", "duree_s": 30, "prix": 10, "actif": True}])
     vu = lancer(m.live_promo_config(SID, authorization="Bearer coachB"))
-    assert vu["enabled"] is True and vu["paiement_reel"] is False and vu["est_hote"] is False
+    assert vu["enabled"] is True and vu["est_hote"] is False
+    assert vu["paiement_reel"] is True                    # 01/10 partie B : super-admin hôte = paiement réel
     assert [(o["duree_s"], o["prix"]) for o in vu["offres"]] == [(30, 10.0)]

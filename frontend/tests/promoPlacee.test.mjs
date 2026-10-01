@@ -26,16 +26,29 @@ test('pas de ratio imposé : la hauteur suit le contenu', () => {
   assert.equal(a.largeur, b.largeur); assert.equal(a.hauteur, 90); assert.equal(b.hauteur, 160);
 });
 
-test('geste seulement par les poignées : « Découvrir » / « Arrêter » restent des clics ; tactile sans défilement', () => {
+test('01/10 — la FENÊTRE se glisse (plus de bouton « Déplacer ») ; clic ≠ geste ; poignée largeur ET hauteur', () => {
   const f = codeSeul(lire('components/session/LivePromoFlottante.tsx'));
-  assert.match(f, /onPointerDown=\{\(e\) => debut\(e, 'deplacer'\)\}/);
-  assert.match(f, /onPointerDown=\{\(e\) => debut\(e, 'taille'\)\}/);
-  assert.equal((f.match(/touch-none/g) || []).length, 2);
-  assert.match(f, /tailleDepuisPoignee\(\{ largeurScene: s\.width/);                         // mécanique de VignetteFlottante
-  assert.match(f, /if \(l\) oRef\.current\.onFin\?\.\(l\);/);                                 // UNE écriture par geste
-  assert.match(f, /if \(!debut\) return null;/);                                               // participant : aucune poignée
+  assert.doesNotMatch(f, /live-promo-deplacer|Déplacer<\/|> Déplacer/);                         // bouton supprimé
+  assert.match(f, /onPointerDown: \(e\) => pos\.debut\?\.\(e, 'deplacer'\)/);              // la fenêtre entière
+  assert.match(f, /closest\('a,button,\[data-promo-poignee\]'\)\) return;/);                  // « Découvrir » / « Arrêter » : un clic
+  assert.match(f, /if \(Math\.hypot\(ev\.clientX - x0, ev\.clientY - y0\) < SEUIL_GESTE_PX\) return;/);   // seuil : un toucher reste un clic
+  assert.match(f, /w: \(ev\.clientX - \(s\.left \+ cur\.x \* s\.width\)\) \/ s\.width, h: \(ev\.clientY - \(s\.top \+ cur\.y \* s\.height\)\) \/ s\.height/);
+  assert.match(f, /if \(engage && l\) oRef\.current\.onFin\?\.\(l\);/);                      // une écriture par geste réel
+  assert.match(f, /if \(!pos\.debut\) return \{\};/);                                          // participant : rien
+  assert.match(f, /if \(!debut\) return null;/);
   const b = codeSeul(lire('components/session/LivePromoBanner.tsx'));
-  assert.doesNotMatch(b, /onPointerDown/);                                                     // la bannière elle-même ne capte rien
+  assert.doesNotMatch(b, /onPointerDown|onClick=\{[^}]*arreter|promoArreter/);                  // la bannière ne termine RIEN
+});
+
+test('01/10 — hauteur demandée, jamais sous le contenu ; visuel qui suit la hauteur', async () => {
+  const { tailleImagePromo } = await import('./.build/sceneLive.mjs');
+  const a = placementPromo({ largeurScene: 1000, hauteurScene: 700, layout: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 }, hauteurContenuPx: 120 });
+  assert.equal(a.hauteur, 350);
+  const b = placementPromo({ largeurScene: 1000, hauteurScene: 700, layout: { x: 0.1, y: 0.1, w: 0.5, h: 0.05 }, hauteurContenuPx: 120 });
+  assert.equal(b.hauteur, 120);                                                                    // jamais sous le contenu
+  const c = placementPromo({ largeurScene: 1000, hauteurScene: 700, layout: { x: 0.1, y: 0.1, w: 0.5, h: 5 }, hauteurContenuPx: 120 });
+  assert.ok(c.hauteur <= 700 - 16);                                                                // jamais plus que la scène
+  assert.equal(tailleImagePromo(300, 500), 200); assert.equal(tailleImagePromo(10, 500), 56); assert.equal(tailleImagePromo(900, 1000), 240);
 });
 
 test('position par défaut inchangée (pile du bas) ; position serveur pour tous ; hôte seul', () => {

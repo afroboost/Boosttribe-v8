@@ -251,7 +251,8 @@ export function deplacerSansCouper(noeud: NoeudDeplacable, cible: CibleDeplaceme
 // ─── 📣 01/10 — PROMO DIFFUSÉE déplaçable / redimensionnable par l'hôte ───────────────────────
 export const PROMO_LARGEUR_MIN_PX = 220;   // en dessous, titre + « Découvrir » deviennent illisibles
 export const PROMO_LARGEUR_MAX = 0.9;      // jamais plus large que 90 % de la scène
-export interface LayoutPromo { x: number; y: number; w: number }
+/** 01/10 : `h` (hauteur, fraction de la scène) facultative — absente = hauteur du contenu. */
+export interface LayoutPromo { x: number; y: number; w: number; h?: number }
 export interface PlacementPromo { x: number; y: number; largeur: number; hauteur: number }
 
 /**
@@ -259,6 +260,13 @@ export interface PlacementPromo { x: number; y: number; largeur: number; hauteur
  * dans la scène, hors barre à droite, hors champ commentaire en bas, réserves qui cèdent avant le
  * cadre — mais SANS ratio imposé : la largeur vient du geste, la HAUTEUR du contenu mesuré.
  */
+/** Taille du visuel de la promo pour une hauteur DEMANDÉE (pas la hauteur finale : sinon la fenêtre
+ *  ne pourrait plus rapetisser) — entre 56 px et 40 % de la largeur (240 px au plus). */
+export function tailleImagePromo(hauteurDemandeePx: number, largeurPx: number): number {
+  const plafond = Math.max(56, Math.min(240, largeurPx * 0.4));
+  return Math.round(Math.max(56, Math.min(plafond, (Number.isFinite(hauteurDemandeePx) ? hauteurDemandeePx : 0) - 26)));
+}
+
 export function placementPromo(e: {
   largeurScene: number; hauteurScene: number; reserveDroitePx?: number; reserveBasPx?: number;
   layout: LayoutPromo; hauteurContenuPx: number;
@@ -273,7 +281,10 @@ export function placementPromo(e: {
   const dispo = L - rd - 2 * m >= plancher ? L - rd - 2 * m : L - 2 * m;       // la réserve cède avant le cadre
   const w = Number.isFinite(e.layout?.w) ? e.layout.w : 0.4;
   const largeur = Math.max(0, Math.min(Math.max(w * L, plancher), PROMO_LARGEUR_MAX * L, dispo));
-  const hauteur = Math.max(0, Math.min(Number.isFinite(e.hauteurContenuPx) ? e.hauteurContenuPx : 0, H - 2 * m));
+  // Hauteur : celle demandée par la poignée, JAMAIS sous le contenu (rien n'est coupé), jamais plus que la scène.
+  const demandee = Number.isFinite(e.layout?.h) ? (e.layout.h as number) * H : 0;
+  const contenu = Number.isFinite(e.hauteurContenuPx) ? e.hauteurContenuPx : 0;
+  const hauteur = Math.max(0, Math.min(Math.max(demandee, contenu), H - 2 * m));
   const rdE = Math.max(0, Math.min(rd, L - 2 * m - largeur));
   const rbE = Math.max(0, Math.min(rb, H - 2 * m - hauteur));
   const xMax = Math.max(m, L - rdE - m - largeur);

@@ -249,6 +249,7 @@ def test_sans_paiement_possible(mode: Optional[str], statut: str) -> bool:
 # None = position par défaut (en bas, comme avant). Bornage FIN (barre, champ, plancher en px) : côté
 # écran (sceneLive.placementPromo) ; ici on ne garde que des nombres sûrs.
 LAYOUT_W_MIN = 0.15
+LAYOUT_H_MIN = 0.08
 
 
 def valider_layout(brut: Any) -> Optional[Dict[str, float]]:
@@ -257,12 +258,18 @@ def valider_layout(brut: Any) -> Optional[Dict[str, float]]:
     if not isinstance(brut, dict):
         raise RegleRefusee("Position illisible")
     sortie: Dict[str, float] = {}
-    for k in ("x", "y", "w"):
+    # 01/10 : `h` (hauteur, fraction de la scène) FACULTATIVE — la fenêtre se redimensionne en largeur
+    #   ET en hauteur ; absente (anciennes positions) = hauteur du contenu.
+    for k in ("x", "y", "w", "h"):
         v = brut.get(k)
+        if k == "h" and v is None:
+            continue
         if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or v in (float("inf"), float("-inf")):
             raise RegleRefusee("Position illisible")
         sortie[k] = round(min(1.0, max(0.0, float(v))), 4)
     sortie["w"] = max(LAYOUT_W_MIN, sortie["w"])
+    if "h" in sortie:
+        sortie["h"] = max(LAYOUT_H_MIN, sortie["h"])
     return sortie
 
 

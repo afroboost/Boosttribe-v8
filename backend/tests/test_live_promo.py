@@ -649,3 +649,11 @@ def test_coach_b_et_autres_participants_font_leur_promo_chez_coach_a_sans_aucun_
             action(); raise AssertionError("droit hôte accordé à Coach B")
         except HTTPException as e:
             assert e.status_code == 403
+
+
+def test_01_10_layout_hauteur_facultative_et_bornee():
+    assert LP.valider_layout({"x": 0.1, "y": 0.2, "w": 0.4, "h": 0.3}) == {"x": 0.1, "y": 0.2, "w": 0.4, "h": 0.3}
+    assert LP.valider_layout({"x": 0.1, "y": 0.2, "w": 0.4}) == {"x": 0.1, "y": 0.2, "w": 0.4}      # anciennes positions
+    assert LP.valider_layout({"x": 0, "y": 0, "w": 0.4, "h": 0.001})["h"] == LP.LAYOUT_H_MIN
+    with pytest.raises(LP.RegleRefusee):
+        LP.valider_layout({"x": 0, "y": 0, "w": 0.4, "h": "grand"})

@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cibleSuperposition } from '@/lib/superposition';
-import { usePromoPositionnable, CalquePromoPlace, PoigneesPromo } from '@/components/session/LivePromoFlottante';
+import { usePromoPositionnable, CalquePromoPlace, PoigneesPromo, propsCadrePromo } from '@/components/session/LivePromoFlottante';
 import type { LayoutPromo } from '@/lib/sceneLive';
 import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff, Video } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
@@ -987,9 +987,10 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
               <div className="pointer-events-auto relative self-center px-2 w-full min-w-0" style={{ maxWidth: 'min(30rem, 100%)' }} data-testid="visio-calque-promo">
                 {/* Position par défaut (en bas, comme avant) ; l'hôte la prend par sa poignée. */}
                 {promoBanniere && !promoPos.layout ? (
-                  <div ref={promoPos.cadreRef} className="relative">
-                    <PoigneesPromo debut={promoPos.debut} />
+                  /* 01/10 : la FENÊTRE se glisse (plus de bouton « Déplacer ») ; poignée de taille en bas à droite. */
+                  <div ref={promoPos.cadreRef} {...propsCadrePromo(promoPos)} className={`relative ${propsCadrePromo(promoPos).className ?? ''}`}>
                     {promoBanniere}
+                    <PoigneesPromo debut={promoPos.debut} />
                   </div>
                 ) : null}
                 {promoNode}

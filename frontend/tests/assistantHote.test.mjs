@@ -109,7 +109,7 @@ test('le panneau est PRIVÉ : jamais peint dans le Programme, jamais diffusé', 
   // Hors Live : racine de la page. Pendant le Live : zone caméra (pour suivre le plein écran).
   const i = page.indexOf('{!liveMode && assistantNode}');
   assert.ok(i > page.indexOf('createPortal(chatPanelNode'), 'hors Live, rendu au niveau page');
-  assert.ok(page.includes('const prompteurTiroirNode = (canShare && liveMode) ? assistantNode : null;'),
+  assert.ok(page.includes('const prompteurTiroirNode = (canShare && outilsCoach && liveMode) ? assistantNode : null;'),
     'pendant le Live, le panneau est dans la zone caméra');
   // Ce qui rend la zone caméra sûre : le compositeur du Programme (MP4 + diffusion) ne lit
   // AUCUN DOM de la page — il ne peint que des pistes vidéo.

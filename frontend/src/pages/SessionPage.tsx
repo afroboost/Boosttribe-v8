@@ -46,6 +46,7 @@ import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
+import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
 import { LivePromoParticipantModal } from '@/components/session/LivePromoParticipantModal';
 import { LivePromoHostModal } from '@/components/session/LivePromoHostModal';
 import { usePrompteur } from '@/hooks/usePrompteur';
@@ -1403,6 +1404,16 @@ export const SessionPage: React.FC = () => {
   const estProprietaireSession = estHoteServeur ?? (sessionHostId ? (!!user?.id && user.id === sessionHostId) : isHost);
   const livePromo = useLivePromo(sessionId || undefined, liveMode, estProprietaireSession, user?.id);
   const estHoteConfig = livePromo.config?.est_hote;
+  // 🎓 01/10 — Prompteur, Enregistrement pendant le Live : outils d'un Live hébergé par un ESPACE COACH.
+  //    Décision SERVEUR (hôte de CETTE session + Espace Coach actif), jamais un rôle global ni une
+  //    valeur locale. Relu à l'entrée en Live ; dépendances primitives (aucune boucle d'appels).
+  const [outilsCoach, setOutilsCoach] = useState(false);
+  useEffect(() => {
+    if (!sessionId || !user?.id) { setOutilsCoach(false); return undefined; }
+    let vivant = true;
+    lireOutilsCoach(sessionId).then((r) => { if (vivant) setOutilsCoach(r.outils_coach); }).catch(() => { if (vivant) setOutilsCoach(false); });
+    return () => { vivant = false; };
+  }, [sessionId, user?.id]);
   useEffect(() => { setEstHoteServeur(typeof estHoteConfig === 'boolean' ? estHoteConfig : null); }, [estHoteConfig]);
   const [promoParticipantOuvert, setPromoParticipantOuvert] = useState(false);
   const [promoHoteOuvert, setPromoHoteOuvert] = useState(false);
@@ -4242,7 +4253,7 @@ export const SessionPage: React.FC = () => {
   //  (AssistantHotePanel : Mon texte / Thème IA / Questions / Assistant IA). Hors Live,
   //  ce bouton l'ouvre en feuille flottante ; pendant le Live, c'est l'icône Prompteur
   //  de la barre qui l'ouvre DANS la vidéo.
-  const prompteurNode = (canShare && !liveMode) ? (
+  const prompteurNode = (canShare && outilsCoach && !liveMode) ? (
     <button
       type="button"
       onClick={() => { setOngletPrompteur('texte'); setAssistantOuvert(true); }}
@@ -4265,7 +4276,7 @@ export const SessionPage: React.FC = () => {
   //  LOCAL, ET SEULEMENT LOCAL : c'est une surface DOM au-dessus du <video>. Elle
   //  n'entre dans aucun MediaStream, aucune piste WebRTC, aucune synchro, aucun
   //  enregistrement. Les participants reçoivent la caméra, rien d'autre.
-  const prompteurOverlayNode = (canShare && prompteurSurVideo) ? (
+  const prompteurOverlayNode = (canShare && outilsCoach && prompteurSurVideo) ? (
     <PrompteurOverlay
       p={prompteur}
       hauteur="clamp(104px, 26vh, 240px)"
@@ -4287,7 +4298,7 @@ export const SessionPage: React.FC = () => {
   // 📝 Pendant le Live, le panneau Prompteur UNIQUE vit dans la zone caméra (slot
   //    historique du tiroir) : il suit donc le plein écran. Ce DOM n'entre jamais dans le
   //    Programme (le compositeur ne peint que des pistes vidéo) — donc ni MP4 ni diffusion.
-  const prompteurTiroirNode = (canShare && liveMode) ? assistantNode : null;
+  const prompteurTiroirNode = (canShare && outilsCoach && liveMode) ? assistantNode : null;
 
   // 🎚️ COMMANDES MUSIQUE DU LIVE — plus de grosse barre ⏮ ▶ ⏭ + titre posée sous la scène :
   //  elle mangeait le bas de l'image (là où vivent le champ commentaire et la caméra).
@@ -4435,9 +4446,9 @@ export const SessionPage: React.FC = () => {
       recordDureeSec={recorder.dureeSec}
       recordSupporte={recorder.capacite.supporte}
       recordMotif={recorder.capacite.motif}
-      onToggleRecord={() => setRecordOpen((o) => !o)}
+      onToggleRecord={outilsCoach ? () => setRecordOpen((o) => !o) : undefined}
       onTerminerLive={() => { void terminerLive('host_terminate'); }}
-      onRecordDirect={() => {
+      onRecordDirect={!outilsCoach ? undefined : () => {
         // Le bouton rond DÉCLENCHE, il n'ouvre pas un panneau : c'est tout l'intérêt.
         // Même moteur, mêmes garde-fous (`demarrerProgramme` applique « rien à l'antenne
         // → caméra du coach à l'antenne »), et l'erreur éventuelle est dite à l'écran.
@@ -4459,7 +4470,7 @@ export const SessionPage: React.FC = () => {
       // UNE icône Prompteur : elle ouvre LE panneau (texte, thème IA, questions, assistant).
       // Afficher/masquer le texte sur la vidéo se fait dans ce panneau.
       prompteurOuvert={assistantOuvert}
-      onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}
+      onTogglePrompteur={canShare && outilsCoach ? () => setAssistantOuvert((o) => !o) : undefined}
       chatOverlayNode={liveChatOverlayNode}
       promoNode={livePromoNode}
       promoBanniere={promoBanniereNode}

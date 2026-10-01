@@ -89,11 +89,11 @@ test('dans SessionPage, le mode embed ne sert QU au crédit afroboost — jamais
 test('les quatre outils du coach ont UNE seule condition : canShare (hôte ou co-hôte)', () => {
   const code = codeSeul(SESSION);
   assert.ok(code.includes('const canShare = isHost || isCoHost;'));
-  assert.ok(code.includes('const prompteurNode = (canShare && !liveMode) ?'), 'lanceur prompteur');
+  assert.ok(code.includes('const prompteurNode = (canShare && outilsCoach && !liveMode) ?'), 'lanceur prompteur');
   assert.ok(code.includes('const assistantNode: React.ReactNode = canShare ?'), 'panneau prompteur');
-  assert.ok(code.includes('const prompteurOverlayNode = (canShare && prompteurSurVideo) ?'), 'overlay');
+  assert.ok(code.includes('const prompteurOverlayNode = (canShare && outilsCoach && prompteurSurVideo) ?'), 'overlay');
   assert.ok(code.includes("const lectureLive = (canShare && selectedTrack && shareMode === 'audio') ?"), '⏮ ▶ ⏭');
-  assert.ok(code.includes('onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}'), 'bouton Prompteur');
+  assert.ok(code.includes('onTogglePrompteur={canShare && outilsCoach ? () => setAssistantOuvert((o) => !o) : undefined}'), 'bouton Prompteur');
   assert.ok(code.includes('onStartTimer={canShare ? () => setShowVisioTimerConfig(true) : undefined}'), 'minuteur');
   // Un seul LiveVisioPanel monté — pas de variante « embed ».
   assert.equal((code.match(/<LiveVisioPanel\b/g) || []).length, 1, 'un seul LiveVisioPanel');
@@ -209,4 +209,15 @@ test('le manifeste généré pour Afroboost vit sous /live/ (fonction pure du bu
   assert.equal(mod.resoudreMarque({}).brandId, 'boosttribe');
   assert.equal(mod.resoudreMarque({ REACT_APP_BRAND: 'autre' }).basePath, '/');
   assert.equal(mod.resoudreMarque({ REACT_APP_BRAND: 'afroboost', REACT_APP_BASE_PATH: 'test' }).basePath, '/test/');
+});
+
+test('01/10 — Prompteur et Enregistrement : hôte (canShare) ET Live d’un Espace Coach (décision serveur)', () => {
+  const code = lire('pages/SessionPage.tsx');
+  assert.ok(code.includes("lireOutilsCoach(sessionId).then((r) => { if (vivant) setOutilsCoach(r.outils_coach); })"), 'vérité serveur');
+  assert.ok(code.includes('}, [sessionId, user?.id]);'), 'dépendances primitives');
+  assert.ok(code.includes('onToggleRecord={outilsCoach ? () => setRecordOpen((o) => !o) : undefined}'), 'enregistrement');
+  assert.ok(code.includes('onRecordDirect={!outilsCoach ? undefined : () => {'), 'bouton rond Enregistrer');
+  const api = lire('lib/outilsCoachApi.ts');
+  assert.ok(api.includes('/live/outils-coach/'), 'route serveur');
+  assert.ok(!/isAdmin|isCoach|role/.test(api.replace(/\/\*[\s\S]*?\*\//g, '')), 'aucun rôle global');
 });

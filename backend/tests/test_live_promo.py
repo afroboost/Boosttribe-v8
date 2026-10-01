@@ -58,6 +58,8 @@ HOTE_A = "22222222-2222-2222-2222-222222222222"     # hôte en mode abonnement
 PART = "33333333-3333-3333-3333-333333333333"
 PART2 = "44444444-4444-4444-4444-444444444444"
 ADMIN = "55555555-5555-5555-5555-555555555555"     # LE super-admin (ADMIN_EMAILS), compte hors commission
+COACH_K = "66666666-6666-6666-6666-666666666666"   # 01/10 : Espace Coach en ABONNEMENT (plan enterprise actif)
+COACH_B = "77777777-7777-7777-7777-777777777777"   # 01/10 : autre coach (commission), PARTICIPANT chez HOTE_C
 OFFRES = [{"id": "o15", "duree_s": 15, "prix": 5}, {"id": "o30", "duree_s": 30, "prix": 10},
           {"id": "o60", "duree_s": 60, "prix": 20}, {"id": "off", "duree_s": 90, "prix": 25, "actif": False}]
 
@@ -79,7 +81,9 @@ class Monde:
         self.users = {"t-hote": {"id": HOTE_C, "email": "h@x.ch"}, "t-abo": {"id": HOTE_A, "email": "a@x.ch"},
                       "t-part": {"id": PART, "email": "p@x.ch", "user_metadata": {"full_name": "Léa Martin"}},
                       "t-part2": {"id": PART2, "email": "q@x.ch"},
-                      "t-admin": {"id": ADMIN, "email": "contact.artboost@gmail.com"}}
+                      "t-admin": {"id": ADMIN, "email": "contact.artboost@gmail.com"},
+                      "t-coachk": {"id": COACH_K, "email": "k@x.ch"}, "t-coachb": {"id": COACH_B, "email": "b@x.ch"}}
+        self.coachs = {HOTE_C, ADMIN, COACH_K, COACH_B}      # Espaces Coach actifs (HOTE_A : abonnement ordinaire)
         self.installer()
 
     def installer(self):
@@ -97,7 +101,10 @@ class Monde:
             return dict(W.sessions[sid])
 
         async def ptype(uid):
-            return "commission" if uid == HOTE_C else "subscription"
+            return "commission" if uid in (HOTE_C, COACH_B) else "subscription"
+
+        async def coach(uid):
+            return uid in W.coachs
 
         async def lire(filtre, ordre="requested_at.desc", limite=100):
             out = []
@@ -169,6 +176,7 @@ class Monde:
         m.get_user_from_token = user
         m._lp_session = session
         m.get_coach_payment_type = ptype
+        m._est_espace_coach = coach
         m._lp_lire = lire
         m._lp_maj = maj
         m._lp_inserer = inserer
@@ -581,3 +589,63 @@ def test_offres_mixtes_le_payant_garde_son_pipeline(w):
 def test_schema_promo_gratuite():
     assert "add column if not exists gratuit boolean not null default false" in LP.SQL_SCHEMA
     assert "check (gratuit or price_chf > 0)" in LP.SQL_SCHEMA
+
+
+
+# ─── 01/10 COMMIT 2 : outils réservés aux Lives d'un ESPACE COACH (décision serveur, hôte de session) ──
+def test_espace_coach_pur():
+    assert LP.espace_coach_actif("commission", None, False, False, False)
+    assert LP.espace_coach_actif("subscription", "enterprise", True, False, False)
+    assert LP.espace_coach_actif("subscription", None, False, True, False)
+    assert LP.espace_coach_actif("subscription", None, False, False, True)                 # super-admin unique
+    assert not LP.espace_coach_actif("subscription", "pro", True, False, False)           # accès « pro » (embed Afroboost)
+    assert not LP.espace_coach_actif("subscription", "enterprise", False, False, False)   # coach EXPIRÉ
+    assert LP.mode_promo("subscription", False, True) == LP.MODE_COACH_GRATUIT and not LP.paiement_reel_possible(LP.MODE_COACH_GRATUIT)
+
+
+def test_hote_non_coach_aucune_gestion_promo(w):
+    cfg = w.appel(w.m.live_promo_host_config, "liveAbo", authorization="Bearer t-abo")
+    assert cfg["eligible"] is False
+    assert err(w, w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveAbo", enabled=True,
+               offres=[{"duree_s": 30, "type": "free"}]), authorization="Bearer t-abo") == 403          # API directe
+
+
+def test_coach_abonne_promos_gratuites_seulement(w):
+    w.sessions["liveK"] = {"session_id": "liveK", "host_id": COACH_K, "live_promo_enabled": False, "live_promo_offres": []}
+    assert err(w, w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveK", enabled=True,
+               offres=[{"duree_s": 60, "prix": 10}]), authorization="Bearer t-coachk") == 403          # payant refusé
+    w.appel(w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveK", enabled=True,
+            offres=[{"id": "g30", "duree_s": 30, "type": "free"}]), authorization="Bearer t-coachk")
+    cfg = w.appel(w.m.live_promo_config, "liveK")
+    assert cfg["enabled"] is True and cfg["paiement_reel"] is False and [o["type"] for o in cfg["offres"]] == ["free"]
+    p = w.demander(sid="liveK", offre="g30")
+    w.appel(w.m.live_promo_decision, p["id"], w.m.LivePromoDecisionBody(decision="accept"), authorization="Bearer t-coachk")
+    assert w.promos[p["id"]]["status"] == LP.READY and w.stripe_crees == 0 and w.wallet == []
+
+
+def test_coach_qui_perd_son_espace_perd_la_gestion_mais_peut_arreter(w):
+    pid = _prete(w)
+    w.coachs.discard(HOTE_C)
+    w.get_type = None
+    async def ptype(uid):
+        return "subscription"                                          # n'est plus en commission
+    w.m.get_coach_payment_type = ptype
+    assert err(w, w.m.live_promo_start, pid, authorization="Bearer t-hote") == 403
+    assert w.appel(w.m.live_promo_host_config, "liveA", authorization="Bearer t-hote")["eligible"] is False
+
+
+def test_coach_b_et_autres_participants_font_leur_promo_chez_coach_a_sans_aucun_droit_hote(w):
+    """Correctif Bassi 01/10 : être Coach AILLEURS ne masque jamais « Faire ma promo » ; aucun droit hôte."""
+    for jeton in ("Bearer t-coachb", "Bearer t-part2", "Bearer t-admin"):
+        vu = w.appel(w.m.live_promo_config, "liveA", authorization=jeton)
+        assert vu["enabled"] is True and vu["est_hote"] is False and len(vu["offres"]) >= 1      # « Faire ma promo » visible
+    assert w.appel(w.m.live_promo_config, "liveA", authorization="Bearer t-hote")["est_hote"] is True   # vrai hôte : absent
+    pid = _prete(w, jeton="Bearer t-coachb")                                                    # Coach B paie
+    assert w.wallet == [(HOTE_C, 8.5, "live_promo", f"live_promo:{pid}")]                       # → wallet de l'HÔTE (A)
+    for action in (lambda: w.appel(w.m.live_promo_start, pid, authorization="Bearer t-coachb"),
+                   lambda: w.appel(w.m.live_promo_host_list, "liveA", authorization="Bearer t-coachb"),
+                   lambda: w.appel(w.m.live_promo_save_config, w.m.LivePromoConfigBody(session_id="liveA", enabled=False), authorization="Bearer t-coachb")):
+        try:
+            action(); raise AssertionError("droit hôte accordé à Coach B")
+        except HTTPException as e:
+            assert e.status_code == 403

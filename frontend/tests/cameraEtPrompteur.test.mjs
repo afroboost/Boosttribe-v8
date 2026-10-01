@@ -167,7 +167,7 @@ test('script vide : un message ET un moyen d écrire, pas une invitation en l ai
 test('demander le prompteur ouvre de quoi écrire', () => {
   const code = codeSeul(SESSION);
   // L'icône Prompteur ouvre LE panneau, dont l'onglet par défaut est « Mon texte » (l'éditeur).
-  assert.ok(code.includes('onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}'));
+  assert.ok(code.includes('onTogglePrompteur={canShare && outilsCoach ? () => setAssistantOuvert((o) => !o) : undefined}'));
   assert.ok(code.includes("useState<OngletPrompteur>('texte')"),
     'ouvrir un cadre vide sans clavier n’aiderait personne');
 });

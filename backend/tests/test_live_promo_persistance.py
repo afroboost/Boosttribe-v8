@@ -124,6 +124,10 @@ def monde(lignes):
         return False
     m.get_user_from_token = user
     m.get_coach_payment_type = ptype
+
+    async def coach(uid):
+        return uid == HOTE                         # 01/10 : l'hôte du banc est un Espace Coach
+    m._est_espace_coach = coach
     m._lp_hote_super_admin = pas_admin
     return m, pg
 

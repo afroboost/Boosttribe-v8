@@ -634,6 +634,9 @@ async def record_start(body: RecordStartBody, authorization: Optional[str] = Hea
     # 💳 Jamais débité ni bloqué : ADMIN (crédits illimités) ou COACH abonné « illimité ».
     is_admin = _is_admin_email(user)
     await _record_authz(body.session_id, uid, is_admin)
+    # 01/10 : enregistrer pendant le Live = outil d'un Live hébergé par un ESPACE COACH (serveur).
+    if not is_admin and not await _hote_session_coach(body.session_id):
+        raise HTTPException(status_code=403, detail="Enregistrement réservé aux Lives d'un Espace Coach")
     settings = await get_pricing_settings()
     cost = int(settings.get("cost_record_transcribe", 4) or 0)
     unlimited = is_admin or await is_coach_unlimited(uid)
@@ -667,6 +670,8 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
     if not session_id or not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     await _record_authz(session_id, uid, _is_admin_email(user))
+    if not _is_admin_email(user) and not await _hote_session_coach(session_id):
+        raise HTTPException(status_code=403, detail="Enregistrement réservé aux Lives d'un Espace Coach")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Fichier audio vide")
@@ -1574,6 +1579,9 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
     #    Le chat n'a rien à faire ici : demander « raccourcis mon intro » n'autorise pas
     #    à envoyer les messages des participants chez un tiers.
     if mode in SOUFFLEUR_MODES_TEXTE:
+        # 01/10 : rédaction du PROMPTEUR = outil d'un Live hébergé par un Espace Coach.
+        if not await _hote_session_coach(session_id):
+            raise HTTPException(status_code=403, detail="Prompteur réservé aux Lives d'un Espace Coach")
         texte = _souffleur_nettoyer(body.texte)[:SOUFFLEUR_MAX_TEXTE] if body.texte else ""
         if not texte.strip():
             return {"ok": False, "raison": "texte_absent", "suggestions": []}
@@ -4613,13 +4621,37 @@ async def _lp_hote_super_admin(host_id: str) -> bool:
         return False
 
 
+async def _est_espace_coach(uid: Optional[str]) -> bool:
+    """01/10 — Espace Coach ACTIF, décidé par le SERVEUR (profil, accès, abonnement coach), relu à
+    chaque appel : un droit expiré ferme les outils, quoi que dise le navigateur."""
+    if not uid:
+        return False
+    ptype = await get_coach_payment_type(uid)
+    if ptype == "commission":
+        return True
+    plan, until = await _get_comp_access(uid)
+    if plan == "enterprise" and _comp_access_active(plan, until):
+        return True
+    if ptype == "subscription" and _subscription_active(await get_coach_subscription(uid)):
+        return True
+    return await _lp_hote_super_admin(uid)
+
+
+async def _hote_session_coach(session_id: str) -> bool:
+    """L'HÔTE de CETTE session est-il un Espace Coach ? (outils réservés aux Lives Coach)"""
+    authz = await get_session_authz(session_id)
+    return await _est_espace_coach((authz or {}).get("host_id"))
+
+
 async def _lp_mode(host_id: Optional[str]) -> Optional[str]:
     if not host_id:
         return None
     ptype = await get_coach_payment_type(host_id)
     if _lp.hote_eligible(ptype):
         return _lp.MODE_COMMISSION
-    return _lp.mode_promo(ptype, await _lp_hote_super_admin(host_id))
+    if await _lp_hote_super_admin(host_id):
+        return _lp.MODE_SUPER_ADMIN
+    return _lp.mode_promo(ptype, False, await _est_espace_coach(host_id))
 
 
 async def _lp_eligible(host_id: Optional[str]) -> bool:
@@ -4668,6 +4700,20 @@ async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
                              {"status": _lp.COMPLETED, "actual_duration_seconds": int(p.get("duration_seconds") or 0)})
         return fini or {**p, "status": _lp.COMPLETED}
     return p
+
+
+@app.get("/live/outils-coach/{session_id}")
+async def live_outils_coach(session_id: str, authorization: Optional[str] = Header(default=None)):
+    """01/10 — Ce que l'ÉCRAN peut proposer à l'appelant dans CETTE session, décidé par le serveur :
+    `est_hote` (identité vs host_id) et `outils_coach` (hôte ET Espace Coach actif) → Prompteur,
+    Enregistrement pendant le Live, gestion des Promotions. Un participant (même coach ailleurs) : false."""
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    user = await get_user_from_token(authorization)
+    authz = await get_session_authz(session_id)
+    host_id = (authz or {}).get("host_id")
+    est_hote = bool(host_id) and user.get("id") == host_id
+    return {"est_hote": est_hote, "outils_coach": est_hote and await _est_espace_coach(host_id)}
 
 
 # ── 🔎 JOURNAL FORENSIC TEMPORAIRE (01/10) — « les tarifs promo ne restent pas » ───────────────────
@@ -4750,6 +4796,7 @@ async def live_promo_config(session_id: str, authorization: Optional[str] = Head
     s = await _lp_session(session_id)
     mode = await _lp_mode(s.get("host_id"))
     actif = mode is not None and s.get("live_promo_enabled") is True
+    offres_publiques = _lp.offres_permises(_lp.offres_actives(s.get("live_promo_offres")), mode) if actif else []
     est_hote: Optional[bool] = None
     if authorization:
         try:
@@ -4758,7 +4805,7 @@ async def live_promo_config(session_id: str, authorization: Optional[str] = Head
             est_hote = None
     return {"eligible": mode is not None, "enabled": actif, "currency": _lp.DEVISE, "est_hote": est_hote,
             "paiement_reel": _lp.paiement_reel_possible(mode),
-            "offres": _lp.offres_actives(s.get("live_promo_offres")) if actif else []}
+            "offres": offres_publiques}
 
 
 @app.get("/live-promo/host-config/{session_id}")
@@ -4813,6 +4860,9 @@ async def _live_promo_save_config(body: LivePromoConfigBody, authorization: Opti
             patch["live_promo_offres"] = _lp.valider_offres(body.offres)
         except _lp.RegleRefusee as e:
             raise _lp_refus(e)
+        mode_hote = await _lp_mode(s.get("host_id"))
+        if not _lp.paiement_reel_possible(mode_hote) and any(o["type"] == "paid" for o in patch["live_promo_offres"]):
+            raise HTTPException(status_code=403, detail="Offres payantes : mode commission requis — choisis « Gratuit »")
     if patch:
         n = await _lp_enregistrer_config(body.session_id, patch)
         _lp_noter(body.session_id, "serveur", evt="save:ecriture", rid=rid, lignes=n)
@@ -4870,7 +4920,8 @@ async def live_promo_request(body: LivePromoRequestBody, authorization: Optional
     if uid == s.get("host_id"):
         raise HTTPException(status_code=400, detail="L'hôte ne peut pas acheter sa propre promo")
     try:
-        d = _lp.valider_demande(body.model_dump(), s.get("live_promo_offres"), _lp_prefixe_media(body.session_id))
+        permises = _lp.offres_permises(_lp.offres_actives(s.get("live_promo_offres")), await _lp_mode(s.get("host_id")))
+        d = _lp.valider_demande(body.model_dump(), permises, _lp_prefixe_media(body.session_id))
     except _lp.RegleRefusee as e:
         raise _lp_refus(e)
     ouvertes = await _lp_lire({"session_id": f"eq.{body.session_id}", "participant_id": f"eq.{uid}",
@@ -4918,6 +4969,8 @@ async def live_promo_decision(promo_id: str, body: LivePromoDecisionBody,
     user = await get_user_from_token(authorization)
     p = await _lp_une(promo_id)
     await _lp_hote(p.get("host_id"), user)
+    if not await _lp_eligible(p.get("host_id")):
+        raise HTTPException(status_code=403, detail="Promotions réservées aux Lives d'un Espace Coach")
     vers = {"accept": _lp.ACCEPTED, "reject": _lp.REJECTED}.get(body.decision)
     if not vers:
         raise HTTPException(status_code=400, detail="Décision invalide")
@@ -5030,6 +5083,8 @@ async def live_promo_start(promo_id: str, authorization: Optional[str] = Header(
     user = await get_user_from_token(authorization)
     p = await _lp_une(promo_id)
     await _lp_hote(p.get("host_id"), user)
+    if not await _lp_eligible(p.get("host_id")):
+        raise HTTPException(status_code=403, detail="Promotions réservées aux Lives d'un Espace Coach")
     for autre in await _lp_lire({"session_id": f"eq.{p['session_id']}", "status": f"eq.{_lp.BROADCASTING}"}, limite=5):
         autre = await _lp_cloturer_si_expiree(autre)
         if autre.get("status") == _lp.BROADCASTING:
@@ -5049,6 +5104,8 @@ async def live_promo_layout(promo_id: str, body: LivePromoLayoutBody, authorizat
     user = await get_user_from_token(authorization)
     p = await _lp_une(promo_id)
     await _lp_hote(p.get("host_id"), user)
+    if not await _lp_eligible(p.get("host_id")):
+        raise HTTPException(status_code=403, detail="Promotions réservées aux Lives d'un Espace Coach")
     try:
         layout = _lp.valider_layout(body.layout)
     except _lp.RegleRefusee as e:

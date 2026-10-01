@@ -83,6 +83,10 @@ def appli(monkeypatch):
 
     monkeypatch.setattr(m, "get_user_from_token", faux_user)
     monkeypatch.setattr(m, "_is_host_or_cohost", faux_hote)
+
+    async def hote_coach(session_id):
+        return True                                       # 01/10 : Live d'un Espace Coach (cas nominal)
+    monkeypatch.setattr(m, "_hote_session_coach", hote_coach)
     monkeypatch.setattr(m, "get_openai_key", fausse_cle)
     monkeypatch.setattr(m.httpx, "AsyncClient", FauxClient)
     ms = sys.modules.get("multistream") or getattr(m, "_ms", None)
@@ -271,4 +275,16 @@ def test_la_redaction_reste_reservee_a_l_hote(appli):
     _m, etat, c = appli
     r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer spectateur"},
                json={"session_id": "SESS-1", "mode": "theme", "texte": "un thème"})
+    assert r.status_code == 403 and etat["appels"] == []
+
+
+def test_01_10_redaction_du_prompteur_refusee_si_l_hote_n_est_pas_un_espace_coach(appli, monkeypatch):
+    """Prompteur = outil d'un Live hébergé par un Espace Coach : refus serveur (appel direct compris)."""
+    m, etat, c = appli
+
+    async def pas_coach(session_id):
+        return False
+    monkeypatch.setattr(m, "_hote_session_coach", pas_coach)
+    r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
+               json={"session_id": "SESS-1", "mode": "theme", "texte": "Un thème"})
     assert r.status_code == 403 and etat["appels"] == []

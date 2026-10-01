@@ -116,7 +116,12 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
                className="h-4 w-4 accent-[var(--bt-accent)]" data-testid="live-promo-activer" />
         Autoriser les promotions payantes pendant ce Live
       </label>
-      {etat.paiement_reel === false ? (
+      {etat.mode === 'coach_gratuit' ? (
+        /* 01/10 : Espace Coach en abonnement — promotions GRATUITES ; le payant passe par le mode commission. */
+        <p className="text-xs text-white/70" data-testid="live-promo-mode-coach">
+          Espace Coach : tu peux proposer des promotions gratuites. Les offres payantes nécessitent le mode commission.
+        </p>
+      ) : etat.paiement_reel === false ? (
         /* Super-admin hors mode commission : aucune destination d'argent n'existe (règle des billets). */
         <p className="text-xs text-amber-200/90" data-testid="live-promo-mode-test">
           Mode test super-admin : le paiement réel n’est pas disponible pour ce compte (hors mode commission).
@@ -132,8 +137,9 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
               <div className="inline-flex rounded-lg border border-white/15 p-0.5 text-xs" role="radiogroup" aria-label="Type d'offre">
                 {(['free', 'paid'] as const).map((t) => (
                   <button key={t} type="button" role="radio" aria-checked={(o.type ?? 'paid') === t}
+                          disabled={t === 'paid' && etat.paiement_reel === false}
                           onClick={() => { immediatRef.current = true; maj(i, t === 'free' ? { type: 'free' } : { type: 'paid', prix: o.prix >= 0.5 ? o.prix : 10 }, t); }}
-                          className={`min-h-[32px] rounded-md px-3 font-semibold ${(o.type ?? 'paid') === t ? 'bg-[var(--bt-accent)] text-white' : 'text-white/65'}`}
+                          className={`min-h-[32px] rounded-md px-3 font-semibold disabled:opacity-40 ${(o.type ?? 'paid') === t ? 'bg-[var(--bt-accent)] text-white' : 'text-white/65'}`}
                           data-testid={t === 'free' ? 'live-promo-type-gratuit' : 'live-promo-type-payant'}>
                     {t === 'free' ? 'Gratuit' : 'Payant'}
                   </button>
@@ -155,7 +161,7 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
             </div>
             </div>
           ))}
-          <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: [...etat.offres, { id: '', duree_s: 30, prix: 10, actif: true, type: 'paid' }] }); }}
+          <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: [...etat.offres, { id: '', duree_s: 30, prix: 10, actif: true, type: etat.paiement_reel === false ? 'free' : 'paid' }] }); }}
                   className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-white/15 px-3 text-sm text-white/85"
                   data-testid="live-promo-ajouter-tarif">
             <Plus className="h-4 w-4" /> Ajouter un tarif

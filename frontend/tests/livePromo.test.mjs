@@ -174,7 +174,9 @@ test('01/10 — promo GRATUITE : type explicite, prix payant inchangé, aucun «
   const t = src('components/session/LivePromoTarifs.tsx');
   assert.match(t, /data-testid=\{t === 'free' \? 'live-promo-type-gratuit' : 'live-promo-type-payant'\}/);
   assert.match(t, /o\.type === 'free' \? \(\s*<span[^>]*data-testid="live-promo-prix-gratuit">Gratuit<\/span>/);
-  assert.match(t, /\{ id: '', duree_s: 30, prix: 10, actif: true, type: 'paid' \}/);             // ajout = payant par défaut
+  assert.match(t, /\{ id: '', duree_s: 30, prix: 10, actif: true, type: etat\.paiement_reel === false \? 'free' : 'paid' \}/);  // payant par défaut (gratuit si le payant est impossible)
+  assert.match(t, /disabled=\{t === 'paid' && etat\.paiement_reel === false\}/);
+  assert.match(t, /data-testid="live-promo-mode-coach"/);
   const h = src('components/session/LivePromoHostModal.tsx');
   assert.equal((h.match(/libelleMontant\(p, devise\)/g) || []).length, 2);
 });

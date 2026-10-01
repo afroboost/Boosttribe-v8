@@ -196,14 +196,39 @@ def hote_eligible(payment_type: Optional[str]) -> bool:
 # réel reste fermé, seul un test SANS ARGENT (accepted -> ready) lui est ouvert.
 MODE_COMMISSION = "commission"
 MODE_SUPER_ADMIN = "super_admin"
+# 01/10 : Espace Coach en ABONNEMENT (plan « enterprise » actif) — promotions GRATUITES seulement
+# (aucune destination d'argent n'est ouverte aux abonnements : règle inchangée).
+MODE_COACH_GRATUIT = "coach_gratuit"
 
 
-def mode_promo(payment_type: Optional[str], hote_est_super_admin: bool) -> Optional[str]:
+def mode_promo(payment_type: Optional[str], hote_est_super_admin: bool, hote_coach_abonne: bool = False) -> Optional[str]:
+    """None = l'hôte n'est PAS un Espace Coach → aucune gestion de promotions."""
     if hote_eligible(payment_type):
         return MODE_COMMISSION
     if hote_est_super_admin:
         return MODE_SUPER_ADMIN
+    if hote_coach_abonne:
+        return MODE_COACH_GRATUIT
     return None
+
+
+def offres_permises(offres: List[Dict[str, Any]], mode: Optional[str]) -> List[Dict[str, Any]]:
+    """Offres qu'un participant peut demander dans ce mode : le payant exige un paiement réel possible."""
+    return [o for o in offres if o.get("type") == "free" or paiement_reel_possible(mode)]
+
+
+# ─── 01/10 : ESPACE COACH (source serveur unique) ──────────────────────────────────────────────
+def espace_coach_actif(payment_type: Optional[str], comp_plan: Optional[str], comp_actif: bool,
+                       abo_coach_actif: bool, est_super_admin: bool) -> bool:
+    """Prompteur, Enregistrement pendant le Live et gestion des Promotions = outils d'un Live
+    hébergé par un Espace Coach : le super-admin unique, un coach en mode commission (choisi par
+    l'admin), ou le plan Coach « enterprise » ACTIF (accès non expiré ou abonnement coach actif).
+    L'accès « pro » temporaire donné par l'entrée Afroboost (embed) n'est PAS un Espace Coach."""
+    if est_super_admin or payment_type == "commission":
+        return True
+    if comp_plan == "enterprise" and comp_actif:
+        return True
+    return bool(abo_coach_actif)
 
 
 def paiement_reel_possible(mode: Optional[str]) -> bool:

@@ -88,13 +88,13 @@ test('l overlay ne peut PAS entrer dans le flux des participants', () => {
 
 test('un participant n a NI panneau NI overlay', () => {
   const code = codeSeul(SESSION);
-  assert.ok(/const prompteurNode = \(canShare && !liveMode\) \?/.test(code),
+  assert.ok(/const prompteurNode = \(canShare && outilsCoach && !liveMode\) \?/.test(code),
     'le lanceur est réservé à qui présente (hôte ou co-hôte)');
   assert.ok(/const assistantNode: React\.ReactNode = canShare \?/.test(code),
     'le panneau est réservé à qui présente (hôte ou co-hôte)');
-  assert.ok(/const prompteurOverlayNode = \(canShare && prompteurSurVideo\) \?/.test(code),
+  assert.ok(/const prompteurOverlayNode = \(canShare && outilsCoach && prompteurSurVideo\) \?/.test(code),
     'l overlay est réservé à qui présente');
-  assert.ok(/onTogglePrompteur=\{canShare \?[\s\S]{0,400}?: undefined\}/.test(code),
+  assert.ok(/onTogglePrompteur=\{canShare && outilsCoach \?[\s\S]{0,400}?: undefined\}/.test(code),
     'la bascule elle-même n est fournie qu à qui présente');
 });
 

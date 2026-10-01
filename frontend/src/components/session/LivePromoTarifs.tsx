@@ -126,19 +126,36 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
       {etat.enabled ? (
         <div className="space-y-2">
           <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 text-[11px] text-white/50"><span>Durée (s)</span><span>Prix ({etat.currency})</span><span>Actif</span><span /></div>
+          {/* 01/10 : chaque offre est GRATUITE ou PAYANTE (type explicite, décidé ici par l'hôte). */}
           {etat.offres.map((o, i) => (
-            <div key={o.id || i} className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2" data-testid="live-promo-tarif">
+            <div key={o.id || i} className="space-y-1.5" data-testid="live-promo-tarif">
+              <div className="inline-flex rounded-lg border border-white/15 p-0.5 text-xs" role="radiogroup" aria-label="Type d'offre">
+                {(['free', 'paid'] as const).map((t) => (
+                  <button key={t} type="button" role="radio" aria-checked={(o.type ?? 'paid') === t}
+                          onClick={() => { immediatRef.current = true; maj(i, t === 'free' ? { type: 'free' } : { type: 'paid', prix: o.prix >= 0.5 ? o.prix : 10 }, t); }}
+                          className={`min-h-[32px] rounded-md px-3 font-semibold ${(o.type ?? 'paid') === t ? 'bg-[var(--bt-accent)] text-white' : 'text-white/65'}`}
+                          data-testid={t === 'free' ? 'live-promo-type-gratuit' : 'live-promo-type-payant'}>
+                    {t === 'free' ? 'Gratuit' : 'Payant'}
+                  </button>
+                ))}
+              </div>
+            <div className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2">
               <input type="number" min={5} max={3600} value={o.duree_s} onChange={(e) => maj(i, { duree_s: parseInt(e.target.value, 10) || 0 }, e.target.value)}
                      className="min-h-[40px] rounded-lg border border-white/15 bg-black/40 px-2 text-white" aria-label="Durée en secondes" />
+              {o.type === 'free' ? (
+                <span className="flex min-h-[40px] items-center rounded-lg border border-white/10 px-2 text-sm text-white/70" data-testid="live-promo-prix-gratuit">Gratuit</span>
+              ) : (
               <input type="number" min={0.5} step={0.5} value={o.prix} onChange={(e) => maj(i, { prix: parseFloat(e.target.value) || 0 }, e.target.value)}
                      className="min-h-[40px] rounded-lg border border-white/15 bg-black/40 px-2 text-white" aria-label="Prix" />
+              )}
               <input type="checkbox" checked={o.actif !== false} onChange={(e) => maj(i, { actif: e.target.checked }, String(e.target.checked))}
                      className="h-4 w-4 accent-[var(--bt-accent)]" aria-label="Tarif actif" />
               <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: etat.offres.filter((_, j) => j !== i) }); }}
                       className="p-2 text-white/50 hover:text-white" aria-label="Supprimer ce tarif"><Trash2 className="h-4 w-4" /></button>
             </div>
+            </div>
           ))}
-          <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: [...etat.offres, { id: '', duree_s: 30, prix: 10, actif: true }] }); }}
+          <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: [...etat.offres, { id: '', duree_s: 30, prix: 10, actif: true, type: 'paid' }] }); }}
                   className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-white/15 px-3 text-sm text-white/85"
                   data-testid="live-promo-ajouter-tarif">
             <Plus className="h-4 w-4" /> Ajouter un tarif

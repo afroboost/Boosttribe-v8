@@ -26,7 +26,8 @@ test('Découvrir : http(s) seulement ; sans lien -> null (aucun bouton) ; schém
 });
 
 test('tarifs, statuts, actions de l’hôte', () => {
-  assert.equal(libelleOffre({ id: 'a', duree_s: 30, prix: 10 }), '30 s — 10 CHF');
+  assert.equal(libelleOffre({ id: 'a', duree_s: 30, prix: 10 }), '30 secondes — 10 CHF');
+  assert.equal(libelleOffre({ id: 'g', duree_s: 30, prix: 0, type: 'free' }), '30 secondes — Gratuit');   // 01/10
   assert.deepEqual(actionsHote('requested'), ['refuser', 'accepter']);
   assert.deepEqual(actionsHote('ready'), ['diffuser']);
   assert.deepEqual(actionsHote('broadcasting'), ['arreter']);
@@ -76,7 +77,7 @@ test('hotfix super-admin : section visible si le serveur dit eligible ; mode tes
   const h = src('components/session/LivePromoHostModal.tsx');
   assert.match(h, /!paiementReel && s === 'accepted' \? \['tester'\]/);
   const p = src('components/session/LivePromoParticipantModal.tsx');
-  assert.match(p, /\{paiementReel && peutPayer\(enCours\.status\) \?/);            // jamais « Payer » en Live de test
+  assert.match(p, /\{paiementReel && !enCours\.gratuit && peutPayer\(enCours\.status\) \?/);            // jamais « Payer » en Live de test
 });
 
 test('« Faire ma promo » : propriété de CETTE session, jamais le rôle global (coach / admin)', () => {
@@ -154,9 +155,26 @@ test('01/10 — tarifs : jamais de faux succès, envoi au départ en keepalive, 
   assert.match(t, /window\.addEventListener\('pagehide', envoyerEnAttente\);/);
   assert.match(t, /promoEnregistrerConfig\(sessionId, d\.etat\.enabled, d\.etat\.offres, true, rid\)/);
   // ajout / suppression : envoi immédiat
-  assert.equal((t.match(/immediatRef\.current = true;/g) || []).length, 2);
+  assert.equal((t.match(/immediatRef\.current = true;/g) || []).length, 3);   // ajout, suppression, gratuit/payant
   assert.match(t, /const delai = immediatRef\.current \? 0 : 700;/);
   assert.match(t, /\}, delai\);/);
   const api = src('lib/livePromoApi.ts');
   assert.match(api, /\.\.\.\(auDepart \? \{ keepalive: true \} : \{\}\)/);
+});
+
+
+test('01/10 — promo GRATUITE : type explicite, prix payant inchangé, aucun « Payer », historique « Gratuite »', async () => {
+  const { offresValides, libelleMontant, estGratuite } = await import('./.build/livePromo.mjs');
+  assert.equal(offresValides([{ id: '', duree_s: 30, prix: 0, type: 'free' }]), '');                  // gratuit : aucun prix exigé
+  assert.equal(offresValides([{ id: '', duree_s: 30, prix: 0, type: 'paid' }]), 'Prix entre 0.5 et 10000 CHF');
+  assert.equal(offresValides([{ id: '', duree_s: 30, prix: 0 }]), 'Prix entre 0.5 et 10000 CHF');    // défaut = payant
+  assert.equal(libelleMontant({ gratuit: true, price_chf: 0 }), 'Gratuite');
+  assert.equal(libelleMontant({ gratuit: false, price_chf: 10 }), '10 CHF');
+  assert.equal(estGratuite({ type: 'free' }), true); assert.equal(estGratuite({}), false);
+  const t = src('components/session/LivePromoTarifs.tsx');
+  assert.match(t, /data-testid=\{t === 'free' \? 'live-promo-type-gratuit' : 'live-promo-type-payant'\}/);
+  assert.match(t, /o\.type === 'free' \? \(\s*<span[^>]*data-testid="live-promo-prix-gratuit">Gratuit<\/span>/);
+  assert.match(t, /\{ id: '', duree_s: 30, prix: 10, actif: true, type: 'paid' \}/);             // ajout = payant par défaut
+  const h = src('components/session/LivePromoHostModal.tsx');
+  assert.equal((h.match(/libelleMontant\(p, devise\)/g) || []).length, 2);
 });

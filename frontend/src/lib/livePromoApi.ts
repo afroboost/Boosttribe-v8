@@ -19,7 +19,7 @@ async function appel<T>(chemin: string, init: RequestInit = {}, auth: boolean | 
 const json = (corps: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corps) });
 
 export interface PromoLigne { id: string; status: string; title: string; body?: string; media_url?: string | null;
-  external_url?: string | null; participant_name?: string; duration_seconds: number; price_chf: number;
+  external_url?: string | null; participant_name?: string; duration_seconds: number; price_chf: number; gratuit?: boolean;
   actual_duration_seconds?: number | null; started_at?: string | null; ends_at?: string | null; stop_reason?: string | null }
 
 // 01/10 : jeton joint SI connecté → `est_hote` dit par le serveur (identité vs host_id de CETTE session).

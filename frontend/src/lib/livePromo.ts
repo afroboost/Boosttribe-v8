@@ -10,7 +10,9 @@
 export type StatutPromo = 'requested' | 'rejected' | 'accepted' | 'payment_pending' | 'payment_failed'
   | 'ready' | 'broadcasting' | 'completed' | 'stopped_early';
 
-export interface OffrePromo { id: string; duree_s: number; prix: number; actif?: boolean }
+/** 01/10 : `type` EXPLICITE — « free » (gratuit, aucun paiement) ou « paid » (défaut, minimum 0,50 CHF). */
+export interface OffrePromo { id: string; duree_s: number; prix: number; actif?: boolean; type?: 'free' | 'paid' }
+export const estGratuite = (o: { type?: string } | null | undefined): boolean => o?.type === 'free';
 
 export interface PromoPublique {
   id: string; title: string; body: string; media_url: string | null; external_url: string | null;
@@ -39,8 +41,14 @@ export function lienDecouvrir(url: string | null | undefined): string | null {
 }
 
 export function libelleOffre(o: OffrePromo, devise = 'CHF'): string {
+  if (estGratuite(o)) return `${o.duree_s} secondes — Gratuit`;
   const prix = Number.isInteger(o.prix) ? String(o.prix) : o.prix.toFixed(2);
-  return `${o.duree_s} s — ${prix} ${devise}`;
+  return `${o.duree_s} secondes — ${prix} ${devise}`;
+}
+
+/** Montant d'une promo de l'historique : « Gratuite » (jamais « 0 CHF payé »), sinon le prix. */
+export function libelleMontant(p: { gratuit?: boolean | null; price_chf: number | string }, devise = 'CHF'): string {
+  return p.gratuit ? 'Gratuite' : `${p.price_chf} ${devise}`;
 }
 
 export function libelleStatut(s: StatutPromo | string): string {
@@ -66,7 +74,7 @@ export const enAttenteHote = (liste: Array<{ status: string }>) => liste.filter(
 export function offresValides(offres: OffrePromo[]): string {
   for (const o of offres) {
     if (!Number.isInteger(o.duree_s) || o.duree_s < 5 || o.duree_s > 3600) return 'Durée entre 5 s et 3600 s';
-    if (!(o.prix >= 0.5 && o.prix <= 10000)) return 'Prix entre 0.5 et 10000 CHF';
+    if (!estGratuite(o) && !(o.prix >= 0.5 && o.prix <= 10000)) return 'Prix entre 0.5 et 10000 CHF';   // payant : minimum inchangé
   }
   return '';
 }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ExternalLink, Megaphone, X } from 'lucide-react';
-import { actionsHote, libelleStatut, lienDecouvrir } from '@/lib/livePromo';
+import { actionsHote, libelleStatut, lienDecouvrir, libelleMontant } from '@/lib/livePromo';
 import { promoArreter, promoDecider, promoDiffuser, promoPretSansPaiement, type PromoLigne } from '@/lib/livePromoApi';
 
 /**
@@ -48,7 +48,7 @@ export function LivePromoHostModal({ liste, devise, onFermer, onChange, paiement
               <div className="flex gap-3">
                 {p.media_url ? <img src={p.media_url} alt="" className="h-16 w-16 flex-shrink-0 rounded-lg object-cover" /> : null}
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs text-white/55">{p.participant_name || 'Participant'} · {p.duration_seconds} s · {p.price_chf} {devise}</p>
+                  <p className="text-xs text-white/55">{p.participant_name || 'Participant'} · {p.duration_seconds} s · {libelleMontant(p, devise)}</p>
                   <p className="font-semibold [overflow-wrap:anywhere]">{p.title}</p>
                   {p.body ? <p className="text-sm text-white/75 [overflow-wrap:anywhere]">{p.body}</p> : null}
                   {lienDecouvrir(p.external_url) ? (
@@ -80,7 +80,7 @@ export function LivePromoHostModal({ liste, devise, onFermer, onChange, paiement
               {historique.map((p) => (
                 <li key={p.id} className="flex flex-wrap gap-x-2 text-xs text-white/65">
                   <span className="font-semibold text-white/80">{p.participant_name || 'Participant'}</span>
-                  <span>{p.duration_seconds} s · {p.price_chf} {devise}</span>
+                  <span>{p.duration_seconds} s · {libelleMontant(p, devise)}</span>
                   <span>· {libelleStatut(p.status)}</span>
                   {p.actual_duration_seconds != null ? <span>· diffusée {p.actual_duration_seconds} s</span> : null}
                 </li>

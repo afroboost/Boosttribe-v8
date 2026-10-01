@@ -77,20 +77,25 @@ def valider_offres(brut: Any) -> List[Dict[str, Any]]:
     for o in brut:
         if not isinstance(o, dict):
             raise RegleRefusee("Tarif illisible")
+        # 01/10 : type EXPLICITE (« free » / « paid ») — défaut « paid » (offres d'avant). Une offre
+        # gratuite n'est JAMAIS un « payant à 0 CHF » : le minimum payant reste exigé.
+        genre = str(o.get("type") or "paid").strip().lower()
+        if genre not in ("free", "paid"):
+            raise RegleRefusee("Type d'offre inconnu (gratuit ou payant)")
         try:
             duree = int(o.get("duree_s"))
-            prix = round(float(o.get("prix")), 2)
+            prix = 0.0 if genre == "free" else round(float(o.get("prix")), 2)
         except (TypeError, ValueError):
             raise RegleRefusee("Durée et prix doivent être des nombres")
         if isinstance(o.get("duree_s"), bool) or not (DUREE_MIN_S <= duree <= DUREE_MAX_S):
             raise RegleRefusee(f"Durée entre {DUREE_MIN_S} s et {DUREE_MAX_S} s")
-        if not (PRIX_MIN <= prix <= PRIX_MAX):
+        if genre == "paid" and not (PRIX_MIN <= prix <= PRIX_MAX):
             raise RegleRefusee(f"Prix entre {PRIX_MIN:g} et {PRIX_MAX:g} {DEVISE}")
         oid = str(o.get("id") or "").strip()[:40] or uuid.uuid4().hex[:12]
         if not re.match(r"^[A-Za-z0-9_-]{1,40}$", oid) or oid in vus:
             oid = uuid.uuid4().hex[:12]
         vus.add(oid)
-        sortie.append({"id": oid, "duree_s": duree, "prix": prix, "actif": o.get("actif") is not False})
+        sortie.append({"id": oid, "duree_s": duree, "prix": prix, "actif": o.get("actif") is not False, "type": genre})
     return sortie
 
 
@@ -134,7 +139,9 @@ def valider_demande(corps: Dict[str, Any], offres: Any, media_prefixe: str) -> D
     media = str(corps.get("media_url") or "").strip()
     if media and not (media_prefixe and media.startswith(media_prefixe)):
         raise RegleRefusee("Image invalide : utilise l'envoi d'image de la promo")
+    # Gratuit / payant : décidé par l'OFFRE DE L'HÔTE (jamais par un champ envoyé par le participant).
     return {"offre_id": offre["id"], "duration_seconds": offre["duree_s"], "price_chf": offre["prix"],
+            "gratuit": offre.get("type") == "free",
             "currency": DEVISE, "title": titre, "body": texte, "media_url": media or None,
             "external_url": url_externe(corps.get("lien"))}
 
@@ -293,4 +300,7 @@ create unique index if not exists live_promos_une_diffusion on public.live_promo
 alter table public.live_promos enable row level security;
 alter table public.live_promos add column if not exists test_sans_paiement boolean not null default false;
 alter table public.live_promos add column if not exists layout jsonb;
+alter table public.live_promos add column if not exists gratuit boolean not null default false;
+alter table public.live_promos drop constraint if exists live_promos_price_chf_check;
+alter table public.live_promos add constraint live_promos_price_chf_check check (gratuit or price_chf > 0);
 """

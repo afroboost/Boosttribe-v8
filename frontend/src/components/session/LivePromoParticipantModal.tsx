@@ -62,7 +62,10 @@ export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemand
             {!paiementReel && enCours.status === 'accepted' ? (
               <p className="text-xs text-white/55" data-testid="live-promo-test-sans-paiement">Live de test : aucun paiement ne t’est demandé.</p>
             ) : null}
-            {paiementReel && peutPayer(enCours.status) ? (
+            {enCours.gratuit ? (
+              <p className="text-xs text-white/55" data-testid="live-promo-gratuite">Promo gratuite : aucun paiement.</p>
+            ) : null}
+            {paiementReel && !enCours.gratuit && peutPayer(enCours.status) ? (
               <button type="button" onClick={() => payer(enCours.id)} disabled={occupe}
                       className="w-full min-h-[44px] rounded-xl font-semibold text-white disabled:opacity-60"
                       style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}

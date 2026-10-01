@@ -4921,6 +4921,10 @@ async def live_promo_decision(promo_id: str, body: LivePromoDecisionBody,
     vers = {"accept": _lp.ACCEPTED, "reject": _lp.REJECTED}.get(body.decision)
     if not vers:
         raise HTTPException(status_code=400, detail="Décision invalide")
+    # 01/10 — PROMO GRATUITE acceptée : directement PRÊTE (ni Stripe, ni wallet, ni commission).
+    #   La diffusion reste MANUELLE (« Diffuser maintenant »).
+    if vers == _lp.ACCEPTED and p.get("gratuit") is True:
+        vers = _lp.READY
     maj = await _lp_maj(promo_id, [_lp.REQUESTED], {"status": vers, "decided_at": _lp.maintenant().isoformat()})
     if not maj:
         raise HTTPException(status_code=409, detail="Cette demande a déjà été traitée")
@@ -4939,6 +4943,8 @@ async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(de
         raise HTTPException(status_code=403, detail="Cette promo n'est pas la tienne")
     if p.get("status") not in _lp.PAYABLES:
         raise HTTPException(status_code=409, detail="Paiement impossible dans l'état actuel")
+    if p.get("gratuit") is True:
+        raise HTTPException(status_code=409, detail="Promo gratuite : aucun paiement")
     if not _lp.paiement_reel_possible(await _lp_mode(p.get("host_id"))):
         # Hôte ni en commission ni super-admin : aucune destination financière (règle des billets).
         raise HTTPException(status_code=409, detail="Paiement réel indisponible pour ce Live")

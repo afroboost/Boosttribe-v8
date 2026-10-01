@@ -23,6 +23,14 @@ sys.path.insert(0, os.path.join(ICI, ".."))
 import live_promo as LP  # noqa: E402
 
 
+def _sans_drop_destructeur(sql):
+    """AJOUT PUR : jamais « drop table » ni « drop column ». Seule exception (01/10, promo gratuite) :
+    remplacer la CONTRAINTE de prix (price_chf > 0 → gratuit ou price_chf > 0) — aucune donnée touchée."""
+    bas = sql.lower()
+    autorise = "drop constraint if exists live_promos_price_chf_check"
+    return "drop table" not in bas and "drop column" not in bas and bas.count("drop ") == bas.count(autorise)
+
+
 def lancer(coro):
     boucle = asyncio.new_event_loop()
     try:
@@ -389,8 +397,9 @@ def test_schema_ajout_pur_idempotent_avec_sauvegarde():
     sql = LP.SQL_SCHEMA.lower()
     assert "create table if not exists public.playlists_backup_live_promo_20260930 as table public.playlists" in sql
     assert "add column if not exists live_promo_enabled" in sql and "create table if not exists public.live_promos" in sql
-    for interdit in ("drop ", "delete ", "update ", "truncate"):
+    for interdit in ("delete ", "update ", "truncate"):
         assert interdit not in sql
+    assert _sans_drop_destructeur(sql)                    # 01/10 : seul le remplacement de la contrainte de prix
 
 
 # ─── HOTFIX : le super-admin voit, configure, modère et teste (sans règle d'argent inventée) ───
@@ -466,7 +475,7 @@ def test_mode_promo_pur():
     assert LP.mode_promo("subscription", False) is None
     assert LP.paiement_reel_possible("commission") and LP.paiement_reel_possible("super_admin")   # 01/10
     assert not LP.paiement_reel_possible(None)
-    assert "test_sans_paiement boolean" in LP.SQL_SCHEMA and "drop " not in LP.SQL_SCHEMA.lower()
+    assert "test_sans_paiement boolean" in LP.SQL_SCHEMA and _sans_drop_destructeur(LP.SQL_SCHEMA)
 
 
 # ─── 01/10 PARTIE A : position / taille de la promo diffusée (fractions de la scène) ─────────────
@@ -513,3 +522,62 @@ def test_layout_promo_suivante_repart_par_defaut(w):
     qid = _prete(w, jeton="Bearer t-part2")
     w.appel(w.m.live_promo_start, qid, authorization="Bearer t-hote")
     assert w.appel(w.m.live_promo_active, "liveA")["promo"]["layout"] is None
+
+
+# ─── 01/10 COMMIT 1 : PROMO GRATUITE (type explicite free / paid, décidé par l'offre de l'hôte) ──
+def test_offres_type_explicite_gratuit_ou_payant():
+    o = LP.valider_offres([{"id": "g30", "duree_s": 30, "type": "free"}, {"id": "p60", "duree_s": 60, "prix": 10}])
+    assert o[0] == {"id": "g30", "duree_s": 30, "prix": 0.0, "actif": True, "type": "free"}
+    assert o[1] == {"id": "p60", "duree_s": 60, "prix": 10.0, "actif": True, "type": "paid"}
+    for mauvais in ([{"duree_s": 30, "prix": 0}], [{"duree_s": 30, "prix": 0, "type": "paid"}], [{"duree_s": 30, "type": "autre", "prix": 5}]):
+        try:
+            LP.valider_offres(mauvais)                                    # payant à 0 CHF : toujours refusé
+            raise AssertionError(mauvais)
+        except LP.RegleRefusee:
+            pass
+    assert LP.valider_offres([{"duree_s": 30, "prix": 10}])[0]["type"] == "paid"      # anciennes offres : payantes
+
+
+def test_participant_ne_peut_pas_rendre_gratuite_une_offre_payante():
+    offres = [{"id": "p60", "duree_s": 60, "prix": 10}]
+    d = LP.valider_demande({"offre_id": "p60", "titre": "Ma promo", "type": "free", "gratuit": True, "prix": 0}, offres, "")
+    assert d["gratuit"] is False and d["price_chf"] == 10.0
+
+
+def _monde_mixte(w):
+    w.sessions["liveMix"] = {"session_id": "liveMix", "host_id": HOTE_C, "live_promo_enabled": True,
+                             "live_promo_offres": [{"id": "g30", "duree_s": 30, "type": "free"}, {"id": "p60", "duree_s": 60, "prix": 10}]}
+
+
+def test_promo_gratuite_refus_puis_acceptation_directement_prete_sans_argent(w):
+    _monde_mixte(w)
+    cfg = w.appel(w.m.live_promo_config, "liveMix")
+    assert [(o["duree_s"], o["type"]) for o in cfg["offres"]] == [(30, "free"), (60, "paid")]
+    p = w.demander(sid="liveMix", offre="g30")
+    assert p["gratuit"] is True and float(p["price_chf"]) == 0.0
+    w.appel(w.m.live_promo_decision, p["id"], w.m.LivePromoDecisionBody(decision="reject"), authorization="Bearer t-hote")
+    assert w.promos[p["id"]]["status"] == LP.REJECTED
+    q = w.demander(sid="liveMix", offre="g30")
+    w.appel(w.m.live_promo_decision, q["id"], w.m.LivePromoDecisionBody(decision="accept"), authorization="Bearer t-hote")
+    assert w.promos[q["id"]]["status"] == LP.READY                                   # directement PRÊTE
+    assert err(w, w.m.live_promo_pay, q["id"], authorization="Bearer t-part") == 409  # aucun « Payer »
+    assert w.stripe_crees == 0 and w.wallet == []                                     # ni Stripe, ni wallet, ni commission
+    assert not w.promos[q["id"]].get("commission_chf") and not w.promos[q["id"]].get("stripe_session_id")
+    w.appel(w.m.live_promo_start, q["id"], authorization="Bearer t-hote")              # diffusion MANUELLE par l'hôte
+    assert w.appel(w.m.live_promo_active, "liveMix")["promo"]["id"] == q["id"]
+
+
+def test_offres_mixtes_le_payant_garde_son_pipeline(w):
+    _monde_mixte(w)
+    p = w.demander(sid="liveMix", offre="p60")
+    assert p["gratuit"] is False
+    w.appel(w.m.live_promo_decision, p["id"], w.m.LivePromoDecisionBody(decision="accept"), authorization="Bearer t-hote")
+    assert w.promos[p["id"]]["status"] == LP.ACCEPTED                                 # attend le paiement
+    w.appel(w.m.live_promo_pay, p["id"], authorization="Bearer t-part")
+    w.webhook_paye(p["id"])
+    assert w.promos[p["id"]]["status"] == LP.READY and w.wallet == [(HOTE_C, 8.5, "live_promo", f"live_promo:{p['id']}")]
+
+
+def test_schema_promo_gratuite():
+    assert "add column if not exists gratuit boolean not null default false" in LP.SQL_SCHEMA
+    assert "check (gratuit or price_chf > 0)" in LP.SQL_SCHEMA

@@ -195,11 +195,11 @@ def test_tarif_creation_relecture_modification_activation_suppression():
     oid = r["offres"][0]["id"]
     assert oid                                                                     # id attribué par le serveur
     relu = lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))       # « reload » : tout état front oublié
-    assert relu["enabled"] is True and relu["offres"] == [{"id": oid, "duree_s": 30, "prix": 10.0, "actif": True}]
+    assert relu["enabled"] is True and relu["offres"] == [{"id": oid, "duree_s": 30, "prix": 10.0, "actif": True, "type": "paid"}]
     # modification avec l'id RENVOYÉ par le serveur → même tarif, jamais un second
     _sauver(m, [{"id": oid, "duree_s": 30, "prix": 15, "actif": True}])
     relu = lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))["offres"]
-    assert relu == [{"id": oid, "duree_s": 30, "prix": 15.0, "actif": True}]
+    assert relu == [{"id": oid, "duree_s": 30, "prix": 15.0, "actif": True, "type": "paid"}]
     # désactivation : conservé pour l'hôte, invisible des participants
     _sauver(m, [{"id": oid, "duree_s": 30, "prix": 15, "actif": False}])
     assert lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))["offres"][0]["actif"] is False

@@ -813,6 +813,7 @@ export const SessionPage: React.FC = () => {
     connectMicSource,
     connectMusicSource,
     getMusicStream,
+    getMicNoeud,
     setSelfMonitor,
     getContext: getMixerContext,
     getTimerOutput,
@@ -2805,6 +2806,7 @@ export const SessionPage: React.FC = () => {
     resolveMedia: studio.resolveMedia,
     audio: {
       getMicStream: () => micDiffuseRef.current,
+      getMicNoeud: () => getMicNoeud(),      // 01/10 lip-sync : même horloge que le bus (plus de détour MediaStream)
       getMusicStream: () => getMusicStream(),
       getTribeStreams: () => getTribeAudioStreams(),
     },

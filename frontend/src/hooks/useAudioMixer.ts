@@ -50,6 +50,8 @@ export interface UseAudioMixerReturn {
   getSecondaryMicLevel: () => number;
   disconnectSecondaryMic: () => void;
   getContext: () => AudioContext | null;
+  /** 01/10 lip-sync : la sortie du micro DIFFUSÉ (limiteur) et son contexte, pour le bus programme. */
+  getMicNoeud: () => { ctx: AudioContext; noeud: AudioNode } | null;
   // 🔴 Flux de la musique (son RÉEL post-gain) pour l'enregistrement — jamais muet contrairement à
   //    element.captureStream() (l'élément est routé via createMediaElementSource).
   getMusicStream: () => MediaStream | null;
@@ -575,6 +577,10 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
    * Retourne l'AudioContext
    */
   const getContext = useCallback(() => audioContextRef.current, []);
+  const getMicNoeud = useCallback(() => {
+    const ctx = micCtxRef.current; const noeud = micLimiterRef.current;
+    return ctx && noeud && ctx.state !== 'closed' ? { ctx, noeud } : null;
+  }, []);
 
   /**
    * 🔴 Flux audio de la MUSIQUE (son réel, post-gain) destiné à l'enregistrement.
@@ -792,6 +798,7 @@ export function useAudioMixer(options: UseAudioMixerOptions = {}): UseAudioMixer
     getSecondaryMicLevel,
     disconnectSecondaryMic,
     getContext,
+    getMicNoeud,
     getMusicStream,
     getTimerOutput,
     setMicDuckCompensation,

@@ -21,6 +21,8 @@ import { ProgramAudioBus, entreesPourScene } from '@/lib/programAudio';
 export interface SourcesAudioProgramme {
   /** Flux micro DIFFUSÉ du mixeur (gain + limiteur appliqués) — jamais le micro brut. */
   getMicStream: () => MediaStream | null;
+  /** 01/10 lip-sync : le micro diffusé en NŒUD + son contexte (même horloge que le bus). Absent = flux. */
+  getMicNoeud?: () => { ctx: AudioContext; noeud: AudioNode } | null;
   /** Musique du mixeur (`getMusicStream`), son réel post-gain (+ sons du timer). */
   getMusicStream: () => MediaStream | null;
   /** Voix participants reçues chez l'hôte (parole accordée), identité quand connue. */
@@ -77,7 +79,7 @@ export function useProgramStream(o: UseProgramStreamOptions): UseProgramStreamRe
     const video = comp.demarrer();
     if (!video) { setAvis('compositeur indisponible (canvas/captureStream)'); return null; }
     const bus = new ProgramAudioBus();
-    const audio = bus.demarrer();
+    const audio = bus.demarrer(o.audio.getMicNoeud?.()?.ctx ?? null);
     const pistes = [...video.getVideoTracks(), ...(audio?.getAudioTracks() ?? [])];
     const out = new MediaStream(pistes);
     compRef.current = comp; busRef.current = bus;
@@ -101,6 +103,7 @@ export function useProgramStream(o: UseProgramStreamOptions): UseProgramStreamRe
       const bus = busRef.current; if (!bus) return;
       const a = audioRef.current;
       const mic = a.getMicStream(); const musique = a.getMusicStream(); const tribu = a.getTribeStreams();
+      const micNoeud = a.getMicNoeud?.() ?? null;
       const entrees = entreesPourScene({
         mic: !!mic, musique: !!musique,
         participantsDansScene,
@@ -109,6 +112,7 @@ export function useProgramStream(o: UseProgramStreamOptions): UseProgramStreamRe
       });
       bus.synchroniser(entrees.map((e) => ({
         id: e.id, gain: e.gain,
+        noeud: e.id === 'mic' && micNoeud && micNoeud.ctx === bus.contexte ? micNoeud.noeud : null,
         flux: e.id === 'mic' ? mic : e.id === 'musique' ? musique
           : tribu.find((t) => `participant:${t.userId ?? t.peerId}` === e.id)?.stream ?? null,
       })));

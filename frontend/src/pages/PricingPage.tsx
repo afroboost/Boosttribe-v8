@@ -639,6 +639,16 @@ const PricingPage: React.FC = () => {
               {trialDays} jours d'essai illimité, puis débit auto. Sans engagement, résiliable à tout moment.{' '}
               <span className="text-white/60 font-semibold">Non remboursable.</span>
             </p>
+            {/* 01/10 : ce que débloque l'Espace Coach (outils réservés aux Lives d'un Espace Coach). */}
+            <div className="mt-4 w-full max-w-md rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left" data-testid="pricing-inclus-coach">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/70">Inclus dans l'Espace Coach</p>
+              <ul className="space-y-1.5 text-sm text-white/80">
+                {['Prompteur Live', 'Enregistrement Live + transcription IA', 'Promotions des participants (gratuites ou payantes)',
+                  'Live Visio avancé : scène, mains levées, partage d’écran', 'Diffusion vers les réseaux sociaux', 'Crédits illimités'].map((x) => (
+                  <li key={x} className="flex items-start gap-2"><Check size={16} className="mt-0.5 flex-shrink-0" style={{ color: 'var(--bt-accent)' }} />{x}</li>
+                ))}
+              </ul>
+            </div>
           </div>
         </div>
       </div>

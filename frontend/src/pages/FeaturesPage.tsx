@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTheme } from "@/context/ThemeContext";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { MobileMenu } from "@/components/layout/MobileMenu";
+import { getBilletterieConfig } from "@/lib/paymentApi";
 import {
   Radio,
   Video,
@@ -13,7 +14,9 @@ import {
   Crown,
   Smartphone,
   ArrowRight,
-  CheckCircle2
+  CheckCircle2,
+  ScrollText,
+  Megaphone
 } from "lucide-react";
 
 // 🎨 Palette Afroboost (cohérente, premium) — magenta / rose, accents sobres.
@@ -21,7 +24,10 @@ const MAGENTA = "var(--bt-accent)";
 const PINK = "var(--bt-accent-2)";
 
 // Feature data — reflète TOUTES les nouveautés de BoostTribe.
-const FEATURES = [
+// 01/10 : `badge` « Espace Coach » = outil d'un Live hébergé par un Espace Coach (règle serveur).
+// Le prix Coach n'est JAMAIS écrit ici : il vient de la configuration (même source que /pricing).
+const BADGE_COACH = "Espace Coach";
+const construireFeatures = (prixCoach: string) => [
   {
     id: 1,
     icon: Radio,
@@ -34,8 +40,8 @@ const FEATURES = [
     id: 2,
     icon: Video,
     title: "Live Visio façon Zoom",
-    description: "Activez la caméra et voyez les participants en direct pendant la session. Une scène jusqu'à 10 intervenants, le « lever la main » pour monter, le spotlight pour épingler une caméra et le partage d'écran.",
-    benefits: ["Scène jusqu'à 10 caméras", "Lever la main + spotlight", "Partage d'écran"],
+    description: "Activez la caméra et voyez les participants en direct pendant la session. Une scène jusqu'à 10 intervenants, le « lever la main » pour monter, le spotlight pour épingler une caméra, le partage d'écran et des vignettes que l'hôte déplace et redimensionne.",
+    benefits: ["Scène jusqu'à 10 caméras", "Lever la main + spotlight", "Partage d'écran", "Vignettes déplaçables"],
     color: PINK,
   },
   {
@@ -57,9 +63,28 @@ const FEATURES = [
   {
     id: 5,
     icon: FileText,
-    title: "Enregistrement complet + Transcription IA",
-    description: "Option premium : enregistrez toute la session (toutes les voix + la musique), puis obtenez automatiquement une transcription en français et un résumé / notes de cours. Audio et texte téléchargeables.",
-    benefits: ["Capte toutes les voix", "Transcription FR + résumé", "Consentement & téléchargement"],
+    title: "Enregistrement Live + Transcription IA",
+    badge: BADGE_COACH,
+    description: "Pendant votre Live, enregistrez la vidéo de la scène diffusée avec le son du programme (voix et musique), téléchargeable en fin de séance. En option, enregistrez toutes les voix + la musique pour obtenir une transcription en français et un résumé / notes de cours.",
+    benefits: ["Vidéo du Live téléchargeable", "Transcription FR + résumé", "Consentement des participants"],
+    color: MAGENTA,
+  },
+  {
+    id: 9,
+    icon: ScrollText,
+    title: "Prompteur Live",
+    badge: BADGE_COACH,
+    description: "Affichez votre texte directement pendant votre Live et faites-le défiler pendant que vous présentez, sans quitter votre écran de diffusion. L'assistant peut vous aider à le rédiger.",
+    benefits: ["Texte pendant le Live", "Vitesse réglable", "Mobile et ordinateur", "Contrôle pendant la diffusion"],
+    color: PINK,
+  },
+  {
+    id: 10,
+    icon: Megaphone,
+    title: "Promotions des participants",
+    badge: BADGE_COACH,
+    description: "Autorisez vos participants à proposer une promotion pendant votre Live. Vous gardez le contrôle : vous acceptez ou refusez, puis vous choisissez quand la diffuser.",
+    benefits: ["Offre gratuite ou payante", "Validation par l'hôte", "Paiement sécurisé si payant", "Diffusion manuelle", "Durée configurable", "Promo repositionnable"],
     color: MAGENTA,
   },
   {
@@ -74,8 +99,9 @@ const FEATURES = [
     id: 7,
     icon: Crown,
     title: "Espace Coach",
-    description: "Animez vos propres sessions et choisissez votre modèle. L'Abonnement Illimité (99,99 CHF/mois) offre des crédits illimités et 0% de commission ; vous encaissez vos élèves vous-même via votre lien/QR privé.",
-    benefits: ["Abonnement illimité 99,99/mois", "0% de commission", "Modes ouverte / payante / privée"],
+    badge: BADGE_COACH,
+    description: `Animez vos propres Lives avec les outils avancés d'animation. L'Abonnement Illimité (${prixCoach} CHF/mois) offre des crédits illimités et 0% de commission ; vous encaissez vos élèves vous-même via votre lien/QR privé.`,
+    benefits: ["Lives Coach", "Prompteur", "Enregistrement Live", "Promotions des participants", "Gestion des participants (scène, mains levées)", "Diffusion vers les réseaux sociaux"],
     color: MAGENTA,
   },
   {
@@ -89,8 +115,9 @@ const FEATURES = [
 ];
 
 // Feature Card Component
+type Feature = ReturnType<typeof construireFeatures>[number] & { badge?: string };
 interface FeatureCardProps {
-  feature: typeof FEATURES[0];
+  feature: Feature;
   index: number;
 }
 
@@ -126,6 +153,12 @@ const FeatureCard: React.FC<FeatureCardProps> = ({ feature, index }) => {
         />
       </div>
       
+      {feature.badge ? (
+        <span className="relative mb-3 inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+              style={{ borderColor: MAGENTA, color: MAGENTA }} data-testid="feature-badge-coach">
+          {feature.badge}
+        </span>
+      ) : null}
       {/* Title */}
       <h3 
         className="relative text-xl font-bold text-white mb-3"
@@ -156,6 +189,14 @@ const FeatureCard: React.FC<FeatureCardProps> = ({ feature, index }) => {
 const FeaturesPage: React.FC = () => {
   const { theme } = useTheme();
   const { colors, fonts } = theme;
+  // Prix Coach : MÊME source que /pricing (configuration billetterie) ; 99.99 n'est qu'un repli.
+  const [prixCoach, setPrixCoach] = useState<number>(99.99);
+  useEffect(() => {
+    let vivant = true;
+    getBilletterieConfig().then((r) => { if (vivant && r.data?.coach_sub_price_chf) setPrixCoach(r.data.coach_sub_price_chf); }).catch(() => {});
+    return () => { vivant = false; };
+  }, []);
+  const FEATURES = construireFeatures(prixCoach.toFixed(2).replace('.', ','));
 
   return (
     <div 

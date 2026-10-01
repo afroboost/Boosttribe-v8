@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { Radio, Video, Mic, FileText, ArrowRight } from "lucide-react";
+import { Radio, Video, Mic, FileText, ArrowRight, Crown } from "lucide-react";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { useTheme } from "@/context/ThemeContext";
 import { useReveal } from "@/hooks/useReveal";
@@ -44,11 +44,18 @@ const CHAPTERS: Chapter[] = [
     icon: Mic,
   },
   {
-    eyebrow: "Après la séance",
+    eyebrow: "Après la séance · Espace Coach",
     title: <>Tout est gardé,<br />puis transcrit.</>,
     body:
-      "Enregistrez la session entière — toutes les voix et la musique — puis recevez automatiquement une transcription en français et un résumé. Audio et texte téléchargeables.",
+      "Dans un Live Coach, enregistrez la session — la vidéo de la scène et le son du programme — puis, en option, recevez une transcription en français et un résumé. Fichiers téléchargeables.",
     icon: FileText,
+  },
+  {
+    eyebrow: "Espace Coach",
+    title: <>Les outils du coach,<br />en direct.</>,
+    body:
+      "Prompteur pendant le Live, enregistrement du Live et promotions de vos participants — gratuites ou payantes, toujours validées par vous. Réservés aux Lives d'un Espace Coach ; vos participants, eux, n'ont pas besoin d'être coachs pour proposer leur promo.",
+    icon: Crown,
   },
 ];
 

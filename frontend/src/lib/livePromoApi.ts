@@ -25,11 +25,24 @@ export interface PromoLigne { id: string; status: string; title: string; body?: 
 // 01/10 : jeton joint SI connecté → `est_hote` dit par le serveur (identité vs host_id de CETTE session).
 export const promoConfig = (sid: string) =>
   appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; paiement_reel?: boolean; est_hote?: boolean | null }>(`/live-promo/config/${encodeURIComponent(sid)}`, {}, 'si-connecte');
-export const promoConfigHote = (sid: string) =>
-  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean }>(`/live-promo/host-config/${encodeURIComponent(sid)}`);
+export const promoConfigHote = (sid: string, rid = '') =>
+  appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean }>(`/live-promo/host-config/${encodeURIComponent(sid)}`, rid ? { headers: { 'X-Request-Id': rid } } : {});
+
+/** 🔎 01/10 — JOURNAL FORENSIC TEMPORAIRE : événements de la section tarifs (aucun jeton). text/plain + keepalive. */
+export function promoJournal(sid: string, evenement: string, details: Record<string, unknown> = {}): void {
+  try {
+    fetch(`${API_URL}/live-promo/journal`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ session_id: sid, evenement, details }) }).catch(() => { /* diagnostic seulement */ });
+  } catch { /* diagnostic seulement */ }
+}
+export const nouvelIdRequete = (): string => `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+export const resumeOffres = (offres: OffrePromo[]) => offres.map((o) => ({ d: o.duree_s, p: o.prix, a: o.actif !== false, id: !!o.id }));
 // `auDepart` : la page se ferme → `keepalive` (le navigateur n'annule pas l'envoi à la navigation).
-export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[], auDepart = false) =>
-  appel<{ ok: boolean; offres?: OffrePromo[]; enabled?: boolean }>('/live-promo/config', { ...json({ session_id: sid, enabled, offres }), ...(auDepart ? { keepalive: true } : {}) });
+export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[], auDepart = false, rid = '') => {
+  const init = json({ session_id: sid, enabled, offres });
+  return appel<{ ok: boolean; offres?: OffrePromo[]; enabled?: boolean }>('/live-promo/config', {
+    ...init, headers: { ...(init.headers as Record<string, string>), ...(rid ? { 'X-Request-Id': rid } : {}) }, ...(auDepart ? { keepalive: true } : {}) });
+};
 export const promoActive = (sid: string) =>
   appel<{ promo: PromoPublique | null; server_now: string }>(`/live-promo/active/${encodeURIComponent(sid)}`, {}, false);
 export const promoMesDemandes = (sid: string) => appel<{ promos: PromoLigne[] }>(`/live-promo/mine/${encodeURIComponent(sid)}`);

@@ -4666,6 +4666,78 @@ async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
     return p
 
 
+# ── 🔎 JOURNAL FORENSIC TEMPORAIRE (01/10) — « les tarifs promo ne restent pas » ───────────────────
+# Mémoire du processus (un seul worker uvicorn), 300 événements max par session, perdu au redémarrage.
+# JAMAIS de jeton, cookie ni e-mail : identités HACHÉES (8 car.), durées / prix / drapeaux seulement.
+# À RETIRER une fois la cause trouvée.
+import hashlib as _lp_hashlib
+import json
+from collections import deque as _lp_deque
+
+_LP_JOURNAL: Dict[str, Any] = {}
+
+
+def _lp_h(x: Any) -> Optional[str]:
+    return _lp_hashlib.sha256(str(x).encode()).hexdigest()[:8] if x else None
+
+
+def _lp_resume(offres: Any) -> Any:
+    if not isinstance(offres, list):
+        return {"type": type(offres).__name__}
+    out = []
+    for o in offres[:10]:
+        if isinstance(o, dict):
+            out.append({"d": o.get("duree_s"), "p": o.get("prix"), "a": o.get("actif"),
+                        "id": bool(str(o.get("id") or "").strip())})
+        else:
+            out.append({"type": type(o).__name__})
+    return out
+
+
+def _lp_noter(session_id: str, source: str, **ev: Any) -> None:
+    try:
+        if not session_id or not SESSION_ID_RE.match(session_id):
+            return
+        j = _LP_JOURNAL.setdefault(session_id, _lp_deque(maxlen=300))
+        j.append({"t": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "src": source, **ev})
+    except Exception:  # noqa: BLE001 — le journal ne casse jamais une requête
+        pass
+
+
+class LivePromoJournalBody(BaseModel):
+    session_id: str
+    evenement: str
+    details: Optional[Dict[str, Any]] = None
+
+
+@app.post("/live-promo/journal")
+async def live_promo_journal_ecrire(request: Request):
+    """Événements du NAVIGATEUR de l'hôte (section tarifs). Corps text/plain (aucune pré-requête CORS)."""
+    try:
+        d = json.loads((await request.body())[:4000] or b"{}")
+        sid = str(d.get("session_id") or "")[:40]
+        details = d.get("details") if isinstance(d.get("details"), dict) else {}
+        def _propre(v: Any) -> Any:
+            if v is None or isinstance(v, (bool, int, float)):
+                return v
+            if isinstance(v, (list, dict)):
+                txt = json.dumps(v)
+                return v if len(txt) <= 800 else "(tronqué)"
+            return str(v)[:200]
+        propre = {str(k)[:20]: _propre(v) for k, v in list(details.items())[:15]}
+        _lp_noter(sid, "navigateur", evt=str(d.get("evenement") or "")[:40], **propre)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True}
+
+
+@app.get("/live-promo/journal/{session_id}")
+async def live_promo_journal_lire(session_id: str):
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    return {"session_id": session_id, "evenements": list(_LP_JOURNAL.get(session_id) or [])}
+
+
 @app.get("/live-promo/config/{session_id}")
 async def live_promo_config(session_id: str, authorization: Optional[str] = Header(default=None)):
     """Ce que voit un participant : promo activée ? tarifs ACTIFS. `eligible` = hôte en mode commission.
@@ -4686,10 +4758,18 @@ async def live_promo_config(session_id: str, authorization: Optional[str] = Head
 
 
 @app.get("/live-promo/host-config/{session_id}")
-async def live_promo_host_config(session_id: str, authorization: Optional[str] = Header(default=None)):
-    user = await get_user_from_token(authorization)
-    s = await _lp_session(session_id)
-    await _lp_hote(s.get("host_id"), user)
+async def live_promo_host_config(session_id: str, authorization: Optional[str] = Header(default=None),
+                                 x_request_id: Optional[str] = Header(default=None)):
+    rid = (x_request_id if isinstance(x_request_id, str) else "")[:40]
+    try:
+        user = await get_user_from_token(authorization)
+        s = await _lp_session(session_id)
+        await _lp_hote(s.get("host_id"), user)
+    except HTTPException as e:
+        _lp_noter(session_id, "serveur", evt="host-config", rid=rid, http=e.status_code, raison=str(e.detail)[:120])
+        raise
+    _lp_noter(session_id, "serveur", evt="host-config", rid=rid, http=200, user=_lp_h(user.get("id")),
+              hote=_lp_h(s.get("host_id")), enabled=s.get("live_promo_enabled"), offres_base=_lp_resume(s.get("live_promo_offres")))
     try:
         offres = _lp.valider_offres(s.get("live_promo_offres"))
     except _lp.RegleRefusee:
@@ -4700,9 +4780,24 @@ async def live_promo_host_config(session_id: str, authorization: Optional[str] =
 
 
 @app.post("/live-promo/config")
-async def live_promo_save_config(body: LivePromoConfigBody, authorization: Optional[str] = Header(default=None)):
+async def live_promo_save_config(body: LivePromoConfigBody, authorization: Optional[str] = Header(default=None),
+                                 x_request_id: Optional[str] = Header(default=None)):
+    rid = (x_request_id if isinstance(x_request_id, str) else "")[:40]
+    _lp_noter(body.session_id, "serveur", evt="save:recu", rid=rid, enabled=body.enabled, offres_corps=_lp_resume(body.offres))
+    try:
+        rep = await _live_promo_save_config(body, authorization, rid)
+    except HTTPException as e:
+        _lp_noter(body.session_id, "serveur", evt="save:refus", rid=rid, http=e.status_code, raison=str(e.detail)[:160])
+        raise
+    _lp_noter(body.session_id, "serveur", evt="save:ok", rid=rid, http=200, offres_rep=_lp_resume(rep.get("offres")))
+    return rep
+
+
+async def _live_promo_save_config(body: LivePromoConfigBody, authorization: Optional[str], rid: str) -> Dict[str, Any]:
     user = await get_user_from_token(authorization)
     s = await _lp_session(body.session_id)
+    _lp_noter(body.session_id, "serveur", evt="save:avant", rid=rid, user=_lp_h(user.get("id")), hote=_lp_h(s.get("host_id")),
+              match=user.get("id") == s.get("host_id"), enabled_base=s.get("live_promo_enabled"), offres_base=_lp_resume(s.get("live_promo_offres")))
     await _lp_hote(s.get("host_id"), user)
     if not await _lp_eligible(s.get("host_id")):
         raise HTTPException(status_code=403, detail="Les promotions payantes sont réservées au mode commission.")
@@ -4716,10 +4811,13 @@ async def live_promo_save_config(body: LivePromoConfigBody, authorization: Optio
             raise _lp_refus(e)
     if patch:
         n = await _lp_enregistrer_config(body.session_id, patch)
+        _lp_noter(body.session_id, "serveur", evt="save:ecriture", rid=rid, lignes=n)
         if n <= 0:
             raise HTTPException(status_code=500, detail="Enregistrement impossible")
         # Preuve : on RELIT ce que lira le participant ; un écart = échec dit, jamais un faux succès.
         relu = await _lp_session(body.session_id)
+        _lp_noter(body.session_id, "serveur", evt="save:relecture", rid=rid, enabled=relu.get("live_promo_enabled"),
+                  offres=_lp_resume(relu.get("live_promo_offres")))
         if any(relu.get(k) != v for k, v in patch.items()):
             logger.warning("[LIVE-PROMO] config session=%s non confirmée à la relecture", body.session_id)
             raise HTTPException(status_code=500, detail="Enregistrement non confirmé — réessayez")

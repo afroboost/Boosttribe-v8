@@ -109,7 +109,7 @@ test('01/10 — cas réel : config de la session Live à enabled:false côté pa
   assert.match(t, /const envoyerEnAttente = \(\) => \{\s+const d = dernier\.current;\s+if \(d\.etat && d\.signature && d\.signature !== charge\.current && !offresValides\(d\.etat\.offres\)\) \{/);
   assert.match(t, /return \(\) => \{ window\.removeEventListener\('pagehide', envoyerEnAttente\); envoyerEnAttente\(\); \};/);
   // Après chaque enregistrement : relecture de la config PUBLIQUE (celle du participant), affichée.
-  assert.match(t, /promoConfig\(sessionId\)\.then\(\(c\) => setVuParticipants/);
+  assert.match(t, /promoConfig\(sessionId\)\.then\(\(c\) => \{ promoJournal\(sessionId, 'relecture-publique'[^\n]*setVuParticipants\(/);
   assert.match(t, /data-testid="live-promo-vu-participants"/);
   assert.equal((t.match(/relirePublic\(\)/g) || []).length >= 3, true);
 });
@@ -152,10 +152,11 @@ test('01/10 — tarifs : jamais de faux succès, envoi au départ en keepalive, 
   assert.match(t, /setMessage\(`Enregistrement du tarif impossible : \$\{\(e as Error\)\.message\}`\)/);
   // départ de la page : pagehide + démontage, keepalive
   assert.match(t, /window\.addEventListener\('pagehide', envoyerEnAttente\);/);
-  assert.match(t, /promoEnregistrerConfig\(sessionId, d\.etat\.enabled, d\.etat\.offres, true\)/);
+  assert.match(t, /promoEnregistrerConfig\(sessionId, d\.etat\.enabled, d\.etat\.offres, true, rid\)/);
   // ajout / suppression : envoi immédiat
   assert.equal((t.match(/immediatRef\.current = true;/g) || []).length, 2);
-  assert.match(t, /\}, immediatRef\.current \? 0 : 700\);/);
+  assert.match(t, /const delai = immediatRef\.current \? 0 : 700;/);
+  assert.match(t, /\}, delai\);/);
   const api = src('lib/livePromoApi.ts');
   assert.match(api, /\.\.\.\(auDepart \? \{ keepalive: true \} : \{\}\)/);
 });

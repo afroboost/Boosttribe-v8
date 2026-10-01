@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { offresValides, type OffrePromo } from '@/lib/livePromo';
-import { promoConfig, promoConfigHote, promoEnregistrerConfig } from '@/lib/livePromoApi';
+import { promoConfig, promoConfigHote, promoEnregistrerConfig, promoJournal, nouvelIdRequete, resumeOffres } from '@/lib/livePromoApi';
 
 /**
  * 📣 PROMOTIONS DES PARTICIPANTS — section de la Page promo de la session.
@@ -18,18 +18,21 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   // après chaque enregistrement. En prod, les sessions Live réelles répondaient enabled:false.
   const [vuParticipants, setVuParticipants] = useState<{ enabled: boolean; n: number } | null>(null);
   const relirePublic = () => {
-    promoConfig(sessionId).then((c) => setVuParticipants({ enabled: !!c.enabled, n: (c.offres || []).length }))
-      .catch(() => setVuParticipants(null));
+    promoConfig(sessionId).then((c) => { promoJournal(sessionId, 'relecture-publique', { enabled: !!c.enabled, n: (c.offres || []).length }); setVuParticipants({ enabled: !!c.enabled, n: (c.offres || []).length }); })
+      .catch((e) => { promoJournal(sessionId, 'relecture-publique:erreur', { erreur: (e as Error).message }); setVuParticipants(null); });
   };
   // Dernier état connu, pour l'enregistrement « au départ » (fermeture de la fenêtre).
   const dernier = useRef<{ etat: typeof etat; signature: string }>({ etat: null, signature: '' });
   useEffect(() => {
     let vivant = true;
-    promoConfigHote(sessionId).then((c) => {
+    const rid = nouvelIdRequete();
+    promoJournal(sessionId, 'monte', { rid });
+    promoConfigHote(sessionId, rid).then((c) => {
+      promoJournal(sessionId, 'host-config:ok', { rid, vivant, eligible: c.eligible, enabled: c.enabled, offres: resumeOffres(c.offres || []) });
       if (!vivant) return;
       setEtat(c);
       charge.current = JSON.stringify({ e: c.enabled, o: c.offres });
-    }).catch(() => { if (vivant) setEtat(null); });
+    }).catch((e) => { promoJournal(sessionId, 'host-config:erreur', { rid, erreur: (e as Error).message }); if (vivant) setEtat(null); });
     return () => { vivant = false; };
   }, [sessionId]);
   // ✅ Enregistrement AUTOMATIQUE (le 1er test réel : la case cochée n'était jamais envoyée —
@@ -37,14 +40,18 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   //    une CHAÎNE (primitive) : aucune boucle d'appels ; rien n'est envoyé si rien n'a changé.
   const signature = etat && etat.eligible ? JSON.stringify({ e: etat.enabled, o: etat.offres }) : '';
   useEffect(() => {
+    if (etat) promoJournal(sessionId, 'etat', { enabled: etat.enabled, offres: resumeOffres(etat.offres), deja_enregistre: signature === charge.current, refus: offresValides(etat.offres) || null, eligible: etat.eligible });
     if (!signature || signature === charge.current || !etat) return undefined;
     if (offresValides(etat.offres)) return undefined;          // saisie incomplète : on attend
     dernier.current = { etat, signature };
+    const delai = immediatRef.current ? 0 : 700;
     const t = window.setTimeout(() => {
-      promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)
-        .then((r) => { adopter(r.offres); dernier.current = { etat: null, signature: '' }; setMessage('Enregistré automatiquement'); relirePublic(); })
-        .catch((e) => setMessage(`Enregistrement du tarif impossible : ${(e as Error).message}`));
-    }, immediatRef.current ? 0 : 700);
+      const rid = nouvelIdRequete();
+      promoJournal(sessionId, 'envoi:auto', { rid, enabled: etat.enabled, offres: resumeOffres(etat.offres) });
+      promoEnregistrerConfig(sessionId, etat.enabled, etat.offres, false, rid)
+        .then((r) => { promoJournal(sessionId, 'reponse:ok', { rid, offres: resumeOffres(r.offres || []) }); adopter(r.offres); dernier.current = { etat: null, signature: '' }; setMessage('Enregistré automatiquement'); relirePublic(); })
+        .catch((e) => { promoJournal(sessionId, 'reponse:erreur', { rid, erreur: (e as Error).message }); setMessage(`Enregistrement du tarif impossible : ${(e as Error).message}`); });
+    }, delai);
     immediatRef.current = false;
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -57,8 +64,10 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
       const d = dernier.current;
       if (d.etat && d.signature && d.signature !== charge.current && !offresValides(d.etat.offres)) {
         dernier.current = { etat: null, signature: '' };
-        promoEnregistrerConfig(sessionId, d.etat.enabled, d.etat.offres, true).catch(() => { /* la page est fermée */ });
-      }
+        const rid = nouvelIdRequete();
+        promoJournal(sessionId, 'envoi:depart', { rid, enabled: d.etat.enabled, offres: resumeOffres(d.etat.offres) });
+        promoEnregistrerConfig(sessionId, d.etat.enabled, d.etat.offres, true, rid).catch(() => { /* la page est fermée */ });
+      } else promoJournal(sessionId, 'depart:rien-en-attente', {});
     };
     window.addEventListener('pagehide', envoyerEnAttente);
     return () => { window.removeEventListener('pagehide', envoyerEnAttente); envoyerEnAttente(); };
@@ -78,14 +87,18 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   }
   if (!etat || !etat.eligible) return null;
 
-  const maj = (i: number, patch: Partial<OffrePromo>) =>
+  const maj = (i: number, patch: Partial<OffrePromo>, brut?: string) => {
+    promoJournal(sessionId, 'champ', { i, champ: Object.keys(patch)[0], brut: brut ?? null, valeur: Object.values(patch)[0] as unknown as string });
     setEtat({ ...etat, offres: etat.offres.map((o, j) => (j === i ? { ...o, ...patch } : o)) });
+  };
   const enregistrer = async () => {
     const refus = offresValides(etat.offres);
     if (refus) { setMessage(refus); return; }
     setOccupe(true); setMessage('');
-    try { adopter((await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)).offres); dernier.current = { etat: null, signature: '' }; setMessage('Enregistré'); relirePublic(); }
-    catch (e) { setMessage(`Enregistrement du tarif impossible : ${(e as Error).message}`); }
+    const rid = nouvelIdRequete();
+    promoJournal(sessionId, 'envoi:manuel', { rid, enabled: etat.enabled, offres: resumeOffres(etat.offres) });
+    try { const r = await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres, false, rid); promoJournal(sessionId, 'reponse:ok', { rid, offres: resumeOffres(r.offres || []) }); adopter(r.offres); dernier.current = { etat: null, signature: '' }; setMessage('Enregistré'); relirePublic(); }
+    catch (e) { promoJournal(sessionId, 'reponse:erreur', { rid, erreur: (e as Error).message }); setMessage(`Enregistrement du tarif impossible : ${(e as Error).message}`); }
     setOccupe(false);
   };
   return (
@@ -115,11 +128,11 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
           <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2 text-[11px] text-white/50"><span>Durée (s)</span><span>Prix ({etat.currency})</span><span>Actif</span><span /></div>
           {etat.offres.map((o, i) => (
             <div key={o.id || i} className="grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2" data-testid="live-promo-tarif">
-              <input type="number" min={5} max={3600} value={o.duree_s} onChange={(e) => maj(i, { duree_s: parseInt(e.target.value, 10) || 0 })}
+              <input type="number" min={5} max={3600} value={o.duree_s} onChange={(e) => maj(i, { duree_s: parseInt(e.target.value, 10) || 0 }, e.target.value)}
                      className="min-h-[40px] rounded-lg border border-white/15 bg-black/40 px-2 text-white" aria-label="Durée en secondes" />
-              <input type="number" min={0.5} step={0.5} value={o.prix} onChange={(e) => maj(i, { prix: parseFloat(e.target.value) || 0 })}
+              <input type="number" min={0.5} step={0.5} value={o.prix} onChange={(e) => maj(i, { prix: parseFloat(e.target.value) || 0 }, e.target.value)}
                      className="min-h-[40px] rounded-lg border border-white/15 bg-black/40 px-2 text-white" aria-label="Prix" />
-              <input type="checkbox" checked={o.actif !== false} onChange={(e) => maj(i, { actif: e.target.checked })}
+              <input type="checkbox" checked={o.actif !== false} onChange={(e) => maj(i, { actif: e.target.checked }, String(e.target.checked))}
                      className="h-4 w-4 accent-[var(--bt-accent)]" aria-label="Tarif actif" />
               <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: etat.offres.filter((_, j) => j !== i) }); }}
                       className="p-2 text-white/50 hover:text-white" aria-label="Supprimer ce tarif"><Trash2 className="h-4 w-4" /></button>

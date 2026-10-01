@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { offresValides, type OffrePromo } from '@/lib/livePromo';
-import { promoConfigHote, promoEnregistrerConfig } from '@/lib/livePromoApi';
+import { promoConfig, promoConfigHote, promoEnregistrerConfig } from '@/lib/livePromoApi';
 
 /**
  * 📣 PROMOTIONS DES PARTICIPANTS — section de la Page promo de la session.
@@ -13,6 +13,15 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   const [message, setMessage] = useState('');
   const [occupe, setOccupe] = useState(false);
   const charge = useRef('');      // dernier état ENREGISTRÉ (sérialisé) : rien à envoyer s'il n'a pas changé
+  // 01/10 — PREUVE : ce que REÇOIVENT les participants de CETTE session (lecture publique), relu
+  // après chaque enregistrement. En prod, les sessions Live réelles répondaient enabled:false.
+  const [vuParticipants, setVuParticipants] = useState<{ enabled: boolean; n: number } | null>(null);
+  const relirePublic = () => {
+    promoConfig(sessionId).then((c) => setVuParticipants({ enabled: !!c.enabled, n: (c.offres || []).length }))
+      .catch(() => setVuParticipants(null));
+  };
+  // Dernier état connu, pour l'enregistrement « au départ » (fermeture de la fenêtre).
+  const dernier = useRef<{ etat: typeof etat; signature: string }>({ etat: null, signature: '' });
   useEffect(() => {
     let vivant = true;
     promoConfigHote(sessionId).then((c) => {
@@ -29,14 +38,26 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   useEffect(() => {
     if (!signature || signature === charge.current || !etat) return undefined;
     if (offresValides(etat.offres)) return undefined;          // saisie incomplète : on attend
+    dernier.current = { etat, signature };
     const t = window.setTimeout(() => {
       promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)
-        .then((r) => { adopter(r.offres); setMessage('Enregistré automatiquement'); })
+        .then((r) => { adopter(r.offres); setMessage('Enregistré automatiquement'); relirePublic(); })
         .catch((e) => setMessage((e as Error).message));
     }, 700);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, sessionId]);
+  // Fermer la fenêtre AVANT les 700 ms annulait l'enregistrement en attente : on l'envoie au départ.
+  useEffect(() => () => {
+    const d = dernier.current;
+    if (d.etat && d.signature && d.signature !== charge.current && !offresValides(d.etat.offres)) {
+      promoEnregistrerConfig(sessionId, d.etat.enabled, d.etat.offres).catch(() => { /* la page est fermée */ });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+  useEffect(() => { relirePublic(); /* état réel au montage */ // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
   // Le serveur attribue l'identifiant d'un NOUVEAU tarif : on reprend sa liste, sinon chaque
   // enregistrement recréerait un identifiant (et une demande en cours viserait un tarif disparu).
   function adopter(offres?: OffrePromo[]) {
@@ -55,13 +76,20 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
     const refus = offresValides(etat.offres);
     if (refus) { setMessage(refus); return; }
     setOccupe(true); setMessage('');
-    try { adopter((await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)).offres); setMessage('Enregistré'); }
+    try { adopter((await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)).offres); setMessage('Enregistré'); relirePublic(); }
     catch (e) { setMessage((e as Error).message); }
     setOccupe(false);
   };
   return (
     <section className="rounded-xl border border-white/10 bg-black/30 p-3 space-y-3" data-testid="live-promo-tarifs">
       <p className="text-white/80 text-xs font-semibold uppercase tracking-wide">Promotions des participants</p>
+      {/* Ce que voient les participants de CETTE session, relu sur le serveur (preuve, pas une supposition). */}
+      <p className="text-xs text-white/60" data-testid="live-promo-vu-participants">
+        Session {sessionId} — visible des participants :{' '}
+        {vuParticipants === null ? '…' : vuParticipants.enabled && vuParticipants.n > 0
+          ? <b className="text-emerald-300">oui ({vuParticipants.n} tarif{vuParticipants.n > 1 ? 's' : ''})</b>
+          : <b className="text-amber-300">non{vuParticipants.enabled ? ' (aucun tarif actif)' : ' (désactivée)'}</b>}
+      </p>
       <label className="flex min-h-[44px] items-center gap-2 text-sm text-white">
         <input type="checkbox" checked={etat.enabled} onChange={(e) => setEtat({ ...etat, enabled: e.target.checked })}
                className="h-4 w-4 accent-[var(--bt-accent)]" data-testid="live-promo-activer" />

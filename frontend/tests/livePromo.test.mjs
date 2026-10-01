@@ -102,3 +102,25 @@ test('tarifs : enregistrement AUTOMATIQUE (plus de piège du second bouton), san
   assert.match(t, /if \(!signature \|\| signature === charge\.current \|\| !etat\) return undefined;/);
   assert.match(t, /adopter\(r\.offres\)/);                                                       // identifiants du serveur
 });
+
+test('01/10 — cas réel : config de la session Live à enabled:false côté participant → l’hôte le VOIT, et rien ne se perd', () => {
+  const t = src('components/session/LivePromoTarifs.tsx');
+  // Fermer la fenêtre avant 700 ms n'annule plus : l'enregistrement en attente part au démontage.
+  assert.match(t, /useEffect\(\(\) => \(\) => \{\s+const d = dernier\.current;\s+if \(d\.etat && d\.signature && d\.signature !== charge\.current && !offresValides\(d\.etat\.offres\)\) \{\s+promoEnregistrerConfig\(sessionId, d\.etat\.enabled, d\.etat\.offres\)/);
+  // Après chaque enregistrement : relecture de la config PUBLIQUE (celle du participant), affichée.
+  assert.match(t, /promoConfig\(sessionId\)\.then\(\(c\) => setVuParticipants/);
+  assert.match(t, /data-testid="live-promo-vu-participants"/);
+  assert.equal((t.match(/relirePublic\(\)/g) || []).length >= 3, true);
+});
+
+test('cas réel de visibilité (coach global non-hôte, super-admin non-hôte) : déjà VRAI dès que la config est activée', () => {
+  const prop = (hostId, userId, isHostGlobal) => (hostId ? (!!userId && userId === hostId) : isHostGlobal);
+  const visible = (cfg, hostId, userId, isHostGlobal) => !prop(hostId, userId, isHostGlobal) && !!userId && cfg.enabled && cfg.offres.length > 0;
+  const actif = { enabled: true, offres: [{ id: 'o', duree_s: 30, prix: 10 }] };
+  const prod = { enabled: false, offres: [] };                                  // réponse RÉELLE des 2 sessions Live
+  assert.equal(visible(actif, 'hoteA', 'coachB', true), true);                  // coach global non-hôte
+  assert.equal(visible(actif, 'hoteA', 'admin', true), true);                   // super-admin non-hôte
+  assert.equal(visible(actif, 'hoteA', 'membre', false), true);                 // membre
+  assert.equal(visible(actif, 'hoteA', 'hoteA', true), false);                  // vrai hôte
+  assert.equal(visible(prod, 'hoteA', 'coachB', true), false);                  // ⇒ la cause : la config de la session
+});

@@ -12,7 +12,7 @@
  */
 
 const CACHE_NAME = 'boosttribe-v11-shell-network-only';
-const CACHE_VERSION = '2.2.0';
+const CACHE_VERSION = '2.2.1';
 // 🏷️ BASE DU BUILD, déduite de la PORTÉE d'enregistrement : « / » sur boosttribe.pro,
 // « /live/ » pour l'habillage Afroboost servi sous afroboost.com/live. Un service
 // worker ne contrôle que son répertoire ; ses chemins doivent donc suivre la base
@@ -199,7 +199,9 @@ async function cacheFirstStrategy(request) {
     return networkResponse;
   } catch (error) {
     // Fallback vers le cache si offline
-    return caches.match(BASE) || new Response('Offline', { status: 503 });
+    // 01/10 : ATTENDRE le cache (caches.match renvoie une PROMESSE, toujours « vraie ») — sinon
+    // respondWith(undefined) → « Failed to convert value to 'Response' » au moindre échec réseau.
+    return (await caches.match(BASE)) || new Response('Offline', { status: 503 });
   }
 }
 
@@ -227,7 +229,9 @@ async function networkFirstStrategy(request) {
     }
     
     // Dernier recours : page d'accueil
-    return caches.match(BASE) || new Response('Offline', { status: 503 });
+    // 01/10 : ATTENDRE le cache (caches.match renvoie une PROMESSE, toujours « vraie ») — sinon
+    // respondWith(undefined) → « Failed to convert value to 'Response' » au moindre échec réseau.
+    return (await caches.match(BASE)) || new Response('Offline', { status: 503 });
   }
 }
 

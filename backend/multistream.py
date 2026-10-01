@@ -130,12 +130,30 @@ class DiffusionRoom:
 _DIFFUSIONS: Dict[str, DiffusionRoom] = {}
 
 
+class PasProprietaire(Exception):
+    """🔐 01/10 : la diffusion de cette room appartient à un AUTRE compte (co-hôte, coach invité…)."""
+
+
 def _diffusion(room: str, user_id: str) -> DiffusionRoom:
+    """La diffusion d'une room appartient au compte qui l'a démarrée. Tant qu'elle tourne, un autre
+    compte n'y touche pas (PasProprietaire) ; arrêtée, la room est libre et repart à zéro pour lui."""
     d = _DIFFUSIONS.get(room)
+    if d and d.user_id != user_id:
+        if d.live or d.egress_id:
+            raise PasProprietaire("Diffusion démarrée par un autre compte")
+        d = None
     if not d:
         d = DiffusionRoom(room=room, user_id=user_id)
         _DIFFUSIONS[room] = d
     return d
+
+
+def _diffusion_lecture(room: str, user_id: str) -> DiffusionRoom:
+    """Lecture seule : un autre compte reçoit un état VIDE, jamais celui du propriétaire."""
+    d = _DIFFUSIONS.get(room)
+    if d and d.user_id == user_id:
+        return d
+    return DiffusionRoom(room=room, user_id=user_id)
 
 
 def reinitialiser_pour_tests() -> None:
@@ -431,11 +449,11 @@ async def demarrer(room: str, user_id: str, plateformes: List[str], video_sid: O
 
 def statut_sync(room: str, user_id: str) -> Dict[str, Any]:
     """Statut instantané sans interroger le moteur (bancs, diagnostics)."""
-    return _diffusion(room, user_id).statut()
+    return _diffusion_lecture(room, user_id).statut()
 
 
 async def statut(room: str, user_id: str) -> Dict[str, Any]:
-    d = _diffusion(room, user_id)
+    d = _diffusion_lecture(room, user_id)
     if d.egress_id:
         try:
             par_url = await moteur().statut(d.egress_id)

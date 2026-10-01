@@ -1366,6 +1366,8 @@ async def broadcast_start(body: BroadcastStartBody, authorization: Optional[str]
         raise HTTPException(status_code=400, detail="Choisissez au moins un réseau")
     try:
         return await _ms.demarrer(body.room, uid, plateformes, body.video_track_sid, body.audio_track_sid)
+    except _ms.PasProprietaire:
+        raise HTTPException(status_code=403, detail="Diffusion démarrée par un autre compte")
     except _ms.DirectVerrouille as verrou:
         # 🔒 Hors mode mock sans le GO de Bassi : rien ne part, réponse explicite (423 Locked).
         raise HTTPException(status_code=423, detail=str(verrou))
@@ -1374,7 +1376,10 @@ async def broadcast_start(body: BroadcastStartBody, authorization: Optional[str]
 @app.post("/live/broadcast/stop")
 async def broadcast_stop(body: BroadcastStopBody, authorization: Optional[str] = Header(default=None)):
     uid = await _broadcast_user_hote(body.room, authorization)
-    return await _ms.arreter(body.room, uid, body.platform)
+    try:
+        return await _ms.arreter(body.room, uid, body.platform)
+    except _ms.PasProprietaire:
+        raise HTTPException(status_code=403, detail="Diffusion démarrée par un autre compte")
 
 
 @app.get("/live/broadcast/status")

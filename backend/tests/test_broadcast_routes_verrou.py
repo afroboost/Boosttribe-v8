@@ -196,3 +196,35 @@ def test_qa_egress_fichier_structure_jamais_streamoutput_ni_verrou_touche():
     assert 'name == "program"' in bloc and 'name == "program-audio"' in bloc, "pistes PROGRAMME, pas la caméra"
     # Le verrou du direct réel est inchangé.
     assert "def verrou_direct_reel" in src and "SOCIAL_LIVE_GO" in src
+
+
+def test_01_10_cloisonnement_http_coach_b_cohote_ne_touche_pas_la_diffusion_de_a(appli, monkeypatch):
+    """🔐 Coach B (co-hôte de la room de A) : ne voit pas, n'arrête pas, ne greffe rien sur la diffusion de A."""
+    m, ms, client = appli
+    social = sys.modules.get("social_destinations")
+
+    async def faux_user(authorization):
+        if authorization == "Bearer coachA":
+            return {"id": "uid-coach-a", "email": "contact.artboost@gmail.com"}
+        if authorization == "Bearer coachB":
+            return {"id": "uid-coach-b", "email": "coach-b@afroboost.test"}
+        raise HTTPException(status_code=401, detail="Token manquant")
+
+    async def resoudre(user_id, platform):
+        return {"rtmp_url": f"rtmps://push.{platform}.test/{user_id}", "stream_key": "K"} if user_id == "uid-coach-a" else None
+
+    monkeypatch.setattr(m, "get_user_from_token", faux_user)
+    if social is not None:
+        social._deps.get_user = faux_user
+    monkeypatch.setattr(ms, "_resoudre_destination", resoudre)
+    A, B = {"Authorization": "Bearer coachA"}, {"Authorization": "Bearer coachB"}
+    room = "ROOMA-0001"
+    r = client.post("/live/broadcast/start", json={"room": room, "destinations": [{"platform": "facebook"}]}, headers=A)
+    assert r.status_code == 200 and r.json()["live"] is True
+    vu = client.get("/live/broadcast/status", params={"room": room}, headers=B).json()
+    assert vu["live"] is False and vu["destinations"] == []                       # GET cross-coach
+    assert client.post("/live/broadcast/stop", json={"room": room}, headers=B).status_code == 403   # STOP
+    assert client.post("/live/broadcast/stop", json={"room": room, "platform": "facebook"}, headers=B).status_code == 403
+    assert client.post("/live/broadcast/start", json={"room": room, "destinations": [{"platform": "tiktok"}]}, headers=B).status_code == 403
+    assert client.get("/live/broadcast/status", params={"room": room}, headers=A).json()["live"] is True  # A intact
+    assert client.post("/live/broadcast/stop", json={"room": room}, headers=A).json()["live"] is False

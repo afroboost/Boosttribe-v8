@@ -42,7 +42,8 @@ export function useLivePromo(sessionId: string | undefined, actif: boolean, estH
     promoActive(sessionId).then((r) => {
       setDecalage(decalageHorloge(r.server_now, t0));
       // Même promo, même échéance : on garde l'objet (aucun rendu, aucun effet relancé).
-      setActive((prev) => (prev && r.promo && prev.id === r.promo.id && prev.ends_at === r.promo.ends_at ? prev : r.promo));
+      setActive((prev) => (prev && r.promo && prev.id === r.promo.id && prev.ends_at === r.promo.ends_at
+        && JSON.stringify(prev.layout ?? null) === JSON.stringify(r.promo.layout ?? null) ? prev : r.promo));
     }).catch(() => { /* réseau : on garde l'état, la prochaine relecture corrigera */ });
     promoConfig(sessionId).then((c) => setConfig((prev) => (prev && JSON.stringify(prev) === JSON.stringify(c) ? prev : c))).catch(() => {});
     if (estHote) promoListeHote(sessionId).then((r) => setListeHote(r.promos || [])).catch(() => {});

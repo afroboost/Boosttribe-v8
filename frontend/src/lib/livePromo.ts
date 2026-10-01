@@ -15,6 +15,8 @@ export interface OffrePromo { id: string; duree_s: number; prix: number; actif?:
 export interface PromoPublique {
   id: string; title: string; body: string; media_url: string | null; external_url: string | null;
   participant_name: string; started_at: string; ends_at: string; duration_seconds: number; remaining_seconds: number;
+  /** 01/10 : position choisie par l'hôte (fractions de la scène) ; null/absent = en bas (défaut). */
+  layout?: { x: number; y: number; w: number } | null;
 }
 
 /** Écart (ms) entre l'horloge du serveur et celle de l'appareil, mesuré à la réception. */

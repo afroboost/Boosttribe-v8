@@ -56,6 +56,9 @@ export const promoPayer = (id: string) => appel<{ url: string }>(`/live-promo/re
 export const promoPretSansPaiement = (id: string) => appel<{ promo: PromoLigne }>(`/live-promo/requests/${id}/test-ready`, json({}));
 export const promoDiffuser = (id: string) =>
   appel<{ promo: PromoPublique; server_now: string }>(`/live-promo/requests/${id}/start`, json({}));
+/** 01/10 : l'hôte place / redimensionne la promo diffusée (fractions de la scène). */
+export const promoLayout = (id: string, layout: { x: number; y: number; w: number } | null) =>
+  appel<{ ok: boolean; layout: { x: number; y: number; w: number } | null }>(`/live-promo/requests/${id}/layout`, json({ layout }));
 export const promoArreter = (id: string, raison?: string) =>
   appel<{ promo: PromoLigne }>(`/live-promo/requests/${id}/stop`, json({ raison: raison || null }));
 export async function promoEnvoyerImage(sid: string, fichier: File): Promise<string> {

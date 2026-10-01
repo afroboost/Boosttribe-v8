@@ -441,3 +441,49 @@ def test_mode_promo_pur():
     assert LP.mode_promo("subscription", True) == "super_admin"
     assert LP.mode_promo("subscription", False) is None
     assert "test_sans_paiement boolean" in LP.SQL_SCHEMA and "drop " not in LP.SQL_SCHEMA.lower()
+
+
+# ─── 01/10 PARTIE A : position / taille de la promo diffusée (fractions de la scène) ─────────────
+def test_layout_pur_fractions_bornees_et_refus():
+    assert LP.valider_layout({"x": 0.1, "y": 0.7, "w": 0.4}) == {"x": 0.1, "y": 0.7, "w": 0.4}
+    assert LP.valider_layout({"x": -3, "y": 9, "w": 5}) == {"x": 0.0, "y": 1.0, "w": 1.0}          # bornes
+    assert LP.valider_layout({"x": 0.5, "y": 0.5, "w": 0.01})["w"] == LP.LAYOUT_W_MIN
+    assert LP.valider_layout(None) is None                                                        # = position par défaut
+    for mauvais in ({"x": "a", "y": 0, "w": 0.4}, {"x": True, "y": 0, "w": 0.4}, [1, 2], {"x": float("nan"), "y": 0, "w": 0.5}):
+        try:
+            LP.valider_layout(mauvais)
+            raise AssertionError(mauvais)
+        except LP.RegleRefusee:
+            pass
+    assert "layout" in LP.vue_publique({"id": "p", "layout": {"x": 0.1, "y": 0.2, "w": 0.3}})
+    assert LP.vue_publique({"id": "p"})["layout"] is None                                         # défaut = bas (inchangé)
+    assert "add column if not exists layout jsonb" in LP.SQL_SCHEMA
+
+
+def test_layout_hote_seul_pendant_la_diffusion_et_vu_par_tous(w):
+    pid = _prete(w)
+    corps = w.m.LivePromoLayoutBody(layout={"x": 0.05, "y": 0.1, "w": 0.5})
+    assert err(w, w.m.live_promo_layout, pid, corps, authorization="Bearer t-hote") == 409    # pas encore diffusée
+    w.appel(w.m.live_promo_start, pid, authorization="Bearer t-hote")
+    assert err(w, w.m.live_promo_layout, pid, corps, authorization="Bearer t-part") == 403    # participant
+    assert err(w, w.m.live_promo_layout, pid, corps, authorization="Bearer t-admin") == 403   # super-admin non-hôte
+    w.appel(w.m.live_promo_layout, pid, corps, authorization="Bearer t-hote")
+    vu = w.appel(w.m.live_promo_active, "liveA")["promo"]
+    assert vu["layout"] == {"x": 0.05, "y": 0.1, "w": 0.5}                                       # même position pour tous
+    # aucune incidence sur durée, statut, paiement
+    ligne = w.promos[pid]
+    assert ligne["status"] == LP.BROADCASTING and ligne["ends_at"] == vu["ends_at"]
+    # « Arrêter la promo » fonctionne toujours après déplacement
+    w.appel(w.m.live_promo_stop, pid, w.m.LivePromoStopBody(raison=None), authorization="Bearer t-hote")
+    assert w.promos[pid]["status"] == LP.STOPPED_EARLY
+    assert err(w, w.m.live_promo_layout, pid, corps, authorization="Bearer t-hote") == 409    # promo finie
+
+
+def test_layout_promo_suivante_repart_par_defaut(w):
+    pid = _prete(w)
+    w.appel(w.m.live_promo_start, pid, authorization="Bearer t-hote")
+    w.appel(w.m.live_promo_layout, pid, w.m.LivePromoLayoutBody(layout={"x": 0.1, "y": 0.1, "w": 0.4}), authorization="Bearer t-hote")
+    w.appel(w.m.live_promo_stop, pid, w.m.LivePromoStopBody(raison=None), authorization="Bearer t-hote")
+    qid = _prete(w, jeton="Bearer t-part2")
+    w.appel(w.m.live_promo_start, qid, authorization="Bearer t-hote")
+    assert w.appel(w.m.live_promo_active, "liveA")["promo"]["layout"] is None

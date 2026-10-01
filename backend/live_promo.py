@@ -208,6 +208,28 @@ def test_sans_paiement_possible(mode: Optional[str], statut: str) -> bool:
     return mode == MODE_SUPER_ADMIN and statut == ACCEPTED
 
 
+# ─── 01/10 : position / taille de la promo DIFFUSÉE (partie A) ─────────────────────────────────
+# Fractions de la SCÈNE (0..1) : coin haut-gauche (x, y) et largeur (w) ; la hauteur suit le contenu.
+# None = position par défaut (en bas, comme avant). Bornage FIN (barre, champ, plancher en px) : côté
+# écran (sceneLive.placementPromo) ; ici on ne garde que des nombres sûrs.
+LAYOUT_W_MIN = 0.15
+
+
+def valider_layout(brut: Any) -> Optional[Dict[str, float]]:
+    if brut is None:
+        return None
+    if not isinstance(brut, dict):
+        raise RegleRefusee("Position illisible")
+    sortie: Dict[str, float] = {}
+    for k in ("x", "y", "w"):
+        v = brut.get(k)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or v in (float("inf"), float("-inf")):
+            raise RegleRefusee("Position illisible")
+        sortie[k] = round(min(1.0, max(0.0, float(v))), 4)
+    sortie["w"] = max(LAYOUT_W_MIN, sortie["w"])
+    return sortie
+
+
 def vue_publique(promo: Dict[str, Any], t: Optional[datetime] = None) -> Dict[str, Any]:
     """Ce que TOUS les participants reçoivent d'une promo diffusée (aucune donnée de paiement)."""
     return {"id": promo.get("id"), "title": promo.get("title") or "", "body": promo.get("body") or "",
@@ -215,6 +237,7 @@ def vue_publique(promo: Dict[str, Any], t: Optional[datetime] = None) -> Dict[st
             "participant_name": promo.get("participant_name") or "",
             "started_at": promo.get("started_at"), "ends_at": promo.get("ends_at"),
             "duration_seconds": promo.get("duration_seconds"),
+            "layout": promo.get("layout") if isinstance(promo.get("layout"), dict) else None,
             "remaining_seconds": secondes_restantes(promo.get("ends_at"), t)}
 
 
@@ -265,4 +288,5 @@ create index if not exists live_promos_participant_idx on public.live_promos(par
 create unique index if not exists live_promos_une_diffusion on public.live_promos(session_id) where status = 'broadcasting';
 alter table public.live_promos enable row level security;
 alter table public.live_promos add column if not exists test_sans_paiement boolean not null default false;
+alter table public.live_promos add column if not exists layout jsonb;
 """

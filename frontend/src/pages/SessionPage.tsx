@@ -45,6 +45,7 @@ import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
+import { promoLayout } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
 import { LivePromoParticipantModal } from '@/components/session/LivePromoParticipantModal';
 import { LivePromoHostModal } from '@/components/session/LivePromoHostModal';
 import { usePrompteur } from '@/hooks/usePrompteur';
@@ -4322,12 +4323,21 @@ export const SessionPage: React.FC = () => {
   //    donc DANS la zone caméra : elles restent visibles en plein écran.
   const promoAtraiter = livePromo.enAttente + livePromo.listeHote.filter((p) => p.status === 'ready').length;
   const promoRafraichirEtSignaler = () => { livePromo.rafraichir(); livePromo.signaler(); };
-  const livePromoNode = (livePromo.active || (estProprietaireSession && promoAtraiter > 0) || promoParticipantOuvert || promoHoteOuvert) ? (
+  // 📣 01/10 — la bannière diffusée est passée À PART (le panneau la place : en bas par défaut, ou là
+  //    où l'hôte l'a mise). Position = état serveur ; l'hôte l'écrit au relâcher, puis « relis l'état ».
+  const promoBanniereNode = livePromo.active ? (
+    <LivePromoBanner promo={livePromo.active} decalageMs={livePromo.decalageMs} estHote={estProprietaireSession}
+      onArreter={estProprietaireSession ? () => { if (window.confirm('Arrêter la promo maintenant ?')) livePromo.arreterSiActive('arret_hote'); } : undefined} />
+  ) : null;
+  const promoActifId = livePromo.active?.id ?? null;
+  // Fonction simple (pas un hook : nous sommes après d'éventuels retours anticipés du rendu).
+  const onPromoLayout = (l: { x: number; y: number; w: number }) => {
+    if (!promoActifId) return;
+    promoLayout(promoActifId, l).then(() => promoRafraichirEtSignaler()).catch((e) => showToast((e as Error).message, 'warning'));
+  };
+  const livePromoNode = ((estProprietaireSession && promoAtraiter > 0 && !livePromo.active) || promoParticipantOuvert || promoHoteOuvert) ? (
     <>
-      {livePromo.active ? (
-        <LivePromoBanner promo={livePromo.active} decalageMs={livePromo.decalageMs} estHote={estProprietaireSession}
-          onArreter={estProprietaireSession ? () => { if (window.confirm('Arrêter la promo maintenant ?')) livePromo.arreterSiActive('arret_hote'); } : undefined} />
-      ) : (estProprietaireSession && promoAtraiter > 0) ? (
+      {livePromo.active ? null : (estProprietaireSession && promoAtraiter > 0) ? (
         <button type="button" onClick={() => setPromoHoteOuvert(true)}
           className="mx-auto flex min-h-[36px] items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white backdrop-blur"
           data-testid="live-promo-pastille">
@@ -4452,6 +4462,10 @@ export const SessionPage: React.FC = () => {
       onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}
       chatOverlayNode={liveChatOverlayNode}
       promoNode={livePromoNode}
+      promoBanniere={promoBanniereNode}
+      promoId={promoActifId}
+      promoLayout={livePromo.active?.layout ?? null}
+      onPromoLayout={estProprietaireSession ? onPromoLayout : undefined}
       onFaireMaPromo={(!estProprietaireSession && user && livePromo.config?.enabled && livePromo.config.offres.length > 0)
         ? () => setPromoParticipantOuvert(true) : undefined}
       promoHote={(estProprietaireSession && livePromo.config?.enabled) ? { enAttente: livePromo.enAttente, onOuvrir: () => setPromoHoteOuvert(true) } : undefined}

@@ -246,3 +246,42 @@ export function deplacerSansCouper(noeud: NoeudDeplacable, cible: CibleDeplaceme
   }
   return voie;
 }
+
+
+// ─── 📣 01/10 — PROMO DIFFUSÉE déplaçable / redimensionnable par l'hôte ───────────────────────
+export const PROMO_LARGEUR_MIN_PX = 220;   // en dessous, titre + « Découvrir » deviennent illisibles
+export const PROMO_LARGEUR_MAX = 0.9;      // jamais plus large que 90 % de la scène
+export interface LayoutPromo { x: number; y: number; w: number }
+export interface PlacementPromo { x: number; y: number; largeur: number; hauteur: number }
+
+/**
+ * Où poser la promo (pixels de la scène). Mêmes règles que la vignette (`placementVignette`) —
+ * dans la scène, hors barre à droite, hors champ commentaire en bas, réserves qui cèdent avant le
+ * cadre — mais SANS ratio imposé : la largeur vient du geste, la HAUTEUR du contenu mesuré.
+ */
+export function placementPromo(e: {
+  largeurScene: number; hauteurScene: number; reserveDroitePx?: number; reserveBasPx?: number;
+  layout: LayoutPromo; hauteurContenuPx: number;
+}): PlacementPromo {
+  const L = Number.isFinite(e.largeurScene) ? Math.max(0, e.largeurScene) : 0;
+  const H = Number.isFinite(e.hauteurScene) ? Math.max(0, e.hauteurScene) : 0;
+  if (L <= 0 || H <= 0) return { x: 0, y: 0, largeur: 0, hauteur: 0 };
+  const m = Math.min(MARGE_VIGNETTE_PX, L / 10, H / 10);
+  const rd = Math.max(0, Number.isFinite(e.reserveDroitePx) ? (e.reserveDroitePx as number) : 0);
+  const rb = Math.max(0, Number.isFinite(e.reserveBasPx) ? (e.reserveBasPx as number) : 0);
+  const plancher = Math.min(PROMO_LARGEUR_MIN_PX, L - 2 * m);
+  const dispo = L - rd - 2 * m >= plancher ? L - rd - 2 * m : L - 2 * m;       // la réserve cède avant le cadre
+  const w = Number.isFinite(e.layout?.w) ? e.layout.w : 0.4;
+  const largeur = Math.max(0, Math.min(Math.max(w * L, plancher), PROMO_LARGEUR_MAX * L, dispo));
+  const hauteur = Math.max(0, Math.min(Number.isFinite(e.hauteurContenuPx) ? e.hauteurContenuPx : 0, H - 2 * m));
+  const rdE = Math.max(0, Math.min(rd, L - 2 * m - largeur));
+  const rbE = Math.max(0, Math.min(rb, H - 2 * m - hauteur));
+  const xMax = Math.max(m, L - rdE - m - largeur);
+  const yMax = Math.max(m, H - rbE - m - hauteur);
+  const borne = (v: number, max: number) => Math.min(Math.max(v, m), max);
+  return {
+    x: borne(Number.isFinite(e.layout?.x) ? e.layout.x * L : xMax, xMax),
+    y: borne(Number.isFinite(e.layout?.y) ? e.layout.y * H : yMax, yMax),
+    largeur, hauteur,
+  };
+}

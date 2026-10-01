@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cibleSuperposition } from '@/lib/superposition';
+import { usePromoPositionnable, CalquePromoPlace, PoigneesPromo } from '@/components/session/LivePromoFlottante';
+import type { LayoutPromo } from '@/lib/sceneLive';
 import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff, Video } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
@@ -148,6 +150,12 @@ interface LiveVisioPanelProps {
   /** 📣 Promo participant diffusée (ou, pour l'hôte, la pastille « Promo en attente ») :
    *  rendue dans la pile bas, AU-DESSUS du chat — jamais sous la barre, jamais sur le champ. */
   promoNode?: React.ReactNode;
+  /** 📣 01/10 — la promo DIFFUSÉE seule (bannière), son id, sa position serveur ; `onPromoLayout`
+   *  présent = l'utilisateur est l'HÔTE de la session (il peut la déplacer / la redimensionner). */
+  promoBanniere?: React.ReactNode;
+  promoId?: string | null;
+  promoLayout?: LayoutPromo | null;
+  onPromoLayout?: (l: LayoutPromo) => void;
   /** 📣 Items ⋮ : « Faire ma promo » (participant) / « Promotions live » (hôte). */
   onFaireMaPromo?: () => void;
   promoHote?: { enAttente: number; onOuvrir: () => void };
@@ -215,7 +223,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
   prompteurNode, prompteurTiroirNode, prompteurOuvert = false, onTogglePrompteur, lecture,
   connexionScene, estHote,
-  chatOverlayNode, promoNode, onFaireMaPromo, promoHote, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
+  chatOverlayNode, promoNode, promoBanniere, promoId, promoLayout, onPromoLayout, onFaireMaPromo, promoHote, reactionsNode, commentInputNode, commentairesMasques = false, onToggleCommentaires,
   filmActif = false, rendreFilm, ecranStream = null, ecranLocal = false,
 }) => {
   const [layout, setLayout] = useState<Layout>('grid');
@@ -443,6 +451,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   const droitePile = gaucheCalques > 0 ? `max(${gaucheCalques}px, ${droiteCalques})` : droiteCalques;
   const chatVisible = !!chatOverlayNode && !commentairesMasques;
   const inputVisible = !!commentInputNode && !commentairesMasques;
+  // 📣 Promo diffusée : position choisie par l'hôte (mêmes réserves que les vignettes flottantes).
+  const promoPos = usePromoPositionnable({ promoId: promoBanniere ? promoId : null, layoutServeur: promoLayout ?? null,
+    sceneRef: camAreaRef, reserveDroitePx: enPx(zone.reserveDroite), reserveBasPx: inputVisible ? 64 : 8, onFin: onPromoLayout });
 
   // 📷 GÉOMÉTRIE RÉELLE de la scène : sa taille, et ce qui la recouvre (la colonne de la barre
   //    à droite, le champ commentaire en bas). Mesurée au montage et à chaque redimensionnement
@@ -924,6 +935,14 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             promoHote={promoHote}
           />
 
+          {/* 📣 Promo PLACÉE par l'hôte (fractions de la scène) — absente tant qu'aucune position n'est choisie. */}
+          {promoBanniere ? (
+            <CalquePromoPlace pos={promoPos} largeurScene={largeurZone} hauteurScene={hauteurZone}
+              reserveDroitePx={enPx(zone.reserveDroite)} reserveBasPx={inputVisible ? 64 : 8}>
+              {promoBanniere}
+            </CalquePromoPlace>
+          ) : null}
+
           {/* Pile bas-gauche : chat, invités, champ, musique — à gauche de la barre. */}
           <div
             className="pointer-events-none absolute bottom-0 flex flex-col justify-end gap-2"
@@ -964,8 +983,15 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
 
             {/* 📣 Promo participant : centrée, au-dessus des commentaires, dans la pile (donc à gauche
                 de la barre et au-dessus du champ). Largeur bornée ; rien quand aucune promo. */}
-            {promoNode ? (
+            {(promoNode || (promoBanniere && !promoPos.layout)) ? (
               <div className="pointer-events-auto relative self-center px-2 w-full min-w-0" style={{ maxWidth: 'min(30rem, 100%)' }} data-testid="visio-calque-promo">
+                {/* Position par défaut (en bas, comme avant) ; l'hôte la prend par sa poignée. */}
+                {promoBanniere && !promoPos.layout ? (
+                  <div ref={promoPos.cadreRef} className="relative">
+                    <PoigneesPromo debut={promoPos.debut} />
+                    {promoBanniere}
+                  </div>
+                ) : null}
                 {promoNode}
               </div>
             ) : null}

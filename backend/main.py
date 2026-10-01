@@ -4560,6 +4560,10 @@ class LivePromoDecisionBody(BaseModel):
     decision: str
 
 
+class LivePromoLayoutBody(BaseModel):
+    layout: Optional[Dict[str, Any]] = None
+
+
 class LivePromoStopBody(BaseModel):
     raison: Optional[str] = None
 
@@ -5029,6 +5033,27 @@ async def live_promo_start(promo_id: str, authorization: Optional[str] = Header(
     if not maj:
         raise HTTPException(status_code=409, detail="Cette promo n'est pas prête (paiement non confirmé ?)")
     return {"ok": True, "promo": _lp.vue_publique(maj), "server_now": _lp.maintenant().isoformat()}
+
+
+@app.post("/live-promo/requests/{promo_id}/layout")
+async def live_promo_layout(promo_id: str, body: LivePromoLayoutBody, authorization: Optional[str] = Header(default=None)):
+    """01/10 — L'HÔTE de la session place / redimensionne la promo PENDANT sa diffusion (fractions de
+    la scène). État canonique serveur → tous les participants la voient au même endroit. Ne touche
+    ni la durée, ni le statut, ni le paiement."""
+    user = await get_user_from_token(authorization)
+    p = await _lp_une(promo_id)
+    await _lp_hote(p.get("host_id"), user)
+    try:
+        layout = _lp.valider_layout(body.layout)
+    except _lp.RegleRefusee as e:
+        raise _lp_refus(e)
+    p = await _lp_cloturer_si_expiree(p)
+    if p.get("status") != _lp.BROADCASTING:
+        raise HTTPException(status_code=409, detail="Cette promo n'est pas en cours de diffusion")
+    maj = await _lp_maj(promo_id, [_lp.BROADCASTING], {"layout": layout})
+    if not maj:
+        raise HTTPException(status_code=409, detail="Cette promo n'est pas en cours de diffusion")
+    return {"ok": True, "layout": layout}
 
 
 @app.post("/live-promo/requests/{promo_id}/stop")

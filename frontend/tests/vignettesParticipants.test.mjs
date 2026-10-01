@@ -57,8 +57,9 @@ test('barre verticale inchangée', () => {
 
 test('« Faire ma promo » : jamais pour l’hôte ; participant connecté + promo activée seulement', () => {
   const s = src('pages/SessionPage.tsx');
-  assert.match(s, /onFaireMaPromo=\{\(!isHost && user && livePromo\.config\?\.enabled && livePromo\.config\.offres\.length > 0\)/);
-  assert.match(s, /promoHote=\{\(isHost && livePromo\.config\?\.enabled\)/);                 // l'hôte : « Promotions live »
+  // 01/10 : la décision dépend de la PROPRIÉTÉ de cette session (host_id), jamais du rôle global.
+  assert.match(s, /onFaireMaPromo=\{\(!estProprietaireSession && user && livePromo\.config\?\.enabled && livePromo\.config\.offres\.length > 0\)/);
+  assert.match(s, /promoHote=\{\(estProprietaireSession && livePromo\.config\?\.enabled\)/);   // l'hôte : « Promotions live »
 });
 
 test('menu ⋮ : jamais tronqué, il défile quand l’écran est court', () => {

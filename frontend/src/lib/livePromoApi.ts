@@ -27,7 +27,7 @@ export const promoConfig = (sid: string) =>
 export const promoConfigHote = (sid: string) =>
   appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean }>(`/live-promo/host-config/${encodeURIComponent(sid)}`);
 export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[]) =>
-  appel<{ ok: boolean }>('/live-promo/config', json({ session_id: sid, enabled, offres }));
+  appel<{ ok: boolean; offres?: OffrePromo[]; enabled?: boolean }>('/live-promo/config', json({ session_id: sid, enabled, offres }));
 export const promoActive = (sid: string) =>
   appel<{ promo: PromoPublique | null; server_now: string }>(`/live-promo/active/${encodeURIComponent(sid)}`, {}, false);
 export const promoMesDemandes = (sid: string) => appel<{ promos: PromoLigne[] }>(`/live-promo/mine/${encodeURIComponent(sid)}`);

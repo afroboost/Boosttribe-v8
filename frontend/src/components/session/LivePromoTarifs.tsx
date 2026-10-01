@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { offresValides, type OffrePromo } from '@/lib/livePromo';
 import { promoConfigHote, promoEnregistrerConfig } from '@/lib/livePromoApi';
@@ -12,11 +12,41 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   const [etat, setEtat] = useState<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean } | null>(null);
   const [message, setMessage] = useState('');
   const [occupe, setOccupe] = useState(false);
+  const charge = useRef('');      // dernier état ENREGISTRÉ (sérialisé) : rien à envoyer s'il n'a pas changé
   useEffect(() => {
     let vivant = true;
-    promoConfigHote(sessionId).then((c) => { if (vivant) setEtat(c); }).catch(() => { if (vivant) setEtat(null); });
+    promoConfigHote(sessionId).then((c) => {
+      if (!vivant) return;
+      setEtat(c);
+      charge.current = JSON.stringify({ e: c.enabled, o: c.offres });
+    }).catch(() => { if (vivant) setEtat(null); });
     return () => { vivant = false; };
   }, [sessionId]);
+  // ✅ Enregistrement AUTOMATIQUE (le 1er test réel : la case cochée n'était jamais envoyée —
+  //    le bouton « Enregistrer la page promo » ne concerne pas cette section). Dépendance =
+  //    une CHAÎNE (primitive) : aucune boucle d'appels ; rien n'est envoyé si rien n'a changé.
+  const signature = etat && etat.eligible ? JSON.stringify({ e: etat.enabled, o: etat.offres }) : '';
+  useEffect(() => {
+    if (!signature || signature === charge.current || !etat) return undefined;
+    if (offresValides(etat.offres)) return undefined;          // saisie incomplète : on attend
+    const t = window.setTimeout(() => {
+      promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)
+        .then((r) => { adopter(r.offres); setMessage('Enregistré automatiquement'); })
+        .catch((e) => setMessage((e as Error).message));
+    }, 700);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature, sessionId]);
+  // Le serveur attribue l'identifiant d'un NOUVEAU tarif : on reprend sa liste, sinon chaque
+  // enregistrement recréerait un identifiant (et une demande en cours viserait un tarif disparu).
+  function adopter(offres?: OffrePromo[]) {
+    setEtat((prev) => {
+      if (!prev) return prev;
+      const suivant = { ...prev, offres: Array.isArray(offres) ? offres : prev.offres };
+      charge.current = JSON.stringify({ e: suivant.enabled, o: suivant.offres });
+      return suivant;
+    });
+  }
   if (!etat || !etat.eligible) return null;
 
   const maj = (i: number, patch: Partial<OffrePromo>) =>
@@ -25,7 +55,7 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
     const refus = offresValides(etat.offres);
     if (refus) { setMessage(refus); return; }
     setOccupe(true); setMessage('');
-    try { await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres); setMessage('Enregistré'); }
+    try { adopter((await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)).offres); setMessage('Enregistré'); }
     catch (e) { setMessage((e as Error).message); }
     setOccupe(false);
   };

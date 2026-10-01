@@ -78,3 +78,27 @@ test('hotfix super-admin : section visible si le serveur dit eligible ; mode tes
   const p = src('components/session/LivePromoParticipantModal.tsx');
   assert.match(p, /\{paiementReel && peutPayer\(enCours\.status\) \?/);            // jamais « Payer » en Live de test
 });
+
+test('« Faire ma promo » : propriété de CETTE session, jamais le rôle global (coach / admin)', () => {
+  const s = src('pages/SessionPage.tsx');
+  assert.match(s, /const estProprietaireSession = sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost;/);
+  const ligne = s.slice(s.indexOf('const estProprietaireSession'), s.indexOf('const [promoParticipantOuvert'));
+  assert.doesNotMatch(ligne.replace(/\/\/.*$/gm, ''), /isAdmin|isCoach|role/);                 // aucun rôle global
+  assert.match(s, /useLivePromo\(sessionId \|\| undefined, liveMode, estProprietaireSession, user\?\.id\)/);
+  // simulation de la règle sur les 4 cas du test manuel
+  const prop = (hostId, userId, isHostGlobal) => (hostId ? (!!userId && userId === hostId) : isHostGlobal);
+  const visible = (hostId, userId, isHostGlobal, enabled, n) => !prop(hostId, userId, isHostGlobal) && !!userId && enabled && n > 0;
+  assert.equal(visible('A', 'B', false, true, 1), true);      // membre ordinaire
+  assert.equal(visible('A', 'B', true, true, 1), true);       // coach / super-admin (isHost global vrai) chez un AUTRE hôte
+  assert.equal(visible('A', 'A', true, true, 1), false);      // hôte réel
+  assert.equal(visible('A', 'B', false, false, 1), false);    // promo désactivée
+  assert.equal(visible('A', 'B', false, true, 0), false);     // aucun tarif actif : pas de parcours cassé
+});
+
+test('tarifs : enregistrement AUTOMATIQUE (plus de piège du second bouton), sans boucle', () => {
+  const t = src('components/session/LivePromoTarifs.tsx');
+  assert.match(t, /const signature = etat && etat\.eligible \? JSON\.stringify/);
+  assert.match(t, /\}, \[signature, sessionId\]\);/);                                           // dépendances primitives
+  assert.match(t, /if \(!signature \|\| signature === charge\.current \|\| !etat\) return undefined;/);
+  assert.match(t, /adopter\(r\.offres\)/);                                                       // identifiants du serveur
+});

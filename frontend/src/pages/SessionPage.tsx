@@ -1391,7 +1391,11 @@ export const SessionPage: React.FC = () => {
   const [liveMode, setLiveMode] = useState(false);
   // 📣 PROMO PARTICIPANT (V1) — couche ADDITIONNELLE : elle lit l'état serveur et n'émet que sur
   //    son propre canal ; elle ne pilote ni started, ni heartbeat, ni ended.
-  const livePromo = useLivePromo(sessionId || undefined, liveMode, isHost, user?.id);
+  // Propriétaire de CETTE session (host_id en base) — jamais le rôle global (admin, coach) :
+  //    un coach ou le super-admin qui rejoint le Live d'un AUTRE hôte y est participant, et peut
+  //    donc faire sa promo. Tant que host_id n'est pas encore chargé : repli sur isHost.
+  const estProprietaireSession = sessionHostId ? (!!user?.id && user.id === sessionHostId) : isHost;
+  const livePromo = useLivePromo(sessionId || undefined, liveMode, estProprietaireSession, user?.id);
   const [promoParticipantOuvert, setPromoParticipantOuvert] = useState(false);
   const [promoHoteOuvert, setPromoHoteOuvert] = useState(false);
   // 📱 MOBILE UNIQUEMENT : 4 onglets. Le contenu est MASQUÉ/AFFICHÉ en CSS (jamais démonté) ;
@@ -4310,12 +4314,12 @@ export const SessionPage: React.FC = () => {
   //    donc DANS la zone caméra : elles restent visibles en plein écran.
   const promoAtraiter = livePromo.enAttente + livePromo.listeHote.filter((p) => p.status === 'ready').length;
   const promoRafraichirEtSignaler = () => { livePromo.rafraichir(); livePromo.signaler(); };
-  const livePromoNode = (livePromo.active || (isHost && promoAtraiter > 0) || promoParticipantOuvert || promoHoteOuvert) ? (
+  const livePromoNode = (livePromo.active || (estProprietaireSession && promoAtraiter > 0) || promoParticipantOuvert || promoHoteOuvert) ? (
     <>
       {livePromo.active ? (
-        <LivePromoBanner promo={livePromo.active} decalageMs={livePromo.decalageMs} estHote={isHost}
-          onArreter={isHost ? () => { if (window.confirm('Arrêter la promo maintenant ?')) livePromo.arreterSiActive('arret_hote'); } : undefined} />
-      ) : (isHost && promoAtraiter > 0) ? (
+        <LivePromoBanner promo={livePromo.active} decalageMs={livePromo.decalageMs} estHote={estProprietaireSession}
+          onArreter={estProprietaireSession ? () => { if (window.confirm('Arrêter la promo maintenant ?')) livePromo.arreterSiActive('arret_hote'); } : undefined} />
+      ) : (estProprietaireSession && promoAtraiter > 0) ? (
         <button type="button" onClick={() => setPromoHoteOuvert(true)}
           className="mx-auto flex min-h-[36px] items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white backdrop-blur"
           data-testid="live-promo-pastille">
@@ -4440,9 +4444,9 @@ export const SessionPage: React.FC = () => {
       onTogglePrompteur={canShare ? () => setAssistantOuvert((o) => !o) : undefined}
       chatOverlayNode={liveChatOverlayNode}
       promoNode={livePromoNode}
-      onFaireMaPromo={(!isHost && user && livePromo.config?.enabled && livePromo.config.offres.length > 0)
+      onFaireMaPromo={(!estProprietaireSession && user && livePromo.config?.enabled && livePromo.config.offres.length > 0)
         ? () => setPromoParticipantOuvert(true) : undefined}
-      promoHote={(isHost && livePromo.config?.enabled) ? { enAttente: livePromo.enAttente, onOuvrir: () => setPromoHoteOuvert(true) } : undefined}
+      promoHote={(estProprietaireSession && livePromo.config?.enabled) ? { enAttente: livePromo.enAttente, onOuvrir: () => setPromoHoteOuvert(true) } : undefined}
       commentInputNode={liveCommentInputNode}
       reactionsNode={liveReactionsNode}
       commentairesMasques={commentairesMasques}

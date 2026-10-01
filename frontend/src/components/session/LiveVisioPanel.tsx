@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff } from 'lucide-react';
+import { LayoutGrid, Rows3, Users, Maximize2, Minimize2, X, RefreshCw, Monitor, MonitorUp, PictureInPicture2, Columns2, SquareUser, VideoOff, Video } from 'lucide-react';
 import { SourcesDrawer, type SourcesDrawerProps } from '@/components/session/SourcesDrawer';
 import { CameraTile } from '@/components/session/CameraTile';
 import { VignetteFlottante } from '@/components/session/VignetteFlottante'; // 🪟 UNE vignette flottante (scène + participants)
@@ -318,8 +318,39 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   // 🔍 « Agrandir » = épingler cette caméra ET passer en VRAI plein écran (chantier A). « Réduire » = sortir du plein écran.
   const enlarge = (id: string) => { setSpotlightId(id); enterCamFullscreen(); };
 
+  // 🎥 PARTICIPANT : « Activer ma caméra » sur SA PROPRE vignette — c'est EXACTEMENT la demande
+  //    de scène existante (onRequestStage → STAGE_REQUEST → l'hôte accepte → STAGE_ACCEPT →
+  //    caméra). Aucun droit de publier n'est donné ici ; une fois à l'écran, le bouton caméra
+  //    habituel de la barre prend le relais (le participant peut alors se couper).
+  const actionCameraMoi = (p: VisioParticipant) => {
+    if (p.id !== myUserId || canManageStage || cameraOn || !onRequestStage) return null;
+    return (
+      <div className="absolute inset-x-0 bottom-2 z-10 flex justify-center px-2" data-vignette-bouton>
+        {stageRequestPending ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-semibold text-white/85"
+                role="status" data-testid="visio-moi-camera-attente">
+            <Video size={14} /> En attente de l’hôte
+          </span>
+        ) : (
+          <button type="button" onClick={(e) => { e.stopPropagation(); onRequestStage(); }}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-bold text-white shadow-lg"
+                  style={{ background: 'linear-gradient(135deg, var(--bt-accent) 0%, var(--bt-accent-2) 100%)' }}
+                  data-testid="visio-moi-activer-camera">
+            <Video size={15} /> Activer ma caméra
+          </button>
+        )}
+      </div>
+    );
+  };
+
   // Rendu d'une vignette cliquable (clic = agrandir ; sur la grande vue, clic = réduire).
-  const tileFor = (p: VisioParticipant, large = false) => (
+  const tileFor = (p: VisioParticipant, large = false) => (p.id === myUserId && actionCameraMoi(p)) ? (
+    <div className={`relative ${large ? 'w-full h-full' : ''}`}>
+      {tuileCliquable(p, large)}
+      {actionCameraMoi(p)}
+    </div>
+  ) : tuileCliquable(p, large);
+  const tuileCliquable = (p: VisioParticipant, large = false) => (
     <CameraTile
       name={p.name}
       stream={streamFor(p)}
@@ -677,7 +708,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
           /* 🔍 PLEIN ÉCRAN : une caméra en grand (object-contain → jamais rogner le visage), orientation auto,
              bande de vignettes en bas (taper = elle passe en grand), bouton Réduire + timer overlay (lecture seule). */
           <>
-            {!modeContenu && (<div className="flex-1 min-h-0 flex items-center justify-center">
+            {!modeContenu && (<div className="relative flex-1 min-h-0 flex items-center justify-center">
               {fsBig ? (
                 <CameraTile
                   name={fsBig.name}
@@ -691,6 +722,9 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                   className="w-full h-full rounded-none border-0"
                   hideMicBadge={fsBig.id === myUserId}
                 />
+              ) : null}
+              {fsBig ? (
+                actionCameraMoi(fsBig)
               ) : (
                 <p className="text-white/50 text-sm">Aucune caméra allumée</p>
               )}
@@ -730,6 +764,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
                     avatarUrl={p.avatarUrl}
                     className="w-full h-full rounded-none border-0"
                   />
+                  {actionCameraMoi(p)}
                 </VignetteFlottante>
               );
             })}

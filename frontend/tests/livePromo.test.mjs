@@ -105,8 +105,9 @@ test('tarifs : enregistrement AUTOMATIQUE (plus de piège du second bouton), san
 
 test('01/10 — cas réel : config de la session Live à enabled:false côté participant → l’hôte le VOIT, et rien ne se perd', () => {
   const t = src('components/session/LivePromoTarifs.tsx');
-  // Fermer la fenêtre avant 700 ms n'annule plus : l'enregistrement en attente part au démontage.
-  assert.match(t, /useEffect\(\(\) => \(\) => \{\s+const d = dernier\.current;\s+if \(d\.etat && d\.signature && d\.signature !== charge\.current && !offresValides\(d\.etat\.offres\)\) \{\s+promoEnregistrerConfig\(sessionId, d\.etat\.enabled, d\.etat\.offres\)/);
+  // Fermer la fenêtre OU quitter la page avant l'envoi n'annule plus : la modification en attente part (keepalive).
+  assert.match(t, /const envoyerEnAttente = \(\) => \{\s+const d = dernier\.current;\s+if \(d\.etat && d\.signature && d\.signature !== charge\.current && !offresValides\(d\.etat\.offres\)\) \{/);
+  assert.match(t, /return \(\) => \{ window\.removeEventListener\('pagehide', envoyerEnAttente\); envoyerEnAttente\(\); \};/);
   // Après chaque enregistrement : relecture de la config PUBLIQUE (celle du participant), affichée.
   assert.match(t, /promoConfig\(sessionId\)\.then\(\(c\) => setVuParticipants/);
   assert.match(t, /data-testid="live-promo-vu-participants"/);
@@ -141,4 +142,20 @@ test('01/10 — visibilité « Faire ma promo » : hôte de CETTE session dit pa
   assert.equal(visible(actif, false, 'A', 'coachB', false), true);           // C : coach global non-hôte
   assert.equal(visible(actif, false, null, 'admin', true), true);            // D : super-admin, host_id illisible
   assert.equal(visible({ enabled: false, offres: [] }, false, 'A', 'membre', false), false); // E : désactivée
+});
+
+test('01/10 — tarifs : jamais de faux succès, envoi au départ en keepalive, aucun renvoi d’un tarif déjà enregistré', () => {
+  const t = src('components/session/LivePromoTarifs.tsx');
+  // succès seulement après confirmation serveur ; plus rien « en attente » ensuite (sinon renvoi sans id → nouvel id)
+  assert.match(t, /adopter\(r\.offres\); dernier\.current = \{ etat: null, signature: '' \}; setMessage\('Enregistré automatiquement'\)/);
+  assert.match(t, /const texte = refusSaisie \? `Non enregistré : \$\{refusSaisie\}` : enAttente && !message\.startsWith\('Enregistrement du tarif impossible'\) \? 'Enregistrement en cours…' : message;/);
+  assert.match(t, /setMessage\(`Enregistrement du tarif impossible : \$\{\(e as Error\)\.message\}`\)/);
+  // départ de la page : pagehide + démontage, keepalive
+  assert.match(t, /window\.addEventListener\('pagehide', envoyerEnAttente\);/);
+  assert.match(t, /promoEnregistrerConfig\(sessionId, d\.etat\.enabled, d\.etat\.offres, true\)/);
+  // ajout / suppression : envoi immédiat
+  assert.equal((t.match(/immediatRef\.current = true;/g) || []).length, 2);
+  assert.match(t, /\}, immediatRef\.current \? 0 : 700\);/);
+  const api = src('lib/livePromoApi.ts');
+  assert.match(api, /\.\.\.\(auDepart \? \{ keepalive: true \} : \{\}\)/);
 });

@@ -27,8 +27,9 @@ export const promoConfig = (sid: string) =>
   appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; paiement_reel?: boolean; est_hote?: boolean | null }>(`/live-promo/config/${encodeURIComponent(sid)}`, {}, 'si-connecte');
 export const promoConfigHote = (sid: string) =>
   appel<{ eligible: boolean; enabled: boolean; offres: OffrePromo[]; currency: string; mode?: string | null; paiement_reel?: boolean }>(`/live-promo/host-config/${encodeURIComponent(sid)}`);
-export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[]) =>
-  appel<{ ok: boolean; offres?: OffrePromo[]; enabled?: boolean }>('/live-promo/config', json({ session_id: sid, enabled, offres }));
+// `auDepart` : la page se ferme → `keepalive` (le navigateur n'annule pas l'envoi à la navigation).
+export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: OffrePromo[], auDepart = false) =>
+  appel<{ ok: boolean; offres?: OffrePromo[]; enabled?: boolean }>('/live-promo/config', { ...json({ session_id: sid, enabled, offres }), ...(auDepart ? { keepalive: true } : {}) });
 export const promoActive = (sid: string) =>
   appel<{ promo: PromoPublique | null; server_now: string }>(`/live-promo/active/${encodeURIComponent(sid)}`, {}, false);
 export const promoMesDemandes = (sid: string) => appel<{ promos: PromoLigne[] }>(`/live-promo/mine/${encodeURIComponent(sid)}`);

@@ -183,3 +183,42 @@ def test_est_hote_dit_par_le_serveur_jamais_le_role_global():
     assert vu_b["est_hote"] is False and vu_b["enabled"] is True and len(vu_b["offres"]) == 1
     assert lancer(m.live_promo_config(SID, authorization="Bearer inconnu"))["est_hote"] is None      # jeton invalide : lecture publique
     assert lancer(m.live_promo_config(SID, authorization=None))["est_hote"] is None
+
+
+def _sauver(m, offres, enabled=True, jeton="Bearer hote"):
+    return lancer(m.live_promo_save_config(m.LivePromoConfigBody(session_id=SID, enabled=enabled, offres=offres), authorization=jeton))
+
+
+def test_tarif_creation_relecture_modification_activation_suppression():
+    m, pg = monde([{"session_id": SID, "host_id": HOTE, "live_promo_enabled": False, "live_promo_offres": []}])
+    r = _sauver(m, [{"id": "", "duree_s": 30, "prix": 10, "actif": True}])
+    oid = r["offres"][0]["id"]
+    assert oid                                                                     # id attribué par le serveur
+    relu = lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))       # « reload » : tout état front oublié
+    assert relu["enabled"] is True and relu["offres"] == [{"id": oid, "duree_s": 30, "prix": 10.0, "actif": True}]
+    # modification avec l'id RENVOYÉ par le serveur → même tarif, jamais un second
+    _sauver(m, [{"id": oid, "duree_s": 30, "prix": 15, "actif": True}])
+    relu = lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))["offres"]
+    assert relu == [{"id": oid, "duree_s": 30, "prix": 15.0, "actif": True}]
+    # désactivation : conservé pour l'hôte, invisible des participants
+    _sauver(m, [{"id": oid, "duree_s": 30, "prix": 15, "actif": False}])
+    assert lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))["offres"][0]["actif"] is False
+    assert lancer(m.live_promo_config(SID))["offres"] == []
+    # suppression
+    _sauver(m, [])
+    assert lancer(m.live_promo_host_config(SID, authorization="Bearer hote"))["offres"] == []
+
+
+def test_super_admin_en_mode_test_enregistre_ses_tarifs():
+    m, pg = monde([{"session_id": SID, "host_id": HOTE, "live_promo_enabled": False, "live_promo_offres": []}])
+
+    async def ptype(uid):
+        return "subscription"                    # hors commission…
+
+    async def admin(uid):
+        return uid == HOTE                       # …mais super-admin → mode test (aucun paiement réel)
+    m.get_coach_payment_type, m._lp_hote_super_admin = ptype, admin
+    _sauver(m, [{"id": "", "duree_s": 30, "prix": 10, "actif": True}])
+    vu = lancer(m.live_promo_config(SID, authorization="Bearer coachB"))
+    assert vu["enabled"] is True and vu["paiement_reel"] is False and vu["est_hote"] is False
+    assert [(o["duree_s"], o["prix"]) for o in vu["offres"]] == [(30, 10.0)]

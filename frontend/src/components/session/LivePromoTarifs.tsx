@@ -13,6 +13,7 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
   const [message, setMessage] = useState('');
   const [occupe, setOccupe] = useState(false);
   const charge = useRef('');      // dernier état ENREGISTRÉ (sérialisé) : rien à envoyer s'il n'a pas changé
+  const immediatRef = useRef(false); // ajout / suppression d'un tarif : envoi IMMÉDIAT (pas d'attente de 700 ms)
   // 01/10 — PREUVE : ce que REÇOIVENT les participants de CETTE session (lecture publique), relu
   // après chaque enregistrement. En prod, les sessions Live réelles répondaient enabled:false.
   const [vuParticipants, setVuParticipants] = useState<{ enabled: boolean; n: number } | null>(null);
@@ -41,19 +42,26 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
     dernier.current = { etat, signature };
     const t = window.setTimeout(() => {
       promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)
-        .then((r) => { adopter(r.offres); setMessage('Enregistré automatiquement'); relirePublic(); })
-        .catch((e) => setMessage((e as Error).message));
-    }, 700);
+        .then((r) => { adopter(r.offres); dernier.current = { etat: null, signature: '' }; setMessage('Enregistré automatiquement'); relirePublic(); })
+        .catch((e) => setMessage(`Enregistrement du tarif impossible : ${(e as Error).message}`));
+    }, immediatRef.current ? 0 : 700);
+    immediatRef.current = false;
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, sessionId]);
-  // Fermer la fenêtre AVANT les 700 ms annulait l'enregistrement en attente : on l'envoie au départ.
-  useEffect(() => () => {
-    const d = dernier.current;
-    if (d.etat && d.signature && d.signature !== charge.current && !offresValides(d.etat.offres)) {
-      promoEnregistrerConfig(sessionId, d.etat.enabled, d.etat.offres).catch(() => { /* la page est fermée */ });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Fermer la fenêtre OU quitter la page AVANT l'envoi : la modification en attente part au départ,
+  // en `keepalive` (un fetch ordinaire est annulé par le navigateur à la navigation). Rien n'est
+  // renvoyé si tout est déjà enregistré (sinon le tarif repartait sans id → nouvel id côté serveur).
+  useEffect(() => {
+    const envoyerEnAttente = () => {
+      const d = dernier.current;
+      if (d.etat && d.signature && d.signature !== charge.current && !offresValides(d.etat.offres)) {
+        dernier.current = { etat: null, signature: '' };
+        promoEnregistrerConfig(sessionId, d.etat.enabled, d.etat.offres, true).catch(() => { /* la page est fermée */ });
+      }
+    };
+    window.addEventListener('pagehide', envoyerEnAttente);
+    return () => { window.removeEventListener('pagehide', envoyerEnAttente); envoyerEnAttente(); };
   }, [sessionId]);
   useEffect(() => { relirePublic(); /* état réel au montage */ // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
@@ -76,8 +84,8 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
     const refus = offresValides(etat.offres);
     if (refus) { setMessage(refus); return; }
     setOccupe(true); setMessage('');
-    try { adopter((await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)).offres); setMessage('Enregistré'); relirePublic(); }
-    catch (e) { setMessage((e as Error).message); }
+    try { adopter((await promoEnregistrerConfig(sessionId, etat.enabled, etat.offres)).offres); dernier.current = { etat: null, signature: '' }; setMessage('Enregistré'); relirePublic(); }
+    catch (e) { setMessage(`Enregistrement du tarif impossible : ${(e as Error).message}`); }
     setOccupe(false);
   };
   return (
@@ -113,11 +121,11 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
                      className="min-h-[40px] rounded-lg border border-white/15 bg-black/40 px-2 text-white" aria-label="Prix" />
               <input type="checkbox" checked={o.actif !== false} onChange={(e) => maj(i, { actif: e.target.checked })}
                      className="h-4 w-4 accent-[var(--bt-accent)]" aria-label="Tarif actif" />
-              <button type="button" onClick={() => setEtat({ ...etat, offres: etat.offres.filter((_, j) => j !== i) })}
+              <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: etat.offres.filter((_, j) => j !== i) }); }}
                       className="p-2 text-white/50 hover:text-white" aria-label="Supprimer ce tarif"><Trash2 className="h-4 w-4" /></button>
             </div>
           ))}
-          <button type="button" onClick={() => setEtat({ ...etat, offres: [...etat.offres, { id: '', duree_s: 30, prix: 10, actif: true }] })}
+          <button type="button" onClick={() => { immediatRef.current = true; setEtat({ ...etat, offres: [...etat.offres, { id: '', duree_s: 30, prix: 10, actif: true }] }); }}
                   className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-white/15 px-3 text-sm text-white/85"
                   data-testid="live-promo-ajouter-tarif">
             <Plus className="h-4 w-4" /> Ajouter un tarif
@@ -129,7 +137,14 @@ export function LivePromoTarifs({ sessionId }: { sessionId: string }) {
               data-testid="live-promo-enregistrer">
         {occupe ? 'Enregistrement…' : 'Enregistrer les promotions'}
       </button>
-      {message ? <p className="text-xs text-white/70" role="status">{message}</p> : null}
+      {/* Jamais un succès périmé : tant que la dernière modification n'est pas confirmée par le serveur,
+          on le DIT ; une saisie invalide dit pourquoi elle n'est pas envoyée. */}
+      {(() => {
+        const refusSaisie = etat.enabled ? offresValides(etat.offres) : '';
+        const enAttente = !!signature && signature !== charge.current;
+        const texte = refusSaisie ? `Non enregistré : ${refusSaisie}` : enAttente && !message.startsWith('Enregistrement du tarif impossible') ? 'Enregistrement en cours…' : message;
+        return texte ? <p className="text-xs text-white/70" role="status" data-testid="live-promo-statut">{texte}</p> : null;
+      })()}
     </section>
   );
 }

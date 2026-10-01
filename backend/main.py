@@ -2755,7 +2755,11 @@ async def session_configure(body: SessionConfigBody, authorization: Optional[str
         patch["capacity"] = None
     if not (row and row.get("host_id")):
         patch["host_id"] = uid
-    await upsert_playlist_fields(body.session_id, patch)
+    # 01/10 : écriture ROBUSTE + résultat VÉRIFIÉ (l'upsert ON CONFLICT pouvait échouer en silence
+    #   et répondre ok:true → « Avec crédits » revenait). Puis préférence du coach pour ses prochains Lives.
+    if await _playlist_ecrire(body.session_id, patch) <= 0:
+        raise HTTPException(status_code=500, detail="Enregistrement du mode d'entrée impossible")
+    await _prefs_live_fusionner(uid, {"entree": body.mode, "prix_chf": patch.get("price_chf"), "capacite": patch.get("capacity")})
     return {"ok": True, "mode": body.mode, "price_chf": patch.get("price_chf"), "capacity": patch.get("capacity")}
 
 # ---- Participant : achat d'une place (billet) — Checkout compte plateforme ---
@@ -4596,6 +4600,40 @@ async def _lp_session(session_id: str) -> Dict[str, Any]:
     return next((x for x in rows if x.get("host_id")), rows[0])
 
 
+async def _playlist_ecrire(session_id: str, patch: Dict[str, Any]) -> int:
+    """01/10 — Écriture ROBUSTE sur `playlists` (sans ON CONFLICT, qui échoue sans contrainte unique) :
+    UPDATE de toutes les lignes de la session ; aucune ligne → INSERT. Renvoie le nombre de lignes
+    réellement écrites (0 = échec, jamais un faux succès)."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.patch(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers({"Prefer": "return=representation"}),
+                               params={"session_id": f"eq.{session_id}"}, json=patch)
+        if r.status_code == 200 and (r.json() or []):
+            return len(r.json())
+        r = await client.post(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers({"Prefer": "return=representation"}),
+                              json={"session_id": session_id, **patch})
+    return len(r.json() or []) if r.status_code in (200, 201) and r.content else 0
+
+
+async def _prefs_live_lire(uid: str) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
+                             params={"id": f"eq.{uid}", "select": "live_preferences"})
+    rows = r.json() if r.status_code == 200 else []
+    v = rows[0].get("live_preferences") if rows else None
+    return v if isinstance(v, dict) else {}
+
+
+async def _prefs_live_fusionner(uid: str, partiel: Dict[str, Any]) -> Dict[str, Any]:
+    """Mémorise le dernier réglage ENREGISTRÉ du coach (best-effort : n'empêche jamais l'enregistrement de la session)."""
+    try:
+        nouvelles = _lp.fusionner_preferences(await _prefs_live_lire(uid), partiel)
+        await update_profile(uid, {"live_preferences": nouvelles})
+        return nouvelles
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[PREFS-LIVE] mémorisation impossible : %s", type(e).__name__)
+        return {}
+
+
 async def _lp_enregistrer_config(session_id: str, patch: Dict[str, Any]) -> int:
     """01/10 — Écrit la config promo sur TOUTES les lignes de la session (UPDATE, jamais ON CONFLICT :
     sans contrainte unique sur session_id, l'upsert répondait 400/42P10 → « Enregistrement impossible »).
@@ -4700,6 +4738,58 @@ async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
                              {"status": _lp.COMPLETED, "actual_duration_seconds": int(p.get("duration_seconds") or 0)})
         return fini or {**p, "status": _lp.COMPLETED}
     return p
+
+
+class PreferencesLiveBody(BaseModel):
+    acces: Optional[str] = None
+
+
+@app.get("/coach/preferences-live")
+async def coach_preferences_live(authorization: Optional[str] = Header(default=None)):
+    """01/10 — Le dernier réglage Live ENREGISTRÉ par CE coach (jamais celui d'un autre)."""
+    user = await get_user_from_token(authorization)
+    return {"preferences": await _prefs_live_lire(user.get("id"))}
+
+
+@app.put("/coach/preferences-live")
+async def coach_preferences_live_maj(body: PreferencesLiveBody, authorization: Optional[str] = Header(default=None)):
+    """Droits des invités (écrits côté navigateur sur la session) → mémorisés pour les prochains Lives."""
+    user = await get_user_from_token(authorization)
+    if body.acces is None:
+        return {"preferences": await _prefs_live_lire(user.get("id"))}
+    try:
+        _lp.fusionner_preferences({}, {"acces": body.acces})
+    except _lp.RegleRefusee as e:
+        raise _lp_refus(e)
+    return {"preferences": await _prefs_live_fusionner(user.get("id"), {"acces": body.acces})}
+
+
+class LivePromoAppliquerBody(BaseModel):
+    session_id: str
+
+
+@app.post("/live-promo/appliquer-preferences")
+async def live_promo_appliquer_preferences(body: LivePromoAppliquerBody, authorization: Optional[str] = Header(default=None)):
+    """01/10 — Nouveau Live du coach : ses promotions ENREGISTRÉES (préférences) sont reprises, mais
+    SEULEMENT si ce Live n'a encore jamais été réglé (un réglage propre à la session prime toujours).
+    Hôte de la session uniquement ; offres payantes gardées seulement si le paiement réel est possible."""
+    user = await get_user_from_token(authorization)
+    s = await _lp_session(body.session_id)
+    await _lp_hote(s.get("host_id"), user)
+    mode = await _lp_mode(s.get("host_id"))
+    if mode is None or not _lp.session_promo_vierge(s):
+        return {"applique": False}
+    promo = (await _prefs_live_lire(user.get("id"))).get("promo") or {}
+    try:
+        offres = _lp.offres_permises(_lp.valider_offres(promo.get("offres") or []), mode)
+    except _lp.RegleRefusee:
+        return {"applique": False}
+    if not offres and promo.get("enabled") is not True:
+        return {"applique": False}
+    patch = {"live_promo_enabled": promo.get("enabled") is True, "live_promo_offres": offres}
+    if await _lp_enregistrer_config(body.session_id, patch) <= 0:
+        raise HTTPException(status_code=500, detail="Préférences non appliquées")
+    return {"applique": True, "enabled": patch["live_promo_enabled"], "offres": offres}
 
 
 @app.get("/live/outils-coach/{session_id}")
@@ -4875,6 +4965,8 @@ async def _live_promo_save_config(body: LivePromoConfigBody, authorization: Opti
         if any(relu.get(k) != v for k, v in patch.items()):
             logger.warning("[LIVE-PROMO] config session=%s non confirmée à la relecture", body.session_id)
             raise HTTPException(status_code=500, detail="Enregistrement non confirmé — réessayez")
+        await _prefs_live_fusionner(user.get("id"), {"promo": {"enabled": relu.get("live_promo_enabled") is True,
+                                                               "offres": relu.get("live_promo_offres") or []}})
     return {"ok": True, **{k.replace("live_promo_", ""): v for k, v in patch.items()}}
 
 

@@ -47,6 +47,7 @@ import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
 import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
+import { lirePreferencesLive, memoriserDroitsInvites, appliquerPreferencesPromo } from '@/lib/preferencesLiveApi'; // ⚙️ 01/10 : réglages du coach d'un Live à l'autre
 import { LivePromoParticipantModal } from '@/components/session/LivePromoParticipantModal';
 import { LivePromoHostModal } from '@/components/session/LivePromoHostModal';
 import { usePrompteur } from '@/hooks/usePrompteur';
@@ -1615,6 +1616,9 @@ export const SessionPage: React.FC = () => {
   const [showPromoEditor, setShowPromoEditor] = useState(false); // 📣 éditeur de la page promo
   // 🚪 Mode d'accès : 'account' (avec nom → chat + visio) ou 'guest' (sans inscription → écoute/lecture seule).
   const [accessMode, setAccessMode] = useState<AccessMode>('account');
+  // ⚙️ 01/10 : true = ce Live n'a JAMAIS reçu de droits d'invités (aucune valeur en base) → il peut
+  //    reprendre les préférences du coach ; false = la session a ses propres réglages (ils priment).
+  const accesJamaisRegleRef = useRef<boolean | null>(null);
   // 🚪 Le type d'accès (guest/account) est-il RÉSOLU depuis la DB ? Le gating paywall doit l'attendre
   //    (sinon course : accessInfo backend arrive avant, accessMode vaut 'account' par défaut → faux paywall).
   const [accessModeResolved, setAccessModeResolved] = useState<boolean>(() => !isSupabaseConfigured);
@@ -1881,6 +1885,30 @@ export const SessionPage: React.FC = () => {
   }, [sessionId]);
   useEffect(() => { refreshAccess(); }, [refreshAccess]);
 
+  // ⚙️ 01/10 — NOUVEAU Live de ce coach (nouveau code de session) : il reprend le dernier réglage
+  //    ENREGISTRÉ par le coach (promotions, mode d'entrée, droits des invités) — mais SEULEMENT si
+  //    ce Live n'a encore jamais été réglé : un réglage propre à la session prime toujours.
+  //    Une fois par session ; hôte décidé par le serveur ; dépendances primitives.
+  const prefsAppliqueesRef = useRef('');
+  useEffect(() => {
+    if (!sessionId || !user?.id || !estProprietaireSession || !accessModeResolved) return;
+    if (prefsAppliqueesRef.current === sessionId) return;
+    prefsAppliqueesRef.current = sessionId;
+    (async () => {
+      const promo = await appliquerPreferencesPromo(sessionId).catch(() => null);
+      if (promo?.applique) { livePromo.rafraichir(); livePromo.signaler(); }
+      if (accesJamaisRegleRef.current !== true) return;
+      const p = await lirePreferencesLive().catch(() => ({} as Awaited<ReturnType<typeof lirePreferencesLive>>));
+      if (p.entree) {
+        await configureSession({ session_id: sessionId, mode: p.entree,
+          price_chf: p.entree === 'paid' ? (p.prix_chf ?? null) : null, capacity: p.entree === 'paid' ? (p.capacite ?? null) : null }).catch(() => null);
+      }
+      if (p.acces && await saveAccessMode(sessionId, p.acces, user.id)) { setAccessMode(p.acces); accesJamaisRegleRef.current = false; }
+      if (p.entree || p.acces) await refreshAccess();
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, user?.id, estProprietaireSession, accessModeResolved]);
+
   // ═══ 🎥 JONCTION AUTOMATIQUE À LA VIDÉO — le cœur du correctif ═══════════════════════
   //
   //  Ce bloc est ICI, et pas plus haut, parce qu'il a besoin de TOUTES les règles d'accès
@@ -2145,6 +2173,8 @@ export const SessionPage: React.FC = () => {
       const relu = ok && accessOk ? await lireAccesSession(sessionId) : null;
       if (ok && accessOk && sauvegardeConfirmee({ mode: modeDraft.mode, acces: accessDraft }, relu)) {
         setAccessMode(accessDraft);
+        accesJamaisRegleRef.current = false;
+        void memoriserDroitsInvites(accessDraft);   // ⚙️ 01/10 : préférence du coach pour ses prochains Lives (le mode d'entrée l'est côté serveur)
         showToast('Mode d\'accès enregistré', 'success');
         setShowSessionSettings(false);
         await refreshAccess();
@@ -2339,6 +2369,7 @@ export const SessionPage: React.FC = () => {
             const rows = adRows as Array<{ access_mode?: string }>;
             const pick = rows.find((r) => r.access_mode === 'guest' || r.access_mode === 'account');
             if (pick?.access_mode === 'guest' || pick?.access_mode === 'account') setAccessMode(pick.access_mode);
+            accesJamaisRegleRef.current = !pick;
           }
         } catch { /* colonne access_mode pas encore créée → défaut 'account' */ }
         setAccessModeResolved(true);

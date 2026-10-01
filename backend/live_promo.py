@@ -217,6 +217,34 @@ def offres_permises(offres: List[Dict[str, Any]], mode: Optional[str]) -> List[D
     return [o for o in offres if o.get("type") == "free" or paiement_reel_possible(mode)]
 
 
+# ─── 01/10 : PRÉFÉRENCES LIVE DU COACH (profiles.live_preferences) ────────────────────────────
+# Chaque Live a un NOUVEAU code de session : sans préférences, tout repartait à zéro. On garde ici,
+# PAR COACH, le dernier réglage ENREGISTRÉ (mode d'entrée, droits des invités, promotions) ; un Live
+# encore vierge le reprend. Seules des valeurs validées entrent ici (jamais un champ libre).
+def fusionner_preferences(actuelles: Any, partiel: Dict[str, Any]) -> Dict[str, Any]:
+    p: Dict[str, Any] = dict(actuelles) if isinstance(actuelles, dict) else {}
+    if "entree" in partiel:
+        e = partiel["entree"]
+        if e not in ("open", "private", "paid"):
+            raise RegleRefusee("Mode d'entrée invalide")
+        p["entree"] = e
+        p["prix_chf"] = round(float(partiel["prix_chf"]), 2) if e == "paid" and partiel.get("prix_chf") is not None else None
+        p["capacite"] = int(partiel["capacite"]) if e == "paid" and partiel.get("capacite") else None
+    if "acces" in partiel:
+        if partiel["acces"] not in ("guest", "account"):
+            raise RegleRefusee("Droits des invités invalides")
+        p["acces"] = partiel["acces"]
+    if "promo" in partiel:
+        pr = partiel["promo"] or {}
+        p["promo"] = {"enabled": pr.get("enabled") is True, "offres": valider_offres(pr.get("offres") or [])}
+    return p
+
+
+def session_promo_vierge(s: Dict[str, Any]) -> bool:
+    """Un Live dont les promotions n'ont JAMAIS été réglées (désactivées, aucune offre)."""
+    return s.get("live_promo_enabled") is not True and not (s.get("live_promo_offres") or [])
+
+
 # ─── 01/10 : ESPACE COACH (source serveur unique) ──────────────────────────────────────────────
 def espace_coach_actif(payment_type: Optional[str], comp_plan: Optional[str], comp_actif: bool,
                        abo_coach_actif: bool, est_super_admin: bool) -> bool:
@@ -333,6 +361,7 @@ alter table public.live_promos enable row level security;
 alter table public.live_promos add column if not exists test_sans_paiement boolean not null default false;
 alter table public.live_promos add column if not exists layout jsonb;
 alter table public.live_promos add column if not exists gratuit boolean not null default false;
+alter table public.profiles add column if not exists live_preferences jsonb;
 alter table public.live_promos drop constraint if exists live_promos_price_chf_check;
 alter table public.live_promos add constraint live_promos_price_chf_check check (gratuit or price_chf > 0);
 """

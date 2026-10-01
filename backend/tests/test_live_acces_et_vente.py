@@ -147,6 +147,15 @@ def appli(monkeypatch):
     monkeypatch.setattr(m, "get_session_row", faux_row)
     monkeypatch.setattr(m, "get_session_authz", faux_authz)
     monkeypatch.setattr(m, "upsert_playlist_fields", faux_upsert)
+
+    async def faux_ecrire(sid, patch):                     # 01/10 : écriture robuste (UPDATE/INSERT)
+        await faux_upsert(sid, patch)
+        return 1
+
+    async def fausses_prefs(uid, partiel):                 # préférences du coach : hors périmètre de ce banc
+        return {}
+    monkeypatch.setattr(m, "_playlist_ecrire", faux_ecrire)
+    monkeypatch.setattr(m, "_prefs_live_fusionner", fausses_prefs)
     monkeypatch.setattr(m, "get_coach_payment_type", faux_payment_type)
     monkeypatch.setattr(m, "get_commission_settings", faux_settings)
     monkeypatch.setattr(m, "is_coach_unlimited", faux_illimite)

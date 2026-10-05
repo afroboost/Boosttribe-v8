@@ -13,6 +13,7 @@ Endpoints :
 
 import os
 import re
+import time
 import uuid
 from urllib.parse import urlparse
 import asyncio
@@ -3044,6 +3045,125 @@ async def _fin_live_migration():
         except Exception as exc:  # noqa: BLE001
             logger.warning("[FIN-LIVE] migration impossible : %s", type(exc).__name__)
     asyncio.create_task(_run())
+
+
+# --------------------------------------------------------------------------- #
+# 👤 INVITÉ LIVE — photo et coordonnées (Phase 1, 05/10/2026)
+# --------------------------------------------------------------------------- #
+# Photo : un invité ANONYME ne peut pas écrire dans le stockage (compte requis) ; il passait
+# donc sa photo en base64 dans la présence temps réel. Le serveur la dépose désormais dans le
+# bucket public EXISTANT (`session-media/invites/<session>/…`) et rend une URL courte.
+# Coordonnées : relayées vers les Contacts Afroboost, UNIQUEMENT pour un Live servi par
+# afroboost.com (jamais boosttribe.pro), dans un jeton RÉSERVÉ à cet usage (aud distincte,
+# jti, 5 min) signé avec le secret partagé EXISTANT — que le navigateur ne voit jamais.
+AFROBOOST_LIVE_GUEST_URL = os.environ.get(
+    "AFROBOOST_LIVE_GUEST_URL", "https://afroboost.com/api/boosttribe/live-guest").rstrip("/")
+INVITE_ORIGINES_CONTACT = tuple(o.strip().rstrip("/") for o in os.environ.get(
+    "INVITE_ORIGINES_CONTACT", "https://afroboost.com").split(",") if o.strip())
+INVITE_DEBIT_MAX = 8                 # requêtes par IP et par fenêtre
+INVITE_DEBIT_FENETRE_S = 600
+INVITE_PHOTO_MAX = 3 * 1024 * 1024   # la photo arrive déjà recadrée (512×512 JPEG)
+_invite_debit: Dict[str, List[float]] = {}
+_INVITE_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+_INVITE_TEL_RE = re.compile(r"^\+?\d{8,15}$")    # même règle que la saisie Afroboost (V570)
+
+
+def _invite_ip(request: Request) -> str:
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return fwd or (request.client.host if getattr(request, "client", None) else "inconnu")
+
+
+def _invite_limiter(request: Request) -> None:
+    ip, maint = _invite_ip(request), time.time()
+    vus = [t for t in _invite_debit.get(ip, []) if maint - t < INVITE_DEBIT_FENETRE_S]
+    if len(vus) >= INVITE_DEBIT_MAX:
+        raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes")
+    vus.append(maint)
+    _invite_debit[ip] = vus
+
+
+def _invite_photo_autorisee(url: Optional[str]) -> str:
+    base = f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/invites/"
+    u = str(url or "").strip()
+    return u if u.startswith(base) and len(u) <= 500 else ""
+
+
+class InviteContactBody(BaseModel):
+    session_id: str
+    pseudo: str = ""
+    email: Optional[str] = ""
+    whatsapp: Optional[str] = ""
+    photo_url: Optional[str] = None
+
+
+async def _invite_poster(url: str, jeton: str) -> int:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(url, json={"token": jeton})
+    return r.status_code
+
+
+@app.post("/live/invite-photo")
+async def live_invite_photo(request: Request, session_id: str = Form(...), file: UploadFile = File(...)):
+    """Photo de profil d'un invité (anonyme ou non) : JPEG / PNG / WebP, déjà recadrée."""
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    _invite_limiter(request)
+    if not await get_session_authz(session_id):
+        raise HTTPException(status_code=404, detail="Session introuvable")
+    types = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    if ct not in types:
+        raise HTTPException(status_code=400, detail="Format non pris en charge : JPEG, PNG ou WebP")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Fichier vide")
+    if len(data) > INVITE_PHOTO_MAX:
+        raise HTTPException(status_code=400, detail="Photo trop lourde")
+    chemin = f"invites/{session_id}/{uuid.uuid4().hex}.{types[ct]}"
+    async with httpx.AsyncClient(timeout=30) as client:
+        up = await client.post(f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{chemin}",
+                               headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                                        "Content-Type": ct, "x-upsert": "false"}, content=data)
+    if up.status_code not in (200, 201):
+        logger.error("[INVITE] photo non déposée : HTTP %s", up.status_code)
+        raise HTTPException(status_code=502, detail="Envoi de la photo impossible")
+    return {"url": f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{chemin}"}
+
+
+@app.post("/live/invite-contact")
+async def live_invite_contact(body: InviteContactBody, request: Request):
+    """Coordonnées d'un invité → Contacts Afroboost (relais signé, jamais bloquant pour le Live)."""
+    origine = (request.headers.get("origin") or "").rstrip("/")
+    if origine not in INVITE_ORIGINES_CONTACT:
+        raise HTTPException(status_code=403, detail="Collecte réservée aux Lives Afroboost")
+    if not body.session_id or not SESSION_ID_RE.match(body.session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    _invite_limiter(request)
+    if not await get_session_authz(body.session_id):
+        raise HTTPException(status_code=404, detail="Session introuvable")
+    email = str(body.email or "").strip().lower()
+    email = email if _INVITE_EMAIL_RE.match(email) else ""
+    tel = str(body.whatsapp or "").strip()
+    tel = tel if _INVITE_TEL_RE.match(re.sub(r"[\s().-]", "", tel)) else ""
+    if not email and not tel:
+        raise HTTPException(status_code=400, detail="E-mail ou WhatsApp requis")
+    if not AFRO_BT_SHARED_SECRET or _pyjwt is None:
+        logger.error("[INVITE] secret partagé absent : contact non relayé")
+        return {"ok": False}
+    maint = int(time.time())
+    jeton = _pyjwt.encode({"iss": "boosttribe", "aud": "afroboost-contacts", "jti": uuid.uuid4().hex,
+                           "iat": maint, "exp": maint + 300, "session_code": body.session_id,
+                           "nom": re.sub(r"[\x00-\x1f<>]", "", body.pseudo or "").strip()[:60],
+                           "email": email, "whatsapp": tel, "photo_url": _invite_photo_autorisee(body.photo_url)},
+                          AFRO_BT_SHARED_SECRET, algorithm="HS256")
+    try:
+        statut = await _invite_poster(AFROBOOST_LIVE_GUEST_URL, jeton)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[INVITE] Afroboost injoignable : %s", type(exc).__name__)
+        return {"ok": False}
+    if statut != 200:
+        logger.warning("[INVITE] Afroboost a répondu HTTP %s", statut)
+    return {"ok": statut == 200}
 
 
 @app.post("/session/cohosts")

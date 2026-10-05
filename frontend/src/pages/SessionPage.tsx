@@ -102,7 +102,9 @@ import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
-import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest, terminerLiveServeur, liveEstTermine } from '@/lib/paymentApi';
+import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest, terminerLiveServeur, liveEstTermine, enregistrerContactInvite } from '@/lib/paymentApi';
+import { BRAND_ID } from '@/config/brand';
+import { libelleRejoindre, validerContactInvite, avatarPourPresence, TEXTE_INFO_CONTACT, lireContactMemorise, memoriserContact, type AccesInvite } from '@/lib/inviteLive';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
@@ -320,11 +322,20 @@ interface NicknameModalProps {
   initialNickname?: string;
   currentAvatar?: string | null;
   onAddPhoto?: () => void;
+  // 👤 Phase 1 : réglage RÉEL de l'hôte (libellé) + collecte e-mail / WhatsApp (Live Afroboost)
+  acces?: AccesInvite;
+  accesResolu?: boolean;
+  collecteContact?: boolean;
+  contactInitial?: { email: string; whatsapp: string };
+  onSubmitContact?: (contact: { email: string; whatsapp: string }) => void;
 }
 
-const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit, theme, initialNickname, currentAvatar, onAddPhoto }) => {
+export const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit, theme, initialNickname, currentAvatar, onAddPhoto,
+  acces, accesResolu, collecteContact, contactInitial, onSubmitContact }) => {
   const [nickname, setNickname] = useState(initialNickname || (isHost ? 'Coach' : ''));
   const [error, setError] = useState('');
+  const [email, setEmail] = useState(contactInitial?.email || '');
+  const [whatsapp, setWhatsapp] = useState(contactInitial?.whatsapp || '');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -344,19 +355,25 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
       setError('Le pseudo ne peut pas dépasser 20 caractères');
       return;
     }
-    
+
+    if (collecteContact) {
+      const c = validerContactInvite({ email, whatsapp });
+      if (!c.ok) { setError(c.erreur); return; }
+      onSubmitContact?.({ email: c.email, whatsapp: c.whatsapp });
+    }
     onSubmit(trimmed);
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 overflow-y-auto">
       {/* Backdrop */}
       <div 
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+        className="fixed inset-0 bg-black/80 backdrop-blur-sm"
       />
-      
+      {/* 📱 Phase 1 : la fenêtre DÉFILE (clavier mobile ouvert) — aucun bouton caché sous le clavier */}
+      <div className="relative min-h-full flex items-start sm:items-center justify-center p-4">
       {/* Modal */}
       <Card 
         className="relative z-10 w-full max-w-md border-2 bg-black/90 backdrop-blur-xl"
@@ -392,7 +409,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
         </CardHeader>
         
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div className="space-y-2">
               <Label htmlFor="nickname" className="text-white/70">
                 Votre pseudo
@@ -407,10 +424,57 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
                 }}
                 placeholder={isHost ? 'Coach' : 'Entrez votre pseudo'}
                 className="h-12 text-lg text-center bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[var(--bt-accent)]"
-                autoFocus
+                autoFocus={isHost}
                 maxLength={20}
               />
             </div>
+
+            {/* 👤 Phase 1 : photo AVANT le bouton (facultative, avatar par défaut sinon) */}
+            {!isHost && onAddPhoto && (
+              <button
+                type="button"
+                onClick={onAddPhoto}
+                className="w-full h-11 rounded-xl font-medium text-sm flex items-center justify-center gap-2 border border-white/15 bg-white/5 text-white/80 hover:bg-white/10 transition-colors"
+                data-testid="add-photo-btn"
+              >
+                <Camera className="w-4 h-4" />
+                {currentAvatar ? 'Changer ma photo' : 'Ajouter ma photo (facultatif)'}
+              </button>
+            )}
+
+            {collecteContact && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="invite-email" className="text-white/70">E-mail</Label>
+                  <Input
+                    id="invite-email"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                    placeholder="ton@email.com"
+                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[var(--bt-accent)]"
+                    data-testid="invite-email"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="invite-whatsapp" className="text-white/70">WhatsApp</Label>
+                  <Input
+                    id="invite-whatsapp"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    value={whatsapp}
+                    onChange={(e) => { setWhatsapp(e.target.value); setError(''); }}
+                    placeholder="+41 79 123 45 67"
+                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[var(--bt-accent)]"
+                    data-testid="invite-whatsapp"
+                  />
+                  <p className="text-white/40 text-xs">E-mail ou WhatsApp : au moins l’un des deux.</p>
+                </div>
+              </>
+            )}
 
             {error && (
               <p className="text-red-400 text-sm text-center">{error}</p>
@@ -424,28 +488,20 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
                 boxShadow: '0 4px 24px rgba(122, 92, 255, 0.35)',
               }}
             >
-              {isHost ? <Music className="w-4 h-4" /> : <Headphones className="w-4 h-4" />}
-              {isHost ? 'Démarrer la session' : "Rejoindre l'écoute"}
+              {isHost ? <Music className="w-4 h-4" /> : (acces === 'guest' || !accesResolu) ? <Headphones className="w-4 h-4" /> : <Video className="w-4 h-4" />}
+              {libelleRejoindre({ estHote: isHost, acces: acces ?? 'account', resolu: !!accesResolu })}
             </Button>
+            {collecteContact && (
+              <p className="text-white/50 text-xs text-center leading-snug" data-testid="invite-info-contact">{TEXTE_INFO_CONTACT}</p>
+            )}
           </form>
 
-          {/* P2 : photo OPTIONNELLE pour les participants — conseil non bloquant + ajout rapide */}
-          {!isHost && onAddPhoto && (
-            <div className="mt-4 space-y-3">
-              <button
-                type="button"
-                onClick={onAddPhoto}
-                className="w-full h-11 rounded-xl font-medium text-sm flex items-center justify-center gap-2 border border-white/15 bg-white/5 text-white/80 hover:bg-white/10 transition-colors"
-                data-testid="add-photo-btn"
-              >
-                <Camera className="w-4 h-4" />
-                {currentAvatar ? 'Changer ma photo' : 'Ajouter ma photo (recommandé)'}
-              </button>
-              <p className="flex items-start gap-2 text-amber-300/80 text-xs leading-snug">
-                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                <span>Ajoutez votre vraie photo de profil pour une meilleure expérience — sinon l'hôte peut vous éjecter.</span>
-              </p>
-            </div>
+          {/* P2 : conseil photo non bloquant */}
+          {!isHost && onAddPhoto && !currentAvatar && (
+            <p className="mt-4 flex items-start gap-2 text-amber-300/80 text-xs leading-snug">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>Ajoutez votre vraie photo de profil pour une meilleure expérience — sinon l'hôte peut vous éjecter.</span>
+            </p>
           )}
 
           <p className="mt-4 text-center text-white/40 text-xs">
@@ -453,6 +509,7 @@ const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit,
           </p>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 };
@@ -1828,7 +1885,7 @@ export const SessionPage: React.FC = () => {
   // Join socket session when session ID is available
   useEffect(() => {
     if (sessionId && socket.userId && nickname) {
-      socket.joinSession(sessionId, socket.userId, isHost, nickname, myAvatar || undefined);
+      socket.joinSession(sessionId, socket.userId, isHost, nickname, avatarPourPresence(myAvatar));
     }
 
     return () => {
@@ -1838,6 +1895,20 @@ export const SessionPage: React.FC = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, socket.userId, nickname, isHost]);
+
+  // 👤 Phase 1 : photo changée APRÈS l'entrée → la présence est republiée (les autres la voient),
+  //    sans quitter ni rejoindre la session. Seule une URL courte circule (jamais du base64).
+  useEffect(() => {
+    if (!sessionId || !socket.userId || !nickname) return;
+    socket.updatePresenceAvatar(avatarPourPresence(myAvatar));
+    // La photo ajoutée après l'entrée complète aussi la fiche Contacts (jamais d'écrasement côté Afroboost).
+    const c = lireContactMemorise(typeof localStorage === 'undefined' ? null : localStorage);
+    const url = avatarPourPresence(myAvatar);
+    if (!isHost && BRAND_ID === 'afroboost' && url && (c.email || c.whatsapp)) {
+      void enregistrerContactInvite({ sessionId, pseudo: nickname, email: c.email, whatsapp: c.whatsapp, photoUrl: url });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myAvatar]);
 
   // 💳 ACCÈS « Ouverte (crédits) » : le contenu (playlist/lecteur/live) est BLOQUÉ tant que le
   //    participant n'a pas payé son crédit. Le débit est idempotent par session (déjà payé = OK,
@@ -3892,7 +3963,15 @@ export const SessionPage: React.FC = () => {
   // Handle nickname submission
   // - HÔTE : photo de profil requise (inchangé) → ensureAvatar avant de démarrer.
   // - PARTICIPANT (P2) : photo OPTIONNELLE → rejoint immédiatement (avatar = initiales par défaut).
+  // 👤 Phase 1 : coordonnées saisies sur l'écran d'entrée (Live Afroboost) — mémorisées pour le retour.
+  const contactInviteRef = useRef<{ email: string; whatsapp: string } | null>(null);
   const handleNicknameSubmit = useCallback((newNickname: string) => {
+    const contact = contactInviteRef.current;
+    if (!isHost && contact) {
+      memoriserContact(typeof localStorage === 'undefined' ? null : localStorage, contact);
+      void enregistrerContactInvite({ sessionId, pseudo: newNickname, email: contact.email, whatsapp: contact.whatsapp, photoUrl: avatarPourPresence(myAvatar) });
+      contactInviteRef.current = null;
+    }
     const finish = () => {
       setStoredNickname(newNickname);
       setNickname(newNickname);
@@ -3904,7 +3983,7 @@ export const SessionPage: React.FC = () => {
     } else {
       finish();
     }
-  }, [isHost, showToast, ensureAvatar]);
+  }, [isHost, showToast, ensureAvatar, sessionId, myAvatar]);
 
   // P2 : le participant ajoute (optionnellement) sa photo depuis le modal de pseudo
   const handleAddPhotoFromModal = useCallback(() => {
@@ -4713,12 +4792,18 @@ export const SessionPage: React.FC = () => {
         initialNickname={nickname || deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email }).prerempli}
         currentAvatar={myAvatar}
         onAddPhoto={handleAddPhotoFromModal}
+        acces={accessMode}
+        accesResolu={accessModeResolved}
+        collecteContact={BRAND_ID === 'afroboost' && !isHost}
+        contactInitial={lireContactMemorise(typeof localStorage === 'undefined' ? null : localStorage)}
+        onSubmitContact={(c) => { contactInviteRef.current = c; }}
       />
 
       {/* Photo de profil (upload + recadrage) — FACULTATIVE pour tout le monde (hôte inclus) : annulable. */}
       {showAvatarCrop && (
         <AvatarUploadCrop
           userId={user?.id || null}
+          sessionId={sessionId || null}
           title="Votre photo de profil"
           subtitle={isHost ? 'Ajoutez une photo (facultatif)' : 'Ajoutez votre vraie photo (optionnel, recommandé)'}
           onComplete={handleAvatarComplete}

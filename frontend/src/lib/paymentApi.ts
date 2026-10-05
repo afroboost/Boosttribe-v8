@@ -1156,6 +1156,33 @@ export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_
   return { ok: !!data?.ok, host_id: data?.host_id };
 }
 
+/** 👤 Invité : dépose sa photo (déjà recadrée) sur le serveur → URL courte. Erreur = message affichable. */
+export async function envoyerPhotoInvite(sessionId: string, photo: Blob): Promise<{ url?: string; erreur?: string }> {
+  if (!API_URL) return { erreur: 'Envoi de la photo indisponible.' };
+  try {
+    const fd = new FormData();
+    fd.append('session_id', sessionId);
+    fd.append('file', photo, 'photo.jpg');
+    const res = await fetch(`${API_URL}/live/invite-photo`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.url) return { erreur: data?.detail || 'Envoi de la photo impossible, réessaie.' };
+    return { url: String(data.url) };
+  } catch { return { erreur: 'Envoi de la photo impossible (réseau), réessaie.' }; }
+}
+
+/** 👤 Invité : coordonnées → Contacts Afroboost (relais serveur signé). Jamais bloquant. */
+export async function enregistrerContactInvite(c: { sessionId: string | null | undefined; pseudo: string; email: string; whatsapp: string; photoUrl?: string }): Promise<boolean> {
+  if (!API_URL || !c.sessionId) return false;
+  try {
+    const res = await fetch(`${API_URL}/live/invite-contact`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: c.sessionId, pseudo: c.pseudo, email: c.email, whatsapp: c.whatsapp, photo_url: c.photoUrl || null }),
+    });
+    const data = await res.json().catch(() => ({}));
+    return !!data?.ok;
+  } catch { return false; }
+}
+
 /** V571 — l'HÔTE termine définitivement son live : l'ancien lien d'invitation devient invalide. */
 export async function terminerLiveServeur(sessionId: string): Promise<boolean> {
   try {

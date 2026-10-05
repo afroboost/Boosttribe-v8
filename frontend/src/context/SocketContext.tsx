@@ -55,6 +55,8 @@ interface SocketContextValue {
   // Join/Leave
   joinSession: (sessionId: string, userId: string, isHost: boolean, nickname: string, avatar?: string) => void;
   leaveSession: () => void;
+  /** 👤 Phase 1 : republie la présence avec la nouvelle photo, sans quitter la session. */
+  updatePresenceAvatar: (avatar?: string) => void;
   
   // Host Commands
   muteUser: (targetUserId: string) => void;
@@ -106,6 +108,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   
   // Refs for channels
   const supabaseChannelRef = useRef<RealtimeChannel | null>(null);
+  const presenceMetaRef = useRef<PresenceMeta | null>(null);   // 👤 Phase 1 : dernière présence publiée
   
   // State
   const [isConnected, setIsConnected] = useState(false);
@@ -224,6 +227,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     // Create Supabase Realtime channel if configured
     if (isSupabaseConfigured) {
       try {
+        presenceMetaRef.current = { userId: newUserId, nickname, isHost, avatar };
         supabaseChannelRef.current = createSessionChannel(newSessionId, handleMessage, {
           meta: { userId: newUserId, nickname, isHost, avatar },
           onSync: (users) => setPresentUsers(users),
@@ -253,6 +257,13 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleMessage, sendMessage]);
+
+  const updatePresenceAvatar = useCallback((avatar?: string) => {
+    const meta = presenceMetaRef.current;
+    if (!meta || meta.avatar === avatar || !supabaseChannelRef.current) return;
+    presenceMetaRef.current = { ...meta, avatar };
+    try { void supabaseChannelRef.current.track(presenceMetaRef.current); } catch { /* canal fermé : la prochaine entrée publiera */ }
+  }, []);
 
   // Leave session
   const leaveSession = useCallback(() => {
@@ -380,6 +391,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     sessionId,
     presentUsers,
     joinSession,
+    updatePresenceAvatar,
     leaveSession,
     muteUser,
     unmuteUser,

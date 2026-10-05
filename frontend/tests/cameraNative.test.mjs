@@ -141,7 +141,7 @@ test('publication : capacités de LA caméra choisie ; changement de caméra = r
   assert.match(S, /optionsCameraLive\(\{ mobile[^}]*hauteurMax/);
   const sw = S.slice(S.indexOf('const setCameraDevice = useCallback'), S.indexOf('basculeAutoRef.current = async'));
   assert.match(sw, /restartTrack\(\{ deviceId: \{ exact: deviceId \}, \.\.\.capture \}\)/);
-  assert.match(sw, /encodagesAjustes\(/);
+  assert.match(sw, /ajusterDebitsCouches\(piste\)/);          // 05/10 : débits recalculés (encodagesAjustes) — mesuré par le contrat navigateur
   assert.match(sw, /if \(!piste\) \{ await room\.switchActiveDevice\('videoinput', deviceId\); return; \}/, 'switchActiveDevice seulement en secours (aucune piste)');
 });
 

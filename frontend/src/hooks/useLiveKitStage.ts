@@ -13,7 +13,7 @@ import {
 import { supabase } from '@/lib/supabaseClient';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 import { choisirCameraPrincipale, cibleBascule, decisionDebranchement, estMobile } from '@/lib/sourcesLogic';
-import { associerPisteVideo, optionsCameraLive, hauteurMaxCamera, cibleCamera, encodagesAjustes, decisionQualiteCpu } from '@/lib/qualiteVideo';
+import { associerPisteVideo, optionsCameraLive, hauteurMaxCamera, cibleCamera, ajusterDebitsCouches, decisionQualiteCpu, OPTIONS_ROOM_LIVE } from '@/lib/qualiteVideo';
 
 /**
  * 🎥 useLiveKitStage — Mode "Live / Visio" via LiveKit (SFU), remplaçant du mesh PeerJS (useVideoMesh).
@@ -374,7 +374,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
 
     let cancelled = false;
     setConnexion('en-cours');
-    const room = new Room({ adaptiveStream: true, dynacast: true });
+    const room = new Room(OPTIONS_ROOM_LIVE);   // adaptiveStream + dynacast (protégé par le contrat Live)
     roomRef.current = room;
     const screenStreams = screenStreamsRef.current; // référence stable (jamais réassignée) pour le cleanup
 
@@ -555,17 +555,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       await piste.restartTrack({ deviceId: { exact: deviceId }, ...capture });
       const mst = piste.mediaStreamTrack;
       if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); journaliserCapture(mst); }
-      const reglages = mst?.getSettings?.() ?? {};
-      const sender = piste.sender;
-      if (sender && reglages.width && reglages.height) {
-        try {
-          const params = sender.getParameters();
-          if (params.encodings?.length) {
-            params.encodings = encodagesAjustes(params.encodings, reglages.width, reglages.height);
-            await sender.setParameters(params);
-          }
-        } catch (e) { console.warn('[CAMÉRA] débits des couches non ajustés', e); }
-      }
+      try { await ajusterDebitsCouches(piste); } catch (e) { console.warn('[CAMÉRA] débits des couches non ajustés', e); }
     } catch (err) {
       console.warn('[LIVEKIT] changement de caméra échoué (périphérique indisponible ?)', err);
     }

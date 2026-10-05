@@ -12,7 +12,7 @@
  * RÉELLE de chaque élément et choisit la couche adaptée (1080p en grand, 360p en vignette).
  * Un flux local (aperçu, scène) garde `srcObject`, exactement comme avant.
  */
-import { VideoPresets, type TrackPublishOptions, type VideoCaptureOptions } from 'livekit-client';
+import { VideoPresets, type RoomOptions, type TrackPublishOptions, type VideoCaptureOptions } from 'livekit-client';
 
 /** Ce que l'on sait d'une piste LiveKit pour la brancher : attach / detach. */
 export interface PisteAttachable {
@@ -40,6 +40,13 @@ export function brancherVideo(el: HTMLMediaElement, flux: MediaStream): () => vo
   if (el.srcObject !== flux) el.srcObject = flux;
   return () => { /* flux local : le composant gère lui-même son srcObject */ };
 }
+
+/**
+ * 05/10 — Options de la Room du Live, en UN seul endroit (le hook ET le contrat navigateur) :
+ * adaptiveStream = chaque spectateur reçoit la couche adaptée à la taille RÉELLE de sa vidéo ;
+ * dynacast = l'émetteur coupe les couches que personne ne regarde.
+ */
+export const OPTIONS_ROOM_LIVE: RoomOptions = { adaptiveStream: true, dynacast: true };
 
 /** Hauteurs cibles, de la meilleure à la plus modeste (16:9). */
 export const HAUTEURS_CIBLES = [2160, 1440, 1080, 720] as const;
@@ -93,6 +100,21 @@ export function encodagesAjustes<T extends { rid?: string; scaleResolutionDownBy
 ): T[] {
   const petit = Math.min(largeur, hauteur);
   return encodages.map((e) => ({ ...e, maxBitrate: debitPourHauteur(Math.round(petit / (e.scaleResolutionDownBy || 1))) }));
+}
+
+/**
+ * Après un changement de caméra en direct (`restartTrack`) : recalcule les débits des couches pour
+ * la résolution RÉELLEMENT capturée et les pose sur l'émetteur. Vrai si appliqué.
+ */
+export async function ajusterDebitsCouches(piste: { mediaStreamTrack?: MediaStreamTrack; sender?: RTCRtpSender }): Promise<boolean> {
+  const reglages = piste.mediaStreamTrack?.getSettings?.() ?? {};
+  const sender = piste.sender;
+  if (!sender || !reglages.width || !reglages.height) return false;
+  const params = sender.getParameters();
+  if (!params.encodings?.length) return false;
+  params.encodings = encodagesAjustes(params.encodings, reglages.width, reglages.height);
+  await sender.setParameters(params);
+  return true;
 }
 
 /**

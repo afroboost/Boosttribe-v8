@@ -132,7 +132,8 @@ test('01/10 — visibilité « Faire ma promo » : hôte de CETTE session dit pa
   const s = src('pages/SessionPage.tsx');
   assert.match(s, /const estProprietaireSession = estHoteServeur \?\? \(sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost\);/);
   assert.match(s, /useEffect\(\(\) => \{ setEstHoteServeur\(typeof estHoteConfig === 'boolean' \? estHoteConfig : null\); \}, \[estHoteConfig\]\);/);
-  assert.match(s, /onFaireMaPromo=\{\(!estProprietaireSession && user && livePromo\.config\?\.enabled && livePromo\.config\.offres\.length > 0\)/);
+  // 05/10 : la règle vit dans actionPromoParticipant (testée dans liveContract) — l'hôte reste exclu par estProprietaireSession.
+  assert.match(s, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, config: livePromo\.config \}\)/);
   const api = src('lib/livePromoApi.ts');
   assert.match(api, /`\/live-promo\/config\/\$\{encodeURIComponent\(sid\)\}`, \{\}, 'si-connecte'\)/);
   // Modèle de la règle (mêmes entrées que SessionPage) — isHost vaut VRAI pour un admin partout.

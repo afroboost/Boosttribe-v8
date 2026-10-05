@@ -78,3 +78,20 @@ export function offresValides(offres: OffrePromo[]): string {
   }
   return '';
 }
+
+/**
+ * 📣 05/10 — « Faire ma promo » dans le menu ⋮ du PARTICIPANT : que fait l'item ?
+ *  - 'ouvrir'    : participant connecté, promo ouverte sur ce Live → fenêtre de demande (inchangé) ;
+ *  - 'connexion' : invité SANS compte (« Gratuit par lien ») → l'item reste visible et explique
+ *                  qu'un compte est nécessaire (le serveur exige toujours une identité pour la demande) ;
+ *  - null        : hôte de CETTE session, ou promo fermée / aucune offre.
+ * Le participant connecté garde EXACTEMENT le comportement de 855bb11/ed7016a ; l'invité sans compte
+ * n'avait jamais l'item (`user &&` depuis 855bb11) : il le voit désormais, et il mène à la connexion.
+ */
+export function actionPromoParticipant(p: {
+  estProprietaire: boolean; connecte: boolean;
+  config: { enabled: boolean; offres: unknown[] } | null | undefined;
+}): 'ouvrir' | 'connexion' | null {
+  if (p.estProprietaire || !p.config?.enabled || !(p.config.offres || []).length) return null;
+  return p.connecte ? 'ouvrir' : 'connexion';
+}

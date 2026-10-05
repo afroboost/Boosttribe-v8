@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { sessionShareUrl } from '@/lib/publicUrl';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Music, Users, Radio, Volume2, Headphones, Crown, Check, Lightbulb, AlertCircle, Sparkles, Cloud, Zap, Clock, Rocket, ArrowLeft, Mic, MicOff, RefreshCw, ChevronDown, KeyRound, Copy, QrCode, Video, Lock, Globe, Menu, X, Camera, Plus, ListMusic, SlidersHorizontal } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { AudioPlayer } from '@/components/audio/AudioPlayer';
@@ -46,10 +46,12 @@ import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
+import { actionPromoParticipant } from '@/lib/livePromo'; // 📣 05/10 : « Faire ma promo » aussi pour l'invité sans compte
 import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
 import { appliquerPreferencesLive, memoriserDroitsInvites, appliquerPreferencesPromo } from '@/lib/preferencesLiveApi'; // ⚙️ 01/10 : réglages du coach d'un Live à l'autre
 import { LivePromoParticipantModal } from '@/components/session/LivePromoParticipantModal';
 import { LivePromoHostModal } from '@/components/session/LivePromoHostModal';
+import { PromoConnexionInvite } from '@/components/session/PromoConnexionInvite'; // 📣 05/10 : invité sans compte → connexion
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { VisioControlBar } from '@/components/session/VisioControlBar';
 import { useFullscreenPortalTarget } from '@/hooks/useFullscreenPortalTarget';
@@ -711,6 +713,7 @@ async function lireAccesSession(sid: string): Promise<{ mode: string; acces: str
 export const SessionPage: React.FC = () => {
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();   // 📣 05/10 : retour après connexion RELATIF au routeur (basename /live sur afroboost.com)
   const { theme } = useTheme();
   const { showToast } = useToast();
   const { t } = useI18n();
@@ -1552,6 +1555,7 @@ export const SessionPage: React.FC = () => {
   useEffect(() => { setEstHoteServeur(typeof estHoteConfig === 'boolean' ? estHoteConfig : null); }, [estHoteConfig]);
   const [promoParticipantOuvert, setPromoParticipantOuvert] = useState(false);
   const [promoHoteOuvert, setPromoHoteOuvert] = useState(false);
+  const [promoConnexionOuverte, setPromoConnexionOuverte] = useState(false);
   // 📱 MOBILE UNIQUEMENT : 4 onglets. Le contenu est MASQUÉ/AFFICHÉ en CSS (jamais démonté) ;
   //    le desktop (≥1024px) n'est PAS affecté (la règle CSS est sous @media max-width:1023px).
   // 📱 Mobile : 2 onglets seulement (moins de scroll). « player » = Lecteur & Playlist (contenu
@@ -4599,7 +4603,8 @@ export const SessionPage: React.FC = () => {
     if (!promoActifId) return;
     promoLayout(promoActifId, l).then(() => promoRafraichirEtSignaler()).catch((e) => showToast((e as Error).message, 'warning'));
   };
-  const livePromoNode = ((estProprietaireSession && promoAtraiter > 0 && !livePromo.active) || promoParticipantOuvert || promoHoteOuvert) ? (
+  const promoParticipantAction = actionPromoParticipant({ estProprietaire: estProprietaireSession, connecte: !!user, config: livePromo.config });
+  const livePromoNode = ((estProprietaireSession && promoAtraiter > 0 && !livePromo.active) || promoParticipantOuvert || promoHoteOuvert || promoConnexionOuverte) ? (
     <>
       {livePromo.active ? null : (estProprietaireSession && promoAtraiter > 0) ? (
         /* 01/10 : bien VISIBLE (taille, contraste, zone tactile confortable) ; une brève animation rejoue
@@ -4612,6 +4617,10 @@ export const SessionPage: React.FC = () => {
           <span className="h-3 w-3 rounded-full bg-white ring-4 ring-white/40" aria-hidden="true" />
           Promo en attente ({promoAtraiter})
         </button>
+      ) : null}
+      {promoConnexionOuverte ? (
+        <PromoConnexionInvite onFermer={() => setPromoConnexionOuverte(false)}
+          onConnexion={() => navigate('/login', { state: { from: location.pathname + location.search } })} />
       ) : null}
       {promoParticipantOuvert && sessionId && livePromo.config ? (
         <LivePromoParticipantModal sessionId={sessionId} offres={livePromo.config.offres} devise={livePromo.config.currency}
@@ -4735,8 +4744,8 @@ export const SessionPage: React.FC = () => {
       promoId={promoActifId}
       promoLayout={livePromo.active?.layout ?? null}
       onPromoLayout={estProprietaireSession ? onPromoLayout : undefined}
-      onFaireMaPromo={(!estProprietaireSession && user && livePromo.config?.enabled && livePromo.config.offres.length > 0)
-        ? () => setPromoParticipantOuvert(true) : undefined}
+      onFaireMaPromo={promoParticipantAction === 'ouvrir' ? () => setPromoParticipantOuvert(true)
+        : promoParticipantAction === 'connexion' ? () => setPromoConnexionOuverte(true) : undefined}
       promoHote={(estProprietaireSession && livePromo.config?.enabled) ? { enAttente: livePromo.enAttente, onOuvrir: () => setPromoHoteOuvert(true) } : undefined}
       commentInputNode={liveCommentInputNode}
       reactionsNode={liveReactionsNode}

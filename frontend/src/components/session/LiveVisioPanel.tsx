@@ -73,6 +73,7 @@ interface LiveVisioPanelProps {
   screenSupported?: boolean;
   // ✨ Embellir le visage (agent beauté) : réglage rendu dans le menu ⋮ — optionnel.
   embellirNode?: React.ReactNode;
+  lookNode?: React.ReactNode;
   // 🎬 Studio (Phase 2) : mini régie Preview / Programme / scènes. Fermée = rien de visible.
   //    Entrée : item « Studio » du menu ⋮ (partout) + icône ronde discrète sur desktop.
   //    `studioNode` est le panneau lui-même (rendu sous la barre quand `studioOpen`).
@@ -217,7 +218,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
   videoDevices = [], videoDeviceId = null, onSelectCamera, onFlipCamera, onRefreshDevices,
   sources, cameraNotice = null, onDismissCameraNotice,
   onToggleScreenShare, screenSharing = false, screenSupported = false,
-  embellirNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
+  embellirNode, lookNode, studioNode, studioOpen = false, onToggleStudio, onToggleStageRequests, stageRequestCount,
   broadcastNode, broadcastOpen = false, broadcastLive = false, onToggleBroadcast, screenShareDisponible = true,
   onTerminerLive, onRecordDirect,
   recordNode, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif, onToggleRecord,
@@ -926,6 +927,7 @@ export const LiveVisioPanel: React.FC<LiveVisioPanelProps> = ({
             onToggleStudio={onToggleStudio}
             studioOpen={studioOpen}
             embellirNode={embellirNode}
+            lookNode={lookNode}
             commentairesMasques={commentairesMasques}
             onToggleCommentaires={onToggleCommentaires}
             onLeaveLive={onLeaveLive}

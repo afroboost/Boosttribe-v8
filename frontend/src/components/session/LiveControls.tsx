@@ -1,6 +1,6 @@
 import React from 'react';
 import { Mic, MicOff, Video, VideoOff, Hand, Minimize2, MonitorUp, MonitorX, ScrollText, Power, SwitchCamera, SlidersHorizontal } from 'lucide-react';
-import { Timer, Clapperboard, Sparkles, Disc, Square, LogOut, MessageSquareOff, MessageSquare, Users, Radio, Megaphone } from 'lucide-react';
+import { Timer, Clapperboard, Sparkles, Palette, Disc, Square, LogOut, MessageSquareOff, MessageSquare, Users, Radio, Megaphone } from 'lucide-react';
 import { Play, Pause, SkipBack, SkipForward, Music } from 'lucide-react';
 import { MenuActions, type MenuAction } from '@/components/session/MenuActions';
 import { libelleItemRecord, formatDureeRec } from '@/lib/recordUi';
@@ -77,6 +77,8 @@ export interface LiveControlsProps {
   onToggleStudio?: () => void;
   studioOpen?: boolean;
   embellirNode?: React.ReactNode;
+  /** 🎨 05/10 — « Look vidéo » (LUT) : hôte uniquement, item du menu ⋮. */
+  lookNode?: React.ReactNode;
 
   commentairesMasques?: boolean;
   onToggleCommentaires?: () => void;
@@ -123,7 +125,7 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
   onRecordDirect, onToggleRecord, recordOpen = false, recordEtat = 'inactif', recordDureeSec = 0, recordSupporte = true, recordMotif,
   onTogglePrompteur, prompteurOuvert = false,
   onToggleBroadcast, broadcastOpen = false, broadcastLive = false,
-  onTerminerLive, onStartTimer, onToggleStudio, studioOpen = false, embellirNode,
+  onTerminerLive, onStartTimer, onToggleStudio, studioOpen = false, embellirNode, lookNode,
   commentairesMasques = false, onToggleCommentaires,
   onLeaveLive, onReduce, lecture, onFaireMaPromo, promoHote,
 }) => {
@@ -274,6 +276,14 @@ export const LiveControls: React.FC<LiveControlsProps> = ({
       onSelect: () => {},
       node: embellirNode,
       testId: 'visio-embellir',
+    }] : []),
+    ...(lookNode && canManageStage ? [{
+      id: 'look',
+      label: 'Look vidéo',
+      icon: <Palette className="w-5 h-5" />,
+      onSelect: () => {},
+      node: lookNode,
+      testId: 'visio-look',
     }] : []),
     ...(onToggleCommentaires ? [{
       id: 'commentaires',

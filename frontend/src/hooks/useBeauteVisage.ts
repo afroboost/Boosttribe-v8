@@ -11,6 +11,10 @@
  *  - la caméra rallumée (nouvelle LocalVideoTrack) → le processeur est reposé ;
  *  - garde de performance : coupure automatique + `avis = 'perf'` (message discret) ;
  *  - appareil sans WebGL/captureStream → `supporte = false`, l'option n'est pas proposée.
+ *  - 🎨 look vidéo (`bt_look`) : même processeur, même passe ; il SURVIT à l'embellissement
+ *    coupé/rallumé (le processeur reste posé tant qu'un look ≠ Original est choisi) et au
+ *    changement de caméra (restartTrack → processeur.restart). Original + embellissement coupé
+ *    = processeur retiré, piste brute.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LocalVideoTrack } from 'livekit-client';
@@ -18,6 +22,7 @@ import {
   ecrireNiveauBeaute, lireNiveauBeaute, supportBeaute, type NiveauBeaute,
 } from '@/lib/beauteLogic';
 import { BeauteProcessor } from '@/lib/beaute/BeauteProcessor';
+import { ecrireLook, lireLook, traitementNecessaire, type LookId } from '@/lib/looksVideo';
 import { sonderSupportBeaute } from '@/lib/beaute/rendu';
 
 export interface UseBeauteVisageOptions {
@@ -30,6 +35,14 @@ export interface UseBeauteVisageOptions {
 export interface UseBeauteVisageReturn {
   niveau: NiveauBeaute;
   setNiveau: (n: NiveauBeaute) => void;
+  /** 🎨 Look vidéo appliqué au flux PUBLIÉ (même passe GPU que l'embellissement) — mémorisé (`bt_look`). */
+  look: LookId;
+  setLook: (l: LookId) => void;
+  /** 🎨 Look coupé automatiquement ('perf' : appareil trop lent ; 'erreur' : pose impossible). */
+  avisLook: 'perf' | 'erreur' | null;
+  effacerAvisLook: () => void;
+  /** Embellissement en retard : résolution de traitement abaissée (px du grand côté), sinon null. */
+  palier: number | null;
   /** L'appareil peut traiter la vidéo (WebGL + canvas.captureStream). */
   supporte: boolean;
   /** Le processeur est effectivement posé sur la piste publiée. */
@@ -51,6 +64,12 @@ export function useBeauteVisage({ getCameraTrack, cameraOn }: UseBeauteVisageOpt
   const [actif, setActif] = useState(false);
   const [avis, setAvis] = useState<'perf' | 'erreur' | null>(null);
   const [mesure, setMesure] = useState<{ fps: number; msParImage: number } | null>(null);
+  const [look, setLookEtat] = useState<LookId>(() =>
+    typeof localStorage === 'undefined' ? 'original' : lireLook(localStorage));
+  const [avisLook, setAvisLook] = useState<'perf' | 'erreur' | null>(null);
+  const [palier, setPalier] = useState<number | null>(null);
+  const lookRef = useRef(look);
+  lookRef.current = look;
   const processeurRef = useRef<BeauteProcessor | null>(null);
   const pisteRef = useRef<LocalVideoTrack | null>(null);
   const niveauRef = useRef(niveau);
@@ -62,12 +81,19 @@ export function useBeauteVisage({ getCameraTrack, cameraOn }: UseBeauteVisageOpt
     if (n !== 'off') setAvis(null);
   }, []);
 
+  const setLook = useCallback((l: LookId) => {
+    setLookEtat(l);
+    if (typeof localStorage !== 'undefined') ecrireLook(localStorage, l);
+    setAvisLook(null);
+  }, []);
+
   const retirer = useCallback(async () => {
     const piste = pisteRef.current;
     pisteRef.current = null;
     processeurRef.current = null;
     setActif(false);
     setMesure(null);
+    setPalier(null);
     if (piste) {
       try { await piste.stopProcessor(); } catch { /* piste déjà arrêtée */ }
     }
@@ -78,25 +104,31 @@ export function useBeauteVisage({ getCameraTrack, cameraOn }: UseBeauteVisageOpt
     let annule = false;
     const appliquer = async () => {
       const piste = cameraOn ? getCameraTrack() : null;
-      if (!supporte || niveau === 'off' || !piste) {
+      // Original + embellissement coupé : AUCUN traitement, la piste brute de la caméra (qualité native).
+      if (!supporte || !traitementNecessaire(niveau, look) || !piste) {
         if (processeurRef.current) await retirer();
         return;
       }
       // Même piste, processeur déjà posé → changement d'intensité à chaud.
       if (processeurRef.current && pisteRef.current === piste) {
         processeurRef.current.setNiveau(niveau);
+        processeurRef.current.setLook(look);
         return;
       }
       if (processeurRef.current) await retirer();
       const p = new BeauteProcessor(niveau, {
         onCoupure: () => {
-          // Appareil trop lent : retour à la piste brute, réglage remis sur off, avis discret.
-          setAvis('perf');
+          // Appareil trop lent : retour à la piste brute (PLEINE résolution), réglages remis sur
+          // off / Original, avis discret — chacun dans son contrôle.
+          if (niveauRef.current !== 'off') setAvis('perf');
+          if (lookRef.current !== 'original') setAvisLook('perf');
           setNiveauEtat('off');
-          if (typeof localStorage !== 'undefined') ecrireNiveauBeaute(localStorage, 'off');
+          setLookEtat('original');
+          if (typeof localStorage !== 'undefined') { ecrireNiveauBeaute(localStorage, 'off'); ecrireLook(localStorage, 'original'); }
         },
+        onPalier: (cote) => setPalier(cote),
         onMesure: (fps, msParImage) => setMesure({ fps, msParImage }),
-      });
+      }, look);
       try {
         await piste.setProcessor(p);
         if (annule) { try { await piste.stopProcessor(); } catch { /* ignore */ } return; }
@@ -106,14 +138,16 @@ export function useBeauteVisage({ getCameraTrack, cameraOn }: UseBeauteVisageOpt
         setAvis(null);
       } catch (err) {
         console.warn('[BEAUTE] pose du processeur impossible', err);
-        setAvis('erreur');
+        if (niveau !== 'off') setAvis('erreur');
+        if (look !== 'original') setAvisLook('erreur');
         setNiveauEtat('off');
-        if (typeof localStorage !== 'undefined') ecrireNiveauBeaute(localStorage, 'off');
+        setLookEtat('original');   // sinon le look relancerait aussitôt une pose vouée à l'échec
+        if (typeof localStorage !== 'undefined') { ecrireNiveauBeaute(localStorage, 'off'); ecrireLook(localStorage, 'original'); }
       }
     };
     appliquer().catch(() => { /* jamais bloquant */ });
     return () => { annule = true; };
-  }, [niveau, cameraOn, supporte, getCameraTrack, retirer]);
+  }, [niveau, look, cameraOn, supporte, getCameraTrack, retirer]);
 
   // Démontage : on rend la piste brute.
   useEffect(() => () => { retirer().catch(() => { /* ignore */ }); }, [retirer]);
@@ -121,6 +155,11 @@ export function useBeauteVisage({ getCameraTrack, cameraOn }: UseBeauteVisageOpt
   return {
     niveau,
     setNiveau,
+    look,
+    setLook,
+    avisLook,
+    effacerAvisLook: () => setAvisLook(null),
+    palier,
     supporte,
     actif,
     avis,

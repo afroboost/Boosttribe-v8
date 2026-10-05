@@ -15,20 +15,28 @@
  * à 15 images/s pour que les participants ne voient pas une image figée.
  *
  * Garde de performance (beauteLogic) : < 20 fps pendant 3 s → `onCoupure()` — le hook coupe
- * alors la beauté et prévient discrètement. Résolution de traitement plafonnée à 720 px.
+ * alors la beauté et prévient discrètement. Résolution de traitement plafonnée à 720 px (téléphone).
+ *
+ * 🎨 LOOK SEUL (embellissement coupé, look ≠ Original) : une seule passe très légère, toujours à la
+ * PLEINE résolution de la source (aussi sur téléphone) ; s'il prend du retard, AUCUN palier de
+ * résolution : coupure → piste brute pleine résolution + avis visible. La résolution publiée ne
+ * baisse donc jamais à cause d'un look.
  */
 import type { Track } from 'livekit-client';
 import type { TrackProcessor, VideoProcessorOptions } from 'livekit-client';
 import {
   GardePerformance, parametresBeaute, resolutionTraitement, coteMaxTraitement, palierSuivant,
-  MASQUE_ALPHA_TEMPOREL, type NiveauBeaute,
+  MASQUE_ALPHA_TEMPOREL, COTE_MAX_ORDINATEUR, type NiveauBeaute,
 } from '@/lib/beauteLogic';
 import { estMobile } from '@/lib/sourcesLogic';
+import { parametresLook, type LookId } from '@/lib/looksVideo';
 import { creerRenduBeaute, type RenduBeaute } from './rendu';
 
 export interface BeauteProcessorCallbacks {
-  /** Le débit est resté trop bas : l'appelant doit désactiver la beauté. */
+  /** Le débit est resté trop bas : l'appelant doit désactiver la beauté (et le look). */
   onCoupure?: () => void;
+  /** 🎨 Embellissement en retard : résolution de traitement abaissée à `cote` px (signalé, jamais muet). */
+  onPalier?: (cote: number) => void;
   /** Mesure périodique (≈ 1/s) : fps traité et temps moyen par image (ms). */
   onMesure?: (fps: number, msParImage: number) => void;
 }
@@ -58,11 +66,27 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
   // 🎥 Phase caméra 2 : pleine résolution sur ordinateur (jusqu'à 4K), 720 sur téléphone ;
   //    paliers 3840 → 1920 → 1280 si le traitement prend du retard, AVANT toute coupure.
   private coteMax = coteMaxTraitement({ mobile: typeof navigator !== 'undefined' && estMobile(navigator.userAgent, navigator.maxTouchPoints) });
+  /** Plafond EFFECTIF : look seul = pleine résolution de la source ; embellissement = coteMax (paliers). */
+  private cote(): number { return this.niveau === 'off' ? COTE_MAX_ORDINATEUR : this.coteMax; }
   private derniereImage = -1;            // presentedFrames déjà traité (jamais deux fois la même image)
   private sourceMs: number[] = [];       // horodatages média des images de la caméra → cadence réelle
 
-  constructor(niveau: NiveauBeaute, private readonly cb: BeauteProcessorCallbacks = {}) {
+  private look: LookId;
+
+  constructor(niveau: NiveauBeaute, private readonly cb: BeauteProcessorCallbacks = {}, look: LookId = 'original') {
     this.niveau = niveau;
+    this.look = look;
+  }
+
+  /** 🎨 Change le look à chaud (uniforms), sans republier : le Live n'est jamais interrompu. */
+  setLook(look: LookId): void {
+    this.look = look;
+    this.rendu?.setLook(parametresLook(look));
+  }
+
+  /** Taille du canvas publié (mesure / diagnostic). */
+  get tailleSortie(): { largeur: number; hauteur: number } {
+    return { largeur: this.rendu?.canvas.width ?? 0, hauteur: this.rendu?.canvas.height ?? 0 };
   }
 
   /** Cadence RÉELLE de la caméra sur la dernière seconde (0 si inconnue). */
@@ -82,7 +106,7 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
   async init(opts: VideoProcessorOptions): Promise<void> {
     await this.brancherSource(opts.track);
     const { largeur, hauteur } = this.tailleSource();
-    this.rendu = creerRenduBeaute(largeur, hauteur, parametresBeaute(this.niveau), MASQUE_ALPHA_TEMPOREL);
+    this.rendu = creerRenduBeaute(largeur, hauteur, parametresBeaute(this.niveau), MASQUE_ALPHA_TEMPOREL, parametresLook(this.look));
     // Sans argument : une image capturée à chaque dessin (cadence = celle de la source).
     const captureStream = (this.rendu.canvas as HTMLCanvasElement & { captureStream: () => MediaStream }).captureStream;
     const sortie = captureStream.call(this.rendu.canvas) as MediaStream;
@@ -144,7 +168,7 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
     const reglages = (this.flux?.getVideoTracks()[0]?.getSettings?.() ?? {}) as MediaTrackSettings;
     const w = v?.videoWidth || reglages.width || 640;
     const h = v?.videoHeight || reglages.height || 480;
-    return resolutionTraitement(w, h, this.coteMax);
+    return resolutionTraitement(w, h, this.cote());
   }
 
   private demarrerBoucle(): void {
@@ -170,12 +194,14 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
       const t1 = performance.now();
       this.cumulMs += t1 - t0; this.nbImages += 1;
       if (this.garde.enregistrer(t1, this.fpsSource())) {
-        // Traitement en retard : palier inférieur (3840 → 1920 → 1280) avant de couper.
-        const palier = palierSuivant(this.coteMax);
+        // Traitement en retard : palier inférieur (3840 → 1920 → 1280) avant de couper — SEULEMENT
+        // pour l'embellissement. Look seul : jamais de palier (coupure → piste brute pleine résolution).
+        const palier = this.niveau === 'off' ? null : palierSuivant(this.coteMax);
         if (palier) {
           this.coteMax = palier;
           this.garde.reinitialiser();
           console.info('[BEAUTÉ] traitement en retard : résolution de traitement abaissée à', palier, 'px');
+          this.cb.onPalier?.(palier);
         } else {
           this.cb.onCoupure?.();
           return; // l'appelant appelle destroy() via stopProcessor()

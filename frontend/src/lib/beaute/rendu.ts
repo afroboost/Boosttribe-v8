@@ -9,9 +9,12 @@
  *   3. mélange avec l'image d'origine à hauteur de `lissage` × masque — le grain reste ;
  *   4. touche finale : léger éclaircissement + contraste à peine réduit (flatteur, pas délavé).
  *
+ *   5. 🎨 LOOK vidéo (lib/looksVideo.ts), même passe, APRÈS l'embellissement (aussi quand il est coupé).
+ *
  * Aucune dépendance : ~100 lignes de GLSL. Testé visuellement par `tests/beaute.mesure.cjs`.
  */
 import type { ParametresBeaute } from '@/lib/beauteLogic';
+import type { ParametresLook } from '@/lib/looksVideo';
 
 const VERTEX = `
 attribute vec2 a_pos;
@@ -68,10 +71,28 @@ uniform float u_echelle;     // grand côté / 720 (même rendu visuel à toute 
 uniform float u_tolerance;   // 0..1
 uniform float u_eclair;      // 0..1
 uniform float u_contraste;   // ~1
+// 🎨 05/10 — LOOK (LUT) appliqué APRÈS l'embellissement, même passe, pleine résolution.
+//    Miroir EXACT de appliquerLook (lib/looksVideo.ts). Future LUT .cube : voir l'en-tête de looksVideo.ts.
+uniform mat3 u_lookMat;      // matrice couleur (colonnes)
+uniform vec3 u_lookDec;      // décalage
+uniform vec3 u_lookOmbres;   // teinte des ombres   × (1 − l)²
+uniform vec3 u_lookLumieres; // teinte des lumières × l²
+uniform float u_lookSat;     // 1 = inchangée, 0 = monochrome
+uniform float u_lookCon;     // 1 = inchangé
+
+vec3 appliquerLook(vec3 c) {
+  c = u_lookMat * c + u_lookDec;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c += u_lookOmbres * (1.0 - l) * (1.0 - l) + u_lookLumieres * l * l;
+  l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, u_lookSat);
+  c = (c - 0.5) * u_lookCon + 0.5;
+  return clamp(c, 0.0, 1.0);
+}
 
 void main() {
   vec3 orig = texture2D(u_tex, v_uv).rgb;
-  if (u_lissage <= 0.0) { gl_FragColor = vec4(orig, 1.0); return; }
+  if (u_lissage <= 0.0) { gl_FragColor = vec4(appliquerLook(orig), 1.0); return; }
 
   vec3 somme = orig;
   float poids = 1.0;
@@ -98,13 +119,15 @@ void main() {
   // brut : +0,025 sur la peau seule faisait des taches qui papillotaient avec le masque).
   c = (c - 0.5) * u_contraste + 0.5;
   c = c + u_eclair * m * (1.0 - c);
-  gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+  gl_FragColor = vec4(appliquerLook(clamp(c, 0.0, 1.0)), 1.0);
 }`;
 
 export interface RenduBeaute {
   /** Dessine la source (vidéo) dans le canvas avec les paramètres courants. */
   dessiner(source: TexImageSource): void;
   setParametres(p: ParametresBeaute): void;
+  /** 🎨 Look (LUT) à chaud — même canvas, même piste publiée, aucune republication. */
+  setLook(p: ParametresLook): void;
   redimensionner(largeur: number, hauteur: number): void;
   detruire(): void;
   readonly canvas: HTMLCanvasElement;
@@ -123,6 +146,14 @@ function compiler(gl: WebGLRenderingContext, type: number, src: string): WebGLSh
   return sh;
 }
 
+/** Look « Original » (identité exacte) — défini ici : le rendu reste sans dépendance d'exécution. */
+const LOOK_NEUTRE: ParametresLook = { matrice: [1, 0, 0, 0, 1, 0, 0, 0, 1], decalage: [0, 0, 0], teinteOmbres: [0, 0, 0], teinteLumieres: [0, 0, 0], saturation: 1, contraste: 1 };
+
+/** WebGL 1 n'accepte pas `transpose = true` : la matrice (lignes) est passée en colonnes. */
+export function matriceColonnes(m: ParametresLook['matrice']): Float32Array {
+  return new Float32Array([m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]]);
+}
+
 /** Taille du masque : petite (le masque est une zone, pas un détail) — 1/4 de la source, ≤ 480 px. */
 function tailleMasque(l: number, h: number): [number, number] {
   const k = Math.min(0.25, 480 / Math.max(l, h, 1));
@@ -130,7 +161,8 @@ function tailleMasque(l: number, h: number): [number, number] {
 }
 
 /** Crée le rendu WebGL sur un canvas (détaché du DOM). Lève si WebGL est indisponible. */
-export function creerRenduBeaute(largeur: number, hauteur: number, params: ParametresBeaute, alphaMasque = 0.3): RenduBeaute {
+export function creerRenduBeaute(largeur: number, hauteur: number, params: ParametresBeaute, alphaMasque = 0.3,
+  lookInitial: ParametresLook = LOOK_NEUTRE): RenduBeaute {
   const canvas = document.createElement('canvas');
   canvas.width = largeur;
   canvas.height = hauteur;
@@ -198,9 +230,13 @@ export function creerRenduBeaute(largeur: number, hauteur: number, params: Param
     rayon: gl.getUniformLocation(prog, 'u_rayon'), echelle: gl.getUniformLocation(prog, 'u_echelle'),
     tolerance: gl.getUniformLocation(prog, 'u_tolerance'), eclair: gl.getUniformLocation(prog, 'u_eclair'),
     contraste: gl.getUniformLocation(prog, 'u_contraste'),
+    lookMat: gl.getUniformLocation(prog, 'u_lookMat'), lookDec: gl.getUniformLocation(prog, 'u_lookDec'),
+    lookOmbres: gl.getUniformLocation(prog, 'u_lookOmbres'), lookLumieres: gl.getUniformLocation(prog, 'u_lookLumieres'),
+    lookSat: gl.getUniformLocation(prog, 'u_lookSat'), lookCon: gl.getUniformLocation(prog, 'u_lookCon'),
   };
 
   let courant = params;
+  let look = lookInitial;
   let detruit = false;
   return {
     canvas,
@@ -237,10 +273,17 @@ export function creerRenduBeaute(largeur: number, hauteur: number, params: Param
         gl.uniform1f(u.tolerance, courant.tolerance);
         gl.uniform1f(u.eclair, courant.eclaircissement);
         gl.uniform1f(u.contraste, courant.contraste);
+        gl.uniformMatrix3fv(u.lookMat, false, matriceColonnes(look.matrice));
+        gl.uniform3f(u.lookDec, look.decalage[0], look.decalage[1], look.decalage[2]);
+        gl.uniform3f(u.lookOmbres, look.teinteOmbres[0], look.teinteOmbres[1], look.teinteOmbres[2]);
+        gl.uniform3f(u.lookLumieres, look.teinteLumieres[0], look.teinteLumieres[1], look.teinteLumieres[2]);
+        gl.uniform1f(u.lookSat, look.saturation);
+        gl.uniform1f(u.lookCon, look.contraste);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       } catch { /* image pas encore prête (readyState < 2) : on saute l'image */ }
     },
     setParametres(p) { courant = p; },
+    setLook(p) { look = p; },
     redimensionner(l, h) {
       if (canvas.width === l && canvas.height === h) return;
       canvas.width = l; canvas.height = h;

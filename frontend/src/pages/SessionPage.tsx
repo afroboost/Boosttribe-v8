@@ -66,6 +66,7 @@ import { CameraTile } from '@/components/session/CameraTile';
 import { useLiveKitStage } from '@/hooks/useLiveKitStage';
 import { useBeauteVisage } from '@/hooks/useBeauteVisage';
 import BeauteToggle from '@/components/session/BeauteToggle';
+import LookVideoSelector from '@/components/session/LookVideoSelector';
 import { useStudio } from '@/hooks/useStudio';
 import { StudioPanel } from '@/components/session/StudioPanel';
 import SceneRenderer from '@/components/session/SceneRenderer';
@@ -2421,6 +2422,11 @@ export const SessionPage: React.FC = () => {
   //    (Off / Léger / Moyen) rendu dans le menu ⋮ du panneau visio. `null` tant que non branché.
   const beaute = useBeauteVisage({ getCameraTrack: videoMesh.getCameraTrack, cameraOn: videoMesh.cameraOn });
   const embellirNode: React.ReactNode = beaute.supporte ? <BeauteToggle beaute={beaute} compact /> : null;
+  // 🎨 Look vidéo (hôte, menu ⋮) : même processeur que l'embellissement → appliqué au flux PUBLIÉ.
+  const lookNode: React.ReactNode = beaute.supporte ? (
+    <LookVideoSelector look={beaute.look} onChoisir={beaute.setLook} avis={beaute.avisLook}
+      onFermerAvis={beaute.effacerAvisLook} palier={beaute.palier} />
+  ) : null;
   // 💬 CHAT de session (Pro) — état éphémère (realtime uniquement, pas de DB en v1).
   const [chatOpen, setChatOpen] = useState(false);
   const [chatTab, setChatTab] = useState<'assistant' | 'group' | 'private'>('assistant');
@@ -4707,6 +4713,7 @@ export const SessionPage: React.FC = () => {
       onToggleStageRequests={canShare ? () => setStagePanelOpen((o) => !o) : undefined}
       stageRequestCount={stageRequests.length}
       prompteurNode={prompteurOverlayNode}
+      lookNode={lookNode}
       embellirNode={embellirNode} // ✨ slot du menu ⋮ (lot beauté) — null = rien
       studioNode={studioNode}
       broadcastNode={broadcastNode}

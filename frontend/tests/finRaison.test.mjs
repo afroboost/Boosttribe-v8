@@ -25,7 +25,7 @@ test('Terminer = host_terminate, Quitter hôte = host_leave, démontage = page_u
 });
 
 test('les étapes de la fin du live sont inchangées (même séquence pure)', () => {
-  assert.ok(PAGE.includes('const etapes = sequenceFinDuLive({'));
+  assert.ok(PAGE.includes('const etapes = (definitif ? sequenceFinDuLive : sequenceDepartTemporaire)({'));
   for (const e of ["'finaliser-enregistrement'", "'prevenir-participants'", "'couper-camera'", "'quitter-room'", "'annoncer-fin'", "'retour-ecran'"]) {
     assert.ok(PAGE.includes(e), e);
   }

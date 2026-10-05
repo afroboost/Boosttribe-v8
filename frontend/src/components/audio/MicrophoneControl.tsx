@@ -3,6 +3,7 @@ import { Mic, MicOff, Volume2, AlertCircle, Lock, RefreshCw } from 'lucide-react
 import { Button } from '@/components/ui/button';
 import { VuMeterSegmented } from './VuMeter';
 import { useMicrophone } from '@/hooks/useMicrophone';
+import { TRAITEMENTS_PAROLE } from '@/lib/voixLive';
 
 interface MicrophoneControlProps {
   isHost?: boolean;
@@ -59,11 +60,9 @@ export const MicrophoneControl = forwardRef<MicrophoneControlHandle, MicrophoneC
     retryCapture,
     audioStream,
   } = useMicrophone({
-    // 🎧 MIXAGE MANUEL STRICT: Désactiver TOUS les traitements audio automatiques
-    // L'hôte contrôle tout manuellement via les sliders du mixeur
-    echoCancellation: false,   // Désactivé - la musique ne doit pas être étouffée
-    noiseSuppression: false,   // Désactivé - mixage manuel uniquement
-    autoGainControl: false,    // Désactivé - le niveau est contrôlé par le slider
+    // 🎙️ Micro de PAROLE : AEC + NS + AGC (sans eux, la voix des participants revenait en écho).
+    //    La musique ne passe pas par ce micro : ses réglages ne changent pas.
+    ...TRAITEMENTS_PAROLE,
     onAudioLevel: handleAudioLevel,
   });
 

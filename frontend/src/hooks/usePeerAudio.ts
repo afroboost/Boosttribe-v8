@@ -5,6 +5,7 @@ import Peer, { MediaConnection, DataConnection } from 'peerjs';
 //   dans la présence ; les participants le lisent au lieu de le deviner.
 import supabase from '@/lib/supabaseClient';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { GAINS_VOIX_DEFAUT } from '@/lib/voixLive';
 
 // Types
 export interface PeerState {
@@ -246,9 +247,10 @@ const TRIBE_AUDIO_CLASS = 'bt-tribe-audio';
 
 // 🔊 P4 : amplification réelle des voix distantes via GainNode (au-delà du plafond 1.0 de
 // HTMLAudioElement.volume). Niveaux par défaut RELEVÉS pour passer au-dessus de la musique/vidéo.
-const TRIBE_DEFAULT_GAIN = 1.6; // voix d'un participant entendue par l'hôte
-const RELAY_DEFAULT_GAIN = 1.4; // voix d'un autre participant (relayée) entendue par un participant
-const HOST_VOICE_DEFAULT_GAIN = 1.6; // voix de l'hôte entendue par les participants (au moins = voix participant)
+// 🎙️ Niveau naturel (1) : les anciens 1,6 / 1,4 / 1,6 ré-amplifiaient l'écho (cf. lib/voixLive).
+const TRIBE_DEFAULT_GAIN = GAINS_VOIX_DEFAUT.tribu; // voix d'un participant entendue par l'hôte
+const RELAY_DEFAULT_GAIN = GAINS_VOIX_DEFAUT.relais; // voix d'un autre participant (relayée) entendue par un participant
+const HOST_VOICE_DEFAULT_GAIN = GAINS_VOIX_DEFAUT.voixHote; // voix de l'hôte entendue par les participants
 const VOICE_MAX_GAIN = 2.5;     // plafond d'amplification (≈250%)
 
 // 🍏 iOS (#7 / 3d) : mêmes contraintes que la MUSIQUE — NE PAS router la voix reçue de l'hôte dans
@@ -463,7 +465,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       const ctx = voiceCtxRef.current;
       if (!voiceMasterRef.current) {
         const master = ctx.createGain();
-        master.gain.value = 1.25; // léger gain de sortie (makeup)
+        master.gain.value = GAINS_VOIX_DEFAUT.sortie; // niveau naturel (ancien makeup 1,25 retiré)
         const comp = ctx.createDynamicsCompressor();
         // 🔊 3c : limiteur QUASI TRANSPARENT (brickwall proche de 0 dBFS), plus un compresseur qui
         //   écrase le volume. L'ancien réglage (seuil -18 dB, ratio 3) compressait la voix ~3:1 dès
@@ -1505,7 +1507,24 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     const iv = setInterval(() => {
       const ctx = voiceCtxRef.current;
       const host = hostVoiceNodeRef.current;
-      if (!ctx || !host) return;
+      if (!ctx) return;
+      // 🎙️ UNE SEULE SORTIE PAR VOIX (tribu / relais) : un élément <audio> audible impose un gain
+      //    Web Audio nul ; un élément passé en secours (ensureVoiceAudible) revient au chemin
+      //    Web Audio dès que le contexte tourne, avec son volume réglé.
+      const running = ctx.state === 'running';
+      const garder = (n: { gain: GainNode; el: HTMLAudioElement }, volume: number) => {
+        const { gain, el } = n;
+        if (running && el.dataset.secours === '1') {
+          delete el.dataset.secours;
+          el.muted = true;
+          gain.gain.value = volume;
+          return;
+        }
+        if (!el.muted && gain.gain.value !== 0) gain.gain.value = 0;
+      };
+      tribeNodesRef.current.forEach((n, peerId) => garder(n, tribeEffectiveGain(peerIdToUserIdRef.current.get(peerId) ?? undefined)));
+      relayNodesRef.current.forEach((n, uid) => garder(n, relayVolumesRef.current.get(uid) ?? RELAY_DEFAULT_GAIN));
+      if (!host) return;
       if (ctx.state !== 'running') {
         ctx.resume().catch(() => { /* ignore */ });
         if (host.el.muted) {
@@ -1518,7 +1537,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
       }
     }, 500);
     return () => clearInterval(iv);
-  }, []);
+  }, [tribeEffectiveGain]);
 
   // 🔓 UNLOCK AUDIO (appelé dans un GESTE utilisateur) : réveille le contexte voix ET relance TOUS les
   //   <audio> voix (hôte + tribu + relay). Autorise du même coup les FUTURS flux (la politique autoplay
@@ -1543,7 +1562,12 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     tribeNodesRef.current.forEach((n) => nodes.push(n));
     relayNodesRef.current.forEach((n) => nodes.push(n));
     nodes.forEach(({ gain, el }) => {
-      if (!running && el.muted) { el.muted = false; el.volume = Math.min(1, gain.gain.value); }
+      if (!running && el.muted) {
+        el.muted = false; el.volume = Math.min(1, gain.gain.value);
+        // 🎙️ UNE SEULE SORTIE : l'élément joue, le chemin Web Audio se tait (sinon la voix sortait
+        //    DEUX FOIS, décalée, dès que le contexte reprenait). Le garde ci-dessous rétablit le normal.
+        el.dataset.secours = '1'; gain.gain.value = 0;
+      }
       el.play().catch(() => { /* ignore */ });
     });
     // Filet : élément voix hôte même si aucun node routé n'existe encore.

@@ -57,7 +57,7 @@ test('le départ silencieux n’annonce que si un live tournait vraiment', () =>
 test('structurel : la fin est branchée, et sur les événements qui survivent à un onglet fermé', () => {
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   assert.ok(page.includes('const terminerLive = useCallback'), 'la routine existe');
-  assert.ok(page.includes('sequenceFinDuLive({'), 'elle suit la séquence testée');
+  assert.ok(page.includes('(definitif ? sequenceFinDuLive : sequenceDepartTemporaire)({'), 'elle suit la séquence testée (V571b : définitive ou temporaire)');
   assert.ok(page.includes('await recorder.arreter()'), 'elle finalise l’enregistrement existant');
   assert.ok(page.includes('videoMesh.stopCamera()') && page.includes('videoMesh.stopScreen()'));
   assert.ok(page.includes('setLiveMode(false)'), 'elle quitte la room');
@@ -89,7 +89,7 @@ test('structurel : les participants sont prévenus, et l’hôte a un vrai bouto
   assert.equal(EVENEMENT_LIVE_TERMINE, 'LIVE_ENDED');
 });
 
-test('structurel : « Quitter le live » de l’HÔTE termine vraiment le live (bug du 28/09)', () => {
+test('structurel : « Quitter le live » de l’HÔTE coupe tout et éteint le badge (bug du 28/09) — V571b : sans terminer', () => {
   // Mesuré en production le 28/09 : l'hôte « quitte » par le menu ⋮, la visio se
   // ferme, la page reste montée — aucun `ended` ne part et Afroboost affiche
   // « EN DIRECT » jusqu'au garde-fou. Avec le battement, la page aurait même
@@ -102,8 +102,11 @@ test('structurel : « Quitter le live » de l’HÔTE termine vraiment le live (
   const corps = page.slice(page.indexOf('const quitterLeLive = useCallback'), page.indexOf('const quitterLeLive = useCallback') + 600);
   assert.ok(corps.includes('if (!isHost)') && corps.includes('setLiveMode(false)'),
     'un participant ou un co-hôte part seul, sans rien terminer pour les autres');
-  assert.ok(corps.includes("window.confirm('Terminer le Live pour tout le monde ?')"),
-    'même confirmation que le bouton Terminer');
-  // 28/09 bis : la routine reçoit le motif `host_leave` (observabilité), c'est toujours la même.
+  // V571b (décision Bassi 05/10) : Quitter = départ TEMPORAIRE. Plus de « Terminer pour tout
+  // le monde ? » : caméra/micro/écran coupés + annonce à Afroboost (badge éteint, bug du 28/09
+  // toujours corrigé), mais ni participants prévenus, ni lien invalidé.
+  assert.ok(!corps.includes("window.confirm('Terminer le Live pour tout le monde ?')"),
+    'Quitter ne demande plus de terminer pour tout le monde');
+  // 28/09 bis : la routine reçoit le motif `host_leave`, c'est toujours LA même routine.
   assert.ok(corps.includes("terminerLive('host_leave')"), 'l’hôte passe par LA routine de fin, pas une copie');
 });

@@ -59,7 +59,8 @@ test('la promo a SON canal ; la séquence de fin du Live est inchangée', () => 
   assert.doesNotMatch(h, /playback:|heartbeat|live-status|EVENEMENT_LIVE_TERMINE/);
   const s = src('pages/SessionPage.tsx');
   const fin = s.slice(s.indexOf('const terminerLive = useCallback'), s.indexOf('const quitterLeLive'));
-  assert.match(fin, /livePromo\.arreterSiActive\('fin_live'\);\s+const etapes = sequenceFinDuLive\(/);
+  // V571b : la promo s'arrête sur « Terminer » (définitif), pas sur « Quitter » (temporaire).
+  assert.match(fin, /if \(definitif\) livePromo\.arreterSiActive\('fin_live'\);\s+const etapes = \(definitif \? sequenceFinDuLive : sequenceDepartTemporaire\)\(/);
   assert.equal((fin.match(/livePromo/g) || []).length, 2);         // l'appel + la dépendance, rien d'autre
 });
 

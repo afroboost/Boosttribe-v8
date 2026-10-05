@@ -71,7 +71,7 @@ import BroadcastDrawer from '@/components/session/BroadcastDrawer';
 import RecordPanel from '@/components/session/RecordPanel';
 import { useProgramRecorder } from '@/hooks/useProgramRecorder';
 import { antennePourEnregistrer, doitDemarrerAuto } from '@/lib/recordLogic';
-import { EVENEMENT_LIVE_TERMINE, departDoitAnnoncer, sequenceFinDuLive } from '@/lib/finDuLive';
+import { EVENEMENT_LIVE_TERMINE, departDoitAnnoncer, sequenceFinDuLive, sequenceDepartTemporaire } from '@/lib/finDuLive';
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
 import { LiveChatOverlay } from '@/components/session/LiveChatOverlay';
 import { LiveCommentInput } from '@/components/session/LiveCommentInput';
@@ -102,7 +102,7 @@ import { useSecondaryCameras } from '@/hooks/useSecondaryCameras';
 import { useSecondaryMic } from '@/hooks/useSecondaryMic';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
-import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest } from '@/lib/paymentApi';
+import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest, terminerLiveServeur, liveEstTermine } from '@/lib/paymentApi';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
@@ -111,6 +111,7 @@ import {
 } from '@/lib/paymentApi';
 import { Maximize2, Minimize2, Coins, Ticket, Smartphone, Square, ScrollText, MonitorUp } from 'lucide-react';
 import { indexSuivant, aUnePisteSuivante, indexPrecedent, aUnePistePrecedente, actionPrecedent } from '@/lib/playlistNav';
+import { TRAITEMENTS_PAROLE, GAINS_VOIX_DEFAUT } from '@/lib/voixLive';
 
 // LocalStorage key for nickname
 const NICKNAME_STORAGE_KEY = 'bt_nickname';
@@ -1327,11 +1328,9 @@ export const SessionPage: React.FC = () => {
   //    refusé sans geste), on affiche une invite : un simple tap suffit ensuite pour activer.
   const [coachMicInvite, setCoachMicInvite] = useState(false);
   const participantMic = useMicrophone({
-    // 🎚️ AEC/AGC/NS OFF : sinon la musique du participant chute quand il prend la parole (ducking Chrome).
-    echoCancellation: false,
-    noiseSuppression: false,
-    autoGainControl: false,
-    initialVolume: 150, // 🔊 makeup par défaut → participant audible même sans toucher au curseur
+    // 🎙️ Micro de PAROLE : AEC + NS + AGC ; niveau naturel (l'AGC règle le niveau à la source).
+    ...TRAITEMENTS_PAROLE,
+    initialVolume: GAINS_VOIX_DEFAUT.micParticipantPct,
   });
 
   // Quand le micro participant est prêt et qu'il a pris la parole → envoyer à l'hôte
@@ -3092,8 +3091,11 @@ export const SessionPage: React.FC = () => {
   const terminerLive = useCallback(async (motif: MotifFin = 'host_terminate') => {
     // 📣 La promo dépend du Live, jamais l'inverse : on l'arrête sans rien attendre, la séquence
     //    de fin ci-dessous reste EXACTEMENT la même.
-    livePromo.arreterSiActive('fin_live');
-    const etapes = sequenceFinDuLive({
+    // V571b : « Quitter » (host_leave) est TEMPORAIRE — la promo, les participants et le lien
+    //    ne sont touchés que par « Terminer le Live ».
+    const definitif = motif !== 'host_leave';
+    if (definitif) livePromo.arreterSiActive('fin_live');
+    const etapes = (definitif ? sequenceFinDuLive : sequenceDepartTemporaire)({
       enregistrementEnCours: recorder.etat === 'enregistrement',
       partageEcranActif: screenSharing,
       cameraActive: videoMesh.cameraOn,
@@ -3104,6 +3106,8 @@ export const SessionPage: React.FC = () => {
       try {
         if (etape === 'finaliser-enregistrement') await recorder.arreter();
         else if (etape === 'prevenir-participants') {
+          // V571 : seul ce geste EXPLICITE rend l'ancien lien d'invitation mort (fermer / recharger, jamais).
+          if (sessionId && isHost) void terminerLiveServeur(sessionId);
           if (sessionId && supabase && isSupabaseConfigured) {
             await supabase.channel(`playback:${sessionId}`).send({
               type: 'broadcast', event: EVENEMENT_LIVE_TERMINE, payload: { session: sessionId },
@@ -3122,16 +3126,29 @@ export const SessionPage: React.FC = () => {
         else if (etape === 'retour-ecran') setLiveTermine(true);
       } catch { /* une étape qui échoue n'empêche pas les suivantes : on veut TOUT couper */ }
     }
-  }, [recorder, screenSharing, videoMesh, canShare, sessionId, broadcastScreenState, hostMicActive, livePromo.arreterSiActive]);
+  }, [recorder, screenSharing, videoMesh, canShare, isHost, sessionId, broadcastScreenState, hostMicActive, livePromo.arreterSiActive]);
+
+  // 🔴 V571 — ANCIEN LIEN APRÈS « Terminer le Live » : le participant qui l'ouvre voit l'écran
+  //    « Le Live est terminé » (au lieu d'une salle vide « En attente de l'hôte »). Une seule
+  //    lecture par session ; en cas de doute (réseau, colonne pas encore migrée) : rien ne change.
+  useEffect(() => {
+    if (!sessionId || !privacyChecked || isHost) return undefined;
+    if (user?.id && sessionHostId != null && user.id === sessionHostId) return undefined;
+    let annule = false;
+    liveEstTermine(sessionId).then((termine) => { if (termine && !annule) { setLiveTermine(true); setLiveMode(false); } });
+    return () => { annule = true; };
+  }, [sessionId, privacyChecked, isHost, user?.id, sessionHostId]);
 
   // 🚪 « Quitter le live » (menu ⋮). Mesuré le 28/09 : pour l'hôte, ce menu ne
   //    fermait que la visio ; la page restait montée, aucun `ended` ne partait et
-  //    Afroboost affichait « EN DIRECT » pour rien. L'hôte qui quitte TERMINE :
-  //    même confirmation, même routine que le bouton « Terminer ». Un participant
-  //    ou un co-hôte, lui, part seul — il ne termine rien pour les autres.
+  //    Afroboost affichait « EN DIRECT » pour rien. V571b (décision 05/10) : l'hôte qui
+  //    quitte passe par la même routine, en version TEMPORAIRE (tout est coupé, le badge
+  //    s'éteint, le Live reste reprenable avec le même lien). Un participant ou un co-hôte,
+  //    lui, part seul — il ne termine rien pour les autres.
   const quitterLeLive = useCallback(() => {
     if (!isHost) { setLiveMode(false); return; }
-    if (!window.confirm('Terminer le Live pour tout le monde ?')) return;
+    // V571b : départ TEMPORAIRE — caméra / micro / écran coupés, l'hôte sort, le Live reste
+    //    ouvert (même code, même lien). Seul « Terminer le Live » termine pour tout le monde.
     void terminerLive('host_leave');
   }, [isHost, terminerLive]);
 

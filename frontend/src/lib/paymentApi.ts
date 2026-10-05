@@ -1156,6 +1156,25 @@ export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_
   return { ok: !!data?.ok, host_id: data?.host_id };
 }
 
+/** V571 — l'HÔTE termine définitivement son live : l'ancien lien d'invitation devient invalide. */
+export async function terminerLiveServeur(sessionId: string): Promise<boolean> {
+  try {
+    const { data } = await adminFetch(`/session/${encodeURIComponent(sessionId)}/terminer`, { method: 'POST' });
+    return !!data?.ok;
+  } catch { return false; }
+}
+
+/** V571 — public : ce live a-t-il été TERMINÉ par son hôte ? (doute / réseau → false) */
+export async function liveEstTermine(sessionId: string): Promise<boolean> {
+  if (!API_URL) return false;
+  try {
+    const res = await fetch(`${API_URL}/session/${encodeURIComponent(sessionId)}/etat-live`);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data?.termine === true;
+  } catch { return false; }
+}
+
 export async function setCohosts(sessionId: string, cohosts: string[]): Promise<{ ok: boolean; error?: string }> {
   if (!API_URL) return { ok: false, error: 'API non configurée' };
   const token = await getAccessToken();

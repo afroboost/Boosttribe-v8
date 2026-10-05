@@ -57,6 +57,17 @@ export function sequenceFinDuLive(e: EtatAvantFin): EtapeFin[] {
 }
 
 /** Événement Realtime : l'hôte a terminé. Les participants l'apprennent par là. */
+/**
+ * V571b — « Quitter le live » de l'HÔTE = départ TEMPORAIRE (décision Bassi 05/10).
+ * Tout est coupé chez lui et il sort de la room, mais RIEN de définitif : pas de
+ * « Le Live est terminé » envoyé aux participants (ni marque `live_ended_at`), pas d'écran
+ * de fin. L'annonce à Afroboost (`host_leave`) éteint le badge ; le live reste reprenable.
+ * Seul « Terminer le Live » passe par `sequenceFinDuLive`.
+ */
+export function sequenceDepartTemporaire(e: EtatAvantFin): EtapeFin[] {
+  return sequenceFinDuLive(e).filter((x) => x !== 'prevenir-participants' && x !== 'retour-ecran');
+}
+
 export const EVENEMENT_LIVE_TERMINE = 'LIVE_ENDED';
 
 /** Faut-il annoncer la fin lors de ce départ ? Oui seulement si un live tournait. */

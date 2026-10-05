@@ -69,7 +69,7 @@ test('le micro secondaire se branche sur la chaîne EXISTANTE du mixeur (même l
   assert.ok(MIXER.includes('g.connect(limiter);'), 'gain propre → limiteur du micro principal');
   assert.ok(MIXER.includes('micLimiterRef.current = micLimiter;'), 'le limiteur existant est mémorisé, pas recréé');
   assert.ok(!MIXER.includes('createMediaStreamDestination();\n        mic2'), 'aucune deuxième destination de diffusion');
-  assert.ok(HOOK_MIC2.includes('echoCancellation: false, noiseSuppression: false, autoGainControl: false'), 'mêmes contraintes que le micro principal');
+  assert.ok(HOOK_MIC2.includes('...TRAITEMENTS_PAROLE'), 'mêmes contraintes que le micro principal (micro de parole, lib/voixLive)');
   assert.ok(HOOK_MIC2.includes('connectSecondaryMic(stream, gain)'));
 });
 

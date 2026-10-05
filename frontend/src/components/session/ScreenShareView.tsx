@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import { Maximize2, MonitorUp, X } from 'lucide-react';
+import { brancherVideo } from '@/lib/qualiteVideo';
 
 interface ScreenShareViewProps {
   stream: MediaStream;
@@ -15,10 +16,10 @@ export const ScreenShareView: React.FC<ScreenShareViewProps> = ({ stream, isLoca
 
   useEffect(() => {
     const v = videoRef.current;
-    if (v && stream && v.srcObject !== stream) {
-      v.srcObject = stream;
-      v.play().catch(() => { /* autoplay : sera relancé par un geste */ });
-    }
+    if (!v || !stream) return undefined;
+    const debrancher = brancherVideo(v, stream);   // 🎥 flux LiveKit → attach()
+    v.play().catch(() => { /* autoplay : sera relancé par un geste */ });
+    return debrancher;
   }, [stream]);
 
   const goFullscreen = useCallback(() => {

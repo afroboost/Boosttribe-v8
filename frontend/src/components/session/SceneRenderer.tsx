@@ -12,6 +12,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { deplacerSansCouper } from '@/lib/sceneLive';
 import type { SceneBox, StudioSourceRef } from '@/lib/studioScenes';
+import { brancherVideo } from '@/lib/qualiteVideo';
 
 export interface SceneRendererProps {
   boxes: SceneBox[];
@@ -31,9 +32,9 @@ function BoiteVideo({ box, media }: { box: SceneBox; media: MediaStream | MediaS
     if (!el) return;
     if (!media) { el.srcObject = null; return; }
     const stream = media instanceof MediaStream ? media : new MediaStream([media]);
-    el.srcObject = stream;
+    const debrancher = brancherVideo(el, stream);   // 🎥 flux LiveKit → attach()
     el.play().catch(() => { /* autoplay muet : silencieux */ });
-    return () => { el.srcObject = null; };   // détache seulement — n'arrête jamais la piste
+    return () => { debrancher(); el.srcObject = null; };   // détache seulement — n'arrête jamais la piste
   }, [media]);
   return (
     <div
@@ -60,8 +61,9 @@ export function FluxEcran({ stream, muted, className = '' }: { stream: MediaStre
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    if (el.srcObject !== stream) el.srcObject = stream;
+    const debrancher = brancherVideo(el, stream);   // 🎥 flux LiveKit → attach()
     el.play().catch(() => { /* autoplay : relancé au prochain geste */ });
+    return debrancher;
   }, [stream]);
   return <video ref={ref} autoPlay playsInline muted={muted} controls={false} className={`bg-black object-contain pointer-events-none ${className}`} />;
 }

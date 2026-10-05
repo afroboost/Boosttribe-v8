@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { TRAITEMENTS_PAROLE, verifierTraitementsVoix } from '@/lib/voixLive';
 
 /**
  * 🎛️ Phase 1 Sources — MICRO SECONDAIRE (optionnel).
@@ -6,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * Capture un 2ᵉ `audioinput` (Rode, micro USB, interface…) et le branche sur le MIXEUR
  * existant (`connectSecondaryMic` de useAudioMixer : gain propre → même limiteur → même flux
  * diffusé). Rien n'est ajouté à la chaîne de diffusion : c'est une source de plus dans le bus.
- * Mêmes contraintes que le micro principal (AEC/NS/AGC OFF : mixage manuel, musique).
+ * Mêmes contraintes que le micro principal : micro de PAROLE (AEC/NS/AGC, cf. lib/voixLive).
  *
  * Sans micro externe, ce hook reste inactif : le micro de l'appareil (principal) suffit.
  */
@@ -54,11 +55,12 @@ export function useSecondaryMic(mixer: MixerLien): UseSecondaryMicReturn {
     setErreur(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: id }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        audio: { deviceId: { exact: id }, ...TRAITEMENTS_PAROLE },
         video: false,
       });
       streamRef.current?.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });
       streamRef.current = stream;
+      verifierTraitementsVoix(stream.getAudioTracks()[0], 'micro-secondaire');
       const ok = mixerRef.current.connectSecondaryMic(stream, gain);
       if (!ok) {
         stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* ignore */ } });

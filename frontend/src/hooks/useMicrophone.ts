@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { verifierTraitementsVoix } from '@/lib/voixLive';
 
 // Types
 export interface MicrophoneState {
@@ -200,7 +201,8 @@ export function useMicrophone(options: UseMicrophoneOptions = {}): UseMicrophone
       streamRef.current = stream;
       
       const audioTrack = stream.getAudioTracks()[0];
-      // Production: log removed
+      // 🎙️ Ce que le navigateur a RÉELLEMENT appliqué (AEC/NS/AGC) — getSettings, pas la demande.
+      verifierTraitementsVoix(audioTrack, echoCancellation ? 'micro-parole' : 'micro-brut');
 
       // 4. Create AudioContext and RESUME it (user gesture required)
       const audioContext = new AudioContext();

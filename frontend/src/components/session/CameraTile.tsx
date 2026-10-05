@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Mic, MicOff, VideoOff, Crown } from 'lucide-react';
+import { brancherVideo } from '@/lib/qualiteVideo';
 
 interface CameraTileProps {
   name: string;
@@ -24,11 +25,12 @@ export const CameraTile: React.FC<CameraTileProps> = ({
 
   useEffect(() => {
     const v = videoRef.current;
-    if (v && stream && v.srcObject !== stream) {
-      v.srcObject = stream;
-      v.play().catch(() => { /* autoplay : flux muet, devrait passer */ });
-    }
-    if (v && !stream) v.srcObject = null;
+    if (v && !stream) { v.srcObject = null; return undefined; }
+    if (!v || !stream) return undefined;
+    // 🎥 flux LiveKit → attach() (LiveKit voit la taille réelle et envoie la bonne couche)
+    const debrancher = brancherVideo(v, stream);
+    v.play().catch(() => { /* autoplay : flux muet, devrait passer */ });
+    return debrancher;
   }, [stream]);
 
   const initials = (name || '?').slice(0, 2).toUpperCase();

@@ -2986,6 +2986,66 @@ async def claim_host(body: ClaimHostBody, authorization: Optional[str] = Header(
     return {"ok": True, "host_id": uid}
 
 
+# --------------------------------------------------------------------------- #
+# V571 — FIN DU LIVE : seul « Terminer le Live » rend l'ancien lien mort
+# --------------------------------------------------------------------------- #
+# Fermer la fenêtre, recharger, perdre le réseau : le code de session (= le lien
+# d'invitation) reste valable. « Terminer le Live » pose `playlists.live_ended_at` ;
+# un participant qui ouvre ensuite l'ancien lien voit « Le Live est terminé » au lieu
+# d'une salle vide. Colonne ajoutée par migration ADDITIVE et idempotente (pg-meta).
+SQL_FIN_LIVE = "alter table public.playlists add column if not exists live_ended_at timestamptz;"
+
+
+@app.post("/session/{session_id}/terminer")
+async def session_terminer_live(session_id: str, authorization: Optional[str] = Header(default=None)):
+    """L'HÔTE termine définitivement son live (geste explicite) : l'ancien lien devient invalide."""
+    user = await get_user_from_token(authorization)
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    row = await get_session_authz(session_id)
+    if not row or row.get("host_id") != user.get("id"):
+        raise HTTPException(status_code=403, detail="Seul l'hôte peut terminer ce live")
+    n = await _playlist_ecrire(session_id, {"live_ended_at": datetime.now(timezone.utc).isoformat()})
+    if n <= 0:
+        logger.warning("[FIN-LIVE] session=%s : marque de fin non écrite", session_id)
+    return {"ok": n > 0}
+
+
+@app.get("/session/{session_id}/etat-live")
+async def session_etat_live(session_id: str):
+    """Public, minimal : ce live a-t-il été TERMINÉ par son hôte ? Erreur ou colonne absente
+    (migration pas encore passée) → `termine: false` — jamais un faux « terminé »."""
+    if not session_id or not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                                 params={"session_id": f"eq.{session_id}", "select": "live_ended_at"})
+        rows = r.json() if r.status_code == 200 else []
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[FIN-LIVE] état illisible : %s", type(exc).__name__)
+        rows = []
+    return {"termine": any(isinstance(x, dict) and x.get("live_ended_at") for x in (rows or []))}
+
+
+@app.on_event("startup")
+async def _fin_live_migration():
+    """Colonne `playlists.live_ended_at` (AJOUT PUR, idempotent), comme la promo Live.
+    Échec = avertissement : `etat-live` répond alors « non terminé », rien d'autre ne change."""
+    async def _run():
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(f"{SUPABASE_URL}/pg/query", headers=_service_headers(),
+                                      json={"query": SQL_FIN_LIVE})
+            if r.status_code < 300:
+                logger.info("[FIN-LIVE] schéma vérifié (playlists.live_ended_at)")
+            else:
+                logger.warning("[FIN-LIVE] migration refusée par pg-meta : HTTP %s", r.status_code)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[FIN-LIVE] migration impossible : %s", type(exc).__name__)
+    asyncio.create_task(_run())
+
+
 @app.post("/session/cohosts")
 async def set_cohosts(body: CohostsBody, authorization: Optional[str] = Header(default=None)):
     """Seul l'hôte (host_id) peut définir la liste des co-animateurs autorisés à partager."""

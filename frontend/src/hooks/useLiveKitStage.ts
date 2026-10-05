@@ -12,7 +12,8 @@ import {
 } from 'livekit-client';
 import { supabase } from '@/lib/supabaseClient';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
-import { choisirCameraPrincipale, cibleBascule, decisionDebranchement } from '@/lib/sourcesLogic';
+import { choisirCameraPrincipale, cibleBascule, decisionDebranchement, estMobile } from '@/lib/sourcesLogic';
+import { associerPisteVideo, optionsCameraLive } from '@/lib/qualiteVideo';
 
 /**
  * 🎥 useLiveKitStage — Mode "Live / Visio" via LiveKit (SFU), remplaçant du mesh PeerJS (useVideoMesh).
@@ -240,8 +241,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
   const publishCamera = useCallback(async (): Promise<boolean> => {
     const room = roomRef.current;
     if (!room) return false;
+    // 🎥 Ordinateur : 1080p/30 demandés + couches 360p/720p ; téléphone : réglage LiveKit inchangé.
+    const cam = optionsCameraLive({ mobile: estMobile(navigator.userAgent, navigator.maxTouchPoints) });
     const enable = (deviceId?: string | null) =>
-      room.localParticipant.setCameraEnabled(true, deviceId ? { deviceId: { exact: deviceId } } : undefined);
+      room.localParticipant.setCameraEnabled(true, { ...cam.capture, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) }, cam.publication);
     try {
       // 🎛️ Phase 1 — règle des sources : externe choisie (si encore branchée) → caméra de
       //    l'appareil → aucune. Sans caméra du tout, on NE jette PAS : le live reste en audio et
@@ -345,9 +348,12 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
         let s = screenStreamsRef.current.get(uid);
         if (!s) { s = new MediaStream(); screenStreamsRef.current.set(uid, s); }
         s.addTrack(mst);
+        associerPisteVideo(s, track);   // 🎥 attach() à l'affichage : LiveKit choisit la couche selon la taille réelle
         setRemoteScreen({ userId: uid, stream: s });
       } else {
-        upsertRemoteCamera(uid, new MediaStream([mst]));
+        const flux = new MediaStream([mst]);
+        associerPisteVideo(flux, track);
+        upsertRemoteCamera(uid, flux);
       }
     };
     const handleUnsubscribed = (_t: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
@@ -675,7 +681,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     if (prog) { try { await room.localParticipant.unpublishTrack(prog, false); } catch { /* ignore */ } }
     const cam = cameraTrackRef.current;
     if (cam && cameraOnRef.current && !room.localParticipant.getTrackPublication(Track.Source.Camera)) {
-      try { await room.localParticipant.publishTrack(cam, { source: Track.Source.Camera }); } catch (err) { console.warn('[LIVEKIT] republication caméra échouée', err); }
+      try { await room.localParticipant.publishTrack(cam, { ...(optionsCameraLive({ mobile: estMobile(navigator.userAgent, navigator.maxTouchPoints) }).publication || {}), source: Track.Source.Camera }); } catch (err) { console.warn('[LIVEKIT] republication caméra échouée', err); }
     }
   }, []);
 

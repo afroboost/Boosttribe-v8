@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { GAINS_VOIX_DEFAUT } from '@/lib/voixLive';
 
 /**
  * 🎧 AUDIO MIXER HOOK - Boosttribe v8
@@ -82,7 +83,7 @@ const TIMER_MAKEUP_GAIN = 3.0;
 
 const initialState: MixerState = {
   musicVolume: 1.0, // 🔊 plein volume par défaut (avant : 0.8 → atténuation perçue)
-  micVolume: 1.5,   // 🔊 #1 : makeup micro HÔTE à l'émission = 150% (comme le participant initialVolume:150)
+  micVolume: GAINS_VOIX_DEFAUT.micHote,   // 🎙️ niveau naturel (ancien makeup 1,5 retiré : l'AGC règle le niveau)
                     //   → la voix de l'hôte n'était plus 2× plus faible que celle des participants. Réglable 0..250%.
   tribeVolume: 1.0,
   hostVoiceVolume: 1.6, // 🔊 voix de l'hôte au-dessus de la musique par défaut (≥ voix participant)

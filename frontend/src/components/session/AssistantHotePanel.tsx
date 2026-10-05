@@ -2,7 +2,7 @@ import React from 'react';
 import { Sparkles, X, RotateCw, Copy, CornerDownLeft, Check, MessageSquare, PenLine, Wand2, Eraser, Undo2,
   Minus, Plus, Bot, Play, Pause,
   FlipHorizontal2, Eye, EyeOff, Gauge, Type, ScrollText } from 'lucide-react';
-import type { ModeSouffleur } from '@/lib/assistantHote';
+import { VISIO_IA_DISPONIBLE, type ModeSouffleur } from '@/lib/assistantHote';
 import type { Prompteur as InstancePrompteur } from '@/hooks/usePrompteur';
 import {
   ACTIONS_TEXTE, type ActionTexte, type EtatPrompteur, type QuestionEnAttente, type OngletPrompteur,
@@ -509,7 +509,8 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
                 <div className="flex gap-1 p-1 rounded-xl bg-white/5" role="radiogroup" aria-label="Mode des propositions">
                   {(['chat', 'visio'] as const).map((m) => (
                     <button key={m} type="button" role="radio" aria-checked={modeQuestion === m}
-                      onClick={() => onModeQuestion(m)} disabled={m === 'visio' && !invite}
+                      onClick={() => onModeQuestion(m)} disabled={m === 'visio' && (!VISIO_IA_DISPONIBLE || !invite)}
+                      title={m === 'visio' && !VISIO_IA_DISPONIBLE ? 'Transcription vocale bientôt disponible' : undefined}
                       className={`${ONGLET_CLS} disabled:opacity-35 ${modeQuestion === m ? 'bg-[rgb(var(--bt-accent-rgb)/0.25)] text-[var(--bt-accent)]' : 'text-white/60'}`}
                       data-testid={`assistant-mode-${m}`}>
                       {m === 'chat' ? 'Répondre au chat' : 'Échanger en visio'}
@@ -519,6 +520,12 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
               ) : (
                 <p className="text-sm text-white/75" data-testid="assistant-mode">
                   {modeQuestion === 'visio' ? '« En visio » — questions pour la personne à l’écran' : '« Chat » — réponses aux questions du chat'}
+                </p>
+              )}
+              {/* 05/10 : l'IA n'entend pas la voix (aucune transcription en direct) → « en visio » non opérationnel. */}
+              {!VISIO_IA_DISPONIBLE && (
+                <p className="text-[11px] text-white/55 pt-1" data-testid="assistant-visio-indisponible">
+                  « Échanger en visio » : Transcription vocale bientôt disponible.
                 </p>
               )}
               {invite && <p className="text-[11px] text-white/45 pt-1">À l'écran avec toi : {invite}.</p>}

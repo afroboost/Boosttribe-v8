@@ -86,7 +86,7 @@ test('« Faire ma promo » : propriété de CETTE session, jamais le rôle globa
   assert.match(s, /const estProprietaireSession = estHoteServeur \?\? \(sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost\);/);   // 01/10 : serveur d'abord
   const ligne = s.slice(s.indexOf('const estProprietaireSession'), s.indexOf('const [promoParticipantOuvert'));
   assert.doesNotMatch(ligne.replace(/\/\/.*$/gm, ''), /isAdmin|isCoach|role/);                 // aucun rôle global
-  assert.match(s, /useLivePromo\(sessionId \|\| undefined, liveMode, estProprietaireSession, user\?\.id\)/);
+  assert.match(s, /useLivePromo\(sessionId \|\| undefined, liveMode, estProprietaireSession, user\?\.id \|\| \(inviteIdentifie \? 'invite' : undefined\)\)/);
   // simulation de la règle sur les 4 cas du test manuel
   const prop = (hostId, userId, isHostGlobal) => (hostId ? (!!userId && userId === hostId) : isHostGlobal);
   const visible = (hostId, userId, isHostGlobal, enabled, n) => !prop(hostId, userId, isHostGlobal) && !!userId && enabled && n > 0;
@@ -133,7 +133,7 @@ test('01/10 — visibilité « Faire ma promo » : hôte de CETTE session dit pa
   assert.match(s, /const estProprietaireSession = estHoteServeur \?\? \(sessionHostId \? \(!!user\?\.id && user\.id === sessionHostId\) : isHost\);/);
   assert.match(s, /useEffect\(\(\) => \{ setEstHoteServeur\(typeof estHoteConfig === 'boolean' \? estHoteConfig : null\); \}, \[estHoteConfig\]\);/);
   // 05/10 : la règle vit dans actionPromoParticipant (testée dans liveContract) — l'hôte reste exclu par estProprietaireSession.
-  assert.match(s, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, config: livePromo\.config \}\)/);
+  assert.match(s, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, inviteIdentifie, config: livePromo\.config \}\)/);
   const api = src('lib/livePromoApi.ts');
   assert.match(api, /`\/live-promo\/config\/\$\{encodeURIComponent\(sid\)\}`, \{\}, 'si-connecte'\)/);
   // Modèle de la règle (mêmes entrées que SessionPage) — isHost vaut VRAI pour un admin partout.

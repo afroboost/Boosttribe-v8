@@ -37,7 +37,7 @@ test('Faire la promo : participant connecté → fenêtre ; invité sans compte 
 });
 
 test('branchement : la page décide « Faire ma promo » avec CETTE règle (plus de `user &&` qui la cachait)', () => {
-  assert.match(PAGE, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, config: livePromo\.config \}\)/);
+  assert.match(PAGE, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, inviteIdentifie, config: livePromo\.config \}\)/);
   assert.match(PAGE, /onFaireMaPromo=\{promoParticipantAction === 'ouvrir'/);
   assert.match(PAGE, /<PromoConnexionInvite onFermer=/);                       // invité : fenêtre « Se connecter » (cliquée par le harnais)
   assert.match(PAGE, /state: \{ from: location\.pathname \+ location\.search \}/); // retour RELATIF au routeur (basename /live)

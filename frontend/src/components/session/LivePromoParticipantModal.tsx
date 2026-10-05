@@ -1,16 +1,18 @@
 import React, { useRef, useState } from 'react';
 import { ImagePlus, Loader2, Megaphone, X } from 'lucide-react';
 import { libelleOffre, libelleStatut, peutPayer, type OffrePromo } from '@/lib/livePromo';
-import { promoDemander, promoEnvoyerImage, promoPayer, type PromoLigne } from '@/lib/livePromoApi';
+import { promoDemander, promoEnvoyerImage, promoPayer, estSessionInviteExpiree, type PromoLigne } from '@/lib/livePromoApi';
 
 /**
  * 📣 « Faire ma promo » — fenêtre COMPACTE du participant.
  * 1) un tarif fixé par l'hôte ; 2) image + titre + texte + lien facultatif ; 3) envoi.
  * AUCUN paiement à l'envoi : l'hôte accepte d'abord, puis « Payer » ouvre le Checkout existant.
  */
-export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemandes, onFermer, onEnvoye, paiementReel = true }: {
+export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemandes, onFermer, onEnvoye, paiementReel = true, onSessionExpiree }: {
   sessionId: string; offres: OffrePromo[]; devise: string; mesDemandes: PromoLigne[];
   onFermer: () => void; onEnvoye: () => void;
+  /** 05/10 : invité identifié dont la session a expiré → la page propose de s'identifier à nouveau. */
+  onSessionExpiree?: () => void;
   /** false = Live de test du super-admin : aucun paiement ne peut être proposé. */
   paiementReel?: boolean;
 }) {
@@ -23,11 +25,16 @@ export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemand
   const [occupe, setOccupe] = useState(false);
   const [erreur, setErreur] = useState('');
   const fichier = useRef<HTMLInputElement>(null);
+  // 05/10 : session invité expirée / révoquée → message clair + réidentification (seul cas où on la redemande).
+  const echec = (e: unknown) => {
+    setErreur((e as Error).message);
+    if (estSessionInviteExpiree(e)) onSessionExpiree?.();
+  };
 
   const choisirImage = async (f?: File | null) => {
     if (!f) return;
     setOccupe(true); setErreur('');
-    try { setImage(await promoEnvoyerImage(sessionId, f)); } catch (e) { setErreur((e as Error).message); }
+    try { setImage(await promoEnvoyerImage(sessionId, f)); } catch (e) { echec(e); }
     setOccupe(false);
   };
   const envoyer = async () => {
@@ -36,13 +43,13 @@ export function LivePromoParticipantModal({ sessionId, offres, devise, mesDemand
     try {
       await promoDemander({ session_id: sessionId, offre_id: offre, titre, texte, media_url: image, lien: lien.trim() || null });
       onEnvoye();
-    } catch (e) { setErreur((e as Error).message); }
+    } catch (e) { echec(e); }
     setOccupe(false);
   };
   const payer = async (id: string) => {
     if (occupe) return;
     setOccupe(true); setErreur('');
-    try { window.location.href = (await promoPayer(id)).url; } catch (e) { setErreur((e as Error).message); setOccupe(false); }
+    try { window.location.href = (await promoPayer(id)).url; } catch (e) { echec(e); setOccupe(false); }
   };
 
   return (

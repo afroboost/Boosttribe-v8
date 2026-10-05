@@ -76,3 +76,50 @@ export function limiteurChat(opts: OptionsLimiteur = {}) {
     },
   };
 }
+
+/**
+ * 🪪 05/10 — Un INVITÉ IDENTIFIÉ du Live Afroboost : entré sans compte plateforme, mais avec un
+ * pseudo (et son e-mail / WhatsApp, gardés côté serveur — « Bon retour », cookie HttpOnly).
+ * Ce n'est PAS un anonyme : il a passé l'écran d'identité. L'écran d'identité encore ouvert
+ * (formulaire ou « Bon retour » en attente) = pas encore identifié.
+ * boosttribe.pro, hôte, compte connecté : jamais « invité identifié » (règles existantes).
+ */
+export function inviteLiveIdentifie(p: {
+  marque: string; estHote: boolean; connecte: boolean;
+  pseudo: string | null | undefined; ecranIdentiteOuvert: boolean;
+}): boolean {
+  return p.marque === 'afroboost' && !p.estHote && !p.connecte && !p.ecranIdentiteOuvert
+    && String(p.pseudo || '').trim().length >= 2;
+}
+
+/**
+ * 💬 05/10 — Qui peut ÉCRIRE et LIRE le chat du Live ? (même règle à l'envoi et à la réception)
+ * Avant : `isPro` SEUL (crédits / abonnement / admin). L'invité identifié d'un Live Afroboost n'a
+ * jamais de compte, donc jamais `isPro` : son champ était désactivé (« réservés aux membres Pro »),
+ * l'envoi sortait en silence (`if (!isPro) return`) et il ne recevait aucun message. Un Live ne
+ * doit JAMAIS exiger un compte plateforme pour discuter : invité identifié = autorisé.
+ */
+export function droitChatLive(p: { estPro: boolean; inviteIdentifie: boolean }): boolean {
+  return p.estPro || p.inviteIdentifie;
+}
+
+/** Message SORTANT du chat de groupe (extraction de handleSendGroupMessage) ; null = rien ne part. */
+export function messageChatSortant(p: {
+  peutChatter: boolean; userId: string; pseudo: string | null | undefined; photoUrl?: string | null;
+  texte: string; question?: boolean; ts: number; id: string;
+}): MessageLive | null {
+  const texte = String(p.texte || '').trim();
+  if (!p.peutChatter || !texte) return null;
+  return { id: p.id, userId: p.userId, name: p.pseudo || 'Invité', photoUrl: p.photoUrl || null, text: texte, ts: p.ts,
+    ...(p.question ? { question: true } : {}) };
+}
+
+/** Message REÇU par le canal du Live : accepté ? (extraction de la réception CHAT_GROUP). */
+export function accepterMessageChatRecu(p: {
+  peutChatter: boolean; monId: string | null | undefined;
+  message: { id?: string; text?: string; userId?: string } | null | undefined;
+}): boolean {
+  const m = p.message;
+  if (!p.peutChatter || !m || !m.id || !m.text) return false;
+  return m.userId !== p.monId;
+}

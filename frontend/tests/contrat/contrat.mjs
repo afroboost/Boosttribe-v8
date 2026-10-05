@@ -182,6 +182,37 @@ async function harnaisNavigateur() {
     items = await ouvrirMenu('participant_promo_fermee');
     noter('Faire la promo — absente si promo fermée', 'menu ⋮', !items.includes('visio-faire-ma-promo'));
 
+    // ── 05/10 G/I/J : invité IDENTIFIÉ (pseudo + e-mail/WhatsApp à l'entrée, SANS compte) ──
+    items = await ouvrirMenu('invite_identifie');
+    const actionInvite = await clic('visio-faire-ma-promo');
+    noter('G Promo invité identifié — fenêtre directe', '⋮ → Faire la promo → fenêtre (jamais « Se connecter »)',
+      items.includes('visio-faire-ma-promo') && actionInvite.includes('promo:ouvrir') && !actionInvite.includes('promo:connexion'), actionInvite.join(','));
+    await page.evaluate(() => window.contrat.promoInvite(200));
+    const sansConnexion = !(await visible('promo-connexion'));
+    const champsIdentite = await page.$$eval('[data-testid="live-promo-participant"] input', (l) => l.filter((e) => ['email', 'tel'].includes(e.type)
+      || /pseudo|e-?mail|whatsapp|t[ée]l[ée]phone/i.test(`${e.name} ${e.placeholder} ${e.getAttribute('aria-label') || ''}`)).length);
+    await page.fill('[data-testid="live-promo-titre-champ"]', 'Mon atelier danse');
+    await page.click('[data-testid="live-promo-envoyer"]');
+    await page.waitForTimeout(300);
+    const envInv = await page.evaluate(() => ({ r: window.contrat.requetes.map((x) => ({ ...x })), a: [...window.contrat.appels] }));
+    const jetonReq = envInv.r.find((x) => x.url.endsWith('/api/live-guest/jeton'));
+    const demInv = envInv.r.find((x) => x.url.endsWith('/live-promo/requests'));
+    noter('G Promo invité identifié — session invité RÉUTILISÉE', 'jeton demandé avec le cookie (corps = code du Live seul) → POST /live-promo/requests avec X-Live-Guest, sans compte',
+      !!jetonReq && jetonReq.credentials === 'same-origin' && JSON.stringify(Object.keys(jetonReq.corps || {})) === '["session_code"]'
+      && !!demInv && demInv.entetes['X-Live-Guest'] === 'jeton-session-invite' && !demInv.entetes.Authorization
+      && demInv.corps.titre === 'Mon atelier danse' && !('email' in demInv.corps) && envInv.a.includes('promo:envoyee'), JSON.stringify(envInv.r).slice(0, 300));
+    noter('I Promo invité — aucune 2e saisie', 'aucun écran de connexion ; aucun champ pseudo / e-mail / WhatsApp dans la fenêtre',
+      sansConnexion && champsIdentite === 0, `connexion=${!sansConnexion} champs=${champsIdentite}`);
+    await page.evaluate(() => window.contrat.promoInvite(401));
+    await page.fill('[data-testid="live-promo-titre-champ"]', 'Mon atelier danse');
+    await page.click('[data-testid="live-promo-envoyer"]');
+    await page.waitForTimeout(300);
+    const exp = await page.evaluate(() => ({ r: window.contrat.requetes.map((x) => x.url), a: [...window.contrat.appels] }));
+    const msgExp = await page.textContent('[data-testid="live-promo-erreur"]').catch(() => '');
+    noter('J Session invité expirée — protégée', 'jeton refusé (401) → AUCUNE demande envoyée, message clair, réidentification proposée',
+      !exp.r.some((u) => u.endsWith('/live-promo/requests')) && exp.a.includes('promo:reidentification') && /expir/i.test(msgExp), `${exp.r.join(',')} | ${msgExp}`);
+    await page.evaluate(() => window.contrat.finPromoInvite());
+
     // ── Hôte ──
     items = await ouvrirMenu('hote');
     noter('Faire la promo — jamais chez l\'hôte', 'menu ⋮ hôte', !items.includes('visio-faire-ma-promo'));
@@ -235,6 +266,64 @@ async function harnaisNavigateur() {
     await page.waitForTimeout(150);
     noter('Assistant IA — Ignorer', 'clic → suggestion supprimée, texte de l\'hôte intact',
       !(await visible('prompteur-suggestion')) && (await page.textContent('[data-testid="etat-affiche"]')) === 'Mon thème du jour');
+
+    // ── 05/10 A–F + K : CHAT INVITÉ ↔ HÔTE, deux pages (même canal de diffusion), IA chez l'hôte seul ──
+    {
+      const ctx = await nav.newContext({ viewport: { width: 1100, height: 800 } });
+      const [inv, hot] = [await ctx.newPage(), await ctx.newPage()];
+      for (const p of [inv, hot]) p.on('pageerror', (e) => erreurs.push(e.message));
+      await inv.goto(url); await hot.goto(url);
+      await hot.evaluate(() => window.contrat.chatLive('hote'));
+      await inv.evaluate(() => window.contrat.chatLive('invite'));
+      const champInvite = 'input[aria-label="Écrire un commentaire"]';
+      const actif = await inv.$eval(champInvite, (e) => !e.disabled).catch(() => false);
+      await inv.fill(champInvite, 'Bonjour coach, première fois ici').catch(() => {});
+      await inv.keyboard.press('Enter');
+      await hot.waitForTimeout(400);
+      const chezInvite = await inv.textContent('[data-testid="live-chat-overlay"]').catch(() => '');
+      noter('A Chat invité identifié — envoi', 'pseudo Test, sans compte : champ actif, Entrée → message affiché',
+        actif && chezInvite.includes('première fois ici'), `actif=${actif} | ${chezInvite.slice(0, 80)}`);
+      const chezHote = await hot.textContent('[data-testid="live-chat-overlay"]').catch(() => '');
+      noter('B Chat invité — reçu chez l\'hôte', 'l\'hôte voit le message et le pseudo de l\'invité', chezHote.includes('première fois ici') && chezHote.includes('Test'), chezHote.slice(0, 100));
+      await inv.waitForTimeout(1300);                                  // anti-flood du chat
+      await inv.fill(champInvite, 'Est-ce que je peux participer si je débute ?');
+      await inv.keyboard.press('Enter');
+      await hot.waitForTimeout(500);
+      await hot.evaluate(() => window.contrat.chatLiveRediffuser());     // double réception du MÊME message
+      await hot.waitForTimeout(500);
+      const blocHote = await hot.textContent('[data-testid="prompteur-suggestion"]').catch(() => '');
+      const nIA = await hot.evaluate(() => window.contrat.chatLiveEtat.appelsIA);
+      noter('C Question invité → UNE suggestion IA', 'question reçue → 1 demande d\'IA (même après double réception) → bloc « Suggestion IA » chez l\'hôte',
+        nIA === 1 && /SUGGESTION IA/.test(blocHote) && /débutants/.test(blocHote) && /Test demande/.test(blocHote), `appels=${nIA} | ${blocHote.slice(0, 120)}`);
+      const iaChezInvite = !!(await inv.$('[data-testid="prompteur-suggestion"]')) || !!(await inv.$('[data-testid="assistant-bascule"]'))
+        || (await inv.textContent('[data-testid="cote-invite"]')).includes('adapté aux débutants');
+      noter('D IA visible chez l\'hôte seul', 'aucune suggestion ni réponse automatique chez l\'invité', !iaChezInvite && nIA === 1);
+      await hot.click('[data-testid="prompteur-utiliser"]').catch(() => {});
+      await hot.waitForTimeout(200);
+      const brouillon = await hot.textContent('[data-testid="chat-brouillon"]');
+      noter('E IA — Utiliser', 'clic → la suggestion devient « Mon texte » de l\'hôte ; rien n\'est envoyé au chat',
+        /débutants/.test(brouillon) && !(await hot.$('[data-testid="prompteur-suggestion"]'))
+        && !(await inv.textContent('[data-testid="live-chat-overlay"]')).includes('adapté aux débutants'), brouillon.slice(0, 80));
+      await inv.waitForTimeout(1300);
+      await inv.fill(champInvite, 'Comment je réserve la prochaine séance ?');
+      await inv.keyboard.press('Enter');
+      await hot.waitForTimeout(600);
+      const avantIgnorer = !!(await hot.$('[data-testid="prompteur-suggestion"]'));
+      await hot.click('[data-testid="prompteur-ignorer"]').catch(() => {});
+      await hot.waitForTimeout(200);
+      noter('F IA — Ignorer', 'nouvelle question → suggestion ; clic → supprimée, « Mon texte » intact',
+        avantIgnorer && !(await hot.$('[data-testid="prompteur-suggestion"]')) && (await hot.textContent('[data-testid="chat-brouillon"]')) === brouillon
+        && (await hot.evaluate(() => window.contrat.chatLiveEtat.appelsIA)) === 2);
+      // K : « Échanger en visio » (mode de l'IA) dépend d'une transcription vocale inexistante → désactivé, expliqué.
+      await hot.click('[data-testid="prompteur-onglet-assistant"]').catch(() => {});
+      const visio = await hot.$eval('[data-testid="assistant-mode-visio"]', (e) => ({ off: e.disabled, titre: e.title })).catch(() => null);
+      await hot.click('[data-testid="assistant-mode-visio"]', { force: true, timeout: 1000 }).catch(() => {});
+      const modes = await hot.evaluate(() => [...window.contrat.appels]);
+      const texteK = await hot.textContent('[data-testid="assistant-visio-indisponible"]').catch(() => '');
+      noter('K « Échanger en visio » — pas présenté comme opérationnel', 'choix désactivé + « Transcription vocale bientôt disponible » ; clic sans effet',
+        !!visio && visio.off && /Transcription vocale bientôt disponible/.test(texteK) && !modes.includes('mode:visio'), `${JSON.stringify(visio)} | ${texteK}`);
+      await ctx.close();
+    }
 
     // ── Prompteur ──
     await page.evaluate(() => window.contrat.prompteur());
@@ -424,13 +513,21 @@ async function bancLiveKit(lk, nouvellePage) {
 await harnaisNavigateur();
 
 // ── 4. Tests serveur du Live ──────────────────────────────────────────────────────────────────────
-const TESTS_SERVEUR = ['test_preferences_live.py', 'test_preferences_live_parcours.py', 'test_preferences_live_securite.py', 'test_live_promo.py', 'test_live_promo_persistance.py',
+const TESTS_SERVEUR = ['test_preferences_live.py', 'test_preferences_live_parcours.py', 'test_preferences_live_securite.py', 'test_live_promo.py', 'test_live_promo_persistance.py', 'test_live_promo_invite.py',
   'test_promo_acces.py', 'test_souffleur_hote.py', 'test_live_invite.py', 'test_fin_live.py', 'test_live_acces_et_vente.py', 'test_outils_coach.py'];
 if (!args.has('--sans-serveur')) {
   const r = lancer('python3', ['-m', 'pytest', '-q', '-p', 'no:warnings', '-p', 'no:cacheprovider', ...TESTS_SERVEUR.map((f) => `backend/tests/${f}`)], RACINE);
   const m = r.sortie.match(/(\d+) passed/); const f = r.sortie.match(/(\d+) failed/);
   noter('Serveur Live (préférences, promo, invité, fin)', `${m ? m[1] : 0} réussis / ${f ? f[1] : 0} échoués`, r.code === 0,
     [...r.sortie.matchAll(/^FAILED (.+)$/gm)].map((x) => x[1]).slice(0, 5).join(' | ') || r.sortie.slice(-300));
+  // 05/10 H/J : la demande promo de l'invité identifié, CÔTÉ SERVEUR (session invité vérifiée, jamais un e-mail du front).
+  const ri = lancer('python3', ['-m', 'pytest', '-q', '-rA', '-p', 'no:warnings', '-p', 'no:cacheprovider', 'backend/tests/test_live_promo_invite.py'], RACINE);
+  const passe = (t) => new RegExp(`^PASSED .*::${t}\\b`, 'm').test(ri.sortie);
+  noter('H Promo invité — demande reçue chez l\'hôte (serveur)', 'jeton de session invité → demande enregistrée sous SON pseudo → listée chez l\'hôte',
+    passe('test_invite_identifie_envoie_sa_demande_et_l_hote_la_recoit') && passe('test_compte_inchange_et_prioritaire'), ri.sortie.slice(-200));
+  noter('J Session invité expirée — serveur', 'expirée / falsifiée / autre audience / autre Live → refus ; aucune usurpation, aucun e-mail arbitraire',
+    passe('test_session_invite_expiree_ou_falsifiee_refusee') && passe('test_jeton_d_un_autre_live_refuse') && passe('test_aucune_usurpation_ni_email_arbitraire')
+    && passe('test_le_jeton_invite_n_ouvre_aucune_route_hote'), ri.sortie.slice(-200));
 }
 
 // ── 5. Build de production ────────────────────────────────────────────────────────────────────────

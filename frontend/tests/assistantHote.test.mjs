@@ -44,10 +44,12 @@ test('la fenêtre reste courte et les messages vides disparaissent', () => {
 
 /* ═══════════ 2. DE QUOI ON PARLE ═══════════ */
 
-test('personne à l’écran → mode chat ; quelqu’un à l’écran → mode visio', () => {
+// 05/10 — RÈGLE CHANGÉE VOLONTAIREMENT : « Échanger en visio » dépend d'une transcription vocale qui
+//   n'existe pas (VISIO_IA_DISPONIBLE = false) → l'IA reste en mode chat même avec quelqu'un à l'écran.
+test('personne à l’écran → mode chat ; quelqu’un à l’écran → mode chat tant que la visio IA est indisponible', () => {
   assert.equal(modeAutomatique(null), 'chat');
   assert.equal(modeAutomatique(''), 'chat');
-  assert.equal(modeAutomatique('Julie'), 'visio');
+  assert.equal(modeAutomatique('Julie'), 'chat');
 });
 
 /* ═══════════ 3. QUAND ÇA PART : le compteur ne s’emballe pas ═══════════ */

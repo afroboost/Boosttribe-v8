@@ -31,7 +31,9 @@ interface ChatPanelProps {
   open: boolean;
   onToggle: () => void;                      // bouton lanceur (ouvrir/fermer)
   onClose: () => void;
-  isPro: boolean;                            // gating Groupe/Privé + Assistant
+  isPro: boolean;                            // gating Assistant (et Groupe/Privé si `chatAutorise` absent)
+  /** 05/10 : droit au chat Groupe/Privé (Pro OU invité identifié — lib/liveChat `droitChatLive`). */
+  chatAutorise?: boolean;
   gradient: string;                          // dégradé du thème
   unreadTotal: number;                       // badge du lanceur (groupe + privé)
   meUserId: string;
@@ -179,7 +181,7 @@ const ProLock: React.FC<{ gradient: string }> = ({ gradient }) => (
 // Onglets : Assistant (bot Boosttribe) · Groupe · Privé. Gating Pro pour les trois.
 // Plein écran sur mobile, carte flottante bas-droite sur desktop.
 export const ChatPanel: React.FC<ChatPanelProps> = ({
-  open, onToggle, onClose, isPro, gradient, unreadTotal,
+  open, onToggle, onClose, isPro, chatAutorise, gradient, unreadTotal,
   meUserId, isHost, participants,
   tab, onTab, partner, onOpenPartner,
   groupMessages, privateThreads, unread,
@@ -334,7 +336,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             {/* Contenu */}
             {tab === 'assistant' ? (
               <AssistantChat hasAccess={isPro} gradient={gradient} active={open && tab === 'assistant'} />
-            ) : !isPro ? (
+            ) : !(chatAutorise ?? isPro) ? (
               <ProLock gradient={gradient} />
             ) : tab === 'group' ? (
               <>

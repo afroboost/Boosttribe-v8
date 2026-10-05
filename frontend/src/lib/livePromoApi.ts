@@ -4,15 +4,35 @@ import type { OffrePromo, PromoPublique } from '@/lib/livePromo';
 
 const API_URL = (import.meta.env.REACT_APP_API_URL || '').replace(/\/$/, '');
 
-async function appel<T>(chemin: string, init: RequestInit = {}, auth: boolean | 'si-connecte' = true): Promise<T> {
+/**
+ * 05/10 — Session de l'INVITÉ IDENTIFIÉ (Live Afroboost, sans compte) : la page enregistre ici le
+ * fournisseur de jeton de SA session invité (`creerFournisseurJetonInvite`). Utilisé UNIQUEMENT par
+ * les routes du participant (`'participant'`), et seulement sans compte connecté (le compte prime).
+ */
+let fournisseurSessionInvite: (() => Promise<string | null>) | null = null;
+export function definirSessionInvitePromo(f: (() => Promise<string | null>) | null): void { fournisseurSessionInvite = f; }
+/** La session invité est expirée / révoquée : l'écran propose de s'identifier à nouveau (seul cas). */
+export class SessionInviteExpiree extends Error {
+  constructor() { super('Ta session invité a expiré : identifie-toi à nouveau pour continuer.'); this.name = 'SessionInviteExpiree'; }
+}
+export const estSessionInviteExpiree = (e: unknown): boolean => e instanceof SessionInviteExpiree;
+
+async function appel<T>(chemin: string, init: RequestInit = {}, auth: boolean | 'si-connecte' | 'participant' = true): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
+  let parInvite = false;
   if (auth) {
     const t = await getAccessToken().catch(() => null);
-    if (!t && auth === true) throw new Error('Connecte-toi pour continuer');
     if (t) headers.Authorization = `Bearer ${t}`;
+    else if (auth === 'participant' && fournisseurSessionInvite) {
+      const j = await fournisseurSessionInvite().catch(() => null);
+      if (!j) throw new SessionInviteExpiree();
+      headers['X-Live-Guest'] = j;
+      parInvite = true;
+    } else if (auth !== 'si-connecte') throw new Error('Connecte-toi pour continuer');
   }
   const res = await fetch(`${API_URL}${chemin}`, { ...init, headers });
   const data = await res.json().catch(() => ({}));
+  if (parInvite && res.status === 401) throw new SessionInviteExpiree();
   if (!res.ok) throw new Error((data && data.detail) || `Erreur ${res.status}`);
   return data as T;
 }
@@ -45,13 +65,13 @@ export const promoEnregistrerConfig = (sid: string, enabled: boolean, offres: Of
 };
 export const promoActive = (sid: string) =>
   appel<{ promo: PromoPublique | null; server_now: string }>(`/live-promo/active/${encodeURIComponent(sid)}`, {}, false);
-export const promoMesDemandes = (sid: string) => appel<{ promos: PromoLigne[] }>(`/live-promo/mine/${encodeURIComponent(sid)}`);
+export const promoMesDemandes = (sid: string) => appel<{ promos: PromoLigne[] }>(`/live-promo/mine/${encodeURIComponent(sid)}`, {}, 'participant');
 export const promoListeHote = (sid: string) => appel<{ promos: PromoLigne[] }>(`/live-promo/host/${encodeURIComponent(sid)}`);
 export const promoDemander = (corps: { session_id: string; offre_id: string; titre: string; texte: string; media_url?: string | null; lien?: string | null }) =>
-  appel<{ promo: PromoLigne }>('/live-promo/requests', json(corps));
+  appel<{ promo: PromoLigne }>('/live-promo/requests', json(corps), 'participant');
 export const promoDecider = (id: string, decision: 'accept' | 'reject') =>
   appel<{ promo: PromoLigne }>(`/live-promo/requests/${id}/decision`, json({ decision }));
-export const promoPayer = (id: string) => appel<{ url: string }>(`/live-promo/requests/${id}/pay`, json({}));
+export const promoPayer = (id: string) => appel<{ url: string }>(`/live-promo/requests/${id}/pay`, json({}), 'participant');
 /** Super-admin hors mode commission : prêt SANS paiement (test, aucun argent). */
 export const promoPretSansPaiement = (id: string) => appel<{ promo: PromoLigne }>(`/live-promo/requests/${id}/test-ready`, json({}));
 export const promoDiffuser = (id: string) =>
@@ -65,5 +85,5 @@ export async function promoEnvoyerImage(sid: string, fichier: File): Promise<str
   const f = new FormData();
   f.append('file', fichier);
   f.append('session_id', sid);
-  return (await appel<{ url: string }>('/live-promo/media', { method: 'POST', body: f })).url;
+  return (await appel<{ url: string }>('/live-promo/media', { method: 'POST', body: f }, 'participant')).url;
 }

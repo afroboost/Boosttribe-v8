@@ -21,7 +21,9 @@ test('chat, champ commentaire et réactions sont passés AU panneau vidéo', () 
 });
 
 test('une question = un signal CLAIR, jamais « tout message »', () => {
-  assert.ok(PAGE.includes('...(opts?.question ? { question: true } : {})'));
+  // 05/10 : le message sortant est construit par lib/liveChat (messageChatSortant), le drapeau y passe tel quel.
+  assert.ok(PAGE.includes('question: !!opts?.question'));
+  assert.ok(lire('lib', 'liveChat.ts').includes('...(p.question ? { question: true } : {})'));
   assert.ok(PAGE.includes('recevoirMessages(e, groupMessages, socket.userId)'));
   assert.ok(!PAGE.includes('recevoirQuestion(e, {'), 'plus de mise en file de chaque message');
 });

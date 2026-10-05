@@ -5408,9 +5408,10 @@ async def _live_promo_save_config(body: LivePromoConfigBody, authorization: Opti
 
 @app.post("/live-promo/media")
 async def live_promo_media(file: UploadFile = File(...), session_id: str = Form(...),
-                           authorization: Optional[str] = Header(default=None)):
+                           authorization: Optional[str] = Header(default=None),
+                           x_live_guest: Optional[str] = Header(default=None)):
     """Image de la promo (participant). IMAGES RASTER seulement (jamais SVG/HTML), 8 Mo max."""
-    user = await get_user_from_token(authorization)
+    user = await _lp_participant(authorization, x_live_guest, session_id)
     s = await _lp_session(session_id)
     if not (s.get("live_promo_enabled") is True and await _lp_eligible(s.get("host_id"))):
         raise HTTPException(status_code=403, detail="Promotions non ouvertes pour ce Live")
@@ -5437,10 +5438,53 @@ def _lp_prefixe_media(session_id: str) -> str:
     return f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/live-promos/{session_id}/"
 
 
+# 05/10 — « Faire la promo » pour l'INVITÉ IDENTIFIÉ d'un Live Afroboost (sans compte BoostTribe).
+#   Son identité = SA session invité Afroboost (cookie HttpOnly `afb_live_guest`, « Bon retour »),
+#   convertie par afroboost.com/api/live-guest/jeton en un jeton COURT : HS256, secret partagé EXISTANT,
+#   iss=afroboost, aud=boosttribe-live-guest (réservée), sub = id de l'invité, pseudo, session_code.
+#   Ce serveur ne croit QUE ce jeton (jamais un nom / e-mail envoyé par le front). Un compte connecté
+#   garde exactement son chemin (jeton Supabase, prioritaire). Le jeton invité n'ouvre que les routes
+#   du PARTICIPANT (demander, ses demandes, image, payer la sienne) — jamais une route d'hôte.
+LP_INVITE_AUD = "boosttribe-live-guest"
+_LP_NS_INVITE = uuid.UUID("6f1c2b8e-5d1a-4c4e-9a51-2f6c0b7d4e11")
+
+
+def _lp_id_invite(invite_id: str) -> str:
+    """Identifiant STABLE (uuid5) d'un invité Afroboost dans `live_promos.participant_id`."""
+    return str(uuid.uuid5(_LP_NS_INVITE, f"afroboost-live-guest:{invite_id}"))
+
+
+def _lp_invite_depuis_jeton(jeton: str, session_id: Optional[str]) -> Dict[str, Any]:
+    if not AFRO_BT_SHARED_SECRET or _pyjwt is None:
+        raise HTTPException(status_code=503, detail="Session invité indisponible (configuration)")
+    try:
+        p = _pyjwt.decode(jeton, AFRO_BT_SHARED_SECRET, algorithms=["HS256"], audience=LP_INVITE_AUD,
+                          issuer="afroboost", options={"require": ["exp", "sub", "iat"]})
+    except Exception:  # noqa: BLE001 — expirée, falsifiée, autre audience : même réponse
+        raise HTTPException(status_code=401, detail="Session invité expirée — identifie-toi à nouveau")
+    sub = str(p.get("sub") or "").strip()
+    if not sub:
+        raise HTTPException(status_code=401, detail="Session invité expirée — identifie-toi à nouveau")
+    if session_id is not None and str(p.get("session_code") or "").upper() != str(session_id).upper():
+        raise HTTPException(status_code=403, detail="Cette session invité concerne un autre Live")
+    nom = _lp.texte_propre(str(p.get("pseudo") or ""), 60) or "Invité"
+    return {"id": _lp_id_invite(sub), "email": None, "user_metadata": {"full_name": nom}, "invite": True}
+
+
+async def _lp_participant(authorization: Optional[str], x_live_guest: Any, session_id: Optional[str]) -> Dict[str, Any]:
+    """Le PARTICIPANT d'une route promo : compte (jeton Supabase) ou invité identifié (jeton de session
+    invité Afroboost). `session_id` = None : le Live est vérifié après (paiement d'une promo existante)."""
+    jeton_invite = x_live_guest.strip() if isinstance(x_live_guest, str) else ""
+    if (isinstance(authorization, str) and authorization.strip()) or not jeton_invite:
+        return await get_user_from_token(authorization)
+    return _lp_invite_depuis_jeton(jeton_invite, session_id)
+
+
 @app.post("/live-promo/requests")
-async def live_promo_request(body: LivePromoRequestBody, authorization: Optional[str] = Header(default=None)):
-    """Le participant ENVOIE sa demande : aucun paiement ici."""
-    user = await get_user_from_token(authorization)
+async def live_promo_request(body: LivePromoRequestBody, authorization: Optional[str] = Header(default=None),
+                             x_live_guest: Optional[str] = Header(default=None)):
+    """Le participant ENVOIE sa demande : aucun paiement ici. 05/10 : compte OU invité identifié."""
+    user = await _lp_participant(authorization, x_live_guest, body.session_id)
     uid = user.get("id")
     s = await _lp_session(body.session_id)
     if not (s.get("live_promo_enabled") is True and await _lp_eligible(s.get("host_id"))):
@@ -5475,8 +5519,9 @@ async def _lp_inserer(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 @app.get("/live-promo/mine/{session_id}")
-async def live_promo_mine(session_id: str, authorization: Optional[str] = Header(default=None)):
-    user = await get_user_from_token(authorization)
+async def live_promo_mine(session_id: str, authorization: Optional[str] = Header(default=None),
+                          x_live_guest: Optional[str] = Header(default=None)):
+    user = await _lp_participant(authorization, x_live_guest, session_id)
     rows = await _lp_lire({"session_id": f"eq.{session_id}", "participant_id": f"eq.{user.get('id')}"}, limite=20)
     return {"promos": [await _lp_cloturer_si_expiree(p) for p in rows]}
 
@@ -5513,13 +5558,16 @@ async def live_promo_decision(promo_id: str, body: LivePromoDecisionBody,
 
 
 @app.post("/live-promo/requests/{promo_id}/pay")
-async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(default=None)):
+async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(default=None),
+                         x_live_guest: Optional[str] = Header(default=None)):
     """Checkout Stripe EXISTANT (compte plateforme), seulement APRÈS acceptation de l'hôte.
     Double clic : même tentative → même clé d'idempotence Stripe → même session."""
     if not await apply_stripe_key():
         raise HTTPException(status_code=500, detail="Stripe non configuré")
-    user = await get_user_from_token(authorization)
+    user = await _lp_participant(authorization, x_live_guest, None)
     p = await _lp_une(promo_id)
+    if user.get("invite"):                       # 05/10 : le jeton invité est lié à UN Live
+        _lp_invite_depuis_jeton(x_live_guest.strip(), p.get("session_id"))
     if p.get("participant_id") != user.get("id"):
         raise HTTPException(status_code=403, detail="Cette promo n'est pas la tienne")
     if p.get("status") not in _lp.PAYABLES:
@@ -5550,7 +5598,7 @@ async def live_promo_pay(promo_id: str, authorization: Optional[str] = Header(de
         success_url=f"{FRONTEND_URL}/session/{p['session_id']}?promo=success",
         cancel_url=f"{FRONTEND_URL}/session/{p['session_id']}?promo=canceled",
         client_reference_id=user.get("id"),
-        customer_email=user.get("email"),
+        **({"customer_email": user["email"]} if user.get("email") else {}),   # invité : Stripe demande l'adresse
         metadata={"kind": "live_promo", "promo_id": p["id"], "session_id": p["session_id"],
                   "coach_user_id": p.get("host_id"), "price_chf": str(prix),
                   "commission_chf": str(comm["commission_chf"]), "commission_percent": str(comm["percent"])},

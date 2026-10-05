@@ -52,8 +52,19 @@ export function messagesPourIA(messages: MessageChat[] | null | undefined): Mess
 }
 
 /** Le mode qui a du sens maintenant : quelqu'un à l'écran → on prépare l'échange. */
+/**
+ * 05/10 — « Échanger en visio » (mode de l'assistant IA) : NON OPÉRATIONNEL tant qu'aucune
+ * transcription vocale en direct n'existe. Ce mode promet des « relances sur ce que la personne
+ * vient de DIRE » ; or l'IA ne reçoit que le TEXTE du chat (aucun speech-to-text temps réel :
+ * seul l'enregistrement est transcrit APRÈS coup). Le choix reste visible, désactivé, avec
+ * « Transcription vocale bientôt disponible » ; l'IA ne bascule plus d'elle-même en « visio »
+ * quand quelqu'un monte à l'écran. La visio elle-même (caméra / micro de l'invité) n'est pas concernée.
+ * Brancher un moteur (entrée prête : `recevoirTranscription`) puis passer ceci à true = décision de Bassi.
+ */
+export const VISIO_IA_DISPONIBLE = false;
+
 export function modeAutomatique(inviteEnVisio?: string | null): ModeSouffleur {
-  return inviteEnVisio ? 'visio' : 'chat';
+  return VISIO_IA_DISPONIBLE && inviteEnVisio ? 'visio' : 'chat';
 }
 
 /** Signature du contexte : deux contextes identiques ne méritent pas deux appels. */

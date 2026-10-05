@@ -58,7 +58,7 @@ test('barre verticale inchangée', () => {
 test('« Faire ma promo » : jamais pour l’hôte ; participant connecté + promo activée seulement', () => {
   const s = src('pages/SessionPage.tsx');
   // 01/10 : la décision dépend de la PROPRIÉTÉ de cette session (host_id), jamais du rôle global.
-  assert.match(s, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, config: livePromo\.config \}\)/);   // 05/10
+  assert.match(s, /actionPromoParticipant\(\{ estProprietaire: estProprietaireSession, connecte: !!user, inviteIdentifie, config: livePromo\.config \}\)/);   // 05/10
   assert.match(s, /promoHote=\{\(estProprietaireSession && livePromo\.config\?\.enabled\)/);   // l'hôte : « Promotions live »
 });
 

@@ -26,6 +26,11 @@ import { MicrophoneControl } from '@/components/audio/MicrophoneControl';
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { useBeauteVisage, type UseBeauteVisageReturn } from '@/hooks/useBeauteVisage';
 import { actionPromoParticipant } from '@/lib/livePromo';
+import { definirSessionInvitePromo } from '@/lib/livePromoApi';
+import { creerFournisseurJetonInvite } from '@/lib/inviteLive';
+import { droitChatLive, inviteLiveIdentifie, messageChatSortant, accepterMessageChatRecu, type MessageLive } from '@/lib/liveChat';
+import { questionAPreparer } from '@/lib/assistantHote';
+import { estQuestionPertinente } from '@/lib/prompteurSources';
 import {
   ETAT_INITIAL, recevoirMessages, recevoirSuggestionAuto, utiliserSuggestion, ignorerSuggestion, ecrire, afficher,
   type EtatPrompteur,
@@ -37,7 +42,7 @@ import { cibleBascule } from '@/lib/sourcesLogic';
 import { dispositionBarre } from '@/lib/liveControls';
 import { sessionShareUrl } from '@/lib/publicUrl';
 
-type Role = 'hote' | 'participant' | 'invite' | 'participant_promo_fermee';
+type Role = 'hote' | 'participant' | 'invite' | 'invite_identifie' | 'participant_promo_fermee';
 const appels: string[] = [];
 let racine: Root | null = null;
 const attendre = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -55,7 +60,8 @@ function menu(role: Role): void {
   const hote = role === 'hote';
   const promoOuverte = role !== 'participant_promo_fermee';
   // MÊME règle que SessionPage (actionPromoParticipant) : on ne teste pas une copie.
-  const action = actionPromoParticipant({ estProprietaire: hote, connecte: role !== 'invite',
+  const action = actionPromoParticipant({ estProprietaire: hote, connecte: role !== 'invite' && role !== 'invite_identifie',
+    inviteIdentifie: role === 'invite_identifie',
     config: { enabled: promoOuverte, offres: promoOuverte ? [{ id: 'a' }] : [] } });
   // Placée comme dans LiveVisioPanel : scène 1280×720, barre verticale à droite (dispositionBarre réelle).
   const barre = dispositionBarre({ largeur: 1280, hauteur: 720, pleinEcran: false });
@@ -83,13 +89,18 @@ function menu(role: Role): void {
 }
 
 /* ═══ Faire ma promo : la fenêtre du participant ENVOIE vraiment la demande ═══ */
-const requetes: { url: string; corps: unknown }[] = [];
-function intercepterReseau(): void {
+const requetes: { url: string; corps: unknown; entetes?: Record<string, string>; credentials?: string }[] = [];
+/** `sessionInvite` : réponse de afroboost.com/api/live-guest/jeton (200 = session valide, 401 = expirée). */
+function intercepterReseau(sessionInvite: 200 | 401 = 200): void {
   requetes.length = 0;
   window.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
     let corps: unknown = null;
     try { corps = init?.body ? JSON.parse(String(init.body)) : null; } catch { corps = init?.body ?? null; }
-    requetes.push({ url: String(url), corps });
+    requetes.push({ url: String(url), corps, entetes: { ...((init?.headers as Record<string, string>) || {}) }, credentials: init?.credentials });
+    if (String(url).endsWith('/api/live-guest/jeton')) {
+      return new Response(JSON.stringify(sessionInvite === 200 ? { jeton: 'jeton-session-invite', expire_dans: 600 } : { detail: 'Session invité expirée' }),
+        { status: sessionInvite, headers: { 'Content-Type': 'application/json' } });
+    }
     return new Response(JSON.stringify({ promo: { id: 'p1', status: 'requested', title: 'x' } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch;
 }
@@ -98,6 +109,19 @@ function promoParticipant(): void {
   monter(<LivePromoParticipantModal sessionId="CONTRAT1-ABCDEF" devise="CHF" mesDemandes={[]}
     offres={[{ id: 'offre-30', duree_s: 30, prix: 0, type: 'free', actif: true } as never]}
     onFermer={note('promo:fermer')} onEnvoye={note('promo:envoyee')} />);
+}
+/** 05/10 — Invité IDENTIFIÉ, SANS compte : la fenêtre promo réutilise SA session invité (aucun écran de connexion). */
+function promoInvite(session: 200 | 401 = 200): void {
+  (globalThis as unknown as { __contratSansCompte?: boolean }).__contratSansCompte = true;
+  intercepterReseau(session);
+  definirSessionInvitePromo(creerFournisseurJetonInvite('CONTRAT1-ABCDEF'));
+  monter(<LivePromoParticipantModal sessionId="CONTRAT1-ABCDEF" devise="CHF" mesDemandes={[]}
+    offres={[{ id: 'offre-30', duree_s: 30, prix: 0, type: 'free', actif: true } as never]}
+    onFermer={note('promo:fermer')} onEnvoye={note('promo:envoyee')} onSessionExpiree={note('promo:reidentification')} />);
+}
+function finPromoInvite(): void {
+  (globalThis as unknown as { __contratSansCompte?: boolean }).__contratSansCompte = false;
+  definirSessionInvitePromo(null);
 }
 function promoConnexion(): void {
   monter(<PromoConnexionInvite onFermer={note('connexion:plus-tard')} onConnexion={note('connexion:go')} />);
@@ -167,6 +191,77 @@ function suggestionIA(): void {
     );
   }
   monter(<Banc />);
+}
+
+/* ═══ 05/10 — CHAT INVITÉ ↔ HÔTE : deux pages, un canal de diffusion (BroadcastChannel = le rôle du
+ *  broadcast Supabase `CHAT_GROUP`). Les règles sont celles de la page : droit au chat, message sortant,
+ *  message accepté à la réception, file du prompteur, UNE demande d'IA par message (réponse simulée,
+ *  aucun réseau), Utiliser / Ignorer CLIQUÉS dans le vrai panneau de l'hôte. ═══ */
+const chatLiveEtat = { appelsIA: 0, recus: [] as MessageLive[] };
+function chatLive(role: 'invite' | 'hote'): void {
+  chatLiveEtat.appelsIA = 0; chatLiveEtat.recus = [];
+  const moi = role === 'hote' ? 'user_hote' : 'user_invite';
+  const peutChatter = role === 'hote' ? droitChatLive({ estPro: true, inviteIdentifie: false })
+    : droitChatLive({ estPro: false, inviteIdentifie: inviteLiveIdentifie({ marque: 'afroboost', estHote: false, connecte: false, pseudo: 'Test', ecranIdentiteOuvert: false }) });
+  const canal = new BroadcastChannel('contrat-chat-live');
+  function Banc() {
+    const [msgs, setMsgs] = React.useState<MessageLive[]>([]);
+    const [etat, setEtat] = React.useState<EtatPrompteur>(() => ecrire(ETAT_INITIAL, ''));
+    const [onglet, setOnglet] = React.useState<OngletPrompteur>('questions');
+    const deja = React.useRef(new Set<string>());
+    useEffect(() => {
+      canal.onmessage = (ev) => {
+        const m = ev.data as MessageLive;
+        if (!accepterMessageChatRecu({ peutChatter, monId: moi, message: m })) return;
+        chatLiveEtat.recus.push(m);
+        setMsgs((l) => (l.some((x) => x.id === m.id) ? l : [...l, m]));
+      };
+      return () => { canal.onmessage = null; };
+    }, []);
+    useEffect(() => { if (role === 'hote') setEtat((e) => recevoirMessages(e, msgs, moi)); }, [msgs]);
+    useEffect(() => {                                    // hôte seul : une question pertinente → UNE demande d'IA
+      if (role !== 'hote') return;
+      const q = questionAPreparer({ file: etat.file, dejaDemandees: deja.current, suggestionEnAttente: !!etat.suggestion,
+        actif: true, enCours: false, pertinente: estQuestionPertinente, maintenant: Date.now() });
+      if (!q) return;
+      deja.current.add(q.id);
+      chatLiveEtat.appelsIA += 1;
+      setEtat((e) => recevoirSuggestionAuto(e, 'Oui, bien sûr ! Tout est adapté aux débutants.', q));
+    }, [etat.file.length, etat.suggestion]);
+    const rien = () => undefined;
+    return (
+      <div data-testid={`cote-${role}`} style={{ position: 'relative', width: 1000, height: 760 }}>
+        <div style={{ position: 'relative', width: 600, height: 300 }}>
+          <LiveChatOverlay messages={msgs as never} meUserId={moi} hostUserIds={['user_hote']} />
+        </div>
+        <LiveCommentInput desactive={!peutChatter} motifDesactive="Les commentaires sont réservés aux membres Pro" peutPoserQuestion={role !== 'hote'}
+          onEnvoyer={(texte, o) => {
+            const m = messageChatSortant({ peutChatter, userId: moi, pseudo: role === 'hote' ? 'Coach' : 'Test', texte, question: o.question,
+              ts: Date.now(), id: `${moi}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` });
+            if (!m) return false;
+            setMsgs((l) => [...l, m]);
+            canal.postMessage(m);
+            return true;
+          }} />
+        {role === 'hote' ? (
+          <AssistantHotePanel open disposition="zone-camera" onClose={rien} actif onBasculer={rien} onglet={onglet} onOnglet={setOnglet}
+            etat={etat} theme="" onTheme={rien} enCours={false} indisponible={null} invite="Test" modeQuestion="chat" onModeQuestion={(m) => appels.push(`mode:${m}`)}
+            onEcrire={(t) => setEtat((e) => ecrire(e, t))} onAfficher={rien} onEffacer={rien}
+            onUtiliserSuggestion={() => { setEtat((e) => utiliserSuggestion(e)); setOnglet('texte'); }}
+            onIgnorerSuggestion={() => setEtat((e) => ignorerSuggestion(e))}
+            onDemanderTexte={rien} onOuvrirQuestion={rien} onAutreReponse={rien} onReprendre={rien} />
+        ) : null}
+        <span data-testid="chat-brouillon">{etat.brouillon}</span>
+      </div>
+    );
+  }
+  monter(<Banc />);
+}
+/** Double réception du MÊME message chez l'hôte (rediffusion réseau) : aucune 2e demande d'IA. */
+function chatLiveRediffuser(): void {
+  const c = new BroadcastChannel('contrat-chat-live');
+  for (const m of chatLiveEtat.recus) c.postMessage(m);
+  c.close();
 }
 
 /* ═══ Invitation : QR de la session = lien de partage (décodé) ═══ */
@@ -521,7 +616,7 @@ async function hoteBeaute(n: NiveauBeaute) {
 async function spectateurRafale(ms: number) { return rafale(videoRecue!, ms); }
 
 (window as unknown as Record<string, unknown>).contrat = {
-  menu, appels, promoParticipant, promoConnexion, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, suggestionIA, qr,
+  menu, appels, promoParticipant, promoConnexion, promoInvite, finPromoInvite, chatLive, chatLiveEtat, chatLiveRediffuser, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, suggestionIA, qr,
   micro, etatMicro, pipelineBeaute, looksGpu, mesurerLooks, chronoGpu,
   lk: { hotePublier, etatHote, hoteChangerCamera, hoteCamera, quitter, spectateurRejoindre, spectateurTaille, spectateurReconnexion,
     hoteLook, hoteBeaute, spectateurRafale },

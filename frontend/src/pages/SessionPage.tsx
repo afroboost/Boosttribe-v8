@@ -45,7 +45,8 @@ import { LiveVisioPanel } from '@/components/session/LiveVisioPanel';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
-import { promoLayout } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
+import { promoLayout, definirSessionInvitePromo } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
+import { droitChatLive, inviteLiveIdentifie, messageChatSortant, accepterMessageChatRecu } from '@/lib/liveChat'; // 💬 05/10 : chat de l'invité identifié
 import { actionPromoParticipant } from '@/lib/livePromo'; // 📣 05/10 : « Faire ma promo » aussi pour l'invité sans compte
 import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
 import { appliquerPreferencesLive, memoriserDroitsInvites, appliquerPreferencesPromo } from '@/lib/preferencesLiveApi'; // ⚙️ 01/10 : réglages du coach d'un Live à l'autre
@@ -110,7 +111,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest, terminerLiveServeur, liveEstTermine, enregistrerContactInvite } from '@/lib/paymentApi';
 import { BRAND_ID } from '@/config/brand';
-import { libelleRejoindre, validerContactInvite, avatarPourPresence, TEXTE_INFO_CONTACT, effacerPiiInvite, liveGuestMoi, liveGuestRejoindre, liveGuestContinuer, liveGuestModifier, liveGuestOublier, type AccesInvite, type VueInvite } from '@/lib/inviteLive';
+import { libelleRejoindre, validerContactInvite, avatarPourPresence, TEXTE_INFO_CONTACT, effacerPiiInvite, liveGuestMoi, liveGuestRejoindre, liveGuestContinuer, liveGuestModifier, liveGuestOublier, creerFournisseurJetonInvite, type AccesInvite, type VueInvite } from '@/lib/inviteLive';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
@@ -892,6 +893,12 @@ export const SessionPage: React.FC = () => {
   //    (cookie HttpOnly posé par afroboost.com/api). boosttribe.pro, hôtes et comptes : inchangés.
   const parcoursInvite = BRAND_ID === 'afroboost' && !isHost && !user?.id;
   const [bonRetour, setBonRetour] = useState<VueInvite | null>(null);
+  // 🪪 05/10 — INVITÉ IDENTIFIÉ (pseudo + e-mail / WhatsApp donnés à l'entrée, session invité serveur) :
+  //    ce n'est pas un anonyme. Il peut discuter (le chat n'exige jamais un compte plateforme) et
+  //    « Faire la promo » avec SA session invité (aucune 2e connexion, aucune 2e saisie).
+  const inviteIdentifie = inviteLiveIdentifie({ marque: BRAND_ID, estHote: isHost, connecte: !!user?.id,
+    pseudo: nickname, ecranIdentiteOuvert: showNicknameModal || !!bonRetour });
+  const peutChatter = droitChatLive({ estPro: isPro, inviteIdentifie });
   const [modeModification, setModeModification] = useState(false);
   const [showAvatarCrop, setShowAvatarCrop] = useState(false);
   const pendingAfterAvatarRef = useRef<(() => void) | null>(null);
@@ -1544,7 +1551,15 @@ export const SessionPage: React.FC = () => {
   //    partout — un super-admin participant perdait « Faire ma promo » quand host_id était illisible).
   const [estHoteServeur, setEstHoteServeur] = useState<boolean | null>(null);
   const estProprietaireSession = estHoteServeur ?? (sessionHostId ? (!!user?.id && user.id === sessionHostId) : isHost);
-  const livePromo = useLivePromo(sessionId || undefined, liveMode, estProprietaireSession, user?.id);
+  // 05/10 : l'invité identifié relit aussi « Mes demandes » (avec SA session invité, jamais un e-mail du front).
+  const livePromo = useLivePromo(sessionId || undefined, liveMode, estProprietaireSession, user?.id || (inviteIdentifie ? 'invite' : undefined));
+  // 📣 05/10 — Promo de l'invité identifié : on RÉUTILISE sa session invité (cookie HttpOnly « Bon retour »),
+  //    convertie en jeton court par afroboost.com/api. Aucune 2e connexion, aucune 2e saisie.
+  useEffect(() => {
+    if (!inviteIdentifie || !sessionId) { definirSessionInvitePromo(null); return undefined; }
+    definirSessionInvitePromo(creerFournisseurJetonInvite(sessionId));
+    return () => definirSessionInvitePromo(null);
+  }, [inviteIdentifie, sessionId]);
   const estHoteConfig = livePromo.config?.est_hote;
   // 🎓 01/10 — Prompteur, Enregistrement pendant le Live : outils d'un Live hébergé par un ESPACE COACH.
   //    Décision SERVEUR (hôte de CETTE session + Espace Coach actif), jamais un rôle global ni une
@@ -2440,8 +2455,8 @@ export const SessionPage: React.FC = () => {
   // 🙈 « Masquer les commentaires » (menu ⋮ du Live) : cache le chat posé sur la vidéo, sans quitter le Live.
   const [commentairesMasques, setCommentairesMasques] = useState(false);
   // Refs lues par les handlers Realtime (souscrits une seule fois) pour décider de l'incrément "non lu".
-  const isProRef = useRef(isPro);
-  useEffect(() => { isProRef.current = isPro; }, [isPro]);
+  const peutChatterRef = useRef(peutChatter);   // 05/10 : même règle à la réception qu'à l'envoi
+  useEffect(() => { peutChatterRef.current = peutChatter; }, [peutChatter]);
   const chatOpenRef = useRef(chatOpen);
   useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
   // ❤️ Réactions Live : le canal (souscrit une fois) passe par ces refs, remplies plus bas
@@ -2770,10 +2785,9 @@ export const SessionPage: React.FC = () => {
       })
       // 💬 CHAT GROUPÉ (Pro) — message visible par tout le groupe
       .on('broadcast', { event: 'CHAT_GROUP' }, (payload) => {
-        if (!isProRef.current || !payload.payload) return;
         const m = payload.payload as ChatMessage;
-        if (!m.id || !m.text) return;
-        if (m.userId === myUserIdRef.current) return; // self-echo (déjà ajouté localement)
+        // 05/10 : règle unique (lib/liveChat) — droit au chat (Pro OU invité identifié), message complet, pas l'écho de soi.
+        if (!accepterMessageChatRecu({ peutChatter: peutChatterRef.current, monId: myUserIdRef.current, message: m })) return;
         setGroupMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m]));
         if (!chatOpenRef.current || chatViewRef.current !== 'group') {
           setChatUnread((prev) => ({ ...prev, group: (prev.group || 0) + 1 }));
@@ -2781,7 +2795,7 @@ export const SessionPage: React.FC = () => {
       })
       // 💬 CHAT PRIVÉ (Pro) — 1-à-1, visible uniquement par expéditeur + destinataire
       .on('broadcast', { event: 'CHAT_PRIVATE' }, (payload) => {
-        if (!isProRef.current || !payload.payload) return;
+        if (!peutChatterRef.current || !payload.payload) return;
         const m = payload.payload as ChatMessage;
         if (!m.id || !m.text || !m.fromUserId || !m.toUserId) return;
         if (m.toUserId !== myUserIdRef.current) return; // destiné à quelqu'un d'autre → ignorer
@@ -3539,19 +3553,16 @@ export const SessionPage: React.FC = () => {
     [socket.userId],
   );
   const handleSendGroupMessage = useCallback((text: string, opts?: { question?: boolean }) => {
-    if (!isPro || !text.trim()) return;
-    const m: ChatMessage = {
-      id: makeChatId(), userId: socket.userId, name: nickname || 'Invité',
-      photoUrl: myAvatar || null, text: text.trim(), ts: Date.now(),
-      // ❓ Signal CLAIR de question (bouton « ? » du champ commentaire) : seul ce drapeau
-      //    fait entrer un message dans la file Questions du prompteur de l'hôte.
-      ...(opts?.question ? { question: true } : {}),
-    };
+    // 05/10 : avant, `if (!isPro) return` — l'invité identifié (jamais Pro) n'envoyait RIEN, en silence.
+    // ❓ `question` : signal CLAIR (bouton « ? ») — seul ce drapeau (ou une vraie question) entre dans la file du prompteur.
+    const m = messageChatSortant({ peutChatter, userId: socket.userId, pseudo: nickname, photoUrl: myAvatar || null,
+      texte: text, question: !!opts?.question, ts: Date.now(), id: makeChatId() }) as ChatMessage | null;
+    if (!m) return;
     setGroupMessages((prev) => [...prev, m]);
     sendPlaybackEvent('CHAT_GROUP', m);
-  }, [isPro, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
+  }, [peutChatter, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
   const handleSendPrivateMessage = useCallback((partnerId: string, text: string) => {
-    if (!isPro || !partnerId || !text.trim()) return;
+    if (!peutChatter || !partnerId || !text.trim()) return;
     const m: ChatMessage = {
       id: makeChatId(), userId: socket.userId, name: nickname || 'Invité',
       photoUrl: myAvatar || null, text: text.trim(), ts: Date.now(),
@@ -3559,7 +3570,7 @@ export const SessionPage: React.FC = () => {
     };
     setPrivateThreads((prev) => ({ ...prev, [partnerId]: [...(prev[partnerId] || []), m] }));
     sendPlaybackEvent('CHAT_PRIVATE', m);
-  }, [isPro, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
+  }, [peutChatter, makeChatId, socket.userId, nickname, myAvatar, sendPlaybackEvent]);
 
   // ❤️ RÉACTIONS LIVE — animation locale immédiate, réseau agrégé (lib/liveReactions).
   const reactions = useLiveReactions({ userId: socket.userId, envoyer: sendPlaybackEvent, estHote: isHost });
@@ -4679,7 +4690,7 @@ export const SessionPage: React.FC = () => {
     if (!promoActifId) return;
     promoLayout(promoActifId, l).then(() => promoRafraichirEtSignaler()).catch((e) => showToast((e as Error).message, 'warning'));
   };
-  const promoParticipantAction = actionPromoParticipant({ estProprietaire: estProprietaireSession, connecte: !!user, config: livePromo.config });
+  const promoParticipantAction = actionPromoParticipant({ estProprietaire: estProprietaireSession, connecte: !!user, inviteIdentifie, config: livePromo.config });
   const livePromoNode = ((estProprietaireSession && promoAtraiter > 0 && !livePromo.active) || promoParticipantOuvert || promoHoteOuvert || promoConnexionOuverte) ? (
     <>
       {livePromo.active ? null : (estProprietaireSession && promoAtraiter > 0) ? (
@@ -4701,6 +4712,7 @@ export const SessionPage: React.FC = () => {
       {promoParticipantOuvert && sessionId && livePromo.config ? (
         <LivePromoParticipantModal sessionId={sessionId} offres={livePromo.config.offres} devise={livePromo.config.currency}
           mesDemandes={livePromo.mesDemandes} onFermer={() => setPromoParticipantOuvert(false)} onEnvoye={promoRafraichirEtSignaler}
+          onSessionExpiree={() => { setPromoParticipantOuvert(false); setShowNicknameModal(true); }}
           paiementReel={livePromo.config.paiement_reel !== false} />
       ) : null}
       {promoHoteOuvert ? (
@@ -4725,7 +4737,7 @@ export const SessionPage: React.FC = () => {
   const liveCommentInputNode = chatLiveAutorise ? (
     <LiveCommentInput
       onEnvoyer={(texte, { question }) => { handleSendGroupMessage(texte, { question }); return true; }}
-      desactive={!isPro}
+      desactive={!peutChatter}
       motifDesactive="Les commentaires sont réservés aux membres Pro"
       peutPoserQuestion={!canShare}
       slotDroite={liveReactionButtonNode}
@@ -4942,6 +4954,7 @@ export const SessionPage: React.FC = () => {
       onToggle={toggleChat}
       onClose={() => setChatOpen(false)}
       isPro={isPro}
+      chatAutorise={peutChatter}
       gradient={theme.colors.gradient.primary}
       unreadTotal={chatUnreadTotal}
       meUserId={socket.userId}

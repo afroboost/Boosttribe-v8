@@ -124,3 +124,35 @@ export async function liveGuestModifier(c: { session_code?: string | null; pseud
 export async function liveGuestOublier(): Promise<void> {
   try { await fetch(`${CHEMIN_LIVE_GUEST}/oublier`, { method: 'POST', credentials: 'same-origin' }); } catch { /* réseau */ }
 }
+
+/**
+ * 05/10 — « Faire la promo » d'un INVITÉ IDENTIFIÉ : on RÉUTILISE sa session invité (cookie HttpOnly
+ * `afb_live_guest` posé à l'entrée du Live, « Bon retour »). afroboost.com/api/live-guest/jeton la
+ * convertit en un jeton COURT (10 min) que le serveur du Live vérifie (secret partagé). Le navigateur
+ * n'envoie QUE le code du Live : jamais un e-mail, un WhatsApp ou un pseudo (l'identité vient du cookie).
+ * Mis en cache jusqu'à 1 min de son expiration. `null` = session absente / expirée / révoquée (401) :
+ * c'est le SEUL cas où l'écran redemande l'identité.
+ */
+type FetchMinimal = (url: string, init: RequestInit) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+export function creerFournisseurJetonInvite(sessionCode: string | null | undefined,
+  f: FetchMinimal | null = null, maintenant: () => number = Date.now): () => Promise<string | null> {
+  let cache: { jeton: string; finMs: number } | null = null;
+  return async () => {
+    if (!sessionCode) return null;
+    if (cache && maintenant() < cache.finMs) return cache.jeton;
+    cache = null;
+    try {
+      const appel: FetchMinimal = f || ((u, i) => fetch(u, i));
+      const res = await appel(`${CHEMIN_LIVE_GUEST}/jeton`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_code: sessionCode }),
+      });
+      if (!res.ok) return null;
+      const r = (await res.json()) as { jeton?: unknown; expire_dans?: unknown };
+      if (typeof r?.jeton !== 'string' || !r.jeton) return null;
+      const duree = typeof r.expire_dans === 'number' && r.expire_dans > 0 ? r.expire_dans : 600;
+      cache = { jeton: r.jeton, finMs: maintenant() + Math.max(0, duree - 60) * 1000 };
+      return r.jeton;
+    } catch { return null; }
+  };
+}

@@ -3063,23 +3063,54 @@ INVITE_ORIGINES_CONTACT = tuple(o.strip().rstrip("/") for o in os.environ.get(
 INVITE_DEBIT_MAX = 8                 # requêtes par IP et par fenêtre
 INVITE_DEBIT_FENETRE_S = 600
 INVITE_PHOTO_MAX = 3 * 1024 * 1024   # la photo arrive déjà recadrée (512×512 JPEG)
+INVITE_SESSION_MAX = 300             # photos / contacts par session et par 24 h, toutes IP confondues
+INVITE_SESSION_FENETRE_S = 24 * 3600
 _invite_debit: Dict[str, List[float]] = {}
 _INVITE_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
 _INVITE_TEL_RE = re.compile(r"^\+?\d{8,15}$")    # même règle que la saisie Afroboost (V570)
 
 
 def _invite_ip(request: Request) -> str:
-    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    return fwd or (request.client.host if getattr(request, "client", None) else "inconnu")
+    """Revue de sécurité (05/10) : la 1re valeur de X-Forwarded-For est écrite par le CLIENT
+    (falsifiable à volonté). On prend la DERNIÈRE, ajoutée par notre propre proxy, sinon le pair TCP."""
+    vals = [v.strip() for v in (request.headers.get("x-forwarded-for") or "").split(",") if v.strip()]
+    return vals[-1] if vals else (request.client.host if getattr(request, "client", None) else "inconnu")
 
 
-def _invite_limiter(request: Request) -> None:
-    ip, maint = _invite_ip(request), time.time()
-    vus = [t for t in _invite_debit.get(ip, []) if maint - t < INVITE_DEBIT_FENETRE_S]
-    if len(vus) >= INVITE_DEBIT_MAX:
+def _invite_compter(cle: str, plafond: int, fenetre_s: int) -> None:
+    maint = time.time()
+    vus = [t for t in _invite_debit.get(cle, []) if maint - t < fenetre_s]
+    if len(vus) >= plafond:
         raise HTTPException(status_code=429, detail="Trop de tentatives, réessaie dans quelques minutes")
     vus.append(maint)
-    _invite_debit[ip] = vus
+    _invite_debit[cle] = vus
+
+
+def _invite_limiter(request: Request, session_id: str = "", usage: str = "") -> None:
+    """Par IP (non falsifiable) ET par session, toutes IP confondues : même un client qui
+    change d'adresse ne peut pas remplir le stockage ou les Contacts d'une session."""
+    _invite_compter("ip:" + _invite_ip(request), INVITE_DEBIT_MAX, INVITE_DEBIT_FENETRE_S)
+    if session_id:
+        _invite_compter(f"session:{usage}:{session_id}", INVITE_SESSION_MAX, INVITE_SESSION_FENETRE_S)
+
+
+def _invite_type_reel(data: bytes) -> Optional[str]:
+    """Type déduit du CONTENU (signature), jamais de l'en-tête envoyé par le client."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+async def _invite_deposer(chemin: str, ct: str, data: bytes) -> int:
+    async with httpx.AsyncClient(timeout=30) as client:
+        up = await client.post(f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{chemin}",
+                               headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+                                        "Content-Type": ct, "x-upsert": "false"}, content=data)
+    return up.status_code
 
 
 def _invite_photo_autorisee(url: Optional[str]) -> str:
@@ -3107,25 +3138,24 @@ async def live_invite_photo(request: Request, session_id: str = Form(...), file:
     """Photo de profil d'un invité (anonyme ou non) : JPEG / PNG / WebP, déjà recadrée."""
     if not session_id or not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    _invite_limiter(request)
     if not await get_session_authz(session_id):
         raise HTTPException(status_code=404, detail="Session introuvable")
+    _invite_limiter(request, session_id, "photo")
     types = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
-    ct = (file.content_type or "").split(";")[0].strip().lower()
-    if ct not in types:
-        raise HTTPException(status_code=400, detail="Format non pris en charge : JPEG, PNG ou WebP")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Fichier vide")
     if len(data) > INVITE_PHOTO_MAX:
         raise HTTPException(status_code=400, detail="Photo trop lourde")
+    # Revue de sécurité (05/10) : le type vient du CONTENU, jamais de l'en-tête du client — aucun
+    # fichier arbitraire (HTML, PDF…) ne peut être servi depuis le bucket public sous un type image.
+    ct = _invite_type_reel(data)
+    if ct not in types:
+        raise HTTPException(status_code=400, detail="Format non pris en charge : JPEG, PNG ou WebP")
     chemin = f"invites/{session_id}/{uuid.uuid4().hex}.{types[ct]}"
-    async with httpx.AsyncClient(timeout=30) as client:
-        up = await client.post(f"{SUPABASE_URL}/storage/v1/object/{SESSION_MEDIA_BUCKET}/{chemin}",
-                               headers={"apikey": SUPABASE_SERVICE_ROLE_KEY, "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-                                        "Content-Type": ct, "x-upsert": "false"}, content=data)
-    if up.status_code not in (200, 201):
-        logger.error("[INVITE] photo non déposée : HTTP %s", up.status_code)
+    statut = await _invite_deposer(chemin, ct, data)
+    if statut not in (200, 201):
+        logger.error("[INVITE] photo non déposée : HTTP %s", statut)
         raise HTTPException(status_code=502, detail="Envoi de la photo impossible")
     return {"url": f"{SUPABASE_URL}/storage/v1/object/public/{SESSION_MEDIA_BUCKET}/{chemin}"}
 
@@ -3133,14 +3163,17 @@ async def live_invite_photo(request: Request, session_id: str = Form(...), file:
 @app.post("/live/invite-contact")
 async def live_invite_contact(body: InviteContactBody, request: Request):
     """Coordonnées d'un invité → Contacts Afroboost (relais signé, jamais bloquant pour le Live)."""
+    # L'origine sert à ne PAS collecter sur boosttribe.pro ; ce n'est PAS une authentification
+    # (falsifiable hors navigateur). Les vraies barrières : plafonds IP + session ici, et côté
+    # Afroboost un jeton signé + un live Afroboost démarré il y a moins de 24 h.
     origine = (request.headers.get("origin") or "").rstrip("/")
     if origine not in INVITE_ORIGINES_CONTACT:
         raise HTTPException(status_code=403, detail="Collecte réservée aux Lives Afroboost")
     if not body.session_id or not SESSION_ID_RE.match(body.session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
-    _invite_limiter(request)
     if not await get_session_authz(body.session_id):
         raise HTTPException(status_code=404, detail="Session introuvable")
+    _invite_limiter(request, body.session_id, "contact")
     email = str(body.email or "").strip().lower()
     email = email if _INVITE_EMAIL_RE.match(email) else ""
     tel = str(body.whatsapp or "").strip()

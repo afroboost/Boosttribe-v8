@@ -205,3 +205,83 @@ def test_secret_absent_aucun_relais(m, relais, monkeypatch):
     monkeypatch.setattr(m, "AFRO_BT_SHARED_SECRET", "")
     r = lancer(m.live_invite_contact(_contact(m), Req()))
     assert r["ok"] is False and relais == []
+
+
+# ═══ Revue de sécurité du 05/10 (commit 1c7a203, avant déploiement) ═══
+
+class ReqXff(Req):
+    def __init__(self, xff, pair="10.0.0.7"):
+        super().__init__()
+        self.headers["x-forwarded-for"] = xff
+        self.client = type("C", (), {"host": pair})()
+
+
+def test_securite_xff_falsifie_ne_contourne_pas_la_limite(m, relais):
+    """La 1re valeur de X-Forwarded-For est écrite par le CLIENT : la changer ne doit rien changer."""
+    for i in range(m.INVITE_DEBIT_MAX):
+        lancer(m.live_invite_contact(_contact(m), ReqXff(f"6.6.6.{i}, 203.0.113.9")))
+    with pytest.raises(HTTPException) as e:
+        lancer(m.live_invite_contact(_contact(m), ReqXff("7.7.7.7, 203.0.113.9")))
+    assert e.value.status_code == 429
+
+
+def test_securite_plafond_par_session_quelle_que_soit_l_ip(m, relais, monkeypatch):
+    monkeypatch.setattr(m, "INVITE_SESSION_MAX", 3)
+    for i in range(3):
+        lancer(m.live_invite_contact(_contact(m), Req(ip=f"8.8.8.{i}")))
+    with pytest.raises(HTTPException) as e:
+        lancer(m.live_invite_contact(_contact(m), Req(ip="8.8.8.99")))
+    assert e.value.status_code == 429
+
+
+class Fichier:
+    def __init__(self, ct, data):
+        self.content_type, self._d = ct, data
+
+    async def read(self):
+        return self._d
+
+
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 64
+
+
+@pytest.fixture()
+def depot(m, monkeypatch):
+    m._base.playlists.append({"session_id": "LIVE1-AAAA", "host_id": HOTE})
+    deposes = []
+
+    async def deposer(chemin, ct, data):
+        deposes.append((chemin, ct, len(data)))
+        return 200
+    monkeypatch.setattr(m, "_invite_deposer", deposer)
+    m._invite_debit.clear()
+    return deposes
+
+
+@pytest.mark.parametrize("ct, data, ext", [("image/jpeg", JPEG, "jpg"), ("image/png", PNG, "png"), ("image/webp", WEBP, "webp")])
+def test_securite_photo_vraie_image_acceptee(m, depot, ct, data, ext):
+    r = lancer(m.live_invite_photo(Req(), "LIVE1-AAAA", Fichier(ct, data)))
+    assert r["url"].endswith("." + ext) and depot[0][1] == ct
+
+
+@pytest.mark.parametrize("data", [b"<html><script>alert(1)</script></html>", b"%PDF-1.7", b"GIF89a....", b""])
+def test_securite_photo_contenu_non_image_refuse_meme_si_le_type_ment(m, depot, data):
+    with pytest.raises(HTTPException) as e:
+        lancer(m.live_invite_photo(Req(), "LIVE1-AAAA", Fichier("image/jpeg", data)))
+    assert e.value.status_code == 400 and depot == []
+
+
+def test_securite_type_deduit_du_contenu_pas_de_l_en_tete(m, depot):
+    lancer(m.live_invite_photo(Req(), "LIVE1-AAAA", Fichier("image/jpeg", PNG)))
+    assert depot[0][1] == "image/png" and depot[0][0].endswith(".png")
+
+
+def test_securite_plafond_photos_par_session(m, depot, monkeypatch):
+    monkeypatch.setattr(m, "INVITE_SESSION_MAX", 2)
+    for i in range(2):
+        lancer(m.live_invite_photo(Req(ip=f"5.5.5.{i}"), "LIVE1-AAAA", Fichier("image/jpeg", JPEG)))
+    with pytest.raises(HTTPException) as e:
+        lancer(m.live_invite_photo(Req(ip="5.5.5.9"), "LIVE1-AAAA", Fichier("image/jpeg", JPEG)))
+    assert e.value.status_code == 429

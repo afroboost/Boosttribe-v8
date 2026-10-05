@@ -2051,6 +2051,9 @@ export const SessionPage: React.FC = () => {
       //   navigateur (`access_mode` vide) ne se déclenchait jamais : une ligne neuve porte déjà une
       //   valeur → le coach retrouvait « Avec crédits » à chaque nouveau Live.
       const p = await appliquerPreferencesLive(sessionId).catch(() => null);
+      // Refus (403 : l'hôte n'est pas encore ENREGISTRÉ sur ce Live) ou réseau : on retentera quand
+      //   la propriété confirmée par le serveur changera (dépendance primitive → aucune boucle).
+      if (p === null) { prefsAppliqueesRef.current = ''; return; }
       if (p?.applique) {
         if (p.acces === 'guest' || p.acces === 'account') { setAccessMode(p.acces); accesJamaisRegleRef.current = false; }
         await refreshAccess();

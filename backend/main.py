@@ -4841,14 +4841,40 @@ async def _playlist_ecrire(session_id: str, patch: Dict[str, Any]) -> int:
 PREFS_SESSIONS_MAX = 30
 
 
+def _prefs_assainir(p: Any) -> Dict[str, Any]:
+    """05/10 (revue sécu) — Le stockage n'est jamais cru sur parole : LISTE BLANCHE des clés et des
+    valeurs. Une clé inconnue ou une valeur hors règle disparaît (elle n'est ni appliquée à un Live,
+    ni recopiée dans `profiles` / `app_metadata` à la prochaine écriture)."""
+    if not isinstance(p, dict):
+        return {}
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)  # noqa: E731
+    out: Dict[str, Any] = {}
+    if p.get("entree") in ("open", "private", "paid"):
+        out["entree"] = p["entree"]
+        paye = p["entree"] == "paid"
+        out["prix_chf"] = round(float(p["prix_chf"]), 2) if paye and num(p.get("prix_chf")) and p["prix_chf"] > 0 else None
+        out["capacite"] = int(p["capacite"]) if paye and num(p.get("capacite")) and int(p["capacite"]) > 0 else None
+    if p.get("acces") in ("guest", "account"):
+        out["acces"] = p["acces"]
+    if isinstance(p.get("promo"), dict):
+        try:
+            out["promo"] = {"enabled": p["promo"].get("enabled") is True, "offres": _lp.valider_offres(p["promo"].get("offres") or [])}
+        except Exception:  # noqa: BLE001 — offres invalides : promo ignorée
+            pass
+    if isinstance(p.get("sessions_reglees"), list):
+        out["sessions_reglees"] = [x for x in p["sessions_reglees"] if isinstance(x, str) and SESSION_ID_RE.match(x)][:PREFS_SESSIONS_MAX]
+    if num(p.get("maj")):
+        out["maj"] = float(p["maj"])
+    return out
+
+
 async def _prefs_live_profil(uid: str) -> Dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
                                  params={"id": f"eq.{uid}", "select": "live_preferences"})
         rows = r.json() if r.status_code == 200 else []
-        v = rows[0].get("live_preferences") if rows else None
-        return v if isinstance(v, dict) else {}
+        return _prefs_assainir(rows[0].get("live_preferences") if rows else None)
     except Exception:  # noqa: BLE001
         return {}
 
@@ -4857,15 +4883,14 @@ async def _prefs_live_compte(uid: str) -> Dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{uid}", headers=_service_headers())
-        v = ((r.json() or {}).get("app_metadata") or {}).get("live_preferences") if r.status_code == 200 else None
-        return v if isinstance(v, dict) else {}
+        return _prefs_assainir(((r.json() or {}).get("app_metadata") or {}).get("live_preferences") if r.status_code == 200 else None)
     except Exception:  # noqa: BLE001
         return {}
 
 
 async def _prefs_live_lire(uid: str) -> Dict[str, Any]:
     a, b = await _prefs_live_profil(uid), await _prefs_live_compte(uid)
-    return a if float(a.get("maj") or 0) >= float(b.get("maj") or 0) and a else (b or a)
+    return a if (a.get("maj") or 0) >= (b.get("maj") or 0) and a else (b or a)
 
 
 async def _prefs_live_ecrire(uid: str, prefs: Dict[str, Any]) -> bool:
@@ -5038,6 +5063,10 @@ async def coach_preferences_live_maj(body: PreferencesLiveBody, authorization: O
     except _lp.RegleRefusee as e:
         raise _lp_refus(e)
     sid = body.session_id if body.session_id and SESSION_ID_RE.match(body.session_id) else None
+    if sid:                                  # 05/10 (revue sécu) : on ne marque QUE ses propres Lives
+        row = await get_session_authz(sid)
+        if not row or row.get("host_id") != user.get("id"):
+            sid = None
     return {"preferences": await _prefs_live_fusionner(user.get("id"), {"acces": body.acces}, session_id=sid)}
 
 
@@ -5051,7 +5080,9 @@ async def coach_preferences_live_appliquer(body: PreferencesAppliquerBody, autho
     if not SESSION_ID_RE.match(body.session_id or ""):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     row = await get_session_authz(body.session_id)
-    if row and row.get("host_id") and row.get("host_id") != uid:
+    # 05/10 (revue sécu) : SEUL l'hôte ENREGISTRÉ du Live. Un Live sans hôte ou inexistant n'est jamais
+    #   « pris » ni créé ici (l'ancienne version posait host_id = appelant : appropriation d'un Live).
+    if not row or not row.get("host_id") or row.get("host_id") != uid:
         raise HTTPException(status_code=403, detail="Seul l'hôte règle son Live")
     prefs = await _prefs_live_lire(uid)
     if body.session_id in (prefs.get("sessions_reglees") or []):
@@ -5061,13 +5092,15 @@ async def coach_preferences_live_appliquer(body: PreferencesAppliquerBody, autho
     if entree in ("open", "private"):
         patch.update({"mode": entree, "price_chf": None, "capacity": None})
     elif entree == "paid" and prefs.get("prix_chf") and await get_coach_payment_type(uid) == "commission":
-        patch.update({"mode": "paid", "price_chf": prefs.get("prix_chf"), "capacity": prefs.get("capacite")})
+        # Mêmes limites que /session/configure : un prix mémorisé n'en contourne aucune.
+        bornes = await get_commission_settings()
+        pmin, pmax = float(bornes.get("price_min_chf") or 0), float(bornes.get("price_max_chf") or 1e9)
+        if pmin <= float(prefs["prix_chf"]) <= pmax:
+            patch.update({"mode": "paid", "price_chf": prefs["prix_chf"], "capacity": prefs.get("capacite")})
     if prefs.get("acces") in ("guest", "account"):
         patch["access_mode"] = prefs["acces"]
     if not patch:
         return {"applique": False, "raison": "aucune_preference"}
-    if not (row and row.get("host_id")):
-        patch["host_id"] = uid
     if await _playlist_ecrire(body.session_id, patch) <= 0:
         raise HTTPException(status_code=500, detail="Préférences non appliquées")
     await _prefs_live_fusionner(uid, {}, session_id=body.session_id)

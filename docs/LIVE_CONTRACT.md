@@ -61,6 +61,11 @@ Légende — **C** : comportemental (le code tourne : clic, mesure, appel réel)
 | Sélecteur / changement de caméra | entrées hôte cliquées ; 2 caméras : même piste publiée (même trackSid), nouvelle caméra à SA résolution, débits recalculés (8 → 5 Mbit/s en 4K → 1440p), spectateur jamais noir | harnais + banc LiveKit (C) |
 | Beauté OFF | aucun processeur : piste brute, pleine résolution | harnais (C, vrai hook + vrai bouton) |
 | Beauté ON | sortie = résolution de la source (1080p, 1440p, 4K ; jamais 720×406), couleur conservée, non noire ; publiée | harnais + banc LiveKit (C) |
+| Look vidéo — sélection | « Look vidéo » : hôte seul (menu ⋮), jamais chez un participant ; 6 looks (Original, Noir & blanc, Cinéma chaud, Cinéma froid, Teal & Orange, Contraste doux) cliqués | harnais (C) |
+| Look vidéo — rendu | le VRAI shader sur une mire : Original = identité (écart 0), Noir & blanc = R=G=B, les autres = formule de référence `appliquerLook` à ≤ 2/255 | harnais (C, pixel par pixel) + `liveContract` (C) |
+| Look vidéo — publié et reçu | l'hôte clique le vrai sélecteur : Noir & blanc **reçu** R=G=B par le spectateur ; Teal & Orange reçu en couleur ; Original + beauté OFF = processeur retiré (piste brute) | banc LiveKit (C) |
+| Look vidéo — pleine résolution, fluidité | chaque look en 1080p / 1440p / 4K, beauté OFF et ON : sortie = résolution de la source (jamais de palier), ≥ 90 % des i/s de la source et ≥ 15 i/s ; coût GPU 4K synchronisé ≤ 33 ms ; 4K **publiée** avec look | harnais + banc LiveKit (C) |
+| Look vidéo — sans coupure | changer de look = même piste (même trackSid), aucune image noire (chaque image mesurée) ; survit à beauté ON→OFF et au changement de caméra | harnais + banc LiveKit (C) |
 | Simulcast | 3 couches q/h/f ; couche 4K à 8 Mbit/s (aucun plafond) | banc LiveKit (C) |
 | adaptiveStream | vignette → petite couche reçue ; plein écran → couche haute | banc LiveKit (C) |
 | Dynacast | couches que personne ne regarde coupées chez l'hôte | banc LiveKit (C) |
@@ -74,6 +79,7 @@ Légende — **C** : comportemental (le code tourne : clic, mesure, appel réel)
 
 ## Architecture à connaître avant de toucher
 
-- **Pipeline vidéo publié** : caméra → `BeauteProcessor` (WebGL, `lib/beaute/rendu.ts`, pleine résolution) → piste LiveKit. Beauté coupée = **aucun** traitement (piste brute).
+- **Pipeline vidéo publié** : caméra → `BeauteProcessor` (WebGL, `lib/beaute/rendu.ts`) = embellissement **puis** look (`lib/looksVideo.ts`), une seule passe, pleine résolution → piste LiveKit. Original + beauté coupée = **aucun** traitement (piste brute). Look seul : toujours à la résolution de la source, aucun palier ; s'il ne suit pas → coupure vers la piste brute pleine résolution + avis visible. Les paliers 3840 → 1920 → 1280 ne concernent que l'embellissement, et sont désormais signalés à l'hôte (`palier`).
+- **Look vidéo** : réglage mémorisé sur l'appareil de l'hôte (`localStorage` `bt_look`, comme `bt_beaute`), pas encore dans `/coach/preferences-live`. Future LUT `.cube` : interface `Lut3D` / `ParametresLook.lut` documentée en tête de `lib/looksVideo.ts` (import non construit).
 - **Room** : `OPTIONS_ROOM_LIVE` (`lib/qualiteVideo.ts`) — la même constante sert au hook et au contrat. Changement de caméra : `restartTrack` puis `ajusterDebitsCouches`.
 - **Préférences du coach** (serveur) : `profiles.live_preferences` = emplacement principal, écriture **relue** ; si `profiles` refuse (colonne ou ligne absente), secours `app_metadata.live_preferences` (API admin, serveur seul). Lecture : le plus récent (`maj`) gagne. `sessions_reglees` = Lives réglés à la main (30 derniers), jamais écrasés. À l'ouverture d'un Live, l'hôte appelle `POST /coach/preferences-live/appliquer` : le **serveur** décide.

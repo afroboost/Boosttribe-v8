@@ -17,6 +17,11 @@ import { LiveChatOverlay } from '@/components/session/LiveChatOverlay';
 import { AccessModeSelector } from '@/components/session/AccessModeSelector';
 import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import BeauteToggle from '@/components/session/BeauteToggle';
+import LookVideoSelector from '@/components/session/LookVideoSelector';
+import { BeauteProcessor } from '@/lib/beaute/BeauteProcessor';
+import { creerRenduBeaute } from '@/lib/beaute/rendu';
+import { LOOKS, appliquerLook, parametresLook, type LookId } from '@/lib/looksVideo';
+import { parametresBeaute, type NiveauBeaute } from '@/lib/beauteLogic';
 import { MicrophoneControl } from '@/components/audio/MicrophoneControl';
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { useBeauteVisage, type UseBeauteVisageReturn } from '@/hooks/useBeauteVisage';
@@ -64,6 +69,7 @@ function menu(role: Role): void {
       onLeaveLive={note('quitter')}
       commentairesMasques={false} onToggleCommentaires={note('commentaires')}
       embellirNode={hote ? <span data-testid="beaute-toggle">Embellir</span> : undefined}
+      lookNode={hote ? <LookVideoSelector look="original" onChoisir={(l) => appels.push(`look:${l}`)} /> : undefined}
       onFaireMaPromo={action === 'ouvrir' ? note('promo:ouvrir') : action === 'connexion' ? note('promo:connexion') : undefined}
       promoHote={hote ? { enAttente: 0, onOuvrir: note('promo:hote') } : undefined}
     />
@@ -183,7 +189,10 @@ let beaute: UseBeauteVisageReturn | null = null;
 function BancBeaute({ piste }: { piste: LocalVideoTrack }) {
   const b = useBeauteVisage({ getCameraTrack: () => piste, cameraOn: true });
   beaute = b;
-  return <BeauteToggle beaute={b} compact />;
+  return (<div>
+    <BeauteToggle beaute={b} compact />
+    <LookVideoSelector look={b.look} onChoisir={b.setLook} avis={b.avisLook} palier={b.palier} />
+  </div>);
 }
 async function cameraLocale(hauteur: number) {
   const { capture } = optionsCameraLive({ mobile: false, hauteurMax: hauteur });
@@ -191,7 +200,7 @@ async function cameraLocale(hauteur: number) {
 }
 /** OFF puis ON puis OFF, à la hauteur demandée : ce que la piste PUBLIÉE contient à chaque étape. */
 async function pipelineBeaute(hauteur: number) {
-  try { localStorage.setItem('bt_beaute', 'off'); } catch { /* ignore */ }
+  try { localStorage.setItem('bt_beaute', 'off'); localStorage.removeItem('bt_look'); } catch { /* ignore */ }
   const piste = await cameraLocale(hauteur);
   monter(<BancBeaute piste={piste} />);
   await attendre(300);
@@ -223,7 +232,7 @@ async function hotePublier(o: { url: string; jeton: string; hauteur: number; bea
   await room.localParticipant.setCameraEnabled(true, cam.capture, cam.publication);
   const piste = room.localParticipant.getTrackPublication(Track.Source.Camera)!.track as LocalVideoTrack;
   if (o.beaute === 'moyen') {
-    try { localStorage.setItem('bt_beaute', 'moyen'); } catch { /* ignore */ }
+    try { localStorage.setItem('bt_beaute', 'moyen'); localStorage.removeItem('bt_look'); } catch { /* ignore */ }
     monter(<BancBeaute piste={piste} />);
     for (let i = 0; i < 60 && !(piste.getProcessor() && beaute?.actif); i++) await attendre(100);
   }
@@ -326,8 +335,160 @@ async function spectateurReconnexion() {
   return { ...(await spectateurMesurer(3000)), etat: room!.state };
 }
 
+/* ═══ 🎨 LOOKS VIDÉO ═══ */
+
+/** Le VRAI shader, pixel par pixel : une mire de couleurs passe par rendu.ts, sortie comparée à la
+ *  formule de référence (looksVideo.appliquerLook). Original = identité ; Noir & blanc = R=G=B. */
+function looksGpu() {
+  const W = 192, H = 108;
+  const mire = document.createElement('canvas'); mire.width = W; mire.height = H;
+  const m = mire.getContext('2d', { willReadFrequently: true })!;
+  let graine = 7; const alea = () => { graine = (graine * 16807) % 2147483647; return graine / 2147483647; };
+  for (let y = 0; y < H; y += 12) for (let x = 0; x < W; x += 12) {
+    m.fillStyle = `rgb(${Math.floor(alea() * 256)},${Math.floor(alea() * 256)},${Math.floor(alea() * 256)})`; m.fillRect(x, y, 12, 12);
+  }
+  const src = m.getImageData(0, 0, W, H).data;
+  const lecture = document.createElement('canvas'); lecture.width = W; lecture.height = H;
+  const lx = lecture.getContext('2d', { willReadFrequently: true })!;
+  return LOOKS.map((id) => {
+    const r = creerRenduBeaute(W, H, parametresBeaute('off'), 0.3, parametresLook(id));
+    r.dessiner(mire);
+    lx.clearRect(0, 0, W, H); lx.drawImage(r.canvas, 0, 0);
+    const out = lx.getImageData(0, 0, W, H).data;
+    r.detruire();
+    let errMax = 0, errSomme = 0, rgbMax = 0, diffSource = 0; let n = 0;
+    // centre des carreaux (évite les bords interpolés)
+    for (let y = 6; y < H; y += 12) for (let x = 6; x < W; x += 12) {
+      const k = (y * W + x) * 4;
+      const ref = appliquerLook([src[k] / 255, src[k + 1] / 255, src[k + 2] / 255], parametresLook(id)).map((v) => v * 255);
+      for (let c = 0; c < 3; c++) { const e = Math.abs(out[k + c] - ref[c]); errMax = Math.max(errMax, e); errSomme += e; diffSource += Math.abs(out[k + c] - src[k + c]); }
+      rgbMax = Math.max(rgbMax, Math.abs(out[k] - out[k + 1]), Math.abs(out[k + 1] - out[k + 2]));
+      n += 3;
+    }
+    return { id, errMax: +errMax.toFixed(2), errMoy: +(errSomme / n).toFixed(2), rgbMax, diffSource: +(diffSource / n).toFixed(2) };
+  });
+}
+
+type Rafale = { images: number; ips: number; lumaMin: number; noires: number; ecartCouleur: number; luma: number; w: number; h: number };
+/** Regarde une piste comme un consommateur (aperçu / encodeur) : chaque image reçue est comptée et sa
+ *  luminance mesurée (64×36) — une seule image noire se voit. */
+async function rafale(v: HTMLVideoElement, ms: number): Promise<Rafale> {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 36;
+  const x = c.getContext('2d', { willReadFrequently: true })!;
+  let images = 0, lumaMin = 255, noires = 0, fini = false;
+  const vv = v as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number };
+  const t0 = performance.now();
+  await new Promise<void>((ok) => {
+    const cb = () => {
+      if (fini) return;
+      images++;
+      x.drawImage(v, 0, 0, 64, 36);
+      const d = x.getImageData(0, 0, 64, 36).data; let l = 0;
+      for (let i = 0; i < d.length; i += 4) l += (d[i] + d[i + 1] + d[i + 2]) / 3;
+      l /= d.length / 4; lumaMin = Math.min(lumaMin, l); if (l < 8) noires++;
+      if (performance.now() - t0 >= ms) { fini = true; ok(); return; }
+      vv.requestVideoFrameCallback(cb);
+    };
+    vv.requestVideoFrameCallback(cb);
+    setTimeout(() => { fini = true; ok(); }, ms + 2000);
+  });
+  const duree = performance.now() - t0;
+  const m = await mesurerElement(v);
+  return { images, ips: +((images * 1000) / duree).toFixed(1), lumaMin: +lumaMin.toFixed(1), noires, ecartCouleur: m.ecartCouleur, luma: m.luma, w: m.w, h: m.h };
+}
+function lecteur(piste: MediaStreamTrack): HTMLVideoElement {
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.srcObject = new MediaStream([piste]);
+  v.play().catch(() => {});
+  return v;
+}
+
+/** Caméra (1080p / 1440p / 4K) → processeur (beauté off|moyen) → chaque look à tour de rôle (setLook,
+ *  à chaud). Pour chacun : résolution sortie, images/s reçues par un consommateur, ms/image (mesure
+ *  du processeur), paliers / coupures, aucune image noire, même piste de sortie. */
+async function mesurerLooks(o: { hauteur: number; beaute: NiveauBeaute; fenetreMs?: number }) {
+  const fenetre = o.fenetreMs ?? 1200;
+  const s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: Math.round(o.hauteur * 16 / 9) }, height: { exact: o.hauteur }, frameRate: { ideal: 30 } } });
+  const source = s.getVideoTracks()[0];
+  const vs = lecteur(source);
+  const brut = await rafale(vs, fenetre);
+  const mesures: { fps: number; ms: number }[] = [];
+  const paliers: number[] = []; let coupure = false;
+  const p = new BeauteProcessor(o.beaute, { onMesure: (fps, ms) => mesures.push({ fps, ms }), onPalier: (c) => paliers.push(c), onCoupure: () => { coupure = true; } }, 'original');
+  await p.init({ kind: 'video', track: source } as unknown as Parameters<BeauteProcessor['init']>[0]);
+  const sortie = p.processedTrack!;
+  const idSortie = sortie.id;
+  const vo = lecteur(sortie);
+  await rafale(vo, 600);   // échauffement
+  const lignes = [];
+  for (const id of LOOKS) {
+    const debutMesures = mesures.length;
+    p.setLook(id);
+    // la bascule elle-même est regardée : aucune image noire, aucune coupure de flux
+    const r = await rafale(vo, fenetre);
+    const ms = mesures.slice(debutMesures);
+    const moy = (f: (x: { fps: number; ms: number }) => number) => (ms.length ? +(ms.reduce((a, x) => a + f(x), 0) / ms.length).toFixed(2) : null);
+    const ref = await mesurerElement(vs);
+    lignes.push({ look: id, entree: `${brut.w}×${brut.h}`, sortie: `${r.w}×${r.h}`, w: r.w, h: r.h, ipsSortie: r.ips, ipsTraitement: moy((x) => x.fps), msImage: moy((x) => x.ms),
+      noires: r.noires, lumaMin: r.lumaMin, ecartCouleur: r.ecartCouleur, luma: r.luma, ecartSource: ref.ecartCouleur, lumaSource: ref.luma,
+      memePiste: p.processedTrack?.id === idSortie && p.processedTrack?.readyState === 'live',
+      taille: p.tailleSortie });
+  }
+  vo.srcObject = null; vs.srcObject = null;
+  await p.destroy(); source.stop();
+  return { hauteur: o.hauteur, beaute: o.beaute, brut: { w: brut.w, h: brut.h, ips: brut.ips }, lignes, paliers, coupure };
+}
+
+/** Coût GPU RÉEL d'une image (téléversement + rendu + synchronisation readPixels), par résolution,
+ *  embellissement et look. Source = canvas 2D (téléversement CPU→GPU : PESSIMISTE par rapport à une
+ *  vidéo, souvent copiée GPU→GPU). */
+function chronoGpu(o: { largeur: number; hauteur: number; images?: number }) {
+  const n = o.images ?? 20;
+  const src = document.createElement('canvas'); src.width = o.largeur; src.height = o.hauteur;
+  const x = src.getContext('2d')!;
+  const grad = x.createLinearGradient(0, 0, o.largeur, o.hauteur);
+  grad.addColorStop(0, '#c84'); grad.addColorStop(0.5, '#3a7'); grad.addColorStop(1, '#259');
+  x.fillStyle = grad; x.fillRect(0, 0, o.largeur, o.hauteur);
+  const res: { beaute: NiveauBeaute; look: LookId; ms: number }[] = [];
+  for (const b of ['off', 'moyen'] as NiveauBeaute[]) for (const id of LOOKS) {
+    const r = creerRenduBeaute(o.largeur, o.hauteur, parametresBeaute(b), 0.3, parametresLook(id));
+    const gl = r.canvas.getContext('webgl') as WebGLRenderingContext;
+    const px = new Uint8Array(4);
+    let total = 0;
+    for (let i = 0; i < n + 3; i++) {
+      x.fillStyle = `rgb(${i * 7 % 255},0,0)`; x.fillRect(0, 0, 4, 4);   // source « nouvelle » à chaque image
+      const t0 = performance.now();
+      r.dessiner(src);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      if (i >= 3) total += performance.now() - t0;
+    }
+    r.detruire();
+    res.push({ beaute: b, look: id, ms: +(total / n).toFixed(2) });
+  }
+  return res;
+}
+
+/* Banc LiveKit : l'hôte clique le VRAI sélecteur (vrai hook) ; le spectateur regarde. */
+async function hoteLook(id: LookId) {
+  (document.querySelector(`[data-testid="look-${id}"]`) as HTMLButtonElement).click();
+  const piste = room!.localParticipant.getTrackPublication(Track.Source.Camera)!.track as LocalVideoTrack;
+  const voulu = id !== 'original' || (beaute?.niveau ?? 'off') !== 'off';
+  for (let i = 0; i < 60 && (!!piste.getProcessor() !== voulu || beaute?.look !== id); i++) await attendre(100);
+  await attendre(300);
+  return { look: beaute?.look, niveau: beaute?.niveau, stockage: localStorage.getItem('bt_look'), ...(await etatHote()) };
+}
+async function hoteBeaute(n: NiveauBeaute) {
+  (document.querySelector(`[data-testid="beaute-${n}"]`) as HTMLButtonElement).click();
+  for (let i = 0; i < 30 && beaute?.niveau !== n; i++) await attendre(100);
+  await attendre(800);
+  return { look: beaute?.look, niveau: beaute?.niveau, ...(await etatHote()) };
+}
+/** Le spectateur regarde pendant `ms` (images comptées, la plus sombre retenue). */
+async function spectateurRafale(ms: number) { return rafale(videoRecue!, ms); }
+
 (window as unknown as Record<string, unknown>).contrat = {
   menu, appels, promoParticipant, promoConnexion, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, qr,
-  micro, etatMicro, pipelineBeaute,
-  lk: { hotePublier, etatHote, hoteChangerCamera, hoteCamera, quitter, spectateurRejoindre, spectateurTaille, spectateurReconnexion },
+  micro, etatMicro, pipelineBeaute, looksGpu, mesurerLooks, chronoGpu,
+  lk: { hotePublier, etatHote, hoteChangerCamera, hoteCamera, quitter, spectateurRejoindre, spectateurTaille, spectateurReconnexion,
+    hoteLook, hoteBeaute, spectateurRafale },
 };

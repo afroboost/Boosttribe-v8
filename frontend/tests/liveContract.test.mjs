@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { actionPromoParticipant } from './.build/livePromo.mjs';
 import { optionsCameraLive, cibleCamera, OPTIONS_ROOM_LIVE } from './.build/qualiteVideo.mjs';
+import { LOOKS, LIBELLES_LOOK, parametresLook, appliquerLook, traitementNecessaire, lireLook, ecrireLook, estLook, echantillonnerLut } from './.build/looksVideo.mjs';
 import { coteMaxTraitement } from './.build/beauteLogic.mjs';
 import { TRAITEMENTS_PAROLE, GAINS_VOIX_DEFAUT } from './.build/voixLive.mjs';
 import { sequenceFinDuLive, sequenceDepartTemporaire, departDoitAnnoncer } from './.build/finDuLive.mjs';
@@ -82,6 +83,55 @@ test('Room du Live : adaptiveStream + dynacast, options UNIQUES partagées par l
   assert.deepEqual({ ...OPTIONS_ROOM_LIVE }, { adaptiveStream: true, dynacast: true });
   assert.match(STAGE, /new Room\(OPTIONS_ROOM_LIVE\)/);
   assert.match(STAGE, /ajusterDebitsCouches\(piste\)/);                      // changement de caméra : débits recalculés
+});
+
+/* ═══ Looks (LUT) ═══ */
+test('Looks : les 6 préréglages existent ; Original = identité exacte ; Noir & blanc = vrai monochrome', () => {
+  assert.deepEqual([...LOOKS], ['original', 'noir_blanc', 'cinema_chaud', 'cinema_froid', 'teal_orange', 'contraste_doux']);
+  for (const c of [[0.8, 0.3, 0.1], [0.1, 0.5, 0.9], [0, 0, 0], [1, 1, 1]]) {
+    assert.deepEqual(appliquerLook(c, parametresLook('original')).map((x) => +x.toFixed(6)), c);
+    const [r, g, b] = appliquerLook(c, parametresLook('noir_blanc'));
+    assert.ok(Math.abs(r - g) < 1e-9 && Math.abs(g - b) < 1e-9);
+  }
+  const chaud = appliquerLook([0.5, 0.5, 0.5], parametresLook('cinema_chaud'));
+  const froid = appliquerLook([0.5, 0.5, 0.5], parametresLook('cinema_froid'));
+  assert.ok(chaud[0] > chaud[2] && froid[2] > froid[0]);
+});
+
+test('Looks : libellés de l\'hôte ; Teal & Orange = ombres bleu-vert, lumières orangées', () => {
+  assert.deepEqual(Object.values(LIBELLES_LOOK), ['Original', 'Noir & blanc', 'Cinéma chaud', 'Cinéma froid', 'Teal & Orange', 'Contraste doux']);
+  const ombre = appliquerLook([0.15, 0.15, 0.15], parametresLook('teal_orange'));
+  const lumiere = appliquerLook([0.8, 0.8, 0.8], parametresLook('teal_orange'));
+  assert.ok(ombre[2] > ombre[0] && lumiere[0] > lumiere[2]);
+  const doux = appliquerLook([0.05, 0.05, 0.05], parametresLook('contraste_doux'));
+  assert.ok(doux[0] > 0.05, 'noirs relevés');
+});
+
+test('Looks : architecture LUT .cube prête — un look « cuit » en LUT 3D retombe sur la formule', () => {
+  const p = parametresLook('cinema_chaud');
+  const lut = echantillonnerLut(p, 5);
+  assert.equal(lut.donnees.length, 5 * 5 * 5 * 3);
+  // entrée (r=1, g=0, b=0.5) → index r + g·N + b·N² (R varie le plus vite, ordre .cube)
+  const k = (4 + 0 * 5 + 2 * 25) * 3;
+  const ref = appliquerLook([1, 0, 0.5], p);
+  for (let c = 0; c < 3; c++) assert.ok(Math.abs(lut.donnees[k + c] - ref[c]) < 1e-6);
+  const id = echantillonnerLut(parametresLook('original'), 3);
+  assert.ok(Math.abs(id.donnees[(2 + 1 * 3) * 3 + 1] - 0.5) < 1e-6, 'Original = LUT identité');
+});
+
+test('Looks : mémorisation sur l\'appareil (bt_look) ; Original efface le réglage', () => {
+  const m = new Map();
+  const st = { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
+  ecrireLook(st, 'teal_orange'); assert.equal(lireLook(st), 'teal_orange');
+  ecrireLook(st, 'original'); assert.equal(m.has('bt_look'), false); assert.equal(lireLook(st), 'original');
+});
+
+test('Looks : aucun traitement si Original + beauté coupée (qualité native) ; sinon le processeur tourne', () => {
+  assert.equal(traitementNecessaire('off', 'original'), false);
+  assert.equal(traitementNecessaire('off', 'noir_blanc'), true);
+  assert.equal(traitementNecessaire('moyen', 'original'), true);
+  assert.equal(lireLook({ getItem: () => 'n_importe_quoi' }), 'original');
+  assert.equal(estLook('teal_orange'), true);
 });
 
 /* ═══ Audio : strictement inchangé ═══ */

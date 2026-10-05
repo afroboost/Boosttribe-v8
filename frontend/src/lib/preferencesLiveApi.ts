@@ -20,8 +20,14 @@ async function appel<T>(chemin: string, init: RequestInit = {}): Promise<T | nul
 export const lirePreferencesLive = async (): Promise<PreferencesLive> =>
   ((await appel<{ preferences: PreferencesLive }>('/coach/preferences-live'))?.preferences) || {};
 
-export const memoriserDroitsInvites = (acces: 'guest' | 'account') =>
-  appel('/coach/preferences-live', { method: 'PUT', body: JSON.stringify({ acces }) });
+export const memoriserDroitsInvites = (acces: 'guest' | 'account', sessionId?: string | null) =>
+  appel('/coach/preferences-live', { method: 'PUT', body: JSON.stringify({ acces, session_id: sessionId || null }) });
+
+/** 05/10 — Ouverture d'un Live par son hôte : le SERVEUR reprend le dernier mode d'entrée et les
+ *  derniers droits des invités ENREGISTRÉS, sauf si ce Live a déjà été réglé à la main. */
+export interface PreferencesAppliquees { applique: boolean; entree?: 'open' | 'private' | 'paid' | null; acces?: 'guest' | 'account' | null }
+export const appliquerPreferencesLive = (sessionId: string) =>
+  appel<PreferencesAppliquees>('/coach/preferences-live/appliquer', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) });
 
 /** Promotions : le SERVEUR les reprend seulement si ce Live n'a jamais été réglé. */
 export const appliquerPreferencesPromo = (sessionId: string) =>

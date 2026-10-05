@@ -152,7 +152,7 @@ def appli(monkeypatch):
         await faux_upsert(sid, patch)
         return 1
 
-    async def fausses_prefs(uid, partiel):                 # préférences du coach : hors périmètre de ce banc
+    async def fausses_prefs(uid, partiel, session_id=None):               # préférences du coach : hors périmètre de ce banc
         return {}
     monkeypatch.setattr(m, "_playlist_ecrire", faux_ecrire)
     monkeypatch.setattr(m, "_prefs_live_fusionner", fausses_prefs)

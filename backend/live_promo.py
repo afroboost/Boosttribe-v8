@@ -240,6 +240,14 @@ def fusionner_preferences(actuelles: Any, partiel: Dict[str, Any]) -> Dict[str, 
     return p
 
 
+def marquer_session(liste: Any, session_id: Optional[str], maximum: int = 30) -> List[str]:
+    """05/10 — Les derniers Lives réglés À LA MAIN par le coach (le plus récent en tête, sans doublon)."""
+    l = [x for x in (liste if isinstance(liste, list) else []) if isinstance(x, str)]
+    if session_id:
+        l = [session_id] + [x for x in l if x != session_id]
+    return l[:maximum]
+
+
 def session_promo_vierge(s: Dict[str, Any]) -> bool:
     """Un Live dont les promotions n'ont JAMAIS été réglées (désactivées, aucune offre)."""
     return s.get("live_promo_enabled") is not True and not (s.get("live_promo_offres") or [])

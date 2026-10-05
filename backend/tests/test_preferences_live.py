@@ -42,6 +42,8 @@ class Rep:
 class Base:
     def __init__(self):
         self.playlists, self.profiles = [], {HOTE: {"id": HOTE}, AUTRE: {"id": AUTRE}}
+        self.colonne_prefs = True                      # 05/10 : la migration profiles.live_preferences peut manquer en prod
+        self.auth = {HOTE: {"id": HOTE, "app_metadata": {}}, AUTRE: {"id": AUTRE, "app_metadata": {}}}
 
     def client(self):
         base = self
@@ -60,8 +62,22 @@ class Base:
                     sid = filtre(params, "session_id")
                     return Rep(200, [dict(r) for r in base.playlists if r["session_id"] == sid])
                 if "/profiles" in url:
+                    if not base.colonne_prefs and "live_preferences" in str((params or {}).get("select", "")):
+                        return Rep(400, {"code": "42703"})                  # colonne inexistante
                     p = base.profiles.get(filtre(params, "id"))
                     return Rep(200, [dict(p)] if p else [])
+                if "/auth/v1/admin/users/" in url:
+                    u = base.auth.get(url.rsplit("/", 1)[-1])
+                    return Rep(200, dict(u)) if u else Rep(404, {})
+                return Rep(404, {})
+
+            async def put(self, url, headers=None, params=None, json=None):
+                if "/auth/v1/admin/users/" in url:
+                    u = base.auth.get(url.rsplit("/", 1)[-1])
+                    if not u:
+                        return Rep(404, {})
+                    u["app_metadata"] = {**u.get("app_metadata", {}), **((json or {}).get("app_metadata") or {})}
+                    return Rep(200, dict(u))
                 return Rep(404, {})
 
             async def patch(self, url, headers=None, params=None, json=None):
@@ -72,6 +88,8 @@ class Base:
                         r.update(json or {})
                     return Rep(200, [dict(r) for r in lignes])
                 if "/profiles" in url:
+                    if not base.colonne_prefs and "live_preferences" in (json or {}):
+                        return Rep(400, {"code": "PGRST204"})               # colonne inexistante
                     p = base.profiles.get(filtre(params, "id"))
                     if p is not None:
                         p.update(json or {})
@@ -180,3 +198,77 @@ def test_droits_des_invites_memorises_et_relus(m):
     assert lancer(m.coach_preferences_live(authorization="Bearer autre"))["preferences"] == {}          # isolé par coach
     with pytest.raises(HTTPException):
         lancer(m.coach_preferences_live_maj(m.PreferencesLiveBody(acces="admin"), authorization="Bearer hote"))
+
+
+# ─── 05/10 — CONFIGURATION LIVE NON MÉMORISÉE (Gratuit + Accès visio → « Avec crédits » au retour) ───
+# Deux pannes que l'ancien code ne voyait pas : `update_profile` ne fait que JOURNALISER un échec,
+# donc colonne absente ou ligne `profiles` absente = préférence perdue avec une réponse « ok ».
+# Et la reprise côté navigateur n'avait lieu que si `access_mode` était VIDE sur le nouveau Live.
+
+def _choisir_gratuit_visio(m, sid="LIVE1-AAAA"):
+    m._base.playlists.append({"session_id": sid, "host_id": HOTE, "mode": "open", "access_mode": "account"})
+    lancer(m.session_configure(m.SessionConfigBody(session_id=sid, mode="private"), authorization="Bearer hote"))
+    lancer(m.coach_preferences_live_maj(m.PreferencesLiveBody(acces="account", session_id=sid), authorization="Bearer hote"))
+
+
+def _nouveau_live(m, sid="LIVE2-BBBB"):
+    # Nouveau Live : la ligne existe déjà avec des VALEURS PAR DÉFAUT (mode open, access_mode posé).
+    m._base.playlists.append({"session_id": sid, "host_id": HOTE, "mode": "open", "access_mode": "guest"})
+    return lancer(m.coach_preferences_live_appliquer(m.PreferencesAppliquerBody(session_id=sid), authorization="Bearer hote"))
+
+
+def _ligne(m, sid):
+    return next(r for r in m._base.playlists if r["session_id"] == sid)
+
+
+@pytest.mark.parametrize("panne", ["aucune", "colonne_absente", "ligne_profiles_absente"])
+def test_gratuit_et_acces_visio_repris_au_prochain_live(m, panne):
+    if panne == "colonne_absente":
+        m._base.colonne_prefs = False
+    if panne == "ligne_profiles_absente":
+        del m._base.profiles[HOTE]
+    _choisir_gratuit_visio(m)
+    assert lancer(m.coach_preferences_live(authorization="Bearer hote"))["preferences"]["entree"] == "private"
+    r = _nouveau_live(m)
+    assert r["applique"] is True and r["entree"] == "private" and r["acces"] == "account"
+    assert _ligne(m, "LIVE2-BBBB")["mode"] == "private" and _ligne(m, "LIVE2-BBBB")["access_mode"] == "account"
+
+
+def test_avec_credits_et_ecoute_memorises_si_choisis(m):
+    m._base.playlists.append({"session_id": "LIVE1-AAAA", "host_id": HOTE, "mode": "private"})
+    lancer(m.session_configure(m.SessionConfigBody(session_id="LIVE1-AAAA", mode="open"), authorization="Bearer hote"))
+    lancer(m.coach_preferences_live_maj(m.PreferencesLiveBody(acces="guest", session_id="LIVE1-AAAA"), authorization="Bearer hote"))
+    m._base.playlists.append({"session_id": "LIVE2-BBBB", "host_id": HOTE, "mode": "private", "access_mode": "account"})
+    r = lancer(m.coach_preferences_live_appliquer(m.PreferencesAppliquerBody(session_id="LIVE2-BBBB"), authorization="Bearer hote"))
+    assert r["applique"] is True and _ligne(m, "LIVE2-BBBB")["mode"] == "open" and _ligne(m, "LIVE2-BBBB")["access_mode"] == "guest"
+
+
+def test_un_live_regle_dans_cette_session_n_est_jamais_ecrase(m):
+    _choisir_gratuit_visio(m)
+    # Le coach rouvre LE MÊME Live (refresh, retour) : son réglage propre reste, rien n'est réécrit.
+    r = lancer(m.coach_preferences_live_appliquer(m.PreferencesAppliquerBody(session_id="LIVE1-AAAA"), authorization="Bearer hote"))
+    assert r["applique"] is False and _ligne(m, "LIVE1-AAAA")["mode"] == "private"
+    # Un 2e Live réglé à la main sur « Avec crédits » garde « Avec crédits » au retour.
+    m._base.playlists.append({"session_id": "LIVE5-EEEE", "host_id": HOTE, "mode": "private"})
+    lancer(m.session_configure(m.SessionConfigBody(session_id="LIVE5-EEEE", mode="open"), authorization="Bearer hote"))
+    lancer(m.session_configure(m.SessionConfigBody(session_id="LIVE1-AAAA", mode="private"), authorization="Bearer hote"))
+    r = lancer(m.coach_preferences_live_appliquer(m.PreferencesAppliquerBody(session_id="LIVE5-EEEE"), authorization="Bearer hote"))
+    assert r["applique"] is False and _ligne(m, "LIVE5-EEEE")["mode"] == "open"
+
+
+def test_appliquer_reserve_a_l_hote_du_live(m):
+    _choisir_gratuit_visio(m)
+    m._base.playlists.append({"session_id": "LIVE3-CCCC", "host_id": AUTRE, "mode": "open"})
+    with pytest.raises(HTTPException) as e:
+        lancer(m.coach_preferences_live_appliquer(m.PreferencesAppliquerBody(session_id="LIVE3-CCCC"), authorization="Bearer hote"))
+    assert e.value.status_code == 403 and _ligne(m, "LIVE3-CCCC")["mode"] == "open"
+
+
+def test_promo_reprise_meme_sans_colonne_profiles(m):
+    m._base.colonne_prefs = False
+    m._base.playlists.append({"session_id": "LIVE1-AAAA", "host_id": HOTE, "live_promo_enabled": False, "live_promo_offres": []})
+    lancer(m.live_promo_save_config(m.LivePromoConfigBody(session_id="LIVE1-AAAA", enabled=True,
+                                    offres=[{"id": "", "duree_s": 30, "type": "free"}]), authorization="Bearer hote"))
+    m._base.playlists.append({"session_id": "LIVE9-ZZZZ", "host_id": HOTE, "live_promo_enabled": False, "live_promo_offres": []})
+    r = lancer(m.live_promo_appliquer_preferences(m.LivePromoAppliquerBody(session_id="LIVE9-ZZZZ"), authorization="Bearer hote"))
+    assert r["applique"] is True and lancer(m.live_promo_config("LIVE9-ZZZZ", authorization=None))["enabled"] is True

@@ -2760,7 +2760,8 @@ async def session_configure(body: SessionConfigBody, authorization: Optional[str
     #   et répondre ok:true → « Avec crédits » revenait). Puis préférence du coach pour ses prochains Lives.
     if await _playlist_ecrire(body.session_id, patch) <= 0:
         raise HTTPException(status_code=500, detail="Enregistrement du mode d'entrée impossible")
-    await _prefs_live_fusionner(uid, {"entree": body.mode, "prix_chf": patch.get("price_chf"), "capacite": patch.get("capacity")})
+    await _prefs_live_fusionner(uid, {"entree": body.mode, "prix_chf": patch.get("price_chf"), "capacite": patch.get("capacity")},
+                                session_id=body.session_id)
     return {"ok": True, "mode": body.mode, "price_chf": patch.get("price_chf"), "capacity": patch.get("capacity")}
 
 # ---- Participant : achat d'une place (billet) — Checkout compte plateforme ---
@@ -4827,20 +4828,77 @@ async def _playlist_ecrire(session_id: str, patch: Dict[str, Any]) -> int:
     return len(r.json() or []) if r.status_code in (200, 201) and r.content else 0
 
 
-async def _prefs_live_lire(uid: str) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
-                             params={"id": f"eq.{uid}", "select": "live_preferences"})
-    rows = r.json() if r.status_code == 200 else []
-    v = rows[0].get("live_preferences") if rows else None
-    return v if isinstance(v, dict) else {}
+# 05/10 — Les préférences Live du coach : jamais une perte MUETTE.
+#   Cause du « Avec crédits » au retour : `update_profile` ne fait que JOURNALISER un échec. Colonne
+#   `profiles.live_preferences` absente (migration de démarrage non passée — invérifiable sans lecture
+#   de la base) ou ligne `profiles` absente = réglage perdu avec une réponse « ok ».
+#   1. `profiles.live_preferences` reste l'emplacement PRINCIPAL (l'existant, 4ce34a6 : les préférences
+#      déjà mémorisées depuis le 01/10 y sont) — écriture désormais VÉRIFIÉE (ligne relue).
+#   2. `app_metadata.live_preferences` du compte (API admin GoTrue, fusion des clés, serveur seul) :
+#      SECOURS, écrit seulement si (1) a refusé. Existe pour tout compte, sans migration. Pas écrit
+#      d'office : app_metadata voyage dans chaque jeton du coach (on ne le grossit que si nécessaire).
+#   Lecture : les deux, la version la plus récente (`maj`) gagne.
+PREFS_SESSIONS_MAX = 30
 
 
-async def _prefs_live_fusionner(uid: str, partiel: Dict[str, Any]) -> Dict[str, Any]:
-    """Mémorise le dernier réglage ENREGISTRÉ du coach (best-effort : n'empêche jamais l'enregistrement de la session)."""
+async def _prefs_live_profil(uid: str) -> Dict[str, Any]:
     try:
-        nouvelles = _lp.fusionner_preferences(await _prefs_live_lire(uid), partiel)
-        await update_profile(uid, {"live_preferences": nouvelles})
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/rest/v1/profiles", headers=_service_headers(),
+                                 params={"id": f"eq.{uid}", "select": "live_preferences"})
+        rows = r.json() if r.status_code == 200 else []
+        v = rows[0].get("live_preferences") if rows else None
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _prefs_live_compte(uid: str) -> Dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{uid}", headers=_service_headers())
+        v = ((r.json() or {}).get("app_metadata") or {}).get("live_preferences") if r.status_code == 200 else None
+        return v if isinstance(v, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _prefs_live_lire(uid: str) -> Dict[str, Any]:
+    a, b = await _prefs_live_profil(uid), await _prefs_live_compte(uid)
+    return a if float(a.get("maj") or 0) >= float(b.get("maj") or 0) and a else (b or a)
+
+
+async def _prefs_live_ecrire(uid: str, prefs: Dict[str, Any]) -> bool:
+    """`profiles` d'abord (écriture RELUE) ; `app_metadata` seulement en secours. Vrai si un emplacement
+    a réellement enregistré ; sinon un avertissement — jamais un faux succès silencieux."""
+    ok = False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.patch(f"{SUPABASE_URL}/rest/v1/profiles",
+                                   headers=_service_headers({"Prefer": "return=representation"}),
+                                   params={"id": f"eq.{uid}"}, json={"live_preferences": prefs})
+            ok = r.status_code == 200 and bool(r.json() or [])
+            if not ok:
+                logger.warning("[PREFS-LIVE] profiles refusé (HTTP %s) → secours app_metadata", r.status_code)
+                r2 = await client.put(f"{SUPABASE_URL}/auth/v1/admin/users/{uid}", headers=_service_headers(),
+                                      json={"app_metadata": {"live_preferences": prefs}})
+                ok = r2.status_code == 200
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[PREFS-LIVE] écriture : %s", type(e).__name__)
+    if not ok:
+        logger.warning("[PREFS-LIVE] préférences NON mémorisées pour %s", uid[:8])
+    return ok
+
+
+async def _prefs_live_fusionner(uid: str, partiel: Dict[str, Any], session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Mémorise le dernier réglage ENREGISTRÉ du coach (best-effort : n'empêche jamais l'enregistrement
+    de la session). `session_id` : ce Live a été réglé À LA MAIN → ses préférences ne l'écraseront jamais."""
+    try:
+        actuelles = await _prefs_live_lire(uid)
+        nouvelles = _lp.fusionner_preferences(actuelles, partiel)
+        nouvelles["sessions_reglees"] = _lp.marquer_session(actuelles.get("sessions_reglees"), session_id, PREFS_SESSIONS_MAX)
+        nouvelles["maj"] = time.time()
+        await _prefs_live_ecrire(uid, nouvelles)
         return nouvelles
     except Exception as e:  # noqa: BLE001
         logger.warning("[PREFS-LIVE] mémorisation impossible : %s", type(e).__name__)
@@ -4955,6 +5013,11 @@ async def _lp_cloturer_si_expiree(p: Dict[str, Any]) -> Dict[str, Any]:
 
 class PreferencesLiveBody(BaseModel):
     acces: Optional[str] = None
+    session_id: Optional[str] = None     # 05/10 : le Live où ce choix a été fait à la main
+
+
+class PreferencesAppliquerBody(BaseModel):
+    session_id: str
 
 
 @app.get("/coach/preferences-live")
@@ -4974,7 +5037,41 @@ async def coach_preferences_live_maj(body: PreferencesLiveBody, authorization: O
         _lp.fusionner_preferences({}, {"acces": body.acces})
     except _lp.RegleRefusee as e:
         raise _lp_refus(e)
-    return {"preferences": await _prefs_live_fusionner(user.get("id"), {"acces": body.acces})}
+    sid = body.session_id if body.session_id and SESSION_ID_RE.match(body.session_id) else None
+    return {"preferences": await _prefs_live_fusionner(user.get("id"), {"acces": body.acces}, session_id=sid)}
+
+
+@app.post("/coach/preferences-live/appliquer")
+async def coach_preferences_live_appliquer(body: PreferencesAppliquerBody, authorization: Optional[str] = Header(default=None)):
+    """05/10 — Le coach ouvre un Live : ses DERNIERS choix enregistrés (mode d'entrée, droits des invités)
+    s'appliquent, SAUF si ce Live a déjà été réglé à la main. Décidé ICI, plus dans le navigateur (qui
+    ne reprenait que si `access_mode` était vide — or une ligne neuve porte déjà une valeur)."""
+    user = await get_user_from_token(authorization)
+    uid = user.get("id")
+    if not SESSION_ID_RE.match(body.session_id or ""):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    row = await get_session_authz(body.session_id)
+    if row and row.get("host_id") and row.get("host_id") != uid:
+        raise HTTPException(status_code=403, detail="Seul l'hôte règle son Live")
+    prefs = await _prefs_live_lire(uid)
+    if body.session_id in (prefs.get("sessions_reglees") or []):
+        return {"applique": False, "raison": "deja_regle"}
+    patch: Dict[str, Any] = {}
+    entree = prefs.get("entree")
+    if entree in ("open", "private"):
+        patch.update({"mode": entree, "price_chf": None, "capacity": None})
+    elif entree == "paid" and prefs.get("prix_chf") and await get_coach_payment_type(uid) == "commission":
+        patch.update({"mode": "paid", "price_chf": prefs.get("prix_chf"), "capacity": prefs.get("capacite")})
+    if prefs.get("acces") in ("guest", "account"):
+        patch["access_mode"] = prefs["acces"]
+    if not patch:
+        return {"applique": False, "raison": "aucune_preference"}
+    if not (row and row.get("host_id")):
+        patch["host_id"] = uid
+    if await _playlist_ecrire(body.session_id, patch) <= 0:
+        raise HTTPException(status_code=500, detail="Préférences non appliquées")
+    await _prefs_live_fusionner(uid, {}, session_id=body.session_id)
+    return {"applique": True, "entree": patch.get("mode"), "acces": patch.get("access_mode")}
 
 
 class LivePromoAppliquerBody(BaseModel):

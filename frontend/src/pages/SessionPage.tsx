@@ -47,7 +47,7 @@ import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
 import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
-import { lirePreferencesLive, memoriserDroitsInvites, appliquerPreferencesPromo } from '@/lib/preferencesLiveApi'; // ⚙️ 01/10 : réglages du coach d'un Live à l'autre
+import { appliquerPreferencesLive, memoriserDroitsInvites, appliquerPreferencesPromo } from '@/lib/preferencesLiveApi'; // ⚙️ 01/10 : réglages du coach d'un Live à l'autre
 import { LivePromoParticipantModal } from '@/components/session/LivePromoParticipantModal';
 import { LivePromoHostModal } from '@/components/session/LivePromoHostModal';
 import { usePrompteur } from '@/hooks/usePrompteur';
@@ -2043,14 +2043,14 @@ export const SessionPage: React.FC = () => {
     (async () => {
       const promo = await appliquerPreferencesPromo(sessionId).catch(() => null);
       if (promo?.applique) { livePromo.rafraichir(); livePromo.signaler(); }
-      if (accesJamaisRegleRef.current !== true) return;
-      const p = await lirePreferencesLive().catch(() => ({} as Awaited<ReturnType<typeof lirePreferencesLive>>));
-      if (p.entree) {
-        await configureSession({ session_id: sessionId, mode: p.entree,
-          price_chf: p.entree === 'paid' ? (p.prix_chf ?? null) : null, capacity: p.entree === 'paid' ? (p.capacite ?? null) : null }).catch(() => null);
+      // 05/10 : décidé par le SERVEUR (« ce Live a-t-il été réglé à la main ? »). L'ancien test
+      //   navigateur (`access_mode` vide) ne se déclenchait jamais : une ligne neuve porte déjà une
+      //   valeur → le coach retrouvait « Avec crédits » à chaque nouveau Live.
+      const p = await appliquerPreferencesLive(sessionId).catch(() => null);
+      if (p?.applique) {
+        if (p.acces === 'guest' || p.acces === 'account') { setAccessMode(p.acces); accesJamaisRegleRef.current = false; }
+        await refreshAccess();
       }
-      if (p.acces && await saveAccessMode(sessionId, p.acces, user.id)) { setAccessMode(p.acces); accesJamaisRegleRef.current = false; }
-      if (p.entree || p.acces) await refreshAccess();
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, user?.id, estProprietaireSession, accessModeResolved]);
@@ -2320,7 +2320,7 @@ export const SessionPage: React.FC = () => {
       if (ok && accessOk && sauvegardeConfirmee({ mode: modeDraft.mode, acces: accessDraft }, relu)) {
         setAccessMode(accessDraft);
         accesJamaisRegleRef.current = false;
-        void memoriserDroitsInvites(accessDraft);   // ⚙️ 01/10 : préférence du coach pour ses prochains Lives (le mode d'entrée l'est côté serveur)
+        void memoriserDroitsInvites(accessDraft, sessionId);   // ⚙️ 01/10 : préférence du coach pour ses prochains Lives (le mode d'entrée l'est côté serveur)
         showToast('Mode d\'accès enregistré', 'success');
         setShowSessionSettings(false);
         await refreshAccess();

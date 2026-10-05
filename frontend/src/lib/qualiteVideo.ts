@@ -41,23 +41,86 @@ export function brancherVideo(el: HTMLMediaElement, flux: MediaStream): () => vo
   return () => { /* flux local : le composant gère lui-même son srcObject */ };
 }
 
+/** Hauteurs cibles, de la meilleure à la plus modeste (16:9). */
+export const HAUTEURS_CIBLES = [2160, 1440, 1080, 720] as const;
+
 /**
- * Options de la caméra publiée. Ordinateur : 1080p / 30 i/s demandés (contraintes « idéales » :
- * une caméra qui ne sait pas faire donne ce qu'elle peut), préréglage 1080p de LiveKit
- * (3 Mbit/s) et couches 360p + 720p pour les petits écrans. Téléphone : réglage LiveKit
- * inchangé (720p) — ni la batterie, ni l'encodeur, ni le réseau mobile ne sont sacrifiés.
+ * 🎥 Phase caméra 2 — la meilleure hauteur que la caméra ANNONCE, plafonnée à 4K.
+ * Capacités inconnues (Safari ne les expose pas) : 1080p, le comportement d'avant.
+ * La demande reste « idéale » : une caméra qui ne sait pas faire donne ce qu'elle peut,
+ * et `getSettings()` dit ensuite la vérité (journalisée à la publication).
  */
-export function optionsCameraLive({ mobile }: { mobile: boolean }): {
+export function cibleCamera(hauteurMax: number | null | undefined): number {
+  if (!hauteurMax || !Number.isFinite(hauteurMax)) return 1080;
+  return HAUTEURS_CIBLES.find((h) => h <= hauteurMax) ?? 720;
+}
+
+/** Hauteur max annoncée par une caméra SANS l'ouvrir (`InputDeviceInfo.getCapabilities`, Chrome). */
+export function hauteurMaxCamera(appareil: { getCapabilities?: () => MediaTrackCapabilities } | null | undefined): number | null {
+  try {
+    const max = appareil?.getCapabilities?.()?.height?.max;
+    return typeof max === 'number' && max > 0 ? max : null;
+  } catch { return null; }
+}
+
+/** Couches simulcast sous la cible : vignette + écran moyen ; jamais une couche égale à la source. */
+export function couchesPour(hauteur: number) {
+  if (hauteur >= 1440) return [VideoPresets.h360, VideoPresets.h1080];
+  if (hauteur >= 1080) return [VideoPresets.h360, VideoPresets.h720];
+  return [VideoPresets.h180, VideoPresets.h360];
+}
+
+const DEBITS: Array<[number, number]> = [
+  [180, VideoPresets.h180.encoding.maxBitrate], [216, VideoPresets.h216.encoding.maxBitrate],
+  [360, VideoPresets.h360.encoding.maxBitrate], [540, VideoPresets.h540.encoding.maxBitrate],
+  [720, VideoPresets.h720.encoding.maxBitrate], [1080, VideoPresets.h1080.encoding.maxBitrate],
+  [1440, VideoPresets.h1440.encoding.maxBitrate], [2160, VideoPresets.h2160.encoding.maxBitrate],
+];
+
+/** Débit des préréglages LiveKit pour une hauteur donnée (le palier qui la couvre). */
+export function debitPourHauteur(hauteur: number): number {
+  const p = DEBITS.find(([h]) => hauteur <= h + 1);
+  return (p ?? DEBITS[DEBITS.length - 1])[1];
+}
+
+/**
+ * Changement de caméra en direct : les couches gardent leur rid et leur échelle, mais chaque
+ * débit est recalculé pour la NOUVELLE résolution (sinon une 4K resterait plafonnée au débit
+ * d'une 1080p). PURE : la page applique le résultat avec `sender.setParameters`.
+ */
+export function encodagesAjustes<T extends { rid?: string; scaleResolutionDownBy?: number; maxBitrate?: number }>(
+  encodages: T[], largeur: number, hauteur: number,
+): T[] {
+  const petit = Math.min(largeur, hauteur);
+  return encodages.map((e) => ({ ...e, maxBitrate: debitPourHauteur(Math.round(petit / (e.scaleResolutionDownBy || 1))) }));
+}
+
+/**
+ * Surcharge processeur mesurée par le navigateur (`qualityLimitationReason === 'cpu'` trois
+ * fois de suite sur la couche haute) : on descend PROPREMENT d'un palier, jamais sous 1080p
+ * par ce mécanisme, et on dit pourquoi. Le réseau (`bandwidth`) reste géré par LiveKit.
+ */
+export function decisionQualiteCpu(historique: Array<{ limite?: string }>, hauteurActuelle: number): { cible: number; raison: string } | null {
+  const derniers = historique.slice(-3);
+  if (derniers.length < 3 || !derniers.every((x) => x.limite === 'cpu')) return null;
+  const suivante = HAUTEURS_CIBLES.find((h) => h < hauteurActuelle && h >= 1080);
+  return suivante ? { cible: suivante, raison: 'processeur saturé (encodage vidéo)' } : null;
+}
+
+/**
+ * Options de la caméra publiée. Ordinateur : la MEILLEURE hauteur annoncée par la caméra (jusqu'à
+ * 4K), 30 i/s, couches simulcast adaptées ; AUCUN débit imposé — LiveKit le déduit de la
+ * résolution RÉELLEMENT capturée (8 Mbit/s en 4K, 5 en 1440p, 3 en 1080p, 1,7 en 720p).
+ * Téléphone : réglage LiveKit inchangé (720p) — stabilité, batterie et réseau mobile d'abord.
+ */
+export function optionsCameraLive({ mobile, hauteurMax }: { mobile: boolean; hauteurMax?: number | null }): {
   capture: VideoCaptureOptions;
   publication: TrackPublishOptions | undefined;
 } {
   if (mobile) return { capture: {}, publication: undefined };
+  const h = cibleCamera(hauteurMax);
   return {
-    capture: { resolution: { width: 1920, height: 1080, frameRate: 30 } },
-    publication: {
-      simulcast: true,
-      videoEncoding: { maxBitrate: VideoPresets.h1080.encoding.maxBitrate, maxFramerate: 30 },
-      videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h720],
-    },
+    capture: { resolution: { width: Math.round((h * 16) / 9), height: h, frameRate: 30 } },
+    publication: { simulcast: true, videoSimulcastLayers: couchesPour(h) },
   };
 }

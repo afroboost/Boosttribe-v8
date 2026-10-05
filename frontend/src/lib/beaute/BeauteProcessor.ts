@@ -20,8 +20,10 @@
 import type { Track } from 'livekit-client';
 import type { TrackProcessor, VideoProcessorOptions } from 'livekit-client';
 import {
-  GardePerformance, parametresBeaute, resolutionTraitement, type NiveauBeaute,
+  GardePerformance, parametresBeaute, resolutionTraitement, coteMaxTraitement, palierSuivant,
+  MASQUE_ALPHA_TEMPOREL, type NiveauBeaute,
 } from '@/lib/beauteLogic';
+import { estMobile } from '@/lib/sourcesLogic';
 import { creerRenduBeaute, type RenduBeaute } from './rendu';
 
 export interface BeauteProcessorCallbacks {
@@ -31,8 +33,9 @@ export interface BeauteProcessorCallbacks {
   onMesure?: (fps: number, msParImage: number) => void;
 }
 
+type MetaImage = { presentedFrames?: number; mediaTime?: number };
 type VideoAvecRVFC = HTMLVideoElement & {
-  requestVideoFrameCallback?: (cb: () => void) => number;
+  requestVideoFrameCallback?: (cb: (maintenant: number, meta?: MetaImage) => void) => number;
   cancelVideoFrameCallback?: (id: number) => void;
 };
 
@@ -52,9 +55,22 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
   private cumulMs = 0;
   private nbImages = 0;
   private derniereMesure = 0;
+  // 🎥 Phase caméra 2 : pleine résolution sur ordinateur (jusqu'à 4K), 720 sur téléphone ;
+  //    paliers 3840 → 1920 → 1280 si le traitement prend du retard, AVANT toute coupure.
+  private coteMax = coteMaxTraitement({ mobile: typeof navigator !== 'undefined' && estMobile(navigator.userAgent, navigator.maxTouchPoints) });
+  private derniereImage = -1;            // presentedFrames déjà traité (jamais deux fois la même image)
+  private sourceMs: number[] = [];       // horodatages média des images de la caméra → cadence réelle
 
   constructor(niveau: NiveauBeaute, private readonly cb: BeauteProcessorCallbacks = {}) {
     this.niveau = niveau;
+  }
+
+  /** Cadence RÉELLE de la caméra sur la dernière seconde (0 si inconnue). */
+  private fpsSource(): number {
+    const n = this.sourceMs.length;
+    if (n < 2) return 0;
+    const duree = this.sourceMs[n - 1] - this.sourceMs[0];
+    return duree > 0 ? ((n - 1) * 1000) / duree : 0;
   }
 
   /** Change l'intensité à chaud (sans republier). */
@@ -66,7 +82,7 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
   async init(opts: VideoProcessorOptions): Promise<void> {
     await this.brancherSource(opts.track);
     const { largeur, hauteur } = this.tailleSource();
-    this.rendu = creerRenduBeaute(largeur, hauteur, parametresBeaute(this.niveau));
+    this.rendu = creerRenduBeaute(largeur, hauteur, parametresBeaute(this.niveau), MASQUE_ALPHA_TEMPOREL);
     // Sans argument : une image capturée à chaque dessin (cadence = celle de la source).
     const captureStream = (this.rendu.canvas as HTMLCanvasElement & { captureStream: () => MediaStream }).captureStream;
     const sortie = captureStream.call(this.rendu.canvas) as MediaStream;
@@ -128,14 +144,23 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
     const reglages = (this.flux?.getVideoTracks()[0]?.getSettings?.() ?? {}) as MediaTrackSettings;
     const w = v?.videoWidth || reglages.width || 640;
     const h = v?.videoHeight || reglages.height || 480;
-    return resolutionTraitement(w, h);
+    return resolutionTraitement(w, h, this.coteMax);
   }
 
   private demarrerBoucle(): void {
     this.arreterBoucle();
-    const tick = () => {
+    const tick = (_maintenant?: number, meta?: MetaImage) => {
       if (!this.actif || !this.video || !this.rendu) return;
       const t0 = performance.now();
+      // Une image déjà traitée n'est jamais retraitée (rVFC peut rappeler pour la même image).
+      if (meta && typeof meta.presentedFrames === 'number') {
+        if (meta.presentedFrames === this.derniereImage) { this.planifier(tick); return; }
+        this.derniereImage = meta.presentedFrames;
+        if (typeof meta.mediaTime === 'number') {
+          this.sourceMs.push(meta.mediaTime * 1000);
+          this.sourceMs = this.sourceMs.filter((x) => x >= meta.mediaTime! * 1000 - 1000);
+        }
+      }
       if (this.video.readyState >= 2) {
         // La source a changé de taille (bascule avant/arrière) : suivre.
         const { largeur, hauteur } = this.tailleSource();
@@ -144,9 +169,17 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
       }
       const t1 = performance.now();
       this.cumulMs += t1 - t0; this.nbImages += 1;
-      if (this.garde.enregistrer(t1)) {
-        this.cb.onCoupure?.();
-        return; // l'appelant appelle destroy() via stopProcessor()
+      if (this.garde.enregistrer(t1, this.fpsSource())) {
+        // Traitement en retard : palier inférieur (3840 → 1920 → 1280) avant de couper.
+        const palier = palierSuivant(this.coteMax);
+        if (palier) {
+          this.coteMax = palier;
+          this.garde.reinitialiser();
+          console.info('[BEAUTÉ] traitement en retard : résolution de traitement abaissée à', palier, 'px');
+        } else {
+          this.cb.onCoupure?.();
+          return; // l'appelant appelle destroy() via stopProcessor()
+        }
       }
       if (t1 - this.derniereMesure >= 1000) {
         this.derniereMesure = t1;
@@ -158,7 +191,7 @@ export class BeauteProcessor implements TrackProcessor<Track.Kind.Video, VideoPr
     this.planifier(tick);
   }
 
-  private planifier(tick: () => void): void {
+  private planifier(tick: (maintenant?: number, meta?: MetaImage) => void): void {
     const v = this.video;
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       // rAF/rVFC sont gelés en arrière-plan : minuteur à 15 i/s pour ne pas figer les participants.

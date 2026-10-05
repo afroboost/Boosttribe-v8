@@ -14,11 +14,10 @@ import assert from 'node:assert/strict';
 import { optionsCameraLive, brancherVideo, associerPisteVideo } from './.build/qualiteVideo.mjs';
 import { lire, codeSeul } from './lireSource.mjs';
 
-test('ordinateur : capture 1080p/30 demandée, préréglage 1080p LiveKit, couches 360p + 720p', () => {
+test('ordinateur : la capture suit la caméra (Phase caméra 2 — cf. cameraNative.test.mjs) ; capacités inconnues → 1080p', () => {
   const o = optionsCameraLive({ mobile: false });
   assert.deepEqual(o.capture.resolution, { width: 1920, height: 1080, frameRate: 30 });
-  assert.equal(o.publication.videoEncoding.maxBitrate, 3_000_000);
-  assert.equal(o.publication.videoEncoding.maxFramerate, 30);
+  assert.equal(o.publication.videoEncoding, undefined, 'débit déduit de la résolution réelle par LiveKit');
   assert.deepEqual(o.publication.videoSimulcastLayers.map((l) => [l.width, l.height]), [[640, 360], [1280, 720]]);
   assert.equal(o.publication.simulcast, true);
 });
@@ -57,7 +56,7 @@ test('réception : chaque piste vidéo distante (caméra ET écran) est associé
 test('émission : la caméra est publiée avec optionsCameraLive (y compris republication)', () => {
   assert.match(S, /optionsCameraLive\(\{ mobile: /);
   assert.match(S, /setCameraEnabled\(true, \{ \.\.\.cam\.capture, \.\.\.\(deviceId \? \{ deviceId: \{ exact: deviceId \} \} : \{\}\) \}, cam\.publication\)/);
-  assert.match(S, /publishTrack\(cam, \{ \.\.\.\(optionsCameraLive\(\{ mobile: [^)]*\) \}\)\.publication \|\| \{\}\), source: Track\.Source\.Camera \}\)/);
+  assert.match(S, /publishTrack\(cam, \{ \.\.\.\(optionsCameraLive\(\{ mobile: /);
 });
 
 for (const [f, nom] of [['components/session/CameraTile.tsx', 'CameraTile'], ['components/session/SceneRenderer.tsx', 'SceneRenderer'],

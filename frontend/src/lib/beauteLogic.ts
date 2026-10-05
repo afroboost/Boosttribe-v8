@@ -77,8 +77,57 @@ export function ecrireNiveauBeaute(
   } catch { /* mode privé : le réglage vaut pour la session */ }
 }
 
-/** Plafond de la résolution de traitement (grand côté), pour que le mobile suive. */
+/** Plafond de la résolution de traitement (grand côté) sur TÉLÉPHONE, pour qu'il suive. */
 export const COTE_MAX_TRAITEMENT = 720;
+/**
+ * 🎥 Phase caméra 2 : sur ORDINATEUR, le traitement se fait à la résolution de la caméra (jusqu'à
+ * 4K). Mesuré le 05/10 : le plafond de 720 s'appliquait partout et publiait 720×406 — une caméra
+ * 1080p ou 4K était envoyée en ~404p. Paliers de repli si le traitement prend du retard.
+ */
+export const COTE_MAX_ORDINATEUR = 3840;
+export const PALIERS_TRAITEMENT = [3840, 1920, 1280] as const;
+
+export function coteMaxTraitement({ mobile }: { mobile: boolean }): number {
+  return mobile ? COTE_MAX_TRAITEMENT : COTE_MAX_ORDINATEUR;
+}
+
+/** Palier inférieur quand le traitement est en retard ; null = plus de palier (coupure). */
+export function palierSuivant(coteMax: number): number | null {
+  return PALIERS_TRAITEMENT.find((p) => p < coteMax) ?? null;
+}
+
+/**
+ * Les rayons de lissage ont été réglés sur une image de 720 px de grand côté : à plus haute
+ * résolution, le rayon suit la taille pour garder le MÊME rendu visuel (pas plus fort, pas plus faible).
+ */
+export function echelleRayon(largeur: number, hauteur: number): number {
+  return Math.max(1, Math.max(largeur, hauteur) / 720);
+}
+
+/** Moyenne temporelle du masque peau : 0,3 = la nouvelle image pèse 30 %. Anti-scintillement. */
+export const MASQUE_ALPHA_TEMPOREL = 0.3;
+
+export function lisserMasqueTemporel(precedent: number, courant: number, alpha = MASQUE_ALPHA_TEMPOREL): number {
+  return precedent + (courant - precedent) * alpha;
+}
+
+const lisse = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Miroir EXACT du masque peau du shader (lib/beaute/rendu.ts) : Cb/Cr BT.601 avec des transitions
+ * ÉLARGIES (≈ 0,10 au lieu de 0,05-0,06) — un bruit capteur de quelques niveaux ne fait plus
+ * basculer un pixel de bord d'une image à l'autre.
+ */
+export function masquePeauRef(r: number, g: number, b: number): number {
+  const cb = 0.5 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+  const cr = 0.5 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+  const mCb = lisse(0.26, 0.36, cb) * (1 - lisse(0.50, 0.60, cb));
+  const mCr = lisse(0.48, 0.58, cr) * (1 - lisse(0.66, 0.76, cr));
+  return mCb * mCr;
+}
 
 /**
  * Taille du canvas de traitement : la vidéo est réduite si son grand côté dépasse le plafond,
@@ -120,14 +169,19 @@ export class GardePerformance {
     return duree > 0 ? ((this.fenetre.length - 1) * 1000) / duree : 0;
   }
 
-  /** À appeler à chaque image traitée. Renvoie `true` quand il faut couper. */
-  enregistrer(maintenant: number): boolean {
+  /**
+   * À appeler à chaque image traitée. Renvoie `true` quand il faut réagir (palier inférieur ou
+   * coupure). `fpsSource` (cadence RÉELLE de la caméra) : une caméra lente — basse lumière à
+   * 15 i/s — n'est plus prise pour un traitement trop lourd ; seul un RETARD sur la source compte.
+   */
+  enregistrer(maintenant: number, fpsSource?: number): boolean {
     if (this.declenchee) return false;
     this.fenetre.push(maintenant);
     const premiere = this.fenetre[0];
     if (maintenant - premiere < 1000) return false;      // échauffement : pas de verdict
     const fps = this.fps(maintenant);
-    if (fps >= this.fpsMin) { this.sousSeuilDepuis = null; return false; }
+    const seuil = fpsSource && fpsSource > 0 ? Math.min(this.fpsMin, fpsSource * 0.8) : this.fpsMin;
+    if (fps >= seuil) { this.sousSeuilDepuis = null; return false; }
     if (this.sousSeuilDepuis === null) this.sousSeuilDepuis = maintenant;
     if (maintenant - this.sousSeuilDepuis >= this.toleranceMs) { this.declenchee = true; return true; }
     return false;

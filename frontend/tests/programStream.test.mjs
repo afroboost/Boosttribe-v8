@@ -39,7 +39,9 @@ test('structurel : Live Visio reçoit le programme à la place de la caméra, ca
   const lk = codeSeul(lire('hooks', 'useLiveKitStage.ts'));
   assert.ok(lk.includes('unpublishTrack(cam, false)'), 'la caméra est dépubliée SANS être stoppée (beauté + compositeur continuent)');
   assert.ok(lk.includes("source: Track.Source.Camera, name: 'program'"), 'le programme est publié comme source Camera');
-  assert.ok(lk.includes('restartTrack({ deviceId: { exact: deviceId } })'), 'bascule de caméra pendant le programme = restart local');
+  // Phase caméra 2 : la bascule redémarre la piste caméra (même pendant le programme) à la meilleure qualité de la nouvelle caméra.
+  assert.ok(lk.includes('restartTrack({ deviceId: { exact: deviceId }, ...capture })'), 'bascule de caméra pendant le programme = restart local');
+  assert.ok(lk.includes('const piste = cameraTrackRef.current'), 'la piste caméra (non publiée pendant le programme) est celle qui redémarre');
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
   assert.ok(page.includes('programmeVersParticipants'), 'drapeau « programme vers les participants »');
   assert.ok(page.includes('useState(true)') && page.includes('setProgrammeVersParticipants'), 'ON par défaut dès qu’une scène est à l’antenne');

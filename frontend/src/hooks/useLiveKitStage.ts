@@ -13,7 +13,7 @@ import {
 import { supabase } from '@/lib/supabaseClient';
 import type { RemoteCamera } from '@/hooks/useVideoMesh';
 import { choisirCameraPrincipale, cibleBascule, decisionDebranchement, estMobile } from '@/lib/sourcesLogic';
-import { associerPisteVideo, optionsCameraLive } from '@/lib/qualiteVideo';
+import { associerPisteVideo, optionsCameraLive, hauteurMaxCamera, cibleCamera, encodagesAjustes, decisionQualiteCpu } from '@/lib/qualiteVideo';
 
 /**
  * 🎥 useLiveKitStage — Mode "Live / Visio" via LiveKit (SFU), remplaçant du mesh PeerJS (useVideoMesh).
@@ -236,15 +236,53 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     try { track.off(TrackEvent.TrackProcessorUpdate, maj); track.on(TrackEvent.TrackProcessorUpdate, maj); } catch { /* ignore */ }
   }, []);
 
+  // 🎥 Phase caméra 2 — ce que la caméra donne RÉELLEMENT (jamais « 4K » si getSettings dit moins).
+  const journaliserCapture = useCallback((mst: MediaStreamTrack) => {
+    try {
+      const r = mst.getSettings();
+      console.info('[CAMÉRA] capture réelle', `${r.width}×${r.height} @ ${Math.round(r.frameRate || 0)} i/s`, mst.label);
+    } catch { /* navigateur ancien */ }
+  }, []);
+
+  // 🎥 Phase caméra 2 — surcharge processeur mesurée par le navigateur sur la couche haute
+  //    (`qualityLimitationReason === 'cpu'` 3 fois de suite, relevé toutes les 5 s) : on descend
+  //    d'UN palier (4K → 1440 → 1080), jamais plus bas par ce mécanisme, et on le dit en console.
+  const historiqueCpuRef = useRef<Array<{ limite?: string }>>([]);
+  useEffect(() => {
+    if (!cameraOn) return undefined;
+    const id = window.setInterval(async () => {
+      const piste = cameraTrackRef.current;
+      const mst = piste?.mediaStreamTrack;
+      if (!piste || !mst) return;
+      try {
+        const stats = await piste.getSenderStats();
+        const haut = [...stats].sort((a, b) => (b.frameHeight || 0) - (a.frameHeight || 0))[0];
+        historiqueCpuRef.current = [...historiqueCpuRef.current, { limite: haut?.qualityLimitationReason }].slice(-3);
+        const h = mst.getSettings().height || 0;
+        const d = decisionQualiteCpu(historiqueCpuRef.current, cibleCamera(h));
+        if (!d) return;
+        historiqueCpuRef.current = [];
+        await mst.applyConstraints({ width: { ideal: Math.round((d.cible * 16) / 9) }, height: { ideal: d.cible }, frameRate: { ideal: 30 } });
+        console.info('[CAMÉRA] qualité abaissée à', `${d.cible}p`, '—', d.raison);
+        journaliserCapture(mst);
+      } catch { /* statistiques indisponibles : rien */ }
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [cameraOn, journaliserCapture]);
+
   // ─── Publier réellement la caméra (suppose la permission accordée) ───
   //     Utilise le périphérique choisi (caméra externe) ; repli propre si indisponible.
   const publishCamera = useCallback(async (): Promise<boolean> => {
     const room = roomRef.current;
     if (!room) return false;
-    // 🎥 Ordinateur : 1080p/30 demandés + couches 360p/720p ; téléphone : réglage LiveKit inchangé.
-    const cam = optionsCameraLive({ mobile: estMobile(navigator.userAgent, navigator.maxTouchPoints) });
-    const enable = (deviceId?: string | null) =>
-      room.localParticipant.setCameraEnabled(true, { ...cam.capture, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) }, cam.publication);
+    // 🎥 Phase caméra 2 : la MEILLEURE qualité que CETTE caméra annonce (jusqu'à 4K), lue sans l'ouvrir ;
+    //    téléphone : réglage LiveKit inchangé (stabilité d'abord). Débit déduit de la résolution réelle.
+    const mobile = estMobile(navigator.userAgent, navigator.maxTouchPoints);
+    const enable = (deviceId?: string | null) => {
+      const appareil = videoDevicesRef.current.find((d) => d.deviceId === deviceId) ?? videoDevicesRef.current[0];
+      const cam = optionsCameraLive({ mobile, hauteurMax: hauteurMaxCamera(appareil as never) });
+      return room.localParticipant.setCameraEnabled(true, { ...cam.capture, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) }, cam.publication);
+    };
     try {
       // 🎛️ Phase 1 — règle des sources : externe choisie (si encore branchée) → caméra de
       //    l'appareil → aucune. Sans caméra du tout, on NE jette PAS : le live reste en audio et
@@ -273,7 +311,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       }
       const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
       const mst = pub?.track?.mediaStreamTrack;
-      if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
+      if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); journaliserCapture(mst); }
       suivreProcesseur(pub?.track as LocalVideoTrack | undefined);
       cameraTrackRef.current = (pub?.track as LocalVideoTrack | undefined) ?? null;
       setCameraOn(true);
@@ -506,22 +544,32 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     const room = roomRef.current;
     if (!room || !cameraOnRef.current) return; // caméra éteinte → sera pris en compte à l'allumage
     try {
-      if (programTrackRef.current && cameraTrackRef.current) {
-        // 🎬 Programme à l'antenne : la caméra n'est pas publiée → on la redémarre localement
-        //    (le processeur « Embellir » suit via restartTrack, comme lors d'un switchActiveDevice).
-        await cameraTrackRef.current.restartTrack({ deviceId: { exact: deviceId } });
-        const mst = cameraTrackRef.current.mediaStreamTrack;
-        if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
-        return;
+      // 🎥 Phase caméra 2 : la NOUVELLE caméra est redémarrée à SA meilleure qualité (capacités lues
+      //    sans l'ouvrir), sur la même piste (processeur « Embellir » compris) — pas de reconnexion.
+      //    Les débits des couches sont recalculés pour la nouvelle résolution.
+      const appareil = videoDevicesRef.current.find((d) => d.deviceId === deviceId);
+      const { capture } = optionsCameraLive({ mobile: estMobile(navigator.userAgent, navigator.maxTouchPoints), hauteurMax: hauteurMaxCamera(appareil as never) });
+      const piste = cameraTrackRef.current
+        ?? (room.localParticipant.getTrackPublication(Track.Source.Camera)?.track as LocalVideoTrack | undefined) ?? null;
+      if (!piste) { await room.switchActiveDevice('videoinput', deviceId); return; }
+      await piste.restartTrack({ deviceId: { exact: deviceId }, ...capture });
+      const mst = piste.mediaStreamTrack;
+      if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); journaliserCapture(mst); }
+      const reglages = mst?.getSettings?.() ?? {};
+      const sender = piste.sender;
+      if (sender && reglages.width && reglages.height) {
+        try {
+          const params = sender.getParameters();
+          if (params.encodings?.length) {
+            params.encodings = encodagesAjustes(params.encodings, reglages.width, reglages.height);
+            await sender.setParameters(params);
+          }
+        } catch (e) { console.warn('[CAMÉRA] débits des couches non ajustés', e); }
       }
-      await room.switchActiveDevice('videoinput', deviceId);
-      const pub = room.localParticipant.getTrackPublication(Track.Source.Camera);
-      const mst = pub?.track?.mediaStreamTrack;
-      if (mst) { setLocalStream(new MediaStream([mst])); surveillerFinDePiste(mst); }
     } catch (err) {
       console.warn('[LIVEKIT] changement de caméra échoué (périphérique indisponible ?)', err);
     }
-  }, [surveillerFinDePiste]);
+  }, [surveillerFinDePiste, journaliserCapture]);
 
   // 🎛️ Bascule automatique après débranchement : retour à la caméra de l'appareil, ou live audio.
   basculeAutoRef.current = async (retour: string | null) => {
@@ -681,7 +729,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
     if (prog) { try { await room.localParticipant.unpublishTrack(prog, false); } catch { /* ignore */ } }
     const cam = cameraTrackRef.current;
     if (cam && cameraOnRef.current && !room.localParticipant.getTrackPublication(Track.Source.Camera)) {
-      try { await room.localParticipant.publishTrack(cam, { ...(optionsCameraLive({ mobile: estMobile(navigator.userAgent, navigator.maxTouchPoints) }).publication || {}), source: Track.Source.Camera }); } catch (err) { console.warn('[LIVEKIT] republication caméra échouée', err); }
+      try { await room.localParticipant.publishTrack(cam, { ...(optionsCameraLive({ mobile: estMobile(navigator.userAgent, navigator.maxTouchPoints), hauteurMax: cam.mediaStreamTrack?.getSettings?.().height ?? null }).publication || {}), source: Track.Source.Camera }); } catch (err) { console.warn('[LIVEKIT] republication caméra échouée', err); }
     }
   }, []);
 

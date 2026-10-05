@@ -31,10 +31,14 @@ test('un message marqué question devient une question, avec son heure', () => {
 });
 
 test('un message ordinaire du chat n’est PAS une question — fini le bruit', () => {
-  assert.equal(messageVersQuestion(msg({ question: undefined }), MOI), null);
-  assert.equal(messageVersQuestion(msg({ question: false }), MOI), null);
+  // 05/10 : une VRAIE question non marquée est désormais reconnue (cf. cameraNative/liveContract) ;
+  //   le bruit, lui, reste dehors.
+  for (const text of ['Super séance 🔥', 'bravo', 'on m’entend ?', 'ça marche ?', '🔥🔥🔥']) {
+    assert.equal(messageVersQuestion(msg({ question: undefined, text }), MOI), null, text);
+    assert.equal(messageVersQuestion(msg({ question: false, text }), MOI), null, text);
+  }
   // Une chaîne « true » n'est pas le signal : seul le booléen l'est.
-  assert.equal(messageVersQuestion(msg({ question: 'true' }), MOI), null);
+  assert.equal(messageVersQuestion(msg({ question: 'true', text: 'Super séance' }), MOI), null);
 });
 
 test('mes propres messages ne sont jamais des questions', () => {
@@ -71,7 +75,7 @@ test('seuls auteur, texte, heure et id sortent — rien d’autre du message', (
 
 test('une rafale de messages : TOUTES les questions entrent, pas seulement la dernière', () => {
   const e = recevoirMessages(ETAT_INITIAL, [
-    msg({ id: 'a' }), msg({ id: 'b', question: false }), msg({ id: 'c' }), msg({ id: 'd', userId: MOI }),
+    msg({ id: 'a' }), msg({ id: 'b', question: false, text: 'bravo !' }), msg({ id: 'c' }), msg({ id: 'd', userId: MOI }),
   ], MOI);
   assert.deepEqual(e.file.map((q) => q.id), ['a', 'c']);
 });
@@ -79,7 +83,7 @@ test('une rafale de messages : TOUTES les questions entrent, pas seulement la de
 test('rien de nouveau → le MÊME objet est rendu (aucune boucle de rendu)', () => {
   const e1 = recevoirMessages(ETAT_INITIAL, [msg({ id: 'a' })], MOI);
   assert.equal(recevoirMessages(e1, [msg({ id: 'a' })], MOI), e1);
-  assert.equal(recevoirMessages(ETAT_INITIAL, [msg({ question: false })], MOI), ETAT_INITIAL);
+  assert.equal(recevoirMessages(ETAT_INITIAL, [msg({ question: false, text: 'bravo' })], MOI), ETAT_INITIAL);
   assert.equal(recevoirMessages(ETAT_INITIAL, null, MOI), ETAT_INITIAL);
 });
 

@@ -148,17 +148,19 @@ test('éteint par défaut : aucune requête tant que le coach ne l’allume pas'
   // Les DEUX portes vers l'IA refusent de partir tant que l'interrupteur est éteint.
   ['const demanderTexte', 'const demanderReponse'].forEach((porte) => {
     const bloc = page.slice(page.indexOf(porte), page.indexOf(porte) + 400);
-    assert.ok(/if \(!sessionId \|\| !assistantActif\) return;/.test(bloc), `porte non gardée : ${porte}`);
+    assert.ok(/if \(!sessionId \|\| !assistantActif\) return( false)?;/.test(bloc), `porte non gardée : ${porte}`);
   });
 });
 
-test('plus aucune relance AUTOMATIQUE : l’IA ne part que sur un clic', () => {
+test('relance AUTOMATIQUE : seulement une QUESTION, une fois, souffleur allumé par l’hôte', () => {
   const page = codeSeul(lire('pages', 'SessionPage.tsx'));
-  // Le prompteur a remplacé la boucle de suggestions par des boutons. Aucun effet ne doit
-  // appeler l'IA : sinon une question du chat déclencherait une requête à l'insu de l'hôte.
+  // 05/10 (demande explicite) : une question du chat prépare une suggestion pour l'HÔTE. Un seul
+  // effet a ce droit, et il passe par questionAPreparer (souffleur allumé, une demande par question,
+  // jamais pendant une suggestion en attente) ; demanderReponse garde aussi la porte assistantActif.
   page.split('useEffect(').slice(1).forEach((bloc) => {
     const corps = bloc.slice(0, bloc.indexOf('}, ['));
-    assert.ok(!/demanderIA|demanderReponse|demanderTexte/.test(corps),
-      'un effet appelle l’IA sans clic de l’hôte');
+    if (!/demanderIA|demanderReponse|demanderTexte/.test(corps)) return;
+    assert.ok(/questionAPreparer\(/.test(corps) && !/demanderIA|demanderTexte/.test(corps),
+      'un effet appelle l’IA hors du chemin « question → suggestion »');
   });
 });

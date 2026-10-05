@@ -101,3 +101,117 @@ export function doitAppeler(d: DemandeRelance): boolean {
   if (d.empreinte === d.etat.derniereEmpreinte) return false;
   return d.maintenant - d.etat.dernierAppelMs >= DELAI_MIN_MS;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════
+ * 05/10 — PRÉPARATION AUTOMATIQUE : une question PERTINENTE arrive dans le chat → une suggestion
+ * est préparée pour l'HÔTE (jamais envoyée au participant). Chaque garde-fou ci-dessous est un
+ * coût évité ; tous sont des fonctions pures, testées sans réseau.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Calme demandé après l'arrivée d'une question avant d'appeler (une rafale = un seul appel). */
+export const DEBOUNCE_MS = 1500;
+/** Une question plus vieille que ça (ex. relue après un rechargement) ne déclenche rien. */
+export const AGE_MAX_AUTO_MS = 10 * 60_000;
+/** Plafond client des demandes AUTOMATIQUES par fenêtre glissante (le serveur a le sien). */
+export const MAX_AUTO_PAR_FENETRE = 10;
+export const FENETRE_AUTO_MS = 5 * 60_000;
+/** Au-delà, on abandonne l'attente : le Live continue, l'hôte voit « indisponible ». */
+export const DELAI_REPONSE_MS = 15_000;
+export const DELAI_REDACTION_MS = 35_000;
+/** Contexte envoyé avec une question : la question + les 4 derniers messages, rien de plus. */
+export const MESSAGES_CONTEXTE_QUESTION = 4;
+/** Mémoire des questions déjà demandées (bornée). */
+export const MEMOIRE_DEMANDEES = 200;
+
+export interface QuestionAuto { id: string; texte: string; ts?: number }
+
+/**
+ * La prochaine question à préparer, ou `null`. Une question = AU PLUS une demande automatique
+ * (`dejaDemandees`) ; rien tant qu'une suggestion attend la décision de l'hôte, ni pendant un
+ * appel en vol ; assistant éteint → rien, jamais ; bruit (bonjour, merci, emoji…) → rien ;
+ * question trop ancienne → rien. La plus ANCIENNE question pertinente passe d'abord.
+ */
+export function questionAPreparer<Q extends QuestionAuto>(p: {
+  file: Q[]; dejaDemandees: ReadonlySet<string> | string[]; suggestionEnAttente: boolean;
+  actif: boolean; enCours: boolean; pertinente: (texte: string) => boolean; maintenant?: number;
+}): Q | null {
+  if (!p.actif || p.enCours || p.suggestionEnAttente) return null;
+  const deja = p.dejaDemandees instanceof Set ? p.dejaDemandees : new Set(p.dejaDemandees);
+  return p.file.find((q) => !!q && !!q.id && !deja.has(q.id) && p.pertinente(q.texte)
+    && !(typeof q.ts === 'number' && typeof p.maintenant === 'number' && p.maintenant - q.ts > AGE_MAX_AUTO_MS)) ?? null;
+}
+
+/** Plafond client : vrai si une demande automatique est permise maintenant (sans rien compter). */
+export function quotaAutoPermis(historique: readonly number[], maintenant: number): boolean {
+  return historique.filter((t) => maintenant - t < FENETRE_AUTO_MS).length < MAX_AUTO_PAR_FENETRE;
+}
+
+/** Ajoute un appel à l'historique (copie bornée à la fenêtre). */
+export function compterAppelAuto(historique: readonly number[], maintenant: number): number[] {
+  return [...historique.filter((t) => maintenant - t < FENETRE_AUTO_MS), maintenant];
+}
+
+/** Ce qui part avec une question : la question elle-même + les derniers messages, bornés. */
+export function contextePourQuestion(
+  messages: MessageChat[] | null | undefined,
+  q: { id?: string; auteur?: string; texte?: string } | null | undefined,
+): { messages: MessagePourIA[]; question: MessagePourIA | null } {
+  const ctx = messagesPourIA(messages).slice(-MESSAGES_CONTEXTE_QUESTION);
+  const texte = String((q && q.texte) || '').trim().slice(0, 500);
+  return { messages: ctx, question: texte ? { nom: String((q && q.auteur) || 'Participant').slice(0, 40), texte } : null };
+}
+
+/**
+ * Attendre une promesse, mais pas plus de `ms`. Le délai dépassé ou une exception deviennent
+ * une valeur de REPLI : jamais de rejet non géré, jamais d'attente infinie de l'hôte.
+ */
+export function avecDelai<T>(p: Promise<T>, ms: number, repli: T, siErreur: T = repli): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let fini = false;
+    const t = setTimeout(() => { if (!fini) { fini = true; resolve(repli); } }, ms);
+    Promise.resolve(p).then(
+      (v) => { if (!fini) { fini = true; clearTimeout(t); resolve(v); } },
+      () => { if (!fini) { fini = true; clearTimeout(t); resolve(siErreur); } },
+    );
+  });
+}
+
+/** Mémoire des questions demandées : relue (liste blanche de chaînes), bornée. */
+export function lireDemandees(brut: string | null | undefined): Set<string> {
+  try {
+    const v = JSON.parse(String(brut || '[]'));
+    return new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && x.length <= 200).slice(-MEMOIRE_DEMANDEES));
+  } catch { return new Set(); }
+}
+export function ecrireDemandees(s: ReadonlySet<string>): string {
+  return JSON.stringify([...s].slice(-MEMOIRE_DEMANDEES));
+}
+
+/** Que faire quand le calme (debounce) est écoulé ? Décision pure, testée. */
+export type DecisionAuto = { action: 'appeler' } | { action: 'quota' } | { action: 'attendre'; ms: number };
+export function decisionAuto(p: { historique: readonly number[]; maintenant: number; dernierAppelMs: number }): DecisionAuto {
+  if (!quotaAutoPermis(p.historique, p.maintenant)) return { action: 'quota' };
+  const reste = DELAI_MIN_MS - (p.maintenant - p.dernierAppelMs);
+  return reste > 0 ? { action: 'attendre', ms: Math.max(500, reste) } : { action: 'appeler' };
+}
+
+/**
+ * DEBOUNCE : chaque `planifier` annule le précédent ; seul le dernier part, après `ms` de calme.
+ * Une rafale de messages (ou de re-rendus) = UNE exécution. Minuterie injectable (tests).
+ */
+export interface Debounce { planifier(fn: () => void): void; annuler(): void }
+export function creerDebounce(
+  ms: number,
+  minuterie: { poser: (fn: () => void, ms: number) => unknown; retirer: (h: unknown) => void } = {
+    poser: (fn, d) => setTimeout(fn, d), retirer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+  },
+): Debounce {
+  let h: unknown = null;
+  return {
+    planifier(fn) {
+      if (h !== null) minuterie.retirer(h);
+      h = minuterie.poser(() => { h = null; fn(); }, ms);
+    },
+    annuler() { if (h !== null) { minuterie.retirer(h); h = null; } },
+  };
+}

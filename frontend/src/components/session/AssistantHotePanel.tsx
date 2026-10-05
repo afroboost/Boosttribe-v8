@@ -120,6 +120,9 @@ const MOTIFS: Record<string, string> = {
   texte_absent: "Écris d'abord ton thème ou ton texte.",
   hors_ligne: "Assistant indisponible : connexion interrompue.",
   reserve_hote: "Réservé à l'hôte de cette session.",
+  trop_de_demandes: "Assistant en pause quelques instants (trop de demandes). Le Live continue.",
+  delai_depasse: "L'assistant a mis trop de temps à répondre. Le Live continue ; réessaie plus tard.",
+  deja_en_cours: "Une suggestion est déjà en préparation pour cette question.",
 };
 
 const BTN = 'min-h-[44px] px-3 py-2 rounded-lg text-xs font-semibold transition-colors inline-flex items-center justify-center gap-1';
@@ -464,7 +467,7 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
             {zoneSuggestion}
             {!etat.file.length && !q && (
               <p className="text-white/50 text-sm" data-testid="prompteur-aucune-question">
-                Aucune question en attente. Seuls les messages envoyés avec « Poser une question » arrivent ici.
+                Aucune question en attente. Les questions du chat arrivent ici ; assistant allumé, une suggestion est préparée pour toi seul.
               </p>
             )}
             {!!etat.file.length && (

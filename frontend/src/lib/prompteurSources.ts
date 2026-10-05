@@ -133,6 +133,22 @@ export function recevoirSuggestion(e: EtatPrompteur, texte: string, question: Qu
 }
 
 /**
+ * 05/10 — Suggestion préparée AUTOMATIQUEMENT pour une question du chat. Plus prudente que
+ * `recevoirSuggestion` (geste de l'hôte) :
+ *  - une proposition déjà en attente n'est JAMAIS remplacée (l'hôte la lit peut-être) ;
+ *  - la question a disparu entre-temps (modération, déjà traitée) → la réponse est jetée ;
+ *  - ni le brouillon ni le texte affiché ne bougent.
+ */
+export function recevoirSuggestionAuto(e: EtatPrompteur, texte: string, q: QuestionEnAttente): EtatPrompteur {
+  if (e.suggestion || !String(texte || '').trim()) return e;
+  const dansFile = e.file.some((x) => x.id === q.id);
+  const active = !!e.questionActive && e.questionActive.id === q.id;
+  if (!dansFile && !active) return e;
+  const base = dansFile ? selectionnerQuestion(e, q.id) : e;
+  return recevoirSuggestion(base, texte, active ? e.questionActive : q);
+}
+
+/**
  * « Utiliser » : et SEULEMENT là, la suggestion devient le brouillon — donc éditable.
  * Elle ne passe jamais directement à l'écran : l'hôte doit encore cliquer « Afficher ».
  */
@@ -198,15 +214,16 @@ export interface MessagePourQuestion {
  * Un message du chat devient-il une question pour l'hôte ?
  *
  * AVANT : tout message d'un autre participant entrait dans la file — « bravo », « 🔥 »,
- * « on m'entend ? ». Du bruit, en direct. MAINTENANT : seul un message MARQUÉ
- * `question: true` (le booléen, pas une chaîne) en devient une. Jamais les miens,
+ * « on m'entend ? ». Du bruit, en direct. MAINTENANT : un message MARQUÉ
+ * `question: true` (le booléen, pas une chaîne) en devient une ; 05/10 : une VRAIE question
+ * non marquée aussi (`ressembleAQuestion`), jamais le bruit (`estBruit`). Jamais les miens,
  * jamais un texte vide ; texte borné ; seuls id, auteur, texte et heure sortent.
  */
 export function messageVersQuestion(
   m: MessagePourQuestion | null | undefined,
   meUserId: string | null | undefined,
 ): QuestionEnAttente | null {
-  if (!m || m.question !== true) return null;
+  if (!m || (m.question !== true && !ressembleAQuestion(m.text))) return null;
   if (meUserId && m.userId === meUserId) return null;
   const texte = String(m.text || '').trim().slice(0, LONGUEUR_MAX_QUESTION);
   if (!texte) return null;
@@ -215,6 +232,59 @@ export function messageVersQuestion(
   const id = String(m.id || `${m.userId || auteur}-${ts ?? ''}-${texte}`);
   return ts === undefined ? { id, auteur, texte } : { id, auteur, texte, ts };
 }
+
+/**
+ * 05/10 — LE FILTRE DE PERTINENCE (coût IA). Deux questions distinctes :
+ *
+ *  - `estBruit` : politesse, réaction, vérification du son, emoji. « bonjour », « merci coach ! »,
+ *    « 🔥🔥 », « on m'entend ? », « ça va ? ». Ces messages ne valent JAMAIS un appel à l'IA,
+ *    même envoyés avec le bouton « ? ».
+ *  - `ressembleAQuestion` : une VRAIE question, même sans le bouton « ? » — un point
+ *    d'interrogation dans une phrase d'au moins trois mots, ou un mot interrogatif CLAIR en tête
+ *    (« Est-ce que… », « Comment… », « Combien… »). « Quel… » / « Que… » sans « ? » sont exclus :
+ *    en français ce sont souvent des exclamations (« Quelle belle séance »).
+ *
+ * `estQuestionPertinente` = ce qui autorise une demande AUTOMATIQUE de suggestion.
+ */
+const LETTRES = /[^\p{L}\p{N}'’-]+/gu;
+const POLITESSE = /^(bonjour|bonsoir|salut|slt|coucou|hello|hi|hey|yo|wesh|merci|mercii+|thanks|thank|bravo|super|top|génial|genial|trop|magnifique|incroyable|énorme|enorme|ok|okay|d'accord|d’accord|oui|ouais|lol|mdr|ptdr|haha+|hihi+|bisous|bises|bye|ciao|bonne|yes|cool|parfait|waouh|wow|ouf)$/;
+const VERIF_SON = /(m['’]?entend|nous entend|vous entend|me voi[st]|nous voi[st]|on voit|on entend|le son|du son|pas de son|ça marche|ca marche|ça fonctionne|ça va|ca va|sa va|quoi de neuf|vous allez bien|tu vas bien|comment (vas|allez)[- ](tu|vous))/;
+const INTERROGATIFS = /^(est[- ]ce|comment|pourquoi|quand|combien|o[uù] |à quelle|a quelle|de quelle|peut[- ]on|peux[- ]tu|pouvez[- ]vous|puis[- ]je|je peux|on peut|faut[- ]il|y a[- ]t[- ]il|est[- ]il possible|c['’]est (quand|combien|o[uù]|quoi)|what|how|when|where|why|can i|can you|is there|do you)\b/;
+
+function motsDe(texte: string): string[] {
+  return texte.toLowerCase().replace(LETTRES, ' ').trim().split(/\s+/).filter(Boolean);
+}
+
+export function estBruit(texte: string | null | undefined): boolean {
+  const s = String(texte || '').trim().toLowerCase();
+  const mots = motsDe(s);
+  const lettres = mots.join('');
+  if (lettres.length < 3) return true;                               // emoji, « ? », « ok »
+  if (POLITESSE.test(mots[0]) && mots.length <= 4) return true;       // « merci coach ! », « bonjour à tous »
+  if (mots.length <= 6 && VERIF_SON.test(s)) return true;            // « on m'entend ? », « ça va ? »
+  return false;
+}
+
+export function ressembleAQuestion(texte: string | null | undefined): boolean {
+  const s = String(texte || '').trim().toLowerCase();
+  if (estBruit(s)) return false;
+  const mots = motsDe(s);
+  if (mots.length < 3) return false;
+  if (s.includes('?')) return true;
+  if (/!\s*$/.test(s)) return false;                                 // une exclamation n'est pas une question
+  return INTERROGATIFS.test(s);
+}
+
+/** Une question mérite-t-elle une demande AUTOMATIQUE à l'IA ? (jamais pour du bruit) */
+export function estQuestionPertinente(texte: string | null | undefined): boolean {
+  const s = String(texte || '').trim().toLowerCase();
+  if (estBruit(s) || motsDe(s).length < 3) return false;
+  if (ressembleAQuestion(s)) return true;
+  // Marquée « ? » sans en avoir l'air : une exclamation (« Quelle belle séance ! », « Que c'est
+  // beau ») ne vaut pas un appel ; une affirmation interrogative (« Tu fais des cours le samedi »), si.
+  return !/!\s*$/.test(s) && !EXCLAMATIF.test(s);
+}
+const EXCLAMATIF = /^(quel|quelle|quels|quelles|que|qu['’]|comme|trop|tellement|vraiment)\b/;
 
 /**
  * Toute la liste des messages, pas seulement le dernier : une rafale ne perd plus de
@@ -347,3 +417,18 @@ export const ACTIONS_TEXTE = [
 ] as const;
 
 export type ActionTexte = (typeof ACTIONS_TEXTE)[number]['cle'];
+
+/**
+ * 🎙️ 05/10 — ENTRÉE TRANSCRIPTION (questions ORALES) — interface prête, AUCUN moteur branché.
+ * Audit : aucune transcription en direct n'existe (seule la transcription de l'ENREGISTREMENT,
+ * après coup, via gpt-4o-transcribe). Quand une brique speech-to-text temps réel sera validée,
+ * chaque segment TEXTE reconnu arrivera ici et suivra le même chemin que le chat : file → suggestion.
+ * Jamais d'audio vers le modèle de réponse : seulement le texte du segment.
+ */
+export interface SegmentTranscrit { id: string; auteur?: string; texte: string; ts?: number }
+export function recevoirTranscription(e: EtatPrompteur, seg: SegmentTranscrit | null | undefined): EtatPrompteur {
+  if (!seg || !seg.id || !ressembleAQuestion(seg.texte)) return e;
+  const texte = String(seg.texte).trim().slice(0, LONGUEUR_MAX_QUESTION);
+  const q: QuestionEnAttente = { id: `voix-${seg.id}`, auteur: String(seg.auteur || '').trim().slice(0, 40) || 'Participant (oral)', texte };
+  return recevoirQuestion(e, typeof seg.ts === 'number' ? { ...q, ts: seg.ts } : q);
+}

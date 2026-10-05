@@ -1535,6 +1535,11 @@ class SouffleurBody(BaseModel):
     invite: Optional[str] = None                        # prénom de l'invité à l'écran
     sujet: Optional[str] = None                         # titre/thème de la session
     texte: Optional[str] = None                         # le texte/thème écrit par l'hôte
+    # 05/10 — question à laquelle répondre + id du message (déduplication serveur) ;
+    #   `autre` = « Autre proposition » (geste de l'hôte : la réponse mémorisée n'est pas resservie).
+    question: Optional[Dict[str, Any]] = None
+    message_id: Optional[str] = None
+    autre: bool = False
 
 
 def _souffleur_instructions(mode: str) -> str:
@@ -1555,6 +1560,61 @@ def _souffleur_instructions(mode: str) -> str:
                    "message, adressées à la personne qui l'a écrit.")
 
 
+# 05/10 — LIMITE DE FRÉQUENCE du souffleur (coût IA) : par compte ET par Live, en mémoire du
+#   processus. Au-delà : `ok:false, raison:"trop_de_demandes"` — le Live continue, rien ne casse.
+SOUFFLEUR_ECART_MIN_S = 2.0
+SOUFFLEUR_FENETRE_S = 300.0
+SOUFFLEUR_MAX_PAR_FENETRE = 20
+SOUFFLEUR_DELAI_S = 12.0          # fournisseur trop lent → `fournisseur_indisponible` (le client attend 15 s)
+_souffleur_appels: Dict[str, List[float]] = {}
+
+# 05/10 — DÉDUPLICATION par message : même (compte, Live, message_id) = UN SEUL appel au
+#   fournisseur. Réponse réussie mémorisée 10 min et resservie (double réception, rechargement,
+#   deux onglets) ; un appel en vol pour le même message → `deja_en_cours`, pas un second appel.
+SOUFFLEUR_MEMOIRE_S = 600.0
+_souffleur_memoire: Dict[str, tuple] = {}
+_souffleur_en_vol: set = set()
+_RE_MESSAGE_ID = re.compile(r"^[A-Za-z0-9_.:@-]{1,120}$")
+
+
+def _souffleur_cle_message(user_id: Any, session_id: str, message_id: Optional[str]) -> Optional[str]:
+    mid = str(message_id or "").strip()
+    if not mid or not _RE_MESSAGE_ID.match(mid):
+        return None
+    return f"{user_id}|{session_id}|{mid}"
+
+
+def _souffleur_memoire_lire(cle: str, maintenant: float) -> Optional[Dict[str, Any]]:
+    v = _souffleur_memoire.get(cle)
+    if not v:
+        return None
+    if maintenant - v[0] > SOUFFLEUR_MEMOIRE_S:
+        _souffleur_memoire.pop(cle, None)
+        return None
+    return v[1]
+
+
+def _souffleur_memoire_ecrire(cle: str, maintenant: float, rep: Dict[str, Any]) -> None:
+    _souffleur_memoire[cle] = (maintenant, rep)
+    if len(_souffleur_memoire) > 2000:                     # borne mémoire : on oublie les plus anciens
+        for k in list(_souffleur_memoire)[:500]:
+            _souffleur_memoire.pop(k, None)
+
+
+def _souffleur_quota(cle: str, maintenant: float) -> bool:
+    """Vrai si l'appel est permis (et alors il est compté)."""
+    l = [t for t in _souffleur_appels.get(cle, []) if maintenant - t < SOUFFLEUR_FENETRE_S]
+    if (l and maintenant - l[-1] < SOUFFLEUR_ECART_MIN_S) or len(l) >= SOUFFLEUR_MAX_PAR_FENETRE:
+        _souffleur_appels[cle] = l
+        return False
+    l.append(maintenant)
+    _souffleur_appels[cle] = l
+    if len(_souffleur_appels) > 5000:                       # borne mémoire : on oublie les plus anciens
+        for k in list(_souffleur_appels)[:1000]:
+            _souffleur_appels.pop(k, None)
+    return True
+
+
 @app.post("/live/assistant/suggestions")
 async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str] = Header(default=None)):
     """Suggestions PRIVÉES pour l'hôte. 401 sans jeton, 403 si l'appelant n'est pas hôte.
@@ -1569,6 +1629,33 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     if not await _is_host_or_cohost(session_id, user.get("id")):
         raise HTTPException(status_code=403, detail="assistant_reserve_a_l_hote")
+
+    mode_demande = body.mode if body.mode in ("chat", "visio") else None
+    cle_msg = _souffleur_cle_message(user.get("id"), session_id, body.message_id) if mode_demande else None
+    if cle_msg and not body.autre:
+        deja = _souffleur_memoire_lire(cle_msg, time.time())
+        if deja is not None:
+            return {**deja, "deja": True}                 # même message : resservi, AUCUN appel
+    if cle_msg and cle_msg in _souffleur_en_vol:
+        return {"ok": False, "raison": "deja_en_cours", "suggestions": []}
+
+    if not _souffleur_quota(f"{user.get('id')}|{session_id}", time.time()):
+        return {"ok": False, "raison": "trop_de_demandes", "suggestions": []}
+
+    if cle_msg:
+        _souffleur_en_vol.add(cle_msg)
+        try:
+            rep = await _souffleur_appeler(body, session_id)
+        finally:
+            _souffleur_en_vol.discard(cle_msg)
+        if rep.get("ok"):
+            _souffleur_memoire_ecrire(cle_msg, time.time(), rep)
+        return rep
+    return await _souffleur_appeler(body, session_id)
+
+
+async def _souffleur_appeler(body: SouffleurBody, session_id: str) -> Dict[str, Any]:
+    """L'appel au fournisseur lui-même — l'identité et le rôle ont DÉJÀ été vérifiés."""
 
     key = await get_openai_key()
     if not key:
@@ -1633,6 +1720,12 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
         contexte.append("À l'écran avec le coach : " + _souffleur_nettoyer(body.invite)[:40])
     if lignes:
         contexte.append("Chat récent :\n" + "\n".join(lignes))
+    q = body.question if isinstance(body.question, dict) else None
+    q_texte = _souffleur_nettoyer((q or {}).get("texte")) if q else ""
+    if q_texte:
+        q_nom = _souffleur_nettoyer((q or {}).get("nom"))[:40] or "Participant"
+        contexte.append(f"QUESTION À LAQUELLE RÉPONDRE — {q_nom} : {q_texte}\n"
+                        "Propose des réponses à CETTE question (pas au dernier message du chat).")
     if not contexte:
         contexte.append("Aucun message pour l'instant : propose des relances pour lancer l'échange.")
 
@@ -1641,7 +1734,7 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
                "messages": [{"role": "system", "content": _souffleur_instructions(mode)},
                             {"role": "user", "content": "\n\n".join(contexte)}]}
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient(timeout=SOUFFLEUR_DELAI_S) as client:
             resp = await client.post("https://api.openai.com/v1/chat/completions",
                                      headers={"Authorization": f"Bearer {key}",
                                               "Content-Type": "application/json"},

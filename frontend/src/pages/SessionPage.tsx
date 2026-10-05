@@ -82,7 +82,9 @@ import { LiveReactionOverlay, LiveReactionButton } from '@/components/session/Li
 import { useLiveReactions } from '@/hooks/useLiveReactions';
 import { EVT_REACTIONS, EVT_TOTAL } from '@/lib/liveReactions';
 import {
-  doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique,
+  doitAppeler, empreinteContexte, messagesPourIA, modeAutomatique, questionAPreparer, DELAI_MIN_MS,
+  DEBOUNCE_MS, DELAI_REPONSE_MS, DELAI_REDACTION_MS, compterAppelAuto, contextePourQuestion,
+  avecDelai, lireDemandees, ecrireDemandees, decisionAuto, creerDebounce, type Debounce,
   type ModeSouffleur, type EtatRelance,
 } from '@/lib/assistantHote';
 import type { OngletPrompteur } from '@/components/session/AssistantHotePanel';
@@ -90,6 +92,7 @@ import {
   ETAT_INITIAL, ecrire, afficher, effacer, recevoirSuggestion, utiliserSuggestion,
   ignorerSuggestion, recevoirQuestion, ouvrirQuestion, reprendreTexte,
   etatInitialDepuisScript, recevoirMessages, retirerQuestion, selectionnerQuestion, afficherQuestion,
+  recevoirSuggestionAuto, estQuestionPertinente,
   type EtatPrompteur, type QuestionEnAttente, type ActionTexte,
 } from '@/lib/prompteurSources';
 import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
@@ -3148,15 +3151,26 @@ export const SessionPage: React.FC = () => {
     setEtatPrompteur((e) => recevoirMessages(e, groupMessages, socket.userId));
   }, [groupMessages, canShare, socket.userId]);
 
-  const demanderIA = useCallback(async (corps: Parameters<typeof suggestionsAssistant>[0], question: QuestionEnAttente | null) => {
+  // 05/10 — IA indisponible, en erreur ou trop lente = le Live continue : `avecDelai` ne rejette
+  //   jamais, `finally` rend toujours la main, et une réponse arrivée trop tard est ignorée.
+  const demanderIA = useCallback(async (corps: Parameters<typeof suggestionsAssistant>[0], question: QuestionEnAttente | null, auto = false) => {
     setAssistantEnCours(true);
-    const r = await suggestionsAssistant(corps);
-    setAssistantEnCours(false);
-    if (r.ok && r.suggestions.length) {
-      setAssistantIndispo(null);
-      setEtatPrompteur((e) => recevoirSuggestion(e, r.suggestions[0], question));
-    } else {
-      setAssistantIndispo(r.raison || 'fournisseur_indisponible');
+    try {
+      const repli = { ok: false, suggestions: [] as string[], raison: 'delai_depasse' };
+      const delai = corps.mode === 'chat' || corps.mode === 'visio' ? DELAI_REPONSE_MS : DELAI_REDACTION_MS;
+      const r = await avecDelai(suggestionsAssistant(corps), delai, repli, { ...repli, raison: 'fournisseur_indisponible' });
+      if (r.ok && r.suggestions.length) {
+        setAssistantIndispo(null);
+        // Automatique : jamais par-dessus une proposition en attente, jamais pour une question disparue.
+        setEtatPrompteur((e) => (auto && question ? recevoirSuggestionAuto(e, r.suggestions[0], question)
+          : recevoirSuggestion(e, r.suggestions[0], question)));
+      } else {
+        setAssistantIndispo(r.raison || 'fournisseur_indisponible');
+      }
+    } catch {
+      setAssistantIndispo('fournisseur_indisponible');
+    } finally {
+      setAssistantEnCours(false);
     }
   }, []);
 
@@ -3168,18 +3182,71 @@ export const SessionPage: React.FC = () => {
     void demanderIA({ session_id: sessionId, mode: action, messages: [], texte }, null);
   }, [sessionId, assistantActif, themeIA, etatPrompteur.brouillon, demanderIA]);
 
-  // Réponse à une question : le contexte reste le chat, borné et nettoyé côté serveur.
-  const demanderReponse = useCallback((q: QuestionEnAttente | null, forcer: boolean) => {
-    if (!sessionId || !assistantActif) return;
-    const contexte = messagesPourIA(groupMessages as unknown as { name?: string; text?: string }[]);
-    const empreinte = empreinteContexte(assistantMode, contexte, inviteEnVisio) + (q ? `|${q.id}` : '');
+  // Réponse à une question : la question + un contexte MINIMAL (4 derniers messages), nettoyé et
+  //   re-borné côté serveur. Renvoie vrai si l'appel est réellement parti.
+  //   `autre` = « Autre proposition » : le serveur ne ressert pas sa réponse mémorisée.
+  const demanderReponse = useCallback((q: QuestionEnAttente | null, forcer: boolean, auto = false, autre = false): boolean => {
+    if (!sessionId || !assistantActif) return false;
+    const cible = q || etatPrompteur.questionActive;
+    const { messages: contexte, question } = contextePourQuestion(groupMessages as unknown as { name?: string; text?: string }[], cible);
+    const empreinte = empreinteContexte(assistantMode, contexte, inviteEnVisio) + (cible ? `|${cible.id}` : '') + (autre ? `|autre-${Date.now()}` : '');
     if (!doitAppeler({ etat: relanceRef.current, empreinte, maintenant: Date.now(),
-                       actif: assistantActif, forcer, enCours: assistantEnCours })) return;
+                       actif: assistantActif, forcer, enCours: assistantEnCours })) return false;
     relanceRef.current = { dernierAppelMs: Date.now(), derniereEmpreinte: empreinte };
     void demanderIA({ session_id: sessionId, mode: assistantMode, messages: contexte,
                       invite: assistantMode === 'visio' ? inviteEnVisio : null,
-                      sujet: description || null }, q || etatPrompteur.questionActive);
+                      sujet: description || null, question, message_id: cible ? cible.id : null, autre }, cible, auto);
+    return true;
   }, [sessionId, assistantActif, assistantEnCours, assistantMode, groupMessages, inviteEnVisio, description, etatPrompteur.questionActive, demanderIA]);
+
+  // 🤖 05/10 — Une question PERTINENTE arrive → suggestion PRÉPARÉE pour l'hôte (jamais envoyée au
+  //   participant, jamais affichée sans son clic). Garde-fous de coût, tous dans assistantHote.ts :
+  //   hôte seul (canShare) + souffleur allumé ; bruit exclu ; une demande par message_id, mémorisée
+  //   pour la session (re-rendu, reconnexion, rechargement : jamais deux fois) ; calme de DEBOUNCE_MS ;
+  //   délai minimum entre deux appels ; plafond par fenêtre. Le serveur a ses propres limites.
+  const cleDemandees = sessionId ? `bt_souffleur_demandees_${sessionId}` : '';
+  const questionsDemandeesRef = useRef<Set<string> | null>(null);
+  if (questionsDemandeesRef.current === null) {
+    let brut: string | null = null;
+    try { brut = cleDemandees ? sessionStorage.getItem(cleDemandees) : null; } catch { /* stockage refusé */ }
+    questionsDemandeesRef.current = lireDemandees(brut);
+  }
+  const appelsAutoRef = useRef<number[]>([]);
+  const debounceAutoRef = useRef<Debounce | null>(null);
+  if (debounceAutoRef.current === null) debounceAutoRef.current = creerDebounce(DEBOUNCE_MS);
+  const relanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    debounceAutoRef.current?.annuler();
+    if (relanceTimerRef.current) clearTimeout(relanceTimerRef.current);
+  }, []);
+  const [relanceAuto, setRelanceAuto] = useState(0);
+  const idsFile = etatPrompteur.file.map((q) => q.id).join('|');
+  const suggestionEnAttente = !!etatPrompteur.suggestion;
+  useEffect(() => {
+    const debounce = debounceAutoRef.current;
+    if (!canShare || !debounce) return;
+    const deja = questionsDemandeesRef.current || new Set<string>();
+    const q = questionAPreparer({ file: etatPrompteur.file, dejaDemandees: deja, suggestionEnAttente,
+      actif: assistantActif, enCours: assistantEnCours, pertinente: estQuestionPertinente, maintenant: Date.now() });
+    if (!q) { debounce.annuler(); return; }
+    debounce.planifier(() => {
+      const maintenant = Date.now();
+      const d = decisionAuto({ historique: appelsAutoRef.current, maintenant, dernierAppelMs: relanceRef.current.dernierAppelMs });
+      if (d.action === 'quota') { setAssistantIndispo('trop_de_demandes'); return; }
+      if (d.action === 'attendre') {
+        // Délai minimum entre deux appels pas encore écoulé : on repasse une fois qu'il l'est.
+        if (relanceTimerRef.current) clearTimeout(relanceTimerRef.current);
+        relanceTimerRef.current = setTimeout(() => setRelanceAuto((n) => n + 1), d.ms);
+        return;
+      }
+      // Refus (appel en vol, assistant éteint entre-temps) : l'effet repassera au prochain changement.
+      if (!demanderReponse(q, false, true)) return;
+      appelsAutoRef.current = compterAppelAuto(appelsAutoRef.current, maintenant);
+      deja.add(q.id);
+      try { if (cleDemandees) sessionStorage.setItem(cleDemandees, ecrireDemandees(deja)); } catch { /* stockage refusé */ }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canShare, idsFile, suggestionEnAttente, assistantActif, assistantEnCours, relanceAuto]);
 
   const assistantNode: React.ReactNode = canShare ? (
     <AssistantHotePanel
@@ -3227,7 +3294,7 @@ export const SessionPage: React.FC = () => {
       p={prompteur}
       surVideo={prompteurSurVideo}
       onSurVideo={setPrompteurSurVideo}
-      onAutreReponse={() => demanderReponse(etatPrompteur.questionActive, true)}
+      onAutreReponse={() => demanderReponse(etatPrompteur.questionActive, true, false, true)}
       onReprendre={() => { setEtatPrompteur((e) => reprendreTexte(e)); setPrompteurSurVideo(true); }}
       // Pendant le Live, le chat est posé sur la vidéo (plus de carte ChatPanel) : pas d'insertion.
       onInsererChat={liveMode ? undefined : (texte) => { setBrouillonChat(texte); setChatOpen(true); setChatTab('group'); }}

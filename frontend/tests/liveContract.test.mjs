@@ -8,6 +8,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { actionPromoParticipant } from './.build/livePromo.mjs';
+import { questionAPreparer, doitAppeler, DELAI_MIN_MS } from './.build/assistantHote.mjs';
+import {
+  ETAT_INITIAL, ressembleAQuestion, estQuestionPertinente, recevoirMessages, recevoirTranscription,
+  recevoirSuggestionAuto, utiliserSuggestion, ignorerSuggestion,
+} from './.build/prompteurSources.mjs';
 import { optionsCameraLive, cibleCamera, OPTIONS_ROOM_LIVE } from './.build/qualiteVideo.mjs';
 import { LOOKS, LIBELLES_LOOK, parametresLook, appliquerLook, traitementNecessaire, lireLook, ecrireLook, estLook, echantillonnerLut } from './.build/looksVideo.mjs';
 import { coteMaxTraitement } from './.build/beauteLogic.mjs';
@@ -138,4 +143,49 @@ test('Looks : aucun traitement si Original + beauté coupée (qualité native) ;
 test('Audio : AEC + NS + AGC actifs, gains naturels (aucune ré-amplification)', () => {
   assert.deepEqual({ ...TRAITEMENTS_PAROLE }, { echoCancellation: true, noiseSuppression: true, autoGainControl: true });
   assert.ok(Object.entries(GAINS_VOIX_DEFAUT).every(([k, v]) => (k === 'micParticipantPct' ? v === 100 : v === 1)));
+});
+
+/* ═══ Assistant IA du prompteur (détail : assistantPrompteurIA.test.mjs) ═══ */
+test('Assistant IA : bonjour / merci / emoji = aucun appel ; une vraie question = une demande', () => {
+  for (const b of ['bonjour', 'merci coach !', '🔥🔥', 'on m’entend ?', 'ça va ?', 'bravo']) assert.equal(estQuestionPertinente(b), false, b);
+  for (const q of ['Est-ce que je peux faire Afroboost si je débute ?', 'Combien coûte la séance ?']) assert.equal(ressembleAQuestion(q), true, q);
+});
+
+test('Assistant IA : une question = AU PLUS une demande automatique, jamais pendant une suggestion en attente', () => {
+  const m = { id: 'q1', name: 'Awa', text: 'Est-ce que je peux faire Afroboost si je débute ?', userId: 'u1', ts: 1 };
+  const e = recevoirMessages(ETAT_INITIAL, [m], 'hote');
+  const base = { file: e.file, suggestionEnAttente: false, actif: true, enCours: false, pertinente: estQuestionPertinente };
+  const deja = new Set();
+  assert.equal(questionAPreparer({ ...base, dejaDemandees: deja }).id, 'q1');
+  deja.add('q1');
+  assert.equal(questionAPreparer({ ...base, dejaDemandees: deja }), null);
+  assert.equal(questionAPreparer({ ...base, dejaDemandees: new Set(), suggestionEnAttente: true }), null);
+  assert.equal(questionAPreparer({ ...base, dejaDemandees: new Set(), actif: false }), null);
+  let r = e; for (let i = 0; i < 5; i++) r = recevoirMessages(r, [m], 'hote');
+  assert.equal(r.file.length, 1);
+  assert.equal(doitAppeler({ etat: { dernierAppelMs: 1000, derniereEmpreinte: 'a' }, empreinte: 'b', maintenant: 1000 + DELAI_MIN_MS - 1, actif: true }), false);
+});
+
+test('Assistant IA : Utiliser → brouillon de l’hôte (jamais à l’écran direct) ; Ignorer → disparaît ; jamais par-dessus une proposition', () => {
+  const e = recevoirMessages(ETAT_INITIAL, [{ id: 'q1', name: 'Awa', text: 'Combien coûte la séance ?', userId: 'u1' }], 'hote');
+  const s = recevoirSuggestionAuto(e, 'Oui, il y a plusieurs niveaux…', e.file[0]);
+  assert.equal(s.affiche, '');
+  const u = utiliserSuggestion(s);
+  assert.equal(u.brouillon, 'Oui, il y a plusieurs niveaux…');
+  assert.equal(u.affiche, '');
+  assert.equal(ignorerSuggestion(s).suggestion, null);
+  assert.equal(recevoirSuggestionAuto(s, 'autre', e.file[0]), s);
+});
+
+test('Voix : l’entrée transcription (texte) suit le chemin du chat ; aucune question → rien', () => {
+  const e = recevoirTranscription(ETAT_INITIAL, { id: 's1', texte: 'Est-ce que je peux venir avec ma fille ?' });
+  assert.equal(e.file[0].id, 'voix-s1');
+  assert.equal(recevoirTranscription(ETAT_INITIAL, { id: 's2', texte: 'bravo' }), ETAT_INITIAL);
+});
+
+test('branchement : suggestion préparée par la page pour l’HÔTE seul, une fois par question, après debounce', () => {
+  assert.match(PAGE, /if \(!canShare \|\| !debounce\) return;/);
+  assert.match(PAGE, /questionAPreparer\(\{ file: etatPrompteur\.file, dejaDemandees: deja/);
+  assert.match(PAGE, /deja\.add\(q\.id\)/);
+  assert.match(PAGE, /const assistantNode: React\.ReactNode = canShare \? \(/);
 });

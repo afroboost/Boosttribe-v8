@@ -1261,6 +1261,11 @@ export async function suggestionsAssistant(corps: {
   sujet?: string | null;
   /** Le texte de l'hôte, pour les modes de rédaction. Le chat n'y est jamais joint. */
   texte?: string | null;
+  /** 05/10 — la question à laquelle répondre (texte seul) et l'id du message : le serveur
+   *  déduplique (même message = un seul appel au fournisseur). `autre` = « Autre proposition ». */
+  question?: { nom: string; texte: string } | null;
+  message_id?: string | null;
+  autre?: boolean;
 }): Promise<{ ok: boolean; suggestions: string[]; raison?: string }> {
   if (!API_URL) return { ok: false, suggestions: [], raison: 'ia_non_configuree' };
   const token = await getAccessToken();

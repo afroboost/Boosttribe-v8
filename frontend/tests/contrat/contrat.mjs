@@ -215,6 +215,27 @@ async function harnaisNavigateur() {
     const fileHote = await page.evaluate(() => window.contrat.questionsVuesParLHote());
     noter('Questions — « ? » → file du prompteur de l\'hôte', 'question seule (pas le commentaire)', fileHote.length === 1 && fileHote[0].includes('samedi'), JSON.stringify(fileHote));
 
+    // ── Assistant IA : bloc « Suggestion IA » (hôte), Utiliser / Ignorer cliqués ──
+    await page.evaluate(() => window.contrat.suggestionIA());
+    await page.waitForTimeout(150);
+    const blocIA = await page.textContent('[data-testid="prompteur-suggestion"]').catch(() => '');
+    await page.click('[data-testid="prompteur-utiliser"]');
+    await page.waitForTimeout(150);
+    const apresUtiliser = {
+      brouillon: await page.inputValue('[data-testid="prompteur-editeur"]').catch(() => ''),
+      bloc: await visible('prompteur-suggestion'), affiche: await page.textContent('[data-testid="etat-affiche"]'),
+    };
+    noter('Assistant IA — Suggestion IA → Utiliser', 'bloc visible ; clic → réponse dans « Mon texte », écran inchangé',
+      /SUGGESTION IA/.test(blocIA) && /je peux venir/.test(blocIA) && !/bonjour/.test(blocIA)
+      && apresUtiliser.brouillon.startsWith('Oui ! Viens') && !apresUtiliser.bloc && apresUtiliser.affiche === 'Mon thème du jour',
+      `${blocIA.slice(0, 90)} | ${JSON.stringify(apresUtiliser)}`);
+    await page.evaluate(() => window.contrat.suggestionIA());
+    await page.waitForTimeout(150);
+    await page.click('[data-testid="prompteur-ignorer"]');
+    await page.waitForTimeout(150);
+    noter('Assistant IA — Ignorer', 'clic → suggestion supprimée, texte de l\'hôte intact',
+      !(await visible('prompteur-suggestion')) && (await page.textContent('[data-testid="etat-affiche"]')) === 'Mon thème du jour');
+
     // ── Prompteur ──
     await page.evaluate(() => window.contrat.prompteur());
     await page.waitForTimeout(200);

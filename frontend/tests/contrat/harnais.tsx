@@ -26,7 +26,12 @@ import { MicrophoneControl } from '@/components/audio/MicrophoneControl';
 import { usePrompteur } from '@/hooks/usePrompteur';
 import { useBeauteVisage, type UseBeauteVisageReturn } from '@/hooks/useBeauteVisage';
 import { actionPromoParticipant } from '@/lib/livePromo';
-import { ETAT_INITIAL, recevoirMessages } from '@/lib/prompteurSources';
+import {
+  ETAT_INITIAL, recevoirMessages, recevoirSuggestionAuto, utiliserSuggestion, ignorerSuggestion, ecrire, afficher,
+  type EtatPrompteur,
+} from '@/lib/prompteurSources';
+import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
+import type { OngletPrompteur } from '@/lib/prompteurSources';
 import { optionsCameraLive, associerPisteVideo, brancherVideo, ajusterDebitsCouches, OPTIONS_ROOM_LIVE } from '@/lib/qualiteVideo';
 import { cibleBascule } from '@/lib/sourcesLogic';
 import { dispositionBarre } from '@/lib/liveControls';
@@ -131,6 +136,35 @@ function prompteur(): void {
     // Texte LONG : un texte court atteint sa fin aussitôt et la lecture s'arrête d'elle-même (surFin).
     useEffect(() => { p.setScript(['Bienvenue dans le Live ! Échauffement : trois minutes.', ...Array.from({ length: 60 }, (_, i) => `Étape ${i + 1} : on respire et on bouge.`)].join('\n')); }, []); // eslint-disable-line react-hooks/exhaustive-deps
     return <div style={{ position: 'relative', width: 800, height: 450 }}><PrompteurOverlay p={p} hauteur="clamp(104px, 26vh, 240px)" largeurMax="34rem" prise="8%" barre compte onFermer={note('prompteur:fermer')} /><span data-testid="lecture">{String(p.enLecture)}</span></div>;
+  }
+  monter(<Banc />);
+}
+
+/* ═══ Assistant IA : une question du chat → bloc « Suggestion IA » dans le VRAI panneau de l'hôte ═══
+ * La réponse de l'IA est simulée (aucun réseau) ; tout le reste est le code réel : file, filtre,
+ * suggestion automatique (jamais par-dessus le texte de l'hôte), Utiliser / Ignorer cliqués. */
+function suggestionIA(): void {
+  function Banc() {
+    const [etat, setEtat] = React.useState<EtatPrompteur>(() => {
+      const e = recevoirMessages(afficher(ecrire(ETAT_INITIAL, 'Mon thème du jour'), 'manuel'), [
+        { id: 'b1', userId: 'p1', name: 'Awa', text: 'bonjour !', ts: 1 },
+        { id: 'q1', userId: 'p1', name: 'Awa', text: 'Est-ce que je peux venir si je débute ?', ts: 2 },
+      ], 'hote');
+      return recevoirSuggestionAuto(e, 'Oui ! Viens à la séance découverte, on adapte tout.', e.file[0]);
+    });
+    const [onglet, setOnglet] = React.useState<OngletPrompteur>('questions');
+    const rien = () => undefined;
+    return (
+      <div style={{ position: 'relative', width: 900, height: 700 }}>
+        <AssistantHotePanel open disposition="zone-camera" onClose={rien} actif onBasculer={rien} onglet={onglet} onOnglet={setOnglet}
+          etat={etat} theme="" onTheme={rien} enCours={false} indisponible={null} invite={null} modeQuestion="chat"
+          onEcrire={(t) => setEtat((e) => ecrire(e, t))} onAfficher={rien} onEffacer={rien}
+          onUtiliserSuggestion={() => { setEtat((e) => utiliserSuggestion(e)); setOnglet('texte'); }}
+          onIgnorerSuggestion={() => setEtat((e) => ignorerSuggestion(e))}
+          onDemanderTexte={rien} onOuvrirQuestion={rien} onAutreReponse={rien} onReprendre={rien} />
+        <span data-testid="etat-affiche">{etat.affiche}</span>
+      </div>
+    );
   }
   monter(<Banc />);
 }
@@ -487,7 +521,7 @@ async function hoteBeaute(n: NiveauBeaute) {
 async function spectateurRafale(ms: number) { return rafale(videoRecue!, ms); }
 
 (window as unknown as Record<string, unknown>).contrat = {
-  menu, appels, promoParticipant, promoConnexion, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, qr,
+  menu, appels, promoParticipant, promoConnexion, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, suggestionIA, qr,
   micro, etatMicro, pipelineBeaute, looksGpu, mesurerLooks, chronoGpu,
   lk: { hotePublier, etatHote, hoteChangerCamera, hoteCamera, quitter, spectateurRejoindre, spectateurTaille, spectateurReconnexion,
     hoteLook, hoteBeaute, spectateurRafale },

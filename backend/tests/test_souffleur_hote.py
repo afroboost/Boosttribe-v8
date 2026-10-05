@@ -64,13 +64,15 @@ def appli(monkeypatch):
         def json(self): return self._d
 
     class FauxClient:
-        def __init__(self, *a, **k): pass
+        def __init__(self, *a, **k): etat["timeout"] = k.get("timeout")
         async def __aenter__(self): return self
         async def __aexit__(self, *a): return False
         async def post(self, url, headers=None, json=None):
             etat["appels"].append({"url": url, "headers": headers or {}, "json": json or {}})
             if etat["reponse"] == "panne":
                 raise RuntimeError("fournisseur injoignable")
+            if etat["reponse"] == "delai":
+                raise m.httpx.ReadTimeout("fournisseur trop lent")
             if etat["reponse"] == "http500":
                 return FausseReponse(500, {})
             if etat["reponse"] == "illisible":
@@ -288,3 +290,107 @@ def test_01_10_redaction_du_prompteur_refusee_si_l_hote_n_est_pas_un_espace_coac
     r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer hote"},
                json={"session_id": "SESS-1", "mode": "theme", "texte": "Un thème"})
     assert r.status_code == 403 and etat["appels"] == []
+
+
+# ─── 05/10 — limite de fréquence (coût IA) ────────────────────────────────────────────────────────
+def test_limite_de_frequence_du_souffleur():
+    import importlib.util as _iu
+    spec = _iu.spec_from_file_location("btmain_quota", MAIN)
+    for k, v in {"SUPABASE_URL": "http://localhost", "SUPABASE_SERVICE_KEY": "x", "SUPABASE_SERVICE_ROLE_KEY": "x",
+                 "SUPABASE_ANON_KEY": "x", "STRIPE_SECRET_KEY": "sk_test_x", "LIVEKIT_API_KEY": "k",
+                 "LIVEKIT_API_SECRET": "secret-test-suffisamment-long-pour-hs256", "LIVEKIT_URL": "wss://sfu.test"}.items():
+        os.environ.setdefault(k, v)
+    mod = _iu.module_from_spec(spec); spec.loader.exec_module(mod)
+    t0 = 1000.0
+    assert mod._souffleur_quota("u|S", t0) is True
+    assert mod._souffleur_quota("u|S", t0 + 0.5) is False                 # rafale : 2e appel trop tôt
+    assert mod._souffleur_quota("u|AUTRE", t0 + 0.5) is True               # autre Live : compteur séparé
+    n = sum(mod._souffleur_quota("u|S", t0 + 3 * i) for i in range(1, 40))
+    assert n == mod.SOUFFLEUR_MAX_PAR_FENETRE - 1                          # plafond par fenêtre de 5 min
+    assert mod._souffleur_quota("u|S", t0 + 3 * 40 + mod.SOUFFLEUR_FENETRE_S) is True   # la fenêtre se libère
+
+
+# ─── 05/10 — assistant IA du prompteur : coût, déduplication, panne, identité ─────────────────────
+H = {"Authorization": "Bearer hote"}
+QUESTION = {"session_id": "SESS-1", "mode": "chat", "message_id": "msg-42",
+            "messages": [{"nom": "Awa", "texte": "Bravo !"}],
+            "question": {"nom": "Awa", "texte": "Est-ce que je peux venir si je débute ?"}}
+
+
+def test_route_limite_de_frequence_serveur(appli):
+    """Deux demandes en rafale du même hôte : la seconde est refusée PROPREMENT, sans appel."""
+    _m, etat, c = appli
+    r1 = c.post("/live/assistant/suggestions", headers=H, json=CORPS)
+    r2 = c.post("/live/assistant/suggestions", headers=H, json=CORPS)
+    assert r1.status_code == 200 and r1.json()["ok"] is True
+    assert r2.status_code == 200 and r2.json() == {"ok": False, "raison": "trop_de_demandes", "suggestions": []}
+    assert len(etat["appels"]) == 1
+
+
+def test_meme_message_UNE_SEULE_requete_au_fournisseur(appli, monkeypatch):
+    """Double réception, rechargement, deux onglets : le même message_id ne coûte qu'un appel."""
+    m, etat, c = appli
+    monkeypatch.setattr(m, "SOUFFLEUR_ECART_MIN_S", 0.0)
+    reponses = [c.post("/live/assistant/suggestions", headers=H, json=QUESTION).json() for _ in range(5)]
+    assert len(etat["appels"]) == 1
+    assert all(r["ok"] and r["suggestions"] == reponses[0]["suggestions"] for r in reponses)
+    assert reponses[1].get("deja") is True
+    # un AUTRE message : un nouvel appel
+    c.post("/live/assistant/suggestions", headers=H, json={**QUESTION, "message_id": "msg-43"})
+    assert len(etat["appels"]) == 2
+    # « Autre proposition » (geste de l'hôte) : repart chez le fournisseur
+    c.post("/live/assistant/suggestions", headers=H, json={**QUESTION, "autre": True})
+    assert len(etat["appels"]) == 3
+
+
+def test_meme_message_deja_en_vol_pas_de_second_appel(appli):
+    m, etat, c = appli
+    m._souffleur_en_vol.add("uid-hote|SESS-1|msg-42")
+    r = c.post("/live/assistant/suggestions", headers=H, json=QUESTION)
+    assert r.status_code == 200 and r.json()["raison"] == "deja_en_cours" and etat["appels"] == []
+
+
+def test_un_echec_n_est_pas_memorise(appli, monkeypatch):
+    """Panne puis retour du fournisseur : la question pourra être servie (rien de faux en mémoire)."""
+    m, etat, c = appli
+    monkeypatch.setattr(m, "SOUFFLEUR_ECART_MIN_S", 0.0)
+    etat["reponse"] = "panne"
+    assert c.post("/live/assistant/suggestions", headers=H, json=QUESTION).json()["ok"] is False
+    etat["reponse"] = None
+    assert c.post("/live/assistant/suggestions", headers=H, json=QUESTION).json()["ok"] is True
+
+
+def test_delai_depasse_chez_le_fournisseur_reponse_propre(appli):
+    """Fournisseur trop lent : 200 + ok:false, jamais un 500 ; délai borné côté serveur."""
+    m, etat, c = appli
+    etat["reponse"] = "delai"
+    r = c.post("/live/assistant/suggestions", headers=H, json=QUESTION)
+    assert r.status_code == 200
+    assert r.json() == {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+    assert etat["timeout"] == m.SOUFFLEUR_DELAI_S and m.SOUFFLEUR_DELAI_S <= 15
+
+
+def test_la_question_visee_part_seule_et_nettoyee(appli):
+    """L'IA répond à LA question (pas au « Bravo ! » arrivé après) ; contexte court ; coordonnées masquées."""
+    _m, etat, c = appli
+    corps = {**QUESTION, "question": {"nom": "Awa", "texte": "Je peux venir ? mon mail awa@example.com"}}
+    c.post("/live/assistant/suggestions", headers=H, json=corps)
+    contenu = etat["appels"][0]["json"]["messages"][1]["content"]
+    assert "QUESTION À LAQUELLE RÉPONDRE — Awa : Je peux venir ?" in contenu
+    assert "awa@example.com" not in contenu and "[adresse masquée]" in contenu
+
+
+def test_identite_tiree_du_jeton_jamais_du_corps(appli):
+    """Un spectateur qui se déclare hôte dans le corps reste un spectateur : 403, aucun appel."""
+    _m, etat, c = appli
+    corps = {**QUESTION, "user_id": "uid-hote", "role": "host", "is_host": True}
+    r = c.post("/live/assistant/suggestions", headers={"Authorization": "Bearer spectateur"}, json=corps)
+    assert r.status_code == 403 and etat["appels"] == []
+
+
+def test_invite_sans_compte_401(appli):
+    """Un invité du Live (sans compte, donc sans jeton serveur valide) n'atteint jamais l'IA."""
+    _m, etat, c = appli
+    for h in ({}, {"Authorization": "Bearer invite-sans-compte"}):
+        assert c.post("/live/assistant/suggestions", headers=h, json=QUESTION).status_code == 401
+    assert etat["appels"] == []

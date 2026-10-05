@@ -66,16 +66,61 @@ export function avatarPourPresence(url?: string | null): string | undefined {
 /** Information affichée près du bouton (pas un consentement marketing). */
 export const TEXTE_INFO_CONTACT = 'En rejoignant le Live, tes coordonnées sont enregistrées par Afroboost pour gérer ta participation.';
 
-const CLE_CONTACT = 'bt_invite_contact';
+// ── 👋 « Bon retour » (V574) — l'identité de l'invité vit sur le SERVEUR (afroboost.com/api). ──
+// Le navigateur ne garde qu'un cookie HttpOnly opaque (illisible par le JavaScript) ; plus
+// aucune coordonnée en clair dans le stockage local. Les anciennes clés sont effacées.
 
-/** Coordonnées mémorisées sur cet appareil (préremplissage au retour sur le même lien). */
-export function lireContactMemorise(stockage: Pick<Storage, 'getItem'> | null): { email: string; whatsapp: string } {
-  try {
-    const v = JSON.parse(stockage?.getItem(CLE_CONTACT) || '{}');
-    return { email: String(v.email || ''), whatsapp: String(v.whatsapp || '') };
-  } catch { return { email: '', whatsapp: '' }; }
+/** Anciennes clés invité en clair (e-mail / WhatsApp, pseudo, photo). */
+export const CLES_PII_INVITE = ['bt_invite_contact', 'bt_nickname', 'bt_local_avatar'] as const;
+
+export function effacerPiiInvite(stockage: Pick<Storage, 'removeItem'> | null): void {
+  for (const k of CLES_PII_INVITE) {
+    try { stockage?.removeItem(k); } catch { /* stockage indisponible */ }
+  }
 }
 
-export function memoriserContact(stockage: Pick<Storage, 'setItem'> | null, c: { email: string; whatsapp: string }): void {
-  try { stockage?.setItem(CLE_CONTACT, JSON.stringify({ email: c.email, whatsapp: c.whatsapp })); } catch { /* stockage indisponible */ }
+/** Même origine que la page /live : le cookie posé par afroboost.com/api est de premier parti. */
+export const CHEMIN_LIVE_GUEST = '/api/live-guest';
+
+export interface VueInvite { pseudo: string; photo_url: string; email_masque: string; whatsapp_masque: string }
+
+async function appelLiveGuest(chemin: string, methode: 'GET' | 'POST' | 'PATCH', corps?: unknown): Promise<VueInvite | null> {
+  try {
+    const res = await fetch(`${CHEMIN_LIVE_GUEST}${chemin}`, {
+      method: methode,
+      credentials: 'same-origin',
+      headers: corps ? { 'Content-Type': 'application/json' } : undefined,
+      body: corps ? JSON.stringify(corps) : undefined,
+    });
+    if (!res.ok) return null;
+    const v = await res.json();
+    return v && typeof v.pseudo === 'string' ? (v as VueInvite) : null;
+  } catch { return null; }
+}
+
+/** Cet appareil est-il reconnu ? (null = formulaire normal) */
+export async function liveGuestMoi(): Promise<VueInvite | null> { return appelLiveGuest('/moi', 'GET'); }
+
+/** 1re participation (ou nouvelle saisie) : relation coach + identité + cookie. */
+export async function liveGuestRejoindre(c: { session_code: string | null | undefined; pseudo: string; email: string; whatsapp: string; photo_url?: string }): Promise<VueInvite | null> {
+  if (!c.session_code) return null;
+  return appelLiveGuest('/rejoindre', 'POST', { ...c, photo_url: c.photo_url || '' });
+}
+
+/** « Continuer vers le Live » : rattache cette participation au coach du live. */
+export async function liveGuestContinuer(sessionCode: string | null | undefined): Promise<VueInvite | null> {
+  if (!sessionCode) return null;
+  return appelLiveGuest('/continuer', 'POST', { session_code: sessionCode });
+}
+
+/** « Modifier mes informations » : champs vides = inchangés. */
+export async function liveGuestModifier(c: { session_code?: string | null; pseudo?: string; photo_url?: string; email?: string; whatsapp?: string }): Promise<VueInvite | null> {
+  const corps: Record<string, string> = {};
+  for (const [k, v] of Object.entries(c)) if (typeof v === 'string' && v) corps[k] = v;
+  return appelLiveGuest('/moi', 'PATCH', corps);
+}
+
+/** « Ce n'est pas moi » / « Oublier ce profil » : révoque le jeton de CET appareil. */
+export async function liveGuestOublier(): Promise<void> {
+  try { await fetch(`${CHEMIN_LIVE_GUEST}/oublier`, { method: 'POST', credentials: 'same-origin' }); } catch { /* réseau */ }
 }

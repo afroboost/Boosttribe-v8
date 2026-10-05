@@ -104,7 +104,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest, terminerLiveServeur, liveEstTermine, enregistrerContactInvite } from '@/lib/paymentApi';
 import { BRAND_ID } from '@/config/brand';
-import { libelleRejoindre, validerContactInvite, avatarPourPresence, TEXTE_INFO_CONTACT, lireContactMemorise, memoriserContact, type AccesInvite } from '@/lib/inviteLive';
+import { libelleRejoindre, validerContactInvite, avatarPourPresence, TEXTE_INFO_CONTACT, effacerPiiInvite, liveGuestMoi, liveGuestRejoindre, liveGuestContinuer, liveGuestModifier, liveGuestOublier, type AccesInvite, type VueInvite } from '@/lib/inviteLive';
 import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
@@ -328,10 +328,13 @@ interface NicknameModalProps {
   collecteContact?: boolean;
   contactInitial?: { email: string; whatsapp: string };
   onSubmitContact?: (contact: { email: string; whatsapp: string }) => void;
+  // 👋 V574 « Modifier mes informations » : champs vides = inchangés ; rappel des valeurs masquées
+  modeModification?: boolean;
+  contactMasque?: { email: string; whatsapp: string };
 }
 
 export const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, onSubmit, theme, initialNickname, currentAvatar, onAddPhoto,
-  acces, accesResolu, collecteContact, contactInitial, onSubmitContact }) => {
+  acces, accesResolu, collecteContact, contactInitial, onSubmitContact, modeModification, contactMasque }) => {
   const [nickname, setNickname] = useState(initialNickname || (isHost ? 'Coach' : ''));
   const [error, setError] = useState('');
   const [email, setEmail] = useState(contactInitial?.email || '');
@@ -356,7 +359,9 @@ export const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, on
       return;
     }
 
-    if (collecteContact) {
+    if (collecteContact && modeModification && !email.trim() && !whatsapp.trim()) {
+      onSubmitContact?.({ email: '', whatsapp: '' });          // coordonnées inchangées
+    } else if (collecteContact) {
       const c = validerContactInvite({ email, whatsapp });
       if (!c.ok) { setError(c.erreur); return; }
       onSubmitContact?.({ email: c.email, whatsapp: c.whatsapp });
@@ -471,7 +476,11 @@ export const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, on
                     className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-[var(--bt-accent)]"
                     data-testid="invite-whatsapp"
                   />
-                  <p className="text-white/40 text-xs">E-mail ou WhatsApp : au moins l’un des deux.</p>
+                  <p className="text-white/40 text-xs" data-testid="invite-contact-aide">
+                    {modeModification && contactMasque
+                      ? `Actuellement : ${[contactMasque.email, contactMasque.whatsapp].filter(Boolean).join(' · ') || '—'}. Laisse vide pour ne rien changer.`
+                      : 'E-mail ou WhatsApp : au moins l’un des deux.'}
+                  </p>
                 </div>
               </>
             )}
@@ -509,6 +518,69 @@ export const NicknameModal: React.FC<NicknameModalProps> = ({ isOpen, isHost, on
           </p>
         </CardContent>
       </Card>
+      </div>
+    </div>
+  );
+};
+
+// 👋 V574 — « Bon retour [pseudo] » : cet appareil est reconnu par le serveur (cookie HttpOnly).
+//    Coordonnées MASQUÉES uniquement ; aucun droit attaché ; « Ce n'est pas moi » toujours visible.
+export const BonRetourModal: React.FC<{
+  vue: VueInvite;
+  theme: ReturnType<typeof useTheme>['theme'];
+  libelle: string;
+  onContinuer: () => void | Promise<void>;
+  onModifier: () => void;
+  onPasMoi: () => void;
+  onOublier: () => void;
+}> = ({ vue, theme, libelle, onContinuer, onModifier, onPasMoi, onOublier }) => {
+  const [occupe, setOccupe] = useState(false);
+  const continuer = async () => { setOccupe(true); try { await onContinuer(); } finally { setOccupe(false); } };
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto" data-testid="bon-retour">
+      <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" />
+      <div className="relative min-h-full flex items-start sm:items-center justify-center p-4">
+        <Card className="relative z-10 w-full max-w-md border-2 bg-black/90 backdrop-blur-xl" style={{ borderColor: theme.colors.primary }}>
+          <CardHeader className="text-center pb-3">
+            <div className="flex justify-center mb-4">
+              <div className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold text-white overflow-hidden"
+                   style={{ background: theme.colors.gradient.primary }}>
+                {vue.photo_url
+                  ? <img src={vue.photo_url} alt="Ta photo" className="w-full h-full object-cover" />
+                  : generateAvatar(vue.pseudo || '?')}
+              </div>
+            </div>
+            <CardTitle className="text-2xl text-white" style={{ fontFamily: "'Space Grotesk', sans-serif" }}>
+              Bon retour {vue.pseudo} !
+            </CardTitle>
+            <CardDescription className="text-white/60 space-y-0.5">
+              {vue.email_masque && <span className="block" data-testid="bon-retour-email">{vue.email_masque}</span>}
+              {vue.whatsapp_masque && <span className="block" data-testid="bon-retour-whatsapp">{vue.whatsapp_masque}</span>}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button type="button" onClick={continuer} disabled={occupe}
+                    className="w-full h-12 text-white border-none font-medium flex items-center justify-center gap-2"
+                    style={{ background: theme.colors.gradient.primary }} data-testid="bon-retour-continuer">
+              <Video className="w-4 h-4" /> {occupe ? 'Connexion…' : libelle}
+            </Button>
+            <button type="button" onClick={onModifier} disabled={occupe}
+                    className="w-full h-11 rounded-xl text-sm border border-white/15 bg-white/5 text-white/80 hover:bg-white/10"
+                    data-testid="bon-retour-modifier">
+              Modifier mes informations
+            </button>
+            <button type="button" onClick={onPasMoi} disabled={occupe}
+                    className="w-full text-sm text-white/60 hover:text-white underline underline-offset-2"
+                    data-testid="bon-retour-pas-moi">
+              Ce n’est pas moi
+            </button>
+            <button type="button" onClick={onOublier} disabled={occupe}
+                    className="w-full text-xs text-white/40 hover:text-white/70"
+                    data-testid="bon-retour-oublier">
+              Oublier ce profil sur cet appareil
+            </button>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
@@ -806,8 +878,14 @@ export const SessionPage: React.FC = () => {
 
   // B : photo de profil — avatar courant (compte) ou data URL locale (anonyme)
   // P2 : pré-remplie depuis le localStorage si une photo a déjà été choisie auparavant
-  const [localAvatar, setLocalAvatar] = useState<string | null>(() => getStoredLocalAvatar());
+  // 👋 V574 : sur Afroboost, la photo de l'invité vient du SERVEUR (« Bon retour ») — plus de stockage local.
+  const [localAvatar, setLocalAvatar] = useState<string | null>(() => (BRAND_ID === 'afroboost' ? null : getStoredLocalAvatar()));
   const myAvatar = profile?.avatar_url || localAvatar || null;
+  // 👋 V574 « Bon retour [pseudo] » : l'invité ANONYME d'un Live Afroboost est reconnu par le serveur
+  //    (cookie HttpOnly posé par afroboost.com/api). boosttribe.pro, hôtes et comptes : inchangés.
+  const parcoursInvite = BRAND_ID === 'afroboost' && !isHost && !user?.id;
+  const [bonRetour, setBonRetour] = useState<VueInvite | null>(null);
+  const [modeModification, setModeModification] = useState(false);
   const [showAvatarCrop, setShowAvatarCrop] = useState(false);
   const pendingAfterAvatarRef = useRef<(() => void) | null>(null);
 
@@ -1901,12 +1979,10 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     if (!sessionId || !socket.userId || !nickname) return;
     socket.updatePresenceAvatar(avatarPourPresence(myAvatar));
-    // La photo ajoutée après l'entrée complète aussi la fiche Contacts (jamais d'écrasement côté Afroboost).
-    const c = lireContactMemorise(typeof localStorage === 'undefined' ? null : localStorage);
+    // V574 : la photo ajoutée après l'entrée met à jour l'identité de l'invité et ce live (serveur),
+    //    jamais la fiche du coach. Sans cookie reconnu, l'appel est simplement refusé (sans effet).
     const url = avatarPourPresence(myAvatar);
-    if (!isHost && BRAND_ID === 'afroboost' && url && (c.email || c.whatsapp)) {
-      void enregistrerContactInvite({ sessionId, pseudo: nickname, email: c.email, whatsapp: c.whatsapp, photoUrl: url });
-    }
+    if (parcoursInvite && url) void liveGuestModifier({ photo_url: url, session_code: sessionId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myAvatar]);
 
@@ -3925,6 +4001,19 @@ export const SessionPage: React.FC = () => {
   // sans cela le profil arriverait APRÈS ce montage et la modale s'ouvrirait pour rien.
   useEffect(() => {
     if (authLoading) return;
+    // 👋 V574 : invité Afroboost anonyme → c'est le SERVEUR qui reconnaît cet appareil (« Bon retour »),
+    //    plus le pseudo mémorisé en silence (qui entrait sans rattacher la participation au coach).
+    if (parcoursInvite && (urlSessionId || sessionId)) {
+      effacerPiiInvite(typeof localStorage === 'undefined' ? null : { removeItem: (k: string) => { if (k === 'bt_invite_contact') localStorage.removeItem(k); } });
+      let annule = false;
+      liveGuestMoi().then((vue) => {
+        if (annule) return;
+        if (vue) setBonRetour(vue);
+        else setShowNicknameModal(true);
+        setIsInitialized(true);
+      });
+      return () => { annule = true; };
+    }
     const d = deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email });
     if (d.pseudo) {
       setNickname(d.pseudo);
@@ -3935,7 +4024,8 @@ export const SessionPage: React.FC = () => {
     // Show modal if joining a session (has sessionId) or creating one
     if (urlSessionId || sessionId) setShowNicknameModal(true);
     setIsInitialized(true);
-  }, [urlSessionId, sessionId, authLoading, profile?.full_name, user?.email]);
+    return undefined;
+  }, [urlSessionId, sessionId, authLoading, profile?.full_name, user?.email, parcoursInvite]);
 
   // B : photo de profil obligatoire — exécute `next` si avatar présent, sinon ouvre le crop
   const ensureAvatar = useCallback((next: () => void) => {
@@ -3953,27 +4043,36 @@ export const SessionPage: React.FC = () => {
       }
     } else {
       setLocalAvatar(url); // participant anonyme : avatar local (présence)
-      setStoredLocalAvatar(url); // P2 : mémorisé pour les prochaines sessions
+      if (!parcoursInvite) setStoredLocalAvatar(url); // P2 : mémorisé (V574 : jamais pour l'invité Afroboost)
     }
     const next = pendingAfterAvatarRef.current;
     pendingAfterAvatarRef.current = null;
     if (next) next();
-  }, [user?.id, refreshProfile]);
+  }, [user?.id, refreshProfile, parcoursInvite]);
 
   // Handle nickname submission
   // - HÔTE : photo de profil requise (inchangé) → ensureAvatar avant de démarrer.
   // - PARTICIPANT (P2) : photo OPTIONNELLE → rejoint immédiatement (avatar = initiales par défaut).
-  // 👤 Phase 1 : coordonnées saisies sur l'écran d'entrée (Live Afroboost) — mémorisées pour le retour.
+  // 👤 Phase 1 : coordonnées saisies sur l'écran d'entrée (Live Afroboost).
+  // 👋 V574 : envoyées au SERVEUR même origine (identité + cookie HttpOnly) — plus jamais écrites en local.
   const contactInviteRef = useRef<{ email: string; whatsapp: string } | null>(null);
   const handleNicknameSubmit = useCallback((newNickname: string) => {
     const contact = contactInviteRef.current;
-    if (!isHost && contact) {
-      memoriserContact(typeof localStorage === 'undefined' ? null : localStorage, contact);
+    if (parcoursInvite) {
+      const photo = avatarPourPresence(myAvatar) || '';
+      void (modeModification
+        ? liveGuestModifier({ session_code: sessionId, pseudo: newNickname, photo_url: photo, email: contact?.email, whatsapp: contact?.whatsapp })
+        : liveGuestRejoindre({ session_code: sessionId, pseudo: newNickname, email: contact?.email || '', whatsapp: contact?.whatsapp || '', photo_url: photo }));
+      effacerPiiInvite(typeof localStorage === 'undefined' ? null : localStorage);
+      setModeModification(false);
+      setBonRetour(null);
+      contactInviteRef.current = null;
+    } else if (!isHost && contact) {
       void enregistrerContactInvite({ sessionId, pseudo: newNickname, email: contact.email, whatsapp: contact.whatsapp, photoUrl: avatarPourPresence(myAvatar) });
       contactInviteRef.current = null;
     }
     const finish = () => {
-      setStoredNickname(newNickname);
+      if (!parcoursInvite) setStoredNickname(newNickname);
       setNickname(newNickname);
       setShowNicknameModal(false);
       showToast(`Bienvenue ${newNickname} !`, 'success');
@@ -3983,7 +4082,34 @@ export const SessionPage: React.FC = () => {
     } else {
       finish();
     }
-  }, [isHost, showToast, ensureAvatar, sessionId, myAvatar]);
+  }, [isHost, showToast, ensureAvatar, sessionId, myAvatar, parcoursInvite, modeModification]);
+
+  // 👋 V574 — actions de l'écran « Bon retour ».
+  const continuerBonRetour = useCallback(async () => {
+    const vue = await liveGuestContinuer(sessionId);
+    setBonRetour(null);
+    if (!vue) { setShowNicknameModal(true); return; }       // cookie expiré / live fini : formulaire normal
+    setNickname(vue.pseudo);
+    setLocalAvatar(vue.photo_url || null);
+    effacerPiiInvite(typeof localStorage === 'undefined' ? null : localStorage);
+    showToast(`Bon retour ${vue.pseudo} !`, 'success');
+  }, [sessionId, showToast]);
+  const modifierBonRetour = useCallback(() => {
+    if (bonRetour) { setNickname(''); setLocalAvatar(bonRetour.photo_url || null); }
+    setModeModification(true);
+    setShowNicknameModal(true);
+  }, [bonRetour]);
+  // « Ce n'est pas moi » / « Oublier ce profil » : révoque CE jeton, efface les anciennes clés,
+  //  revient au formulaire vierge. Rien n'est supprimé côté serveur (contacts, identité).
+  const oublierCetAppareil = useCallback(() => {
+    void liveGuestOublier();
+    effacerPiiInvite(typeof localStorage === 'undefined' ? null : localStorage);
+    setBonRetour(null);
+    setModeModification(false);
+    setNickname('');
+    setLocalAvatar(null);
+    setShowNicknameModal(true);
+  }, []);
 
   // P2 : le participant ajoute (optionnellement) sa photo depuis le modal de pseudo
   const handleAddPhotoFromModal = useCallback(() => {
@@ -4784,18 +4910,32 @@ export const SessionPage: React.FC = () => {
       }}
     >
       {/* Nickname Modal */}
+      {bonRetour && !showNicknameModal && (
+        <BonRetourModal
+          vue={bonRetour}
+          theme={theme}
+          libelle={accessModeResolved && accessMode === 'guest' ? 'Continuer vers l’écoute' : 'Continuer vers le Live'}
+          onContinuer={continuerBonRetour}
+          onModifier={modifierBonRetour}
+          onPasMoi={oublierCetAppareil}
+          onOublier={oublierCetAppareil}
+        />
+      )}
       <NicknameModal
+        key={modeModification ? 'modifier' : 'saisie'}
         isOpen={showNicknameModal}
         isHost={isHost}
         onSubmit={handleNicknameSubmit}
         theme={theme}
-        initialNickname={nickname || deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email }).prerempli}
+        initialNickname={modeModification && bonRetour ? bonRetour.pseudo : (nickname || (parcoursInvite ? '' : deciderPseudo({ memorise: getStoredNickname(), nomProfil: profile?.full_name, email: user?.email }).prerempli))}
         currentAvatar={myAvatar}
         onAddPhoto={handleAddPhotoFromModal}
         acces={accessMode}
         accesResolu={accessModeResolved}
         collecteContact={BRAND_ID === 'afroboost' && !isHost}
-        contactInitial={lireContactMemorise(typeof localStorage === 'undefined' ? null : localStorage)}
+        contactInitial={{ email: '', whatsapp: '' }}
+        modeModification={modeModification}
+        contactMasque={modeModification && bonRetour ? { email: bonRetour.email_masque, whatsapp: bonRetour.whatsapp_masque } : undefined}
         onSubmitContact={(c) => { contactInviteRef.current = c; }}
       />
 

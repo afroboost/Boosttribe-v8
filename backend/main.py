@@ -1697,6 +1697,9 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     if not await _is_host_or_cohost(session_id, user.get("id")):
         raise HTTPException(status_code=403, detail="assistant_reserve_a_l_hote")
+    # 06/10 (revue sécurité) : le mode « voix » (visio écoutée) suit la règle des jetons de transcription.
+    if body.mode == "voix" and not await _voix_autorisee(user, session_id):
+        raise HTTPException(status_code=403, detail="Transcription réservée aux Lives d'un Espace Coach")
 
     mode_demande = body.mode if body.mode in ("chat", "visio", "voix") else None  # 06/10 : + voix
     cle_msg = _souffleur_cle_message(user.get("id"), session_id, body.message_id) if mode_demande else None
@@ -1887,7 +1890,17 @@ TRANSCRIPTION_MODELE = os.environ.get("OPENAI_LIVE_TRANSCRIBE_MODEL", "gpt-4o-mi
 TRANSCRIPTION_JETON_S = 600
 TRANSCRIPTION_MAX_JETONS = 10      # par compte et par Live, sur la fenêtre ci-dessous
 TRANSCRIPTION_FENETRE_S = 600.0
+# 06/10 (revue sécurité) — plafond par COMPTE tous Lives confondus : créer des Lives en série ne
+#   multiplie pas les jetons payés par la clé de la plateforme.
+TRANSCRIPTION_MAX_JETONS_COMPTE = 20
+TRANSCRIPTION_FENETRE_COMPTE_S = 3600.0
 _transcription_jetons: Dict[str, List[float]] = {}
+
+
+async def _voix_autorisee(user: Dict[str, Any], session_id: str) -> bool:
+    """06/10 (revue sécurité) — écouter et souffler en visio = coût OpenAI : réservé à l'ADMIN ou à un
+    Live hébergé par un ESPACE COACH (même règle que l'enregistrement et le prompteur)."""
+    return _is_admin_email(user) or await _hote_session_coach(session_id)
 
 
 class TranscriptionJetonBody(BaseModel):
@@ -1903,18 +1916,27 @@ async def transcription_jeton(body: TranscriptionJetonBody, authorization: Optio
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     if not await _is_host_or_cohost(session_id, user.get("id")):
         raise HTTPException(status_code=403, detail="assistant_reserve_a_l_hote")
+    if not await _voix_autorisee(user, session_id):
+        raise HTTPException(status_code=403, detail="Transcription réservée aux Lives d'un Espace Coach")
 
     cle_quota = f"{user.get('id')}|{session_id}"
+    cle_compte = f"{user.get('id')}|*"
     maintenant = time.time()
     recents = [t for t in _transcription_jetons.get(cle_quota, []) if maintenant - t < TRANSCRIPTION_FENETRE_S]
-    if len(recents) >= TRANSCRIPTION_MAX_JETONS:
+    compte = [t for t in _transcription_jetons.get(cle_compte, []) if maintenant - t < TRANSCRIPTION_FENETRE_COMPTE_S]
+    if len(recents) >= TRANSCRIPTION_MAX_JETONS or len(compte) >= TRANSCRIPTION_MAX_JETONS_COMPTE:
         return {"ok": False, "raison": "trop_de_demandes"}
 
     key = await get_openai_key()
     if not key:
         return {"ok": False, "raison": "ia_non_configuree"}
     recents.append(maintenant)
+    compte.append(maintenant)
     _transcription_jetons[cle_quota] = recents
+    _transcription_jetons[cle_compte] = compte
+    if len(_transcription_jetons) > 5000:                    # borne mémoire
+        for k in list(_transcription_jetons)[:1000]:
+            _transcription_jetons.pop(k, None)
 
     corps = {
         "expires_after": {"anchor": "created_at", "seconds": TRANSCRIPTION_JETON_S},

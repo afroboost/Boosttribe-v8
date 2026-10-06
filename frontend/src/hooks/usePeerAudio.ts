@@ -36,6 +36,12 @@ export interface UsePeerAudioOptions {
   onTribeAudioEnd?: (peerId: string) => void;
   onError?: (error: string) => void;
   onReady?: () => void;
+  /**
+   * 🎙️ 06/10 — message reçu sur le canal DATA PeerJS (aucun lien avec l'audio). `dePeerId` est fixé par
+   * PeerJS lui-même (l'appareil qui l'envoie), jamais par le contenu : chez l'hôte, c'est le même identifiant
+   * que celui de la voix reçue (`call.peer`) ; chez un participant, seul l'hôte lui parle sur ce canal.
+   */
+  onMessageDonnees?: (dePeerId: string, message: unknown) => void;
 }
 
 export interface UsePeerAudioReturn {
@@ -71,6 +77,8 @@ export interface UsePeerAudioReturn {
    * ni ne modifie aucune connexion.
    */
   getTribeAudioStreams: () => { peerId: string; userId: string | null; stream: MediaStream }[];
+  /** 🎙️ 06/10 — envoie un petit message DATA à un pair (hôte → participant) ou à l'hôte ('hote'). Aucun audio. */
+  envoyerDonnees: (versPeerId: string, message: unknown) => boolean;
 }
 
 const initialState: PeerState = {
@@ -358,6 +366,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     onError,
     onReady,
   } = options;
+  // 🎙️ 06/10 : lu par les handlers DATA (posés une fois à l'ouverture des connexions).
+  const onMessageDonneesRef = useRef(options.onMessageDonnees);
+  onMessageDonneesRef.current = options.onMessageDonnees;
 
   const [state, setState] = useState<PeerState>({
     ...initialState,
@@ -695,6 +706,8 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
             dataConn.on('error', (err) => {
               VLOG('participant → dataConn ERREUR', err);
             });
+            // 🎙️ 06/10 : messages DATA de l'hôte (seul pair joint par ce canal).
+            dataConn.on('data', (d) => { try { onMessageDonneesRef.current?.(hostId, d); } catch { /* ignoré */ } });
           } catch { /* réessayé via la présence ou le handler d'erreur peer-unavailable */ }
         };
 
@@ -1010,6 +1023,9 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
               });
             }
           });
+
+          // 🎙️ 06/10 : messages DATA d'un participant — l'expéditeur est `dataConn.peer` (fixé par PeerJS).
+          dataConn.on('data', (d) => { try { onMessageDonneesRef.current?.(dataConn.peer, d); } catch { /* ignoré */ } });
 
           dataConn.on('close', () => {
             // Production: log removed
@@ -1588,6 +1604,14 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     return out;
   }, []);
 
+  // 🎙️ 06/10 — messagerie DATA (aucun audio) : hôte → un participant précis, participant → hôte.
+  const envoyerDonnees = useCallback((versPeerId: string, message: unknown): boolean => {
+    const id = versPeerId === 'hote' ? hostPeerIdRef.current : versPeerId;
+    const conn = id ? dataConnectionsRef.current.get(id) : undefined;
+    if (!conn || !(conn as unknown as { open?: boolean }).open) return false;
+    try { conn.send(message); return true; } catch { return false; }
+  }, []);
+
   return {
     state,
     connect,
@@ -1607,6 +1631,7 @@ export function usePeerAudio(options: UsePeerAudioOptions): UsePeerAudioReturn {
     reconnect,
     remoteAudioRef,
     getTribeAudioStreams,
+    envoyerDonnees,
   };
 }
 

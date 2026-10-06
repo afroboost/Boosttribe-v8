@@ -38,7 +38,8 @@ import {
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
 import { AvisVoixParticipant } from '@/components/session/AvisVoixParticipant';
 import { useTranscriptionVisio } from '@/hooks/useTranscriptionVisio';
-import { cibleVoix, voixATranscrire, transcriptionAutorisee, EVT_AVIS_VOIX, EVT_AVIS_VOIX_VU, type ConnecteurTranscription } from '@/lib/transcriptionVisio';
+import { cibleVoix, voixATranscrire, transcriptionAutorisee, lireMessageVoix, accuseValide, avisDeLHote, accuseFrais, avisEncoreActif,
+  MSG_AVIS_VOIX, MSG_AVIS_VOIX_VU, BATTEMENT_AVIS_MS, type ConnecteurTranscription } from '@/lib/transcriptionVisio';
 import type { OngletPrompteur } from '@/lib/prompteurSources';
 import { optionsCameraLive, associerPisteVideo, brancherVideo, ajusterDebitsCouches, OPTIONS_ROOM_LIVE } from '@/lib/qualiteVideo';
 import { cibleBascule } from '@/lib/sourcesLogic';
@@ -309,22 +310,44 @@ const REPLIQUES: Record<string, string> = {
   debutant: 'Oui bien sûr, tu peux commencer même si tu débutes. Je te montrerai les mouvements tranquillement.',
   peur: 'T’inquiète, tu vas à ton rythme. Le but c’est surtout de bouger et de passer un bon moment.',
 };
+/* Transport DATA simulé = PeerJS : l'EXPÉDITEUR est fixé par le transport (identité de la page), jamais par
+ *  le message ; chaque message va à UN destinataire. 'p-hote', 'p-amina' (la voix écoutée), 'p-pirate'. */
+type PeerVoix = 'p-hote' | 'p-amina' | 'p-pirate';
+let voixTransport: { moi: PeerVoix; canal: BroadcastChannel; envoyer: (vers: string, m: unknown) => void } | null = null;
+function transportVoix(moi: PeerVoix, recevoir: (de: string, m: unknown) => void) {
+  const canal = new BroadcastChannel('contrat-voix-data');
+  canal.onmessage = (ev) => { const d = ev.data as { de: string; vers: string; m: unknown }; if (d.vers === moi) recevoir(d.de, d.m); };
+  voixTransport = { moi, canal, envoyer: (vers, m) => canal.postMessage({ de: moi, vers, m }) };
+  return voixTransport;
+}
+/** Page « pirate » : un autre participant tente de lancer l'écoute d'Amina, ou de masquer son avis. */
+function voixPirate(): void {
+  transportVoix('p-pirate', () => undefined);
+  monter(<div data-testid="cote-pirate">pirate</div>);
+}
+function voixPirateEnvoie(vers: string, m: unknown): void { voixTransport?.envoyer(vers, m); }
+
 function voixVisio(role: 'hote' | 'participant'): void {
   Object.assign(voixEtat, { connexions: 0, fermetures: 0, appelsIA: 0, copie: null, emettre: null, copiePiste: null });
-  const canal = new BroadcastChannel('contrat-voix-visio');
   if (role === 'participant') {
     function Participant() {
       const [visible, setVisible] = React.useState(false);
+      const [battement, setBattement] = React.useState(0);
+      const dernier = React.useRef(0);
+      const t = React.useRef<ReturnType<typeof transportVoix> | null>(null);
       useEffect(() => {
-        canal.onmessage = (ev) => {
-          const m = ev.data as { event: string; payload: { userId?: string; actif?: boolean } };
-          if (m.event === EVT_AVIS_VOIX && m.payload.userId === 'user_amina') setVisible(!!m.payload.actif);
-        };
-        return () => { canal.onmessage = null; };
+        t.current = transportVoix('p-amina', (de, message) => {
+          const m = lireMessageVoix(message);
+          if (!m || m.t !== MSG_AVIS_VOIX || !avisDeLHote({ dePeerId: de, hotePeerId: 'p-hote' })) return;
+          if (m.actif) { dernier.current = Date.now(); setVisible(true); setBattement((n) => n + 1); }
+          else { dernier.current = 0; setVisible(false); }
+        });
+        const i = setInterval(() => { if (!avisEncoreActif(dernier.current, Date.now())) setVisible(false); }, 1000);
+        return () => { clearInterval(i); t.current?.canal.close(); };
       }, []);
       return (
         <div data-testid="cote-participant">
-          <AvisVoixParticipant visible={visible} onAffiche={() => canal.postMessage({ event: EVT_AVIS_VOIX_VU, payload: { userId: 'user_amina' } })} />
+          <AvisVoixParticipant visible={visible} battement={battement} onAffiche={() => t.current?.envoyer('p-hote', { t: MSG_AVIS_VOIX_VU })} />
           <span data-testid="participant-recu">aucun message</span>
         </div>
       );
@@ -339,6 +362,12 @@ function voixVisio(role: 'hote' | 'participant'): void {
     const [etat, setEtat] = React.useState<EtatPrompteur>(() => ecrire(ETAT_INITIAL, ''));
     const [onglet, setOnglet] = React.useState<OngletPrompteur>('questions');
     const deja = React.useRef(new Set<string>());
+    const dernierAccuse = React.useRef(0);
+    const cible = cibleVoix({ estHote: true, assistantActif: true, mode, inviteId: 'user_amina', moi: 'user_hote' });
+    const voix = flux ? voixATranscrire([{ peerId: 'p-amina', userId: 'user_amina', stream: flux }], cible, 'user_hote') : null;
+    const voixPeerId = voix ? voix.peerId : null;
+    const voixPeerIdRef = React.useRef(voixPeerId); voixPeerIdRef.current = voixPeerId;
+    const t = React.useRef<ReturnType<typeof transportVoix> | null>(null);
     useEffect(() => {
       void voixDistante().then((s) => {
         const el = document.createElement('audio'); el.srcObject = s; el.autoplay = true; document.body.appendChild(el); void el.play().catch(() => {});
@@ -347,29 +376,27 @@ function voixVisio(role: 'hote' | 'participant'): void {
         voixEtat.originalId = s.getAudioTracks()[0].id;
         setFlux(s);
       });
-      canal.onmessage = (ev) => {
-        const m = ev.data as { event: string; payload: { userId?: string } };
-        if (m.event === EVT_AVIS_VOIX_VU && m.payload.userId === cibleRef.current) setVuPar(m.payload.userId as string);
-      };
-      return () => { canal.onmessage = null; };
+      t.current = transportVoix('p-hote', (de, message) => {
+        const m = lireMessageVoix(message);
+        if (!m || m.t !== MSG_AVIS_VOIX_VU || !accuseValide({ dePeerId: de, voixPeerId: voixPeerIdRef.current })) return;
+        dernierAccuse.current = Date.now();
+        setVuPar(de);
+      });
+      return () => { t.current?.canal.close(); };
     }, []);
-    const cible = cibleVoix({ estHote: true, assistantActif: true, mode, inviteId: 'user_amina', moi: 'user_hote' });
-    const cibleRef = React.useRef(cible); cibleRef.current = cible;
     useEffect(() => {
-      if (!cible) return undefined;
-      const envoyer = () => canal.postMessage({ event: EVT_AVIS_VOIX, payload: { userId: cible, actif: true } });
-      envoyer();
-      if (vuPar === cible) return undefined;
-      const t = setInterval(envoyer, 1000);
-      return () => clearInterval(t);
-    }, [cible, vuPar]);
-    useEffect(() => {
-      if (!cible) return undefined;
-      return () => { canal.postMessage({ event: EVT_AVIS_VOIX, payload: { userId: cible, actif: false } }); setVuPar(null); };
-    }, [cible]);
-    const voix = flux ? voixATranscrire([{ peerId: 'p1', userId: 'user_amina', stream: flux }], cible, 'user_hote') : null;
-    const t = useTranscriptionVisio({
-      actif: transcriptionAutorisee({ cible, avisVuPar: vuPar, voixPresente: !!voix }), flux: voix ? voix.stream : null,
+      if (!cible || !voixPeerId) return undefined;
+      const vers = voixPeerId;
+      const battre = () => {
+        t.current?.envoyer(vers, { t: MSG_AVIS_VOIX, actif: true });
+        if (!accuseFrais(dernierAccuse.current, Date.now())) setVuPar((p) => (p === null ? p : null));
+      };
+      battre();
+      const i = setInterval(battre, BATTEMENT_AVIS_MS);
+      return () => { clearInterval(i); t.current?.envoyer(vers, { t: MSG_AVIS_VOIX, actif: false }); dernierAccuse.current = 0; setVuPar(null); };
+    }, [cible, voixPeerId]);
+    const tr = useTranscriptionVisio({
+      actif: transcriptionAutorisee({ cible, voixPeerId, avisVuPar: vuPar }), flux: voix ? voix.stream : null,
       obtenirJeton: async () => ({ ok: true, client_secret: 'ek_banc' }), connecteur: connecteurSimule,
       onSegment: (seg) => setEtat((e) => recevoirTranscription(e, { id: seg.id, auteur: 'Amina', texte: seg.texte })),
     });
@@ -387,13 +414,13 @@ function voixVisio(role: 'hote' | 'participant'): void {
         <AssistantHotePanel open disposition="zone-camera" onClose={rien} actif onBasculer={rien} onglet={onglet} onOnglet={setOnglet}
           etat={etat} theme="" onTheme={rien} enCours={false} indisponible={null} invite="Amina" modeQuestion={mode}
           onModeQuestion={(m) => setMode(m as 'chat' | 'visio')}
-          etatVoix={mode === 'visio' ? (vuPar !== cible ? 'Avis de transcription envoyé à Amina…' : t.etat === 'ecoute' ? 'L’IA écoute Amina (sa voix seulement, rien n’est enregistré).' : t.etat) : null}
+          etatVoix={mode === 'visio' ? (vuPar !== voixPeerId ? 'Avis de transcription envoyé à Amina…' : tr.etat === 'ecoute' ? 'L’IA écoute Amina (sa voix seulement, rien n’est enregistré).' : tr.etat) : null}
           onEcrire={(x) => setEtat((e) => ecrire(e, x))} onAfficher={(src) => setEtat((e) => afficher(e, src))} onEffacer={rien}
           onUtiliserSuggestion={() => { setEtat((e) => utiliserSuggestion(e)); setOnglet('texte'); }}
           onIgnorerSuggestion={() => setEtat((e) => ignorerSuggestion(e))}
           onDemanderTexte={rien} onOuvrirQuestion={rien} onAutreReponse={rien} onReprendre={rien} />
         <span data-testid="voix-affiche">{etat.affiche}</span>
-        <span data-testid="voix-transcription">{t.etat}</span>
+        <span data-testid="voix-transcription">{tr.etat}</span>
       </div>
     );
   }
@@ -768,7 +795,7 @@ async function hoteBeaute(n: NiveauBeaute) {
 async function spectateurRafale(ms: number) { return rafale(videoRecue!, ms); }
 
 (window as unknown as Record<string, unknown>).contrat = {
-  voixVisio, voixEtat, voixDire, voixSonOriginal,
+  voixVisio, voixEtat, voixDire, voixSonOriginal, voixPirate, voixPirateEnvoie,
   menu, appels, promoParticipant, promoConnexion, promoInvite, finPromoInvite, chatLive, chatLiveEtat, chatLiveRediffuser, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, suggestionIA, qr,
   micro, etatMicro, pipelineBeaute, looksGpu, mesurerLooks, chronoGpu,
   lk: { hotePublier, etatHote, hoteChangerCamera, hoteCamera, quitter, spectateurRejoindre, spectateurTaille, spectateurReconnexion,

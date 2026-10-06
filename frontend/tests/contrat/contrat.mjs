@@ -328,9 +328,10 @@ async function harnaisNavigateur() {
     // ── 06/10 V1–V9 : « ÉCHANGER EN VISIO » — voix du participant → transcription → UNE suggestion chez l'hôte ──
     {
       const ctx = await nav.newContext({ viewport: { width: 1100, height: 800 } });
-      const [part, hot] = [await ctx.newPage(), await ctx.newPage()];
-      for (const p of [part, hot]) p.on('pageerror', (e) => erreurs.push(e.message));
-      await hot.goto(url); await part.goto(url);
+      const [part, hot, pir] = [await ctx.newPage(), await ctx.newPage(), await ctx.newPage()];
+      for (const p of [part, hot, pir]) p.on('pageerror', (e) => erreurs.push(e.message));
+      await hot.goto(url); await part.goto(url); await pir.goto(url);
+      await pir.evaluate(() => window.contrat.voixPirate());
       await hot.evaluate(() => window.contrat.voixVisio('hote'));
       await hot.waitForTimeout(800);
       const sonAvant = await hot.evaluate(() => window.contrat.voixSonOriginal());
@@ -341,17 +342,30 @@ async function harnaisNavigateur() {
       const etatAttente = await hot.textContent('[data-testid="assistant-voix-etat"]').catch(() => '');
       noter('V1 Aucune écoute avant l\'avis affiché', 'visio choisi, participant pas encore là → 0 connexion, « Avis … envoyé »',
         avantAvis === 0 && /Avis de transcription envoyé/.test(etatAttente), `connexions=${avantAvis} | ${etatAttente}`);
+      // 🔐 V1b : un AUTRE participant envoie l'accusé « avis affiché » à l'hôte → l'écoute ne démarre PAS.
+      for (let i = 0; i < 3; i++) { await pir.evaluate(() => window.contrat.voixPirateEnvoie('p-hote', { t: 'avis_voix_vu' })); await hot.waitForTimeout(300); }
+      await hot.waitForTimeout(600);
+      const apresPirate = await hot.evaluate(() => window.contrat.voixEtat.connexions);
+      noter('V1b Faux accusé refusé', 'accusé envoyé par un autre appareil → 0 connexion, toujours « Avis … envoyé »',
+        apresPirate === 0 && /Avis de transcription envoyé/.test(await hot.textContent('[data-testid="assistant-voix-etat"]').catch(() => '')), `connexions=${apresPirate}`);
       await part.evaluate(() => window.contrat.voixVisio('participant'));
-      await part.waitForSelector('[data-testid="avis-voix"]', { timeout: 4000 }).catch(() => {});
+      await part.waitForSelector('[data-testid="avis-voix"]', { timeout: 6000 }).catch(() => {});
       const avis = await part.textContent('[data-testid="avis-voix"]').catch(() => '');
       noter('V2 Avis clair chez le participant', '« une transcription de ta voix aide le coach… Rien n’est enregistré »',
         /transcription de ta voix aide le coach à te répondre/.test(avis) && /Rien n’est enregistré/.test(avis), avis.slice(0, 120));
-      for (let i = 0; i < 40 && (await hot.textContent('[data-testid="voix-transcription"]')) !== 'ecoute'; i++) await hot.waitForTimeout(100);
+      for (let i = 0; i < 80 && (await hot.textContent('[data-testid="voix-transcription"]')) !== 'ecoute'; i++) await hot.waitForTimeout(100);
       await hot.waitForTimeout(800);
       const v = await hot.evaluate(() => ({ ...window.contrat.voixEtat, emettre: !!window.contrat.voixEtat.emettre, copiePiste: null }));
       noter('V3 Écoute d\'une COPIE de la voix du participant', 'après l\'accusé : 1 connexion ; piste audio distincte, vivante, qui porte du son',
         v.connexions === 1 && !!v.copie && v.copie.kind === 'audio' && v.copie.id !== v.originalId && v.copie.etat === 'live' && v.copie.energie > 1,
         JSON.stringify(v.copie));
+      // 🔐 V2b : pendant l'écoute, un tiers tente de faire disparaître l'avis chez Amina → l'avis reste.
+      for (let i = 0; i < 3; i++) { await pir.evaluate(() => window.contrat.voixPirateEnvoie('p-amina', { t: 'avis_voix', actif: false })); await part.waitForTimeout(300); }
+      await part.waitForTimeout(500);
+      const avisTient = !!(await part.$('[data-testid="avis-voix"]'));
+      const ecouteTient = (await hot.textContent('[data-testid="voix-transcription"]')) === 'ecoute';
+      noter('V2b Avis impossible à masquer par un tiers', 'retrait forgé par un autre appareil → avis toujours affiché, écoute active',
+        avisTient && ecouteTient, `avis=${avisTient} | ecoute=${ecouteTient}`);
       const sonPendant = await hot.evaluate(() => window.contrat.voixSonOriginal());
       noter('V4 Son du participant intact pendant l\'écoute', 'piste originale vivante, activée, non muette, lue, même énergie',
         !!sonAvant && !!sonPendant && sonPendant.vivante && sonPendant.activee && sonPendant.lecture && !sonPendant.muet

@@ -49,14 +49,16 @@ def charger_main():
 @pytest.fixture()
 def appli(monkeypatch):
     m = charger_main()
-    etat = {"hotes": {("SESS-1", "uid-hote")}, "cle": "sk-test-factice", "appels": [],
-            "reponses": [], "jeton": "ok"}
+    etat = {"hotes": {("SESS-1", "uid-hote"), ("SESS-2", "uid-hote")}, "cle": "sk-test-factice", "appels": [],
+            "reponses": [], "jeton": "ok", "coach": True}
 
     async def faux_user(authorization):
         if authorization == "Bearer hote":
             return {"id": "uid-hote", "email": "coach@example.com"}
         if authorization == "Bearer spectateur":
             return {"id": "uid-spectateur", "email": "public@example.com"}
+        if authorization == "Bearer admin":
+            return {"id": "uid-admin", "email": "contact.artboost@gmail.com"}
         raise HTTPException(status_code=401, detail="Token manquant")
 
     async def faux_hote(session_id, user_id):
@@ -83,6 +85,10 @@ def appli(monkeypatch):
             texte = etat["reponses"].pop(0) if etat["reponses"] else BON_DEBUTANT
             return FausseReponse(200, {"choices": [{"message": {"content": _json.dumps({"suggestion": texte})}}]})
 
+    async def hote_coach(session_id):
+        return etat["coach"]
+
+    monkeypatch.setattr(m, "_hote_session_coach", hote_coach)
     monkeypatch.setattr(m, "get_user_from_token", faux_user)
     monkeypatch.setattr(m, "_is_host_or_cohost", faux_hote)
     monkeypatch.setattr(m, "get_openai_key", fausse_cle)
@@ -146,6 +152,33 @@ def test_jeton_cle_absente(appli):
     etat["cle"] = None
     r = c.post(JETON, headers=H, json={"session_id": "SESS-1"})
     assert r.json() == {"ok": False, "raison": "ia_non_configuree"}
+
+
+def test_jeton_hote_sans_espace_coach_refuse(appli):
+    """Revue sécurité : un compte quelconque qui crée son Live n'obtient AUCUN jeton payant."""
+    _m, etat, c = appli
+    etat["coach"] = False
+    r = c.post(JETON, headers=H, json={"session_id": "SESS-1"})
+    assert r.status_code == 403
+    assert etat["appels"] == [], "aucun appel à OpenAI"
+    r = c.post(SUGG, headers=H, json=voix("Je peux venir si je débute ?"))
+    assert r.status_code == 403 and etat["appels"] == [], "mode voix : même règle"
+
+
+def test_jeton_admin_sans_espace_coach_accepte(appli):
+    _m, etat, c = appli
+    etat["coach"] = False
+    etat["hotes"].add(("SESS-1", "uid-admin"))
+    r = c.post(JETON, headers={"Authorization": "Bearer admin"}, json={"session_id": "SESS-1"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
+def test_jeton_plafond_par_compte_tous_lives(appli):
+    m, _e, c = appli
+    m.TRANSCRIPTION_MAX_JETONS = 100                     # isole le plafond COMPTE
+    rep = [c.post(JETON, headers=H, json={"session_id": "SESS-1" if i % 2 else "SESS-2"}).json() for i in range(21)]
+    assert all(r["ok"] for r in rep[:20])
+    assert rep[20] == {"ok": False, "raison": "trop_de_demandes"}
 
 
 def test_jeton_limite_de_frequence(appli):

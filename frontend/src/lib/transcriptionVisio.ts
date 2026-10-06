@@ -14,6 +14,13 @@
  *
  * Avant toute écoute, le participant VOIT un avis (« ta voix est transcrite pour aider le coach ») ;
  * la transcription ne démarre qu'après l'accusé « avis affiché » de SON appareil.
+ *
+ * 🔐 Revue sécurité (06/10) : l'avis et son accusé ne passent PLUS par le broadcast du Live (aucun
+ * expéditeur vérifié : n'importe qui pouvait forger l'accusé ou masquer l'avis). Ils passent par le canal
+ * DATA PeerJS, où l'expéditeur est fixé par PeerJS : l'hôte n'accepte que l'accusé venant de l'APPAREIL
+ * DONT IL TRANSCRIT LA VOIX ; le participant n'écoute que l'hôte. Battement : l'hôte renvoie l'avis toutes
+ * les 4 s pendant TOUTE l'écoute et coupe l'écoute sans accusé depuis 12 s ; le participant ne retire
+ * l'avis que sur ordre de l'hôte, ou après 15 s sans battement (l'écoute est alors déjà coupée).
  */
 
 /** Une voix participant reçue par l'hôte (forme de `usePeerAudio().getTribeAudioStreams()`). */
@@ -23,9 +30,38 @@ export interface VoixRecue {
   stream: { getAudioTracks: () => { readyState: string }[] };
 }
 
-/** Événements du canal du Live (broadcast) : avis au participant et accusé de lecture. */
-export const EVT_AVIS_VOIX = 'ASSISTANT_VOIX';
-export const EVT_AVIS_VOIX_VU = 'ASSISTANT_VOIX_VU';
+/** Messages DATA PeerJS : avis (hôte → participant écouté) et accusé « avis affiché » (participant → hôte). */
+export const MSG_AVIS_VOIX = 'avis_voix';
+export const MSG_AVIS_VOIX_VU = 'avis_voix_vu';
+export const BATTEMENT_AVIS_MS = 4000;
+export const ACCUSE_MAX_MS = 12000;        // hôte : plus d'accusé depuis 12 s → l'écoute s'arrête
+export const AVIS_EXPIRE_MS = 15000;       // participant : plus de battement depuis 15 s → l'avis se retire
+
+export type MessageVoix = { t: typeof MSG_AVIS_VOIX; actif: boolean } | { t: typeof MSG_AVIS_VOIX_VU };
+export function lireMessageVoix(m: unknown): MessageVoix | null {
+  const o = (m && typeof m === 'object' ? m : null) as { t?: unknown; actif?: unknown } | null;
+  if (!o) return null;
+  if (o.t === MSG_AVIS_VOIX) return { t: MSG_AVIS_VOIX, actif: o.actif === true };
+  if (o.t === MSG_AVIS_VOIX_VU) return { t: MSG_AVIS_VOIX_VU };
+  return null;
+}
+
+/** Hôte : l'accusé ne vaut QUE s'il vient de l'appareil dont la voix est transcrite. */
+export function accuseValide(p: { dePeerId: string | null | undefined; voixPeerId: string | null | undefined }): boolean {
+  return !!p.voixPeerId && p.dePeerId === p.voixPeerId;
+}
+/** Participant : un avis (ou son retrait) ne vaut QUE s'il vient de l'hôte. */
+export function avisDeLHote(p: { dePeerId: string | null | undefined; hotePeerId: string | null | undefined }): boolean {
+  return !!p.hotePeerId && p.dePeerId === p.hotePeerId;
+}
+/** Hôte : l'accusé est-il encore frais ? (sinon on cesse d'écouter) */
+export function accuseFrais(dernierAccuseMs: number, maintenant: number): boolean {
+  return dernierAccuseMs > 0 && maintenant - dernierAccuseMs <= ACCUSE_MAX_MS;
+}
+/** Participant : l'avis doit-il rester affiché ? */
+export function avisEncoreActif(dernierBattementMs: number, maintenant: number): boolean {
+  return dernierBattementMs > 0 && maintenant - dernierBattementMs <= AVIS_EXPIRE_MS;
+}
 
 /** Le mode « Échanger en visio » demande-t-il d'écouter quelqu'un, et qui ? */
 export function cibleVoix(p: {
@@ -43,9 +79,9 @@ export function voixATranscrire<V extends VoixRecue>(voix: V[] | null | undefine
     && v.stream.getAudioTracks().some((t) => t.readyState === 'live')) || null;
 }
 
-/** On n'écoute qu'une fois l'avis AFFICHÉ chez la personne écoutée. */
-export function transcriptionAutorisee(p: { cible: string | null; avisVuPar: string | null; voixPresente: boolean }): boolean {
-  return !!p.cible && p.avisVuPar === p.cible && p.voixPresente;
+/** On n'écoute qu'une fois l'avis AFFICHÉ chez la personne écoutée — accusé de l'appareil de SA voix. */
+export function transcriptionAutorisee(p: { cible: string | null; voixPeerId: string | null; avisVuPar: string | null }): boolean {
+  return !!p.cible && !!p.voixPeerId && p.avisVuPar === p.voixPeerId;
 }
 
 /** Texte de l'avis montré au participant (jamais de jargon). */

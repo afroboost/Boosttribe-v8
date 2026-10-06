@@ -43,6 +43,7 @@ def appli():
         return cle
 
     m.get_user_from_token, m._is_host_or_cohost, m.get_openai_key = user, hote, cle_ia
+    m._hote_session_coach = lambda _s: hote(_s, None)        # Live d'un Espace Coach (cas réel de Bassi)
     return m, TestClient(m.app)
 
 

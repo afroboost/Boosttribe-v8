@@ -46,7 +46,8 @@ import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout, definirSessionInvitePromo } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
-import { cibleVoix, voixATranscrire, transcriptionAutorisee, EVT_AVIS_VOIX, EVT_AVIS_VOIX_VU } from '@/lib/transcriptionVisio'; // 🎙️ 06/10 : « Échanger en visio »
+import { cibleVoix, voixATranscrire, transcriptionAutorisee, lireMessageVoix, accuseValide, avisDeLHote, accuseFrais, avisEncoreActif,
+  MSG_AVIS_VOIX, MSG_AVIS_VOIX_VU, BATTEMENT_AVIS_MS } from '@/lib/transcriptionVisio'; // 🎙️ 06/10 : « Échanger en visio »
 import { useTranscriptionVisio } from '@/hooks/useTranscriptionVisio';
 import { AvisVoixParticipant } from '@/components/session/AvisVoixParticipant';
 import { droitChatLive, inviteLiveIdentifie, membreLiveAfroboost, messageChatSortant, accepterMessageChatRecu } from '@/lib/liveChat'; // 💬 05/10 : chat de l'invité identifié
@@ -1284,6 +1285,8 @@ export const SessionPage: React.FC = () => {
   const isUnlimitedHost = isUnlimited || backendUnlimited;
   const isFreeTrial = isHost && !isSubscribed && !isUnlimitedHost;
 
+  // 🎙️ 06/10 : rempli plus bas (bloc « Échanger en visio ») ; lu par le canal DATA de PeerJS.
+  const voixDonneesRef = useRef<(dePeerId: string, message: unknown) => void>(() => {});
   // PeerJS for WebRTC voice broadcast
   const {
     state: peerState,
@@ -1303,6 +1306,7 @@ export const SessionPage: React.FC = () => {
     setTribeUserMuted,
     remoteAudioRef,
     getTribeAudioStreams,
+    envoyerDonnees,
   } = usePeerAudio({
     sessionId: sessionId || 'default',
     isHost,
@@ -1316,6 +1320,8 @@ export const SessionPage: React.FC = () => {
     // Plus de routage Web Audio ici → latence minimale, pas d'écho/interférences.
     onReceiveTribeAudio: () => {},
     onTribeAudioEnd: () => {},
+    // 🎙️ 06/10 : avis / accusé « Échanger en visio » — canal DATA PeerJS (expéditeur fixé par PeerJS).
+    onMessageDonnees: (de, m) => voixDonneesRef.current(de, m),
     onError: (error) => {
       console.error('[WebRTC] Error:', error);
     },
@@ -2464,9 +2470,8 @@ export const SessionPage: React.FC = () => {
   // 🎙️ 06/10 — « Échanger en visio » : avis montré au participant écouté (côté participant) et
   //   accusé « avis affiché » reçu de lui (côté hôte). L'hôte n'écoute qu'après cet accusé.
   const [avisVoixVisible, setAvisVoixVisible] = useState(false);
-  const [avisVoixVuPar, setAvisVoixVuPar] = useState<string | null>(null);
-  const cibleVoixRef = useRef<string | null>(null);
-  const envoyerEvtLiveRef = useRef<(event: string, payload: unknown) => void>(() => {}); // = sendPlaybackEvent (déclaré plus bas)
+  const [avisVoixBattement, setAvisVoixBattement] = useState(0);
+  const [avisVoixVuPar, setAvisVoixVuPar] = useState<string | null>(null);      // hôte : peerId de l'appareil qui a accusé
   useEffect(() => { peutChatterRef.current = peutChatter; }, [peutChatter]);
   const chatOpenRef = useRef(chatOpen);
   useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
@@ -2793,18 +2798,6 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current) return;                              // l'hôte ne s'auto-cible pas
         if (!p?.userId || p.userId !== myUserIdRef.current) return; // seulement la cible réagit
         applyHostMicRef.current?.(!!p.on);
-      })
-      // 🎙️ 06/10 — l'hôte va écouter CE participant (« Échanger en visio ») : l'avis s'affiche chez lui seul.
-      .on('broadcast', { event: EVT_AVIS_VOIX }, (payload) => {
-        const p = payload.payload as { userId?: string; actif?: boolean };
-        if (isHostRef.current || !p?.userId || p.userId !== myUserIdRef.current) return;
-        setAvisVoixVisible(!!p.actif);
-      })
-      // 🎙️ 06/10 — (hôte) l'avis est affiché chez la personne visée : l'écoute peut commencer.
-      .on('broadcast', { event: EVT_AVIS_VOIX_VU }, (payload) => {
-        const p = payload.payload as { userId?: string };
-        if (!isHostRef.current || !p?.userId || p.userId !== cibleVoixRef.current) return;
-        setAvisVoixVuPar((prev) => (prev === p.userId ? prev : p.userId as string));
       })
       // 💬 CHAT GROUPÉ (Pro) — message visible par tout le groupe
       .on('broadcast', { event: 'CHAT_GROUP' }, (payload) => {
@@ -3303,37 +3296,73 @@ export const SessionPage: React.FC = () => {
   //   la COPIE de sa voix (jamais celle de l'hôte, jamais un micro de plus) → phrase transcrite → file du
   //   prompteur → UNE réplique orale (mode « voix »), chez l'hôte seul. Rien n'est envoyé au participant.
   const cibleEcoute = cibleVoix({ estHote: canShare, assistantActif, mode: assistantMode, inviteId: inviteEnVisioId, moi: socket.userId });
-  useEffect(() => { cibleVoixRef.current = cibleEcoute; }, [cibleEcoute]);
-  // L'avis part à la cible, renvoyé toutes les 4 s tant qu'il n'est pas confirmé (arrivée tardive, réseau).
-  useEffect(() => {
-    if (!cibleEcoute) return undefined;
-    const envoyer = () => envoyerEvtLiveRef.current(EVT_AVIS_VOIX, { userId: cibleEcoute, actif: true });
-    envoyer();
-    if (avisVoixVuPar === cibleEcoute) return undefined;
-    const t = setInterval(envoyer, 4000);
-    return () => clearInterval(t);
-  }, [cibleEcoute, avisVoixVuPar]);
-  // Fin de l'écoute (mode chat, IA éteinte, personne descendue de l'écran) : l'avis disparaît chez elle.
-  useEffect(() => {
-    if (!cibleEcoute) return undefined;
-    const cible = cibleEcoute;
-    return () => { envoyerEvtLiveRef.current(EVT_AVIS_VOIX, { userId: cible, actif: false }); setAvisVoixVuPar(null); };
-  }, [cibleEcoute]);
   // Sa voix telle que l'hôte la reçoit déjà (lecture seule) ; elle n'existe qu'une fois la parole donnée.
+  //   On retient AUSSI l'appareil (peerId) qui l'envoie : c'est à lui, et à lui seul, que parle l'avis.
   const [fluxVoix, setFluxVoix] = useState<MediaStream | null>(null);
+  const [voixPeerId, setVoixPeerId] = useState<string | null>(null);
   useEffect(() => {
-    if (!cibleEcoute) { setFluxVoix(null); return undefined; }
+    if (!cibleEcoute) { setFluxVoix(null); setVoixPeerId(null); return undefined; }
     const lire = () => {
       const v = voixATranscrire(getTribeAudioStreams(), cibleEcoute, socket.userId);
-      const f = v ? v.stream : null;
-      setFluxVoix((prev) => (prev === f ? prev : f));
+      setFluxVoix((prev) => (prev === (v ? v.stream : null) ? prev : (v ? v.stream : null)));
+      setVoixPeerId((prev) => (prev === (v ? v.peerId : null) ? prev : (v ? v.peerId : null)));
     };
     lire();
     const t = setInterval(lire, 1000);
     return () => clearInterval(t);
   }, [cibleEcoute, getTribeAudioStreams, socket.userId]);
+  // 🔐 Avis = battement DATA vers CET appareil pendant toute l'écoute ; sans accusé frais (12 s), on cesse d'écouter.
+  const dernierAccuseRef = useRef(0);
+  const voixPeerIdRef = useRef<string | null>(null);
+  voixPeerIdRef.current = cibleEcoute ? voixPeerId : null;
+  useEffect(() => {
+    if (!cibleEcoute || !voixPeerId) return undefined;
+    const vers = voixPeerId;
+    const battre = () => {
+      envoyerDonnees(vers, { t: MSG_AVIS_VOIX, actif: true });
+      if (!accuseFrais(dernierAccuseRef.current, Date.now())) setAvisVoixVuPar((p) => (p === null ? p : null));
+    };
+    battre();
+    const t = setInterval(battre, BATTEMENT_AVIS_MS);
+    return () => {
+      clearInterval(t);
+      envoyerDonnees(vers, { t: MSG_AVIS_VOIX, actif: false });
+      dernierAccuseRef.current = 0;
+      setAvisVoixVuPar(null);
+    };
+  }, [cibleEcoute, voixPeerId, envoyerDonnees]);
+  // 🎙️ Canal DATA : l'hôte n'accepte l'accusé QUE de l'appareil dont il transcrit la voix ; le participant
+  //   n'accepte l'avis (ou son retrait) QUE de l'hôte. Un tiers ne peut ni lancer l'écoute, ni masquer l'avis.
+  const dernierBattementRef = useRef(0);
+  voixDonneesRef.current = (de, message) => {
+    const m = lireMessageVoix(message);
+    if (!m) return;
+    if (canShare) {
+      if (m.t !== MSG_AVIS_VOIX_VU || !accuseValide({ dePeerId: de, voixPeerId: voixPeerIdRef.current })) return;
+      dernierAccuseRef.current = Date.now();
+      setAvisVoixVuPar((p) => (p === de ? p : de));
+      return;
+    }
+    if (m.t !== MSG_AVIS_VOIX || !avisDeLHote({ dePeerId: de, hotePeerId: peerState.hostPeerId })) return;
+    if (m.actif) {
+      dernierBattementRef.current = Date.now();
+      setAvisVoixVisible(true);
+      setAvisVoixBattement((n) => n + 1);
+    } else {
+      dernierBattementRef.current = 0;
+      setAvisVoixVisible(false);
+    }
+  };
+  // Participant : l'avis ne se retire seul qu'après 15 s sans battement (l'hôte a alors déjà cessé d'écouter).
+  useEffect(() => {
+    if (canShare || !avisVoixVisible) return undefined;
+    const t = setInterval(() => {
+      if (!avisEncoreActif(dernierBattementRef.current, Date.now())) setAvisVoixVisible(false);
+    }, 3000);
+    return () => clearInterval(t);
+  }, [canShare, avisVoixVisible]);
   const transcriptionVoix = useTranscriptionVisio({
-    actif: transcriptionAutorisee({ cible: cibleEcoute, avisVuPar: avisVoixVuPar, voixPresente: !!fluxVoix }),
+    actif: transcriptionAutorisee({ cible: cibleEcoute, voixPeerId, avisVuPar: avisVoixVuPar }),
     flux: fluxVoix,
     obtenirJeton: () => jetonTranscription(sessionId || ''),
     onSegment: (seg) => setEtatPrompteur((e) => recevoirTranscription(e, {
@@ -3342,8 +3371,8 @@ export const SessionPage: React.FC = () => {
   const nomEcoute = inviteEnVisio || 'la personne à l’écran';
   const etatVoix: string | null = assistantMode !== 'visio' ? null
     : !cibleEcoute ? (assistantActif ? 'Personne à l’écran pour l’instant.' : 'Allume l’IA pour qu’elle écoute la personne à l’écran.')
-    : avisVoixVuPar !== cibleEcoute ? `Avis de transcription envoyé à ${nomEcoute}…`
-    : !fluxVoix ? `${nomEcoute} n’a pas la parole : donne-lui le micro pour que l’IA l’entende.`
+    : !fluxVoix || !voixPeerId ? `${nomEcoute} n’a pas la parole : donne-lui le micro pour que l’IA l’entende.`
+    : avisVoixVuPar !== voixPeerId ? `Avis de transcription envoyé à ${nomEcoute}…`
     : transcriptionVoix.etat === 'ecoute' ? `L’IA écoute ${nomEcoute} (sa voix seulement, rien n’est enregistré).`
     : transcriptionVoix.etat === 'connexion' ? 'Connexion à la transcription…'
     : transcriptionVoix.etat === 'erreur'
@@ -3636,7 +3665,6 @@ export const SessionPage: React.FC = () => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
   }, [sessionId]);
-  envoyerEvtLiveRef.current = sendPlaybackEvent; // 🎙️ 06/10 : lu par l'avis « Échanger en visio » (déclaré plus haut)
 
   // 💬 CHAT — envoi (ajout optimiste local + diffusion realtime). Pro uniquement.
   const makeChatId = useCallback(
@@ -5100,8 +5128,8 @@ export const SessionPage: React.FC = () => {
       }}
     >
       {/* 🎙️ 06/10 : avis de transcription — chez le participant écouté seulement */}
-      <AvisVoixParticipant visible={avisVoixVisible && !canShare}
-        onAffiche={() => sendPlaybackEvent(EVT_AVIS_VOIX_VU, { userId: socket.userId })} />
+      <AvisVoixParticipant visible={avisVoixVisible && !canShare} battement={avisVoixBattement}
+        onAffiche={() => envoyerDonnees('hote', { t: MSG_AVIS_VOIX_VU })} />
       {/* Nickname Modal */}
       {bonRetour && !showNicknameModal && (
         <BonRetourModal

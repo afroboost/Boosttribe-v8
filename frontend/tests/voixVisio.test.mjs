@@ -9,7 +9,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   cibleVoix, voixATranscrire, transcriptionAutorisee, segmentDepuisEvenement, creerChrono, latenceMoyenne,
-  EVT_AVIS_VOIX, EVT_AVIS_VOIX_VU, TEXTE_AVIS_VOIX,
+  MSG_AVIS_VOIX, MSG_AVIS_VOIX_VU, TEXTE_AVIS_VOIX, lireMessageVoix, accuseValide, avisDeLHote, accuseFrais, avisEncoreActif,
+  ACCUSE_MAX_MS, AVIS_EXPIRE_MS, BATTEMENT_AVIS_MS,
 } from './.build/transcriptionVisio.mjs';
 import { ETAT_INITIAL, recevoirTranscription, estQuestionPertinente } from './.build/prompteurSources.mjs';
 import { questionAPreparer } from './.build/assistantHote.mjs';
@@ -40,13 +41,38 @@ test('voix à transcrire : celle de la cible seulement, vivante ; jamais l’hô
   assert.equal(voixATranscrire([], 'u_amina', 'u_hote'), null, 'pas encore la parole : rien');
 });
 
-test('aucune écoute avant que l’avis soit AFFICHÉ chez la personne écoutée', () => {
-  assert.equal(transcriptionAutorisee({ cible: 'u_amina', avisVuPar: null, voixPresente: true }), false);
-  assert.equal(transcriptionAutorisee({ cible: 'u_amina', avisVuPar: 'u_bob', voixPresente: true }), false, 'l’accusé d’un autre ne vaut rien');
-  assert.equal(transcriptionAutorisee({ cible: 'u_amina', avisVuPar: 'u_amina', voixPresente: false }), false);
-  assert.equal(transcriptionAutorisee({ cible: 'u_amina', avisVuPar: 'u_amina', voixPresente: true }), true);
+test('aucune écoute avant que l’avis soit AFFICHÉ sur l’appareil de la voix écoutée', () => {
+  assert.equal(transcriptionAutorisee({ cible: 'u_amina', voixPeerId: 'p-amina', avisVuPar: null }), false);
+  assert.equal(transcriptionAutorisee({ cible: 'u_amina', voixPeerId: 'p-amina', avisVuPar: 'p-bob' }), false, 'l’accusé d’un autre appareil ne vaut rien');
+  assert.equal(transcriptionAutorisee({ cible: 'u_amina', voixPeerId: null, avisVuPar: 'p-amina' }), false, 'pas de voix : rien');
+  assert.equal(transcriptionAutorisee({ cible: 'u_amina', voixPeerId: 'p-amina', avisVuPar: 'p-amina' }), true);
   assert.match(TEXTE_AVIS_VOIX, /transcription de ta voix aide le coach à te répondre/);
   assert.match(TEXTE_AVIS_VOIX, /Rien n’est enregistré/);
+});
+
+test('🔐 FAUX ACCUSÉ : seul l’appareil dont la voix est transcrite peut déclencher l’écoute', () => {
+  assert.equal(accuseValide({ dePeerId: 'p-amina', voixPeerId: 'p-amina' }), true);
+  assert.equal(accuseValide({ dePeerId: 'p-pirate', voixPeerId: 'p-amina' }), false, 'un autre participant');
+  assert.equal(accuseValide({ dePeerId: 'p-amina', voixPeerId: null }), false, 'personne n’est écouté');
+  assert.equal(accuseValide({ dePeerId: '', voixPeerId: '' }), false);
+  assert.equal(accuseFrais(0, 10_000), false, 'jamais d’accusé : pas d’écoute');
+  assert.equal(accuseFrais(1_000, 1_000 + ACCUSE_MAX_MS), true);
+  assert.equal(accuseFrais(1_000, 1_001 + ACCUSE_MAX_MS), false, 'accusé périmé : l’écoute s’arrête');
+});
+
+test('🔐 AVIS MASQUÉ : seul l’hôte peut retirer l’avis ; il ne se retire seul qu’APRÈS l’arrêt de l’écoute', () => {
+  assert.equal(avisDeLHote({ dePeerId: 'p-hote', hotePeerId: 'p-hote' }), true);
+  assert.equal(avisDeLHote({ dePeerId: 'p-pirate', hotePeerId: 'p-hote' }), false, 'un tiers ne peut pas masquer l’avis');
+  assert.equal(avisDeLHote({ dePeerId: 'p-hote', hotePeerId: null }), false);
+  assert.ok(BATTEMENT_AVIS_MS < ACCUSE_MAX_MS && ACCUSE_MAX_MS < AVIS_EXPIRE_MS,
+    'battement < arrêt de l’écoute < retrait de l’avis : l’avis survit toujours à l’écoute');
+  assert.equal(avisEncoreActif(1_000, 1_000 + AVIS_EXPIRE_MS), true);
+  assert.equal(avisEncoreActif(1_000, 1_001 + AVIS_EXPIRE_MS), false);
+  assert.deepEqual(lireMessageVoix({ t: MSG_AVIS_VOIX, actif: true }), { t: 'avis_voix', actif: true });
+  assert.deepEqual(lireMessageVoix({ t: MSG_AVIS_VOIX, actif: 'oui' }), { t: 'avis_voix', actif: false });
+  assert.deepEqual(lireMessageVoix({ t: MSG_AVIS_VOIX_VU }), { t: 'avis_voix_vu' });
+  assert.equal(lireMessageVoix({ t: 'autre' }), null);
+  assert.equal(lireMessageVoix('avis_voix'), null);
 });
 
 test('événements du fournisseur : seul le texte FINAL d’une phrase devient un segment', () => {
@@ -84,18 +110,22 @@ test('flux PeerJS intact : COPIE de la piste, seule la copie est arrêtée ; auc
   assert.doesNotMatch(HOOK, /piste\.stop\(\)|\.enabled\s*=|getUserMedia/);
   assert.doesNotMatch(LIB, /getUserMedia|\.enabled\s*=/);
   assert.match(PAGE, /voixATranscrire\(getTribeAudioStreams\(\), cibleEcoute, socket\.userId\)/);
-  assert.doesNotMatch(PEER, /transcri/i, 'usePeerAudio n’est pas modifié');
+  assert.doesNotMatch(PEER, /transcri/i, 'usePeerAudio ne transcrit rien');
+  // Ajout DATA seulement : l'expéditeur vient de PeerJS (`dataConn.peer` / `hostId`), jamais du message.
+  assert.match(PEER, /dataConn\.on\('data', \(d\) => \{ try \{ onMessageDonneesRef\.current\?\.\(dataConn\.peer, d\);/);
+  assert.match(PEER, /dataConn\.on\('data', \(d\) => \{ try \{ onMessageDonneesRef\.current\?\.\(hostId, d\);/);
 });
 
-test('page : avis → accusé → écoute ; la phrase dite part en mode « voix », le chat garde son chemin', () => {
-  assert.match(PAGE, /\{ event: EVT_AVIS_VOIX \}/);
-  assert.match(PAGE, /\{ event: EVT_AVIS_VOIX_VU \}/);
-  assert.match(PAGE, /p\.userId !== cibleVoixRef\.current/, 'seul l’accusé de la personne visée compte');
-  assert.match(PAGE, /actif: transcriptionAutorisee\(\{ cible: cibleEcoute, avisVuPar: avisVoixVuPar, voixPresente: !!fluxVoix \}\)/);
+test('page : avis → accusé par le canal DATA PeerJS (jamais le broadcast) ; phrase dite en mode « voix »', () => {
+  assert.doesNotMatch(PAGE, /'broadcast', \{ event: '?ASSISTANT_VOIX/, 'plus aucun avis/accusé par le broadcast non authentifié');
+  assert.match(PAGE, /onMessageDonnees: \(de, m\) => voixDonneesRef\.current\(de, m\)/);
+  assert.match(PAGE, /accuseValide\(\{ dePeerId: de, voixPeerId: voixPeerIdRef\.current \}\)/);
+  assert.match(PAGE, /avisDeLHote\(\{ dePeerId: de, hotePeerId: peerState\.hostPeerId \}\)/);
+  assert.match(PAGE, /envoyerDonnees\(vers, \{ t: MSG_AVIS_VOIX, actif: true \}\)/);
+  assert.match(PAGE, /envoyerDonnees\('hote', \{ t: MSG_AVIS_VOIX_VU \}\)/);
+  assert.match(PAGE, /actif: transcriptionAutorisee\(\{ cible: cibleEcoute, voixPeerId, avisVuPar: avisVoixVuPar \}\)/);
   assert.match(PAGE, /if \(cible && cible\.id\.startsWith\('voix-'\)\) \{\s*void demanderIA\(\{ session_id: sessionId, mode: 'voix', messages: \[\]/);
   assert.match(PAGE, /void demanderIA\(\{ session_id: sessionId, mode: assistantMode, messages: contexte,/, 'chemin du chat inchangé');
   assert.match(PAGE, /<AvisVoixParticipant visible=\{avisVoixVisible && !canShare\}/);
-  assert.equal(EVT_AVIS_VOIX, 'ASSISTANT_VOIX');
-  assert.equal(EVT_AVIS_VOIX_VU, 'ASSISTANT_VOIX_VU');
   assert.doesNotMatch(PAGE, /sendPlaybackEvent\('CHAT_GROUP'[^)]*voix/i, 'aucune réplique envoyée au chat');
 });

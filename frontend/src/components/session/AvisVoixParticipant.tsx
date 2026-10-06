@@ -3,13 +3,14 @@ import { TEXTE_AVIS_VOIX } from '@/lib/transcriptionVisio';
 
 /**
  * 🎙️ 06/10 — Avis montré au PARTICIPANT écouté en « Échanger en visio », AVANT toute transcription
- * et tant qu'elle dure. Son affichage déclenche l'accusé `ASSISTANT_VOIX_VU` : sans lui, l'hôte
+ * et tant qu'elle dure. Son affichage déclenche l'accusé (canal DATA PeerJS, vers l'hôte seul) : sans lui, l'hôte
  * n'écoute rien. Aucun bouton à cliquer, rien n'est demandé (pas de nouveau micro).
  */
-export const AvisVoixParticipant: React.FC<{ visible: boolean; onAffiche: () => void }> = ({ visible, onAffiche }) => {
+export const AvisVoixParticipant: React.FC<{ visible: boolean; battement: number; onAffiche: () => void }> = ({ visible, battement, onAffiche }) => {
   const rappel = React.useRef(onAffiche);
   rappel.current = onAffiche;
-  React.useEffect(() => { if (visible) rappel.current(); }, [visible]);
+  // L'accusé part APRÈS l'affichage, à chaque battement de l'hôte (l'hôte cesse d'écouter sans lui).
+  React.useEffect(() => { if (visible) rappel.current(); }, [visible, battement]);
   if (!visible) return null;
   return (
     <div role="status" aria-live="polite" data-testid="avis-voix"

@@ -1575,6 +1575,9 @@ _VOIX_TOURNURES_IA = (
     "apprehension", "cordialement", "nous vous", "n'hesite surtout pas",
 )
 _RE_VOIX_VOUS = re.compile(r"\b(vous|votre|vos)\b")
+VOIX_EXCLAMATION_MAX_MOTS = 3      # « T'inquiète ! », « Carrément ! », « Bien sûr ! » : ne compte pas comme une phrase
+VOIX_MOT_REPETE_MIN = 5            # un mot de 5 lettres ou plus, deux fois = répétition maladroite
+_RE_VOIX_MOTS = re.compile(r"[a-z]+")
 _RE_VOIX_EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿]")
 
 
@@ -1597,9 +1600,21 @@ def _voix_style_artificiel(texte: Optional[str]) -> Optional[str]:
         return "vouvoiement"
     if len(brut.split()) > VOIX_MAX_MOTS:
         return "trop_long"
-    phrases = [x for x in re.split(r"[.!?]+", brut) if x.strip()]
+    # 06/10 : une courte exclamation en tête (1 à 3 mots + « ! ») est une respiration, pas une phrase.
+    morceaux = [x.strip() for x in re.split(r"([.!?]+)", brut)]
+    phrases = [(morceaux[i], morceaux[i + 1] if i + 1 < len(morceaux) else "")
+               for i in range(0, len(morceaux), 2) if morceaux[i]]
+    if phrases and "!" in phrases[0][1] and len(phrases[0][0].split()) <= VOIX_EXCLAMATION_MAX_MOTS:
+        phrases = phrases[1:]
     if len(phrases) > VOIX_MAX_PHRASES:
         return "trop_de_phrases"
+    # 06/10 : répétition maladroite (« Suis le rythme à ton rythme ») — même mot plein deux fois.
+    vus: set = set()
+    for mot in _RE_VOIX_MOTS.findall(t):
+        if len(mot) >= VOIX_MOT_REPETE_MIN:
+            if mot in vus:
+                return f"repetition:{mot}"
+            vus.add(mot)
     if _RE_VOIX_EMOJI.search(brut) or brut[:1] in "-*#•":
         return "pas_oral"
     return None
@@ -1614,7 +1629,9 @@ def _souffleur_instructions_voix() -> str:
         "spontané, chaleureux. Une ou deux phrases courtes, 20 mots maximum. "
         "Interdit : « absolument », « tout à fait », « n'hésite pas », « parfaitement adapté », "
         "« il est normal de », le vouvoiement, le langage corporate ou scolaire, les phrases "
-        "trop parfaites, les emojis. N'invente aucun prix, horaire, lieu ni promesse. "
+        "trop parfaites, les emojis. Ne répète jamais le même mot dans la réplique. "
+        "Tu peux ouvrir par une courte exclamation (« T'inquiète ! », « Carrément ! », « Bien sûr ! »). "
+        "N'invente aucun prix, horaire, lieu ni promesse. "
         "Si la phrase n'appelle aucune réponse (bonjour, merci, bruit, phrase coupée), "
         "renvoie une suggestion vide.\n"
         "Exemples :\n"

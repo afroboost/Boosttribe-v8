@@ -220,7 +220,14 @@ def test_jeton_limite_de_frequence(appli):
 
 # ══════════ 2. STYLE ORAL ══════════
 
-@pytest.mark.parametrize("texte", [BON_DEBUTANT, BON_PEUR, "Carrément, viens essayer samedi, on y va tranquille."])
+@pytest.mark.parametrize("texte", [
+    BON_DEBUTANT, BON_PEUR, "Carrément, viens essayer samedi, on y va tranquille.",
+    # 06/10 : une courte exclamation (1 à 3 mots) en tête ne compte pas comme une phrase
+    "T’inquiète ! Tu vas à ton rythme. Le but c’est de bouger et de kiffer.",
+    "Carrément ! Viens comme tu es, je te montre tout tranquillement.",
+    "Bien sûr ! Tout le monde commence un jour. On y va ensemble.",
+    "Oui, carrément ! On va y aller tranquille et je te montre tout.",
+])
 def test_style_naturel_accepte(appli, texte):
     m, _e, _c = appli
     assert m._voix_style_artificiel(texte) is None
@@ -233,10 +240,29 @@ def test_style_naturel_accepte(appli, texte):
     "Vous pouvez venir quand vous voulez.",
     "Oui tu peux venir " + "vraiment " * 25 + "sans souci.",
     "Oui. Tu peux venir. On commence doucement. Tu verras.",
+    # exclamation trop longue en tête : elle compte (4 mots ou plus)
+    "Mais oui bien sûr ! Tu peux venir. On commence doucement.",
+    # 06/10 : répétitions maladroites
+    "T'inquiète pas ! Suis le rythme à ton rythme, c'est ça le plus important.",
+    "Tu vas bouger, on va bouger ensemble, ça va être top.",
 ])
 def test_style_ia_refuse(appli, texte):
     m, _e, _c = appli
     assert m._voix_style_artificiel(texte) is not None
+
+
+def test_motifs_de_refus_explicites(appli):
+    m, _e, _c = appli
+    assert m._voix_style_artificiel("Suis le rythme à ton rythme, c'est top.") == "repetition:rythme"
+    assert m._voix_style_artificiel("T’inquiète ! Tu vas à ton rythme. Le but c’est de bouger.") is None
+    assert m._voix_style_artificiel("Mais oui bien sûr ! Tu peux venir. On commence doucement.") == "trop_de_phrases"
+
+
+def test_consigne_voix_annonce_les_deux_regles(appli):
+    m, _e, _c = appli
+    c = m._souffleur_instructions_voix()
+    assert "répète" in c and "même mot" in c
+    assert "T'inquiète !" in c
 
 
 # ══════════ 3. MODE « voix » ══════════

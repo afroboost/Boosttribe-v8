@@ -20,7 +20,8 @@ import { fileURLToPath } from 'node:url';
 const ICI = path.dirname(fileURLToPath(import.meta.url));
 const FRONT = path.join(ICI, '..', '..');
 const RACINE = path.join(FRONT, '..');
-const PHRASES = ['Est-ce que je peux participer si je suis débutant ?', 'J’ai peur de ne pas suivre.'];
+const PHRASES = ['Est-ce que je peux participer si je suis débutant ?', 'J’ai peur de ne pas suivre.',
+  'Je suis pas très sportif.', 'Et si je n’arrive pas à suivre les mouvements ?'];
 
 function cle() {
   if ((process.env.OPENAI_API_KEY || '').startsWith('sk-')) return process.env.OPENAI_API_KEY;

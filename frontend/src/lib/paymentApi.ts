@@ -1251,7 +1251,7 @@ export async function uploadSessionVideo(
  * suffirait pas. Une indisponibilité n'est pas une erreur ici — le direct continue,
  * l'écran l'annonce. Aucun secret ne transite : la clé IA ne quitte jamais le serveur.
  */
-export type ModeAssistant = 'chat' | 'visio' | 'theme' | 'continuer' | 'raccourcir' | 'developper' | 'naturel';
+export type ModeAssistant = 'chat' | 'visio' | 'voix' | 'theme' | 'continuer' | 'raccourcir' | 'developper' | 'naturel'; // 06/10 : + voix (phrase dite en visio)
 
 export async function suggestionsAssistant(corps: {
   session_id: string;
@@ -1281,5 +1281,27 @@ export async function suggestionsAssistant(corps: {
     return { ok: !!d.ok, suggestions: Array.isArray(d.suggestions) ? d.suggestions : [], raison: d.raison };
   } catch {
     return { ok: false, suggestions: [], raison: 'hors_ligne' };
+  }
+}
+
+/**
+ * 🎙️ 06/10 — « Échanger en visio » : secret ÉPHÉMÈRE (10 min) pour transcrire, depuis le navigateur
+ * de l'hôte, la voix du participant à l'écran. Hôte seul (403 sinon). La clé OpenAI ne sort jamais du serveur.
+ */
+export async function jetonTranscription(sessionId: string): Promise<{ ok: boolean; client_secret?: string; raison?: string }> {
+  if (!API_URL) return { ok: false, raison: 'ia_non_configuree' };
+  const token = await getAccessToken();
+  if (!token) return { ok: false, raison: 'hors_ligne' };
+  try {
+    const res = await fetch(`${API_URL}/live/assistant/transcription/jeton`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!res.ok) return { ok: false, raison: res.status === 403 ? 'reserve_hote' : 'fournisseur_indisponible' };
+    const d = await res.json().catch(() => ({}));
+    return { ok: !!d.ok, client_secret: typeof d.client_secret === 'string' ? d.client_secret : undefined, raison: d.raison };
+  } catch {
+    return { ok: false, raison: 'hors_ligne' };
   }
 }

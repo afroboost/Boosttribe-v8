@@ -1560,6 +1560,74 @@ def _souffleur_instructions(mode: str) -> str:
                    "message, adressées à la personne qui l'a écrit.")
 
 
+# 06/10 — « ÉCHANGER EN VISIO » : la PHRASE DITE par le participant (transcrite chez l'hôte)
+#   devient UNE réplique que le coach peut DIRE tout de suite. Mode séparé (« voix ») : les
+#   consignes du chat et de la visio-chat ne bougent pas. Le style est VÉRIFIÉ, pas espéré :
+#   une réplique qui sonne IA est régénérée UNE fois, puis abandonnée (rien n'est montré).
+VOIX_MAX_MOTS = 24                 # « environ 20 mots » : la consigne dit 20, le filtre tolère 24
+VOIX_MAX_PHRASES = 2
+
+_VOIX_TOURNURES_IA = (
+    "absolument", "tout a fait", "n'hesite pas", "n'hesitez pas", "parfaitement adapte",
+    "il est normal", "il est tout a fait normal", "excellente question", "bonne question",
+    "je comprends ton", "je comprends votre", "en tant qu", "sachez que", "il convient",
+    "par ailleurs", "afin de", "dans le cadre", "permet une progression", "assurement",
+    "apprehension", "cordialement", "nous vous", "n'hesite surtout pas",
+)
+_RE_VOIX_VOUS = re.compile(r"\b(vous|votre|vos)\b")
+_RE_VOIX_EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿]")
+
+
+def _voix_normaliser(texte: str) -> str:
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(texte or "").lower().replace("’", "'"))
+    return "".join(ch for ch in t if unicodedata.category(ch) != "Mn")
+
+
+def _voix_style_artificiel(texte: Optional[str]) -> Optional[str]:
+    """None si la réplique sonne comme un vrai coach à l'oral ; sinon le motif du refus."""
+    brut = str(texte or "").strip()
+    if not brut:
+        return "vide"
+    t = _voix_normaliser(brut)
+    for tournure in _VOIX_TOURNURES_IA:
+        if tournure in t:
+            return f"tournure:{tournure}"
+    if _RE_VOIX_VOUS.search(t):
+        return "vouvoiement"
+    if len(brut.split()) > VOIX_MAX_MOTS:
+        return "trop_long"
+    phrases = [x for x in re.split(r"[.!?]+", brut) if x.strip()]
+    if len(phrases) > VOIX_MAX_PHRASES:
+        return "trop_de_phrases"
+    if _RE_VOIX_EMOJI.search(brut) or brut[:1] in "-*#•":
+        return "pas_oral"
+    return None
+
+
+def _souffleur_instructions_voix() -> str:
+    return (
+        "Tu souffles à l'oreille d'un coach sportif qui anime un Live Afroboost en visio "
+        "(cardio et danse afrobeat au casque, à Neuchâtel). Une personne vient de lui PARLER. "
+        "Propose UNE réplique que le coach va DIRE tout de suite, à voix haute, à cette personne. "
+        "Parle comme un vrai coach sympa, pas comme une IA : tutoiement, mots simples, "
+        "spontané, chaleureux. Une ou deux phrases courtes, 20 mots maximum. "
+        "Interdit : « absolument », « tout à fait », « n'hésite pas », « parfaitement adapté », "
+        "« il est normal de », le vouvoiement, le langage corporate ou scolaire, les phrases "
+        "trop parfaites, les emojis. N'invente aucun prix, horaire, lieu ni promesse. "
+        "Si la phrase n'appelle aucune réponse (bonjour, merci, bruit, phrase coupée), "
+        "renvoie une suggestion vide.\n"
+        "Exemples :\n"
+        "« Est-ce que je peux participer si je suis débutant ? » → « Oui bien sûr, tu peux "
+        "commencer même si tu débutes. Je te montrerai les mouvements tranquillement. »\n"
+        "« J'ai peur de ne pas suivre. » → « T'inquiète, tu vas à ton rythme. Le but c'est "
+        "surtout de bouger et de passer un bon moment. »\n"
+        "À ne JAMAIS écrire : « Absolument, cette activité est parfaitement adaptée aux "
+        "personnes débutantes. » ni « Il est tout à fait normal d'éprouver cette appréhension. »\n"
+        'Réponds en JSON strict : {"suggestion": "…"}.'
+    )
+
+
 # 05/10 — LIMITE DE FRÉQUENCE du souffleur (coût IA) : par compte ET par Live, en mémoire du
 #   processus. Au-delà : `ok:false, raison:"trop_de_demandes"` — le Live continue, rien ne casse.
 SOUFFLEUR_ECART_MIN_S = 2.0
@@ -1630,7 +1698,7 @@ async def souffleur_suggestions(body: SouffleurBody, authorization: Optional[str
     if not await _is_host_or_cohost(session_id, user.get("id")):
         raise HTTPException(status_code=403, detail="assistant_reserve_a_l_hote")
 
-    mode_demande = body.mode if body.mode in ("chat", "visio") else None
+    mode_demande = body.mode if body.mode in ("chat", "visio", "voix") else None  # 06/10 : + voix
     cle_msg = _souffleur_cle_message(user.get("id"), session_id, body.message_id) if mode_demande else None
     if cle_msg and not body.autre:
         deja = _souffleur_memoire_lire(cle_msg, time.time())
@@ -1662,6 +1730,9 @@ async def _souffleur_appeler(body: SouffleurBody, session_id: str) -> Dict[str, 
         return {"ok": False, "raison": "ia_non_configuree", "suggestions": []}
 
     mode = body.mode if (body.mode in ("chat", "visio") or body.mode in SOUFFLEUR_MODES_TEXTE) else "chat"
+
+    if body.mode == "voix":
+        return await _souffleur_voix(body, key)
 
     # ── AIDE À LA RÉDACTION : on travaille le texte de l'hôte, pas le chat ──
     #    Le chat n'a rien à faire ici : demander « raccourcis mon intro » n'autorise pas
@@ -1753,6 +1824,131 @@ async def _souffleur_appeler(body: SouffleurBody, session_id: str) -> Dict[str, 
     except Exception as exc:  # noqa: BLE001 — un souffleur muet n'arrête pas un direct
         logger.warning("[SOUFFLEUR] indisponible : %s", type(exc).__name__)
         return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+
+
+async def _souffleur_voix(body: SouffleurBody, key: str) -> Dict[str, Any]:
+    """06/10 — UNE réplique orale pour ce que le participant vient de DIRE.
+
+    Données minimales : le texte transcrit de CETTE phrase (nettoyé), le prénom, le titre de la
+    session. Ni le chat, ni l'audio. Style vérifié par `_voix_style_artificiel` : une seule
+    régénération, puis rien.
+    """
+    q = body.question if isinstance(body.question, dict) else {}
+    dit = _souffleur_nettoyer((q or {}).get("texte"))
+    if not dit.strip():
+        return {"ok": False, "raison": "texte_absent", "suggestions": []}
+    nom = _souffleur_nettoyer((q or {}).get("nom") or body.invite)[:40] or "La personne"
+    contexte = []
+    if body.sujet:
+        contexte.append("Session : " + _souffleur_nettoyer(body.sujet)[:80])
+    contexte.append(f"{nom} vient de dire : « {dit} »")
+    messages = [{"role": "system", "content": _souffleur_instructions_voix()},
+                {"role": "user", "content": "\n".join(contexte)}]
+    import json as _json
+    for tentative in range(2):                                 # 1 essai + 1 régénération, jamais plus
+        payload = {"model": SOUFFLEUR_MODEL, "temperature": 0.8 if tentative == 0 else 0.95,
+                   "max_tokens": 120, "response_format": {"type": "json_object"},
+                   "messages": messages}
+        try:
+            async with httpx.AsyncClient(timeout=SOUFFLEUR_DELAI_S) as client:
+                resp = await client.post("https://api.openai.com/v1/chat/completions",
+                                         headers={"Authorization": f"Bearer {key}",
+                                                  "Content-Type": "application/json"},
+                                         json=payload)
+            if resp.status_code != 200:
+                logger.warning("[SOUFFLEUR] voix HTTP %s", resp.status_code)
+                return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+            brut = resp.json()["choices"][0]["message"]["content"]
+            obj = _json.loads(brut)
+            reponse = str((obj or {}).get("suggestion") or "").strip().strip('«»"').strip()
+        except Exception as exc:  # noqa: BLE001 — un souffleur muet n'arrête pas un direct
+            logger.warning("[SOUFFLEUR] voix indisponible : %s", type(exc).__name__)
+            return {"ok": False, "raison": "fournisseur_indisponible", "suggestions": []}
+        if not reponse:
+            return {"ok": False, "raison": "rien_a_repondre", "suggestions": []}
+        motif = _voix_style_artificiel(reponse)
+        if motif is None:
+            return {"ok": True, "mode": "voix", "suggestions": [reponse[:220]]}
+        logger.info("[SOUFFLEUR] voix réplique refusée (%s), tentative %s", motif, tentative + 1)
+        messages = messages + [
+            {"role": "assistant", "content": brut},
+            {"role": "user", "content": "Ça sonne trop IA. Redis-le comme un vrai coach, à l'oral : "
+                                        "tutoiement, plus court, plus simple, sans formule toute faite."},
+        ]
+    return {"ok": False, "raison": "style_artificiel", "suggestions": []}
+
+
+# 06/10 — JETON DE TRANSCRIPTION (« Échanger en visio »). Le navigateur de l'HÔTE transcrit la
+#   voix du participant à l'écran (copie du flux PeerJS déjà reçu) directement chez OpenAI, en
+#   WebRTC. Il lui faut un secret ÉPHÉMÈRE : la clé standard ne quitte jamais ce serveur.
+#   Session de type « transcription » uniquement (aucune réponse vocale possible), français,
+#   détection de fin de phrase côté fournisseur. Aucun audio ne transite ni n'est stocké ici.
+TRANSCRIPTION_MODELE = os.environ.get("OPENAI_LIVE_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+TRANSCRIPTION_JETON_S = 600
+TRANSCRIPTION_MAX_JETONS = 10      # par compte et par Live, sur la fenêtre ci-dessous
+TRANSCRIPTION_FENETRE_S = 600.0
+_transcription_jetons: Dict[str, List[float]] = {}
+
+
+class TranscriptionJetonBody(BaseModel):
+    session_id: str
+
+
+@app.post("/live/assistant/transcription/jeton")
+async def transcription_jeton(body: TranscriptionJetonBody, authorization: Optional[str] = Header(default=None)):
+    """Secret éphémère de transcription pour l'HÔTE. 401 sans jeton, 403 si pas hôte."""
+    user = await get_user_from_token(authorization)
+    session_id = (body.session_id or "").strip()
+    if not SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Identifiant de session invalide")
+    if not await _is_host_or_cohost(session_id, user.get("id")):
+        raise HTTPException(status_code=403, detail="assistant_reserve_a_l_hote")
+
+    cle_quota = f"{user.get('id')}|{session_id}"
+    maintenant = time.time()
+    recents = [t for t in _transcription_jetons.get(cle_quota, []) if maintenant - t < TRANSCRIPTION_FENETRE_S]
+    if len(recents) >= TRANSCRIPTION_MAX_JETONS:
+        return {"ok": False, "raison": "trop_de_demandes"}
+
+    key = await get_openai_key()
+    if not key:
+        return {"ok": False, "raison": "ia_non_configuree"}
+    recents.append(maintenant)
+    _transcription_jetons[cle_quota] = recents
+
+    corps = {
+        "expires_after": {"anchor": "created_at", "seconds": TRANSCRIPTION_JETON_S},
+        "session": {
+            "type": "transcription",
+            "audio": {"input": {
+                "transcription": {
+                    "model": TRANSCRIPTION_MODELE, "language": "fr",
+                    "prompt": "Live de sport Afroboost : danse afrobeat, cardio, séance, coach, débutant.",
+                },
+                "noise_reduction": {"type": "near_field"},
+                "turn_detection": {"type": "server_vad", "threshold": 0.5,
+                                   "prefix_padding_ms": 300, "silence_duration_ms": 500},
+            }},
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post("https://api.openai.com/v1/realtime/client_secrets",
+                                     headers={"Authorization": f"Bearer {key}",
+                                              "Content-Type": "application/json"},
+                                     json=corps)
+        if resp.status_code != 200:
+            logger.warning("[TRANSCRIPTION] jeton HTTP %s", resp.status_code)
+            return {"ok": False, "raison": "fournisseur_indisponible"}
+        d = resp.json()
+        secret = str((d or {}).get("value") or "")
+        if not secret.startswith("ek_"):
+            return {"ok": False, "raison": "reponse_illisible"}
+        return {"ok": True, "client_secret": secret, "expires_at": d.get("expires_at"),
+                "modele": TRANSCRIPTION_MODELE}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[TRANSCRIPTION] jeton indisponible : %s", type(exc).__name__)
+        return {"ok": False, "raison": "fournisseur_indisponible"}
 
 
 @app.post("/stripe/sync-plan")

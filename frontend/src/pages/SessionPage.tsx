@@ -46,6 +46,9 @@ import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout, definirSessionInvitePromo } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
+import { cibleVoix, voixATranscrire, transcriptionAutorisee, EVT_AVIS_VOIX, EVT_AVIS_VOIX_VU } from '@/lib/transcriptionVisio'; // 🎙️ 06/10 : « Échanger en visio »
+import { useTranscriptionVisio } from '@/hooks/useTranscriptionVisio';
+import { AvisVoixParticipant } from '@/components/session/AvisVoixParticipant';
 import { droitChatLive, inviteLiveIdentifie, membreLiveAfroboost, messageChatSortant, accepterMessageChatRecu } from '@/lib/liveChat'; // 💬 05/10 : chat de l'invité identifié
 import { actionPromoParticipant } from '@/lib/livePromo'; // 📣 05/10 : « Faire ma promo » aussi pour l'invité sans compte
 import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
@@ -93,7 +96,7 @@ import {
   ETAT_INITIAL, ecrire, afficher, effacer, recevoirSuggestion, utiliserSuggestion,
   ignorerSuggestion, recevoirQuestion, ouvrirQuestion, reprendreTexte,
   etatInitialDepuisScript, recevoirMessages, retirerQuestion, selectionnerQuestion, afficherQuestion,
-  recevoirSuggestionAuto, estQuestionPertinente,
+  recevoirSuggestionAuto, estQuestionPertinente, recevoirTranscription,
   type EtatPrompteur, type QuestionEnAttente, type ActionTexte,
 } from '@/lib/prompteurSources';
 import { RESOLUTION_720P, RESOLUTION_1080P } from '@/lib/programCompositor';
@@ -112,7 +115,7 @@ import { useSessionRecorder } from '@/hooks/useSessionRecorder';
 import { claimHost, setCohosts, spendCredit, listAccessRequests, decideAccessRequest, terminerLiveServeur, liveEstTermine, enregistrerContactInvite } from '@/lib/paymentApi';
 import { BRAND_ID } from '@/config/brand';
 import { libelleRejoindre, validerContactInvite, avatarPourPresence, TEXTE_INFO_CONTACT, effacerPiiInvite, liveGuestMoi, liveGuestRejoindre, liveGuestContinuer, liveGuestModifier, liveGuestOublier, creerFournisseurJetonInvite, type AccesInvite, type VueInvite } from '@/lib/inviteLive';
-import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant } from '@/lib/paymentApi';
+import { startRecording, stopRecording, uploadRecording, getCreditsConfig, suggestionsAssistant, jetonTranscription } from '@/lib/paymentApi';
 import {
   getSessionAccessInfo, getBilletterieConfig, configureSession, buyTicket, checkTicket, getCoachPlan,
   getPawapayConfig, claimPendingAccess,
@@ -2458,6 +2461,12 @@ export const SessionPage: React.FC = () => {
   const [commentairesMasques, setCommentairesMasques] = useState(false);
   // Refs lues par les handlers Realtime (souscrits une seule fois) pour décider de l'incrément "non lu".
   const peutChatterRef = useRef(peutChatter);   // 05/10 : même règle à la réception qu'à l'envoi
+  // 🎙️ 06/10 — « Échanger en visio » : avis montré au participant écouté (côté participant) et
+  //   accusé « avis affiché » reçu de lui (côté hôte). L'hôte n'écoute qu'après cet accusé.
+  const [avisVoixVisible, setAvisVoixVisible] = useState(false);
+  const [avisVoixVuPar, setAvisVoixVuPar] = useState<string | null>(null);
+  const cibleVoixRef = useRef<string | null>(null);
+  const envoyerEvtLiveRef = useRef<(event: string, payload: unknown) => void>(() => {}); // = sendPlaybackEvent (déclaré plus bas)
   useEffect(() => { peutChatterRef.current = peutChatter; }, [peutChatter]);
   const chatOpenRef = useRef(chatOpen);
   useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
@@ -2784,6 +2793,18 @@ export const SessionPage: React.FC = () => {
         if (isHostRef.current) return;                              // l'hôte ne s'auto-cible pas
         if (!p?.userId || p.userId !== myUserIdRef.current) return; // seulement la cible réagit
         applyHostMicRef.current?.(!!p.on);
+      })
+      // 🎙️ 06/10 — l'hôte va écouter CE participant (« Échanger en visio ») : l'avis s'affiche chez lui seul.
+      .on('broadcast', { event: EVT_AVIS_VOIX }, (payload) => {
+        const p = payload.payload as { userId?: string; actif?: boolean };
+        if (isHostRef.current || !p?.userId || p.userId !== myUserIdRef.current) return;
+        setAvisVoixVisible(!!p.actif);
+      })
+      // 🎙️ 06/10 — (hôte) l'avis est affiché chez la personne visée : l'écoute peut commencer.
+      .on('broadcast', { event: EVT_AVIS_VOIX_VU }, (payload) => {
+        const p = payload.payload as { userId?: string };
+        if (!isHostRef.current || !p?.userId || p.userId !== cibleVoixRef.current) return;
+        setAvisVoixVuPar((prev) => (prev === p.userId ? prev : p.userId as string));
       })
       // 💬 CHAT GROUPÉ (Pro) — message visible par tout le groupe
       .on('broadcast', { event: 'CHAT_GROUP' }, (payload) => {
@@ -3153,6 +3174,12 @@ export const SessionPage: React.FC = () => {
   useEffect(() => {
     setAssistantMode((prev) => { const auto = modeAutomatique(inviteEnVisio); return prev === auto ? prev : auto; });
   }, [inviteEnVisio]);
+  // 🎙️ 06/10 — son identifiant (même espace que socket.userId / voix PeerJS / canal).
+  const inviteEnVisioId = useMemo(() => {
+    const autres = (videoMesh.remoteCameras || []).map((c) => c.userId).filter((id) => id && id !== socket.userId);
+    const p = participants.find((x) => autres.includes(x.id) && !x.isCurrentUser);
+    return p ? p.id : null;
+  }, [videoMesh.remoteCameras, participants, socket.userId]);
 
   // Le texte affiché alimente le prompteur EXISTANT (overlay sur la vidéo, taille,
   //    vitesse, miroir). On ne construit pas un second prompteur : on remplit celui-là.
@@ -3173,7 +3200,7 @@ export const SessionPage: React.FC = () => {
     setAssistantEnCours(true);
     try {
       const repli = { ok: false, suggestions: [] as string[], raison: 'delai_depasse' };
-      const delai = corps.mode === 'chat' || corps.mode === 'visio' ? DELAI_REPONSE_MS : DELAI_REDACTION_MS;
+      const delai = corps.mode === 'chat' || corps.mode === 'visio' || corps.mode === 'voix' ? DELAI_REPONSE_MS : DELAI_REDACTION_MS;
       const r = await avecDelai(suggestionsAssistant(corps), delai, repli, { ...repli, raison: 'fournisseur_indisponible' });
       if (r.ok && r.suggestions.length) {
         setAssistantIndispo(null);
@@ -3209,6 +3236,14 @@ export const SessionPage: React.FC = () => {
     if (!doitAppeler({ etat: relanceRef.current, empreinte, maintenant: Date.now(),
                        actif: assistantActif, forcer, enCours: assistantEnCours })) return false;
     relanceRef.current = { dernierAppelMs: Date.now(), derniereEmpreinte: empreinte };
+    // 🎙️ 06/10 : phrase DITE en visio (id « voix-… ») → mode « voix » : UNE réplique orale, la phrase
+    //   seule (pas le chat). Les questions du chat gardent exactement leur chemin.
+    if (cible && cible.id.startsWith('voix-')) {
+      void demanderIA({ session_id: sessionId, mode: 'voix', messages: [], invite: inviteEnVisio,
+                        sujet: description || null, question: { nom: cible.auteur, texte: cible.texte },
+                        message_id: cible.id, autre }, cible, auto);
+      return true;
+    }
     void demanderIA({ session_id: sessionId, mode: assistantMode, messages: contexte,
                       invite: assistantMode === 'visio' ? inviteEnVisio : null,
                       sujet: description || null, question, message_id: cible ? cible.id : null, autre }, cible, auto);
@@ -3264,6 +3299,58 @@ export const SessionPage: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canShare, idsFile, suggestionEnAttente, assistantActif, assistantEnCours, relanceAuto]);
 
+  // 🎙️ 06/10 — « ÉCHANGER EN VISIO » (HÔTE) : avis chez la personne à l'écran → son accusé → écoute de
+  //   la COPIE de sa voix (jamais celle de l'hôte, jamais un micro de plus) → phrase transcrite → file du
+  //   prompteur → UNE réplique orale (mode « voix »), chez l'hôte seul. Rien n'est envoyé au participant.
+  const cibleEcoute = cibleVoix({ estHote: canShare, assistantActif, mode: assistantMode, inviteId: inviteEnVisioId, moi: socket.userId });
+  useEffect(() => { cibleVoixRef.current = cibleEcoute; }, [cibleEcoute]);
+  // L'avis part à la cible, renvoyé toutes les 4 s tant qu'il n'est pas confirmé (arrivée tardive, réseau).
+  useEffect(() => {
+    if (!cibleEcoute) return undefined;
+    const envoyer = () => envoyerEvtLiveRef.current(EVT_AVIS_VOIX, { userId: cibleEcoute, actif: true });
+    envoyer();
+    if (avisVoixVuPar === cibleEcoute) return undefined;
+    const t = setInterval(envoyer, 4000);
+    return () => clearInterval(t);
+  }, [cibleEcoute, avisVoixVuPar]);
+  // Fin de l'écoute (mode chat, IA éteinte, personne descendue de l'écran) : l'avis disparaît chez elle.
+  useEffect(() => {
+    if (!cibleEcoute) return undefined;
+    const cible = cibleEcoute;
+    return () => { envoyerEvtLiveRef.current(EVT_AVIS_VOIX, { userId: cible, actif: false }); setAvisVoixVuPar(null); };
+  }, [cibleEcoute]);
+  // Sa voix telle que l'hôte la reçoit déjà (lecture seule) ; elle n'existe qu'une fois la parole donnée.
+  const [fluxVoix, setFluxVoix] = useState<MediaStream | null>(null);
+  useEffect(() => {
+    if (!cibleEcoute) { setFluxVoix(null); return undefined; }
+    const lire = () => {
+      const v = voixATranscrire(getTribeAudioStreams(), cibleEcoute, socket.userId);
+      const f = v ? v.stream : null;
+      setFluxVoix((prev) => (prev === f ? prev : f));
+    };
+    lire();
+    const t = setInterval(lire, 1000);
+    return () => clearInterval(t);
+  }, [cibleEcoute, getTribeAudioStreams, socket.userId]);
+  const transcriptionVoix = useTranscriptionVisio({
+    actif: transcriptionAutorisee({ cible: cibleEcoute, avisVuPar: avisVoixVuPar, voixPresente: !!fluxVoix }),
+    flux: fluxVoix,
+    obtenirJeton: () => jetonTranscription(sessionId || ''),
+    onSegment: (seg) => setEtatPrompteur((e) => recevoirTranscription(e, {
+      id: seg.id, auteur: inviteEnVisio || undefined, texte: seg.texte, ts: Date.now() })),
+  });
+  const nomEcoute = inviteEnVisio || 'la personne à l’écran';
+  const etatVoix: string | null = assistantMode !== 'visio' ? null
+    : !cibleEcoute ? (assistantActif ? 'Personne à l’écran pour l’instant.' : 'Allume l’IA pour qu’elle écoute la personne à l’écran.')
+    : avisVoixVuPar !== cibleEcoute ? `Avis de transcription envoyé à ${nomEcoute}…`
+    : !fluxVoix ? `${nomEcoute} n’a pas la parole : donne-lui le micro pour que l’IA l’entende.`
+    : transcriptionVoix.etat === 'ecoute' ? `L’IA écoute ${nomEcoute} (sa voix seulement, rien n’est enregistré).`
+    : transcriptionVoix.etat === 'connexion' ? 'Connexion à la transcription…'
+    : transcriptionVoix.etat === 'erreur'
+      ? (transcriptionVoix.raison === 'ia_non_configuree' ? 'Transcription indisponible : clé IA non configurée.'
+        : 'Transcription momentanément indisponible — le Live continue.')
+    : null;
+
   const assistantNode: React.ReactNode = canShare ? (
     <AssistantHotePanel
       open={assistantOuvert}
@@ -3281,6 +3368,7 @@ export const SessionPage: React.FC = () => {
       indisponible={assistantIndispo}
       invite={inviteEnVisio}
       modeQuestion={assistantMode}
+      etatVoix={etatVoix}
       taille={prompteur.taille}
       onPlusPetit={prompteur.plusPetit}
       onPlusGrand={prompteur.plusGrand}
@@ -3548,6 +3636,7 @@ export const SessionPage: React.FC = () => {
     if (!sessionId || !supabase || !isSupabaseConfigured) return;
     supabase.channel(`playback:${sessionId}`).send({ type: 'broadcast', event, payload });
   }, [sessionId]);
+  envoyerEvtLiveRef.current = sendPlaybackEvent; // 🎙️ 06/10 : lu par l'avis « Échanger en visio » (déclaré plus haut)
 
   // 💬 CHAT — envoi (ajout optimiste local + diffusion realtime). Pro uniquement.
   const makeChatId = useCallback(
@@ -5010,6 +5099,9 @@ export const SessionPage: React.FC = () => {
         fontFamily: "'Inter', sans-serif",
       }}
     >
+      {/* 🎙️ 06/10 : avis de transcription — chez le participant écouté seulement */}
+      <AvisVoixParticipant visible={avisVoixVisible && !canShare}
+        onAffiche={() => sendPlaybackEvent(EVT_AVIS_VOIX_VU, { userId: socket.userId })} />
       {/* Nickname Modal */}
       {bonRetour && !showNicknameModal && (
         <BonRetourModal

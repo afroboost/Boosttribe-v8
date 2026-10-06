@@ -101,6 +101,8 @@ export interface PanneauPrompteurUniqueProps {
   onSelectionnerQuestion?: (id: string) => void;
   /** Afficher la question sélectionnée sur le prompteur (« Mon texte » intact). */
   onAfficherQuestion?: () => void;
+  /** 06/10 — « Échanger en visio » : où en est l'écoute de la personne à l'écran (texte prêt à lire). */
+  etatVoix?: string | null;
   /** Demander à l'IA de PROPOSER une réponse à la question sélectionnée. */
   onPreparerReponse?: (id: string) => void;
   onAutreReponse: () => void;
@@ -142,7 +144,7 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
   etat, theme, onTheme, enCours, indisponible, invite, modeQuestion, onModeQuestion, p, surVideo = false,
   onSurVideo, onEcrire, onAfficher, onEffacer, onUtiliserSuggestion, onIgnorerSuggestion,
   onDemanderTexte, onOuvrirQuestion, onSelectionnerQuestion, onAfficherQuestion, onPreparerReponse,
-  onAutreReponse, onReprendre, taille, onPlusPetit, onPlusGrand, onInsererChat,
+  onAutreReponse, onReprendre, taille, onPlusPetit, onPlusGrand, onInsererChat, etatVoix = null,
 }) => {
   const [copie, setCopie] = React.useState(false);
   React.useEffect(() => { if (!copie) return; const t = setTimeout(() => setCopie(false), 1400); return () => clearTimeout(t); }, [copie]);
@@ -527,6 +529,10 @@ export const AssistantHotePanel: React.FC<PanneauPrompteurUniqueProps> = ({
                 <p className="text-[11px] text-white/55 pt-1" data-testid="assistant-visio-indisponible">
                   « Échanger en visio » : Transcription vocale bientôt disponible.
                 </p>
+              )}
+              {/* 06/10 : état de l'écoute (voix du participant à l'écran → transcription → suggestion). */}
+              {VISIO_IA_DISPONIBLE && modeQuestion === 'visio' && etatVoix && (
+                <p className="text-[11px] text-white/70 pt-1" role="status" data-testid="assistant-voix-etat">{etatVoix}</p>
               )}
               {invite && <p className="text-[11px] text-white/45 pt-1">À l'écran avec toi : {invite}.</p>}
             </div>

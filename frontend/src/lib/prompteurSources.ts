@@ -427,7 +427,9 @@ export type ActionTexte = (typeof ACTIONS_TEXTE)[number]['cle'];
  */
 export interface SegmentTranscrit { id: string; auteur?: string; texte: string; ts?: number }
 export function recevoirTranscription(e: EtatPrompteur, seg: SegmentTranscrit | null | undefined): EtatPrompteur {
-  if (!seg || !seg.id || !ressembleAQuestion(seg.texte)) return e;
+  // 06/10 : une phrase DITE au coach n'a pas besoin d'un « ? » (« J'ai peur de ne pas suivre. ») :
+  //   même règle que les questions marquées du chat ; le bruit (« merci », « ok ») reste dehors.
+  if (!seg || !seg.id || !estQuestionPertinente(seg.texte)) return e;
   const texte = String(seg.texte).trim().slice(0, LONGUEUR_MAX_QUESTION);
   const q: QuestionEnAttente = { id: `voix-${seg.id}`, auteur: String(seg.auteur || '').trim().slice(0, 40) || 'Participant (oral)', texte };
   return recevoirQuestion(e, typeof seg.ts === 'number' ? { ...q, ts: seg.ts } : q);

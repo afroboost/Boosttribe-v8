@@ -61,10 +61,13 @@ export function messagesPourIA(messages: MessageChat[] | null | undefined): Mess
  * quand quelqu'un monte à l'écran. La visio elle-même (caméra / micro de l'invité) n'est pas concernée.
  * Brancher un moteur (entrée prête : `recevoirTranscription`) puis passer ceci à true = décision de Bassi.
  */
-export const VISIO_IA_DISPONIBLE = false;
+export const VISIO_IA_DISPONIBLE = true; // 06/10 : transcription en direct branchée (lib/transcriptionVisio), GO de Bassi
 
 export function modeAutomatique(inviteEnVisio?: string | null): ModeSouffleur {
-  return VISIO_IA_DISPONIBLE && inviteEnVisio ? 'visio' : 'chat';
+  // 06/10 : « Échanger en visio » ÉCOUTE la personne : c'est un CHOIX de l'hôte, jamais une bascule
+  //   automatique quand quelqu'un monte à l'écran (l'avis de transcription suit ce choix).
+  void inviteEnVisio;
+  return 'chat';
 }
 
 /** Signature du contexte : deux contextes identiques ne méritent pas deux appels. */

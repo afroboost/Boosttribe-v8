@@ -149,8 +149,8 @@ test('J — jeton invité : demandé avec le cookie, mis en cache, refusé (401)
 });
 
 /* ═══ K : « Échanger en visio » — mode de l'IA qui n'entend pas la voix ═══ */
-test('K — sans transcription vocale, l’IA ne passe JAMAIS d’elle-même en « visio »', () => {
-  assert.equal(VISIO_IA_DISPONIBLE, false);
+test('K — « visio » écoute la voix : disponible (06/10), mais JAMAIS activé d’elle-même par l’IA', () => {
+  assert.equal(VISIO_IA_DISPONIBLE, true);
   assert.equal(modeAutomatique('Julie'), 'chat');
   assert.equal(modeAutomatique(null), 'chat');
   const panneau = codeSeul(lire('components', 'session', 'AssistantHotePanel.tsx'));

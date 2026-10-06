@@ -314,14 +314,86 @@ async function harnaisNavigateur() {
       noter('F IA — Ignorer', 'nouvelle question → suggestion ; clic → supprimée, « Mon texte » intact',
         avantIgnorer && !(await hot.$('[data-testid="prompteur-suggestion"]')) && (await hot.textContent('[data-testid="chat-brouillon"]')) === brouillon
         && (await hot.evaluate(() => window.contrat.chatLiveEtat.appelsIA)) === 2);
-      // K : « Échanger en visio » (mode de l'IA) dépend d'une transcription vocale inexistante → désactivé, expliqué.
+      // K (06/10) : « Échanger en visio » écoute la voix → disponible quand quelqu'un est à l'écran, CHOIX de l'hôte.
       await hot.click('[data-testid="prompteur-onglet-assistant"]').catch(() => {});
       const visio = await hot.$eval('[data-testid="assistant-mode-visio"]', (e) => ({ off: e.disabled, titre: e.title })).catch(() => null);
-      await hot.click('[data-testid="assistant-mode-visio"]', { force: true, timeout: 1000 }).catch(() => {});
+      await hot.click('[data-testid="assistant-mode-visio"]', { timeout: 1000 }).catch(() => {});
       const modes = await hot.evaluate(() => [...window.contrat.appels]);
-      const texteK = await hot.textContent('[data-testid="assistant-visio-indisponible"]').catch(() => '');
-      noter('K « Échanger en visio » — pas présenté comme opérationnel', 'choix désactivé + « Transcription vocale bientôt disponible » ; clic sans effet',
-        !!visio && visio.off && /Transcription vocale bientôt disponible/.test(texteK) && !modes.includes('mode:visio'), `${JSON.stringify(visio)} | ${texteK}`);
+      const plusBientot = !(await hot.$('[data-testid="assistant-visio-indisponible"]'));
+      noter('K « Échanger en visio » — disponible, au choix de l\'hôte', 'invité à l\'écran → choix actif, plus « bientôt disponible » ; clic → mode visio',
+        !!visio && !visio.off && plusBientot && modes.includes('mode:visio'), JSON.stringify(visio));
+      await ctx.close();
+    }
+
+    // ── 06/10 V1–V9 : « ÉCHANGER EN VISIO » — voix du participant → transcription → UNE suggestion chez l'hôte ──
+    {
+      const ctx = await nav.newContext({ viewport: { width: 1100, height: 800 } });
+      const [part, hot] = [await ctx.newPage(), await ctx.newPage()];
+      for (const p of [part, hot]) p.on('pageerror', (e) => erreurs.push(e.message));
+      await hot.goto(url); await part.goto(url);
+      await hot.evaluate(() => window.contrat.voixVisio('hote'));
+      await hot.waitForTimeout(800);
+      const sonAvant = await hot.evaluate(() => window.contrat.voixSonOriginal());
+      await hot.click('[data-testid="prompteur-onglet-assistant"]');
+      await hot.click('[data-testid="assistant-mode-visio"]');
+      await hot.waitForTimeout(700);
+      const avantAvis = await hot.evaluate(() => window.contrat.voixEtat.connexions);
+      const etatAttente = await hot.textContent('[data-testid="assistant-voix-etat"]').catch(() => '');
+      noter('V1 Aucune écoute avant l\'avis affiché', 'visio choisi, participant pas encore là → 0 connexion, « Avis … envoyé »',
+        avantAvis === 0 && /Avis de transcription envoyé/.test(etatAttente), `connexions=${avantAvis} | ${etatAttente}`);
+      await part.evaluate(() => window.contrat.voixVisio('participant'));
+      await part.waitForSelector('[data-testid="avis-voix"]', { timeout: 4000 }).catch(() => {});
+      const avis = await part.textContent('[data-testid="avis-voix"]').catch(() => '');
+      noter('V2 Avis clair chez le participant', '« une transcription de ta voix aide le coach… Rien n’est enregistré »',
+        /transcription de ta voix aide le coach à te répondre/.test(avis) && /Rien n’est enregistré/.test(avis), avis.slice(0, 120));
+      for (let i = 0; i < 40 && (await hot.textContent('[data-testid="voix-transcription"]')) !== 'ecoute'; i++) await hot.waitForTimeout(100);
+      await hot.waitForTimeout(800);
+      const v = await hot.evaluate(() => ({ ...window.contrat.voixEtat, emettre: !!window.contrat.voixEtat.emettre, copiePiste: null }));
+      noter('V3 Écoute d\'une COPIE de la voix du participant', 'après l\'accusé : 1 connexion ; piste audio distincte, vivante, qui porte du son',
+        v.connexions === 1 && !!v.copie && v.copie.kind === 'audio' && v.copie.id !== v.originalId && v.copie.etat === 'live' && v.copie.energie > 1,
+        JSON.stringify(v.copie));
+      const sonPendant = await hot.evaluate(() => window.contrat.voixSonOriginal());
+      noter('V4 Son du participant intact pendant l\'écoute', 'piste originale vivante, activée, non muette, lue, même énergie',
+        !!sonAvant && !!sonPendant && sonPendant.vivante && sonPendant.activee && sonPendant.lecture && !sonPendant.muet
+        && sonPendant.energie > 1 && Math.abs(sonPendant.energie - sonAvant.energie) < sonAvant.energie * 0.5,
+        `${JSON.stringify(sonAvant)} → ${JSON.stringify(sonPendant)}`);
+      await hot.click('[data-testid="prompteur-onglet-questions"]');   // la suggestion vit là où l'hôte lit ses questions
+      const t0 = Date.now();
+      await hot.evaluate(() => window.contrat.voixDire('item_1', 'Est-ce que je peux participer si je suis débutant ?'));
+      await hot.waitForSelector('[data-testid="prompteur-suggestion"]', { timeout: 3000 }).catch(() => {});
+      const latenceClient = Date.now() - t0;
+      const bloc1 = await hot.textContent('[data-testid="prompteur-suggestion"]').catch(() => '');
+      const nIA1 = await hot.evaluate(() => window.contrat.voixEtat.appelsIA);
+      noter('V5 Phrase dite → UNE suggestion chez l\'hôte', '« débutant ? » → 1 demande IA → bloc « Suggestion IA » (Amina)',
+        nIA1 === 1 && /SUGGESTION IA/.test(bloc1) && /tu débutes/.test(bloc1) && /Amina/.test(bloc1), `appels=${nIA1} | ${latenceClient} ms | ${bloc1.slice(0, 110)}`);
+      const chezPart = (await part.textContent('[data-testid="cote-participant"]')) || '';
+      noter('V6 Rien n\'arrive chez le participant', 'aucune suggestion, aucun message automatique',
+        !/tu débutes|SUGGESTION/.test(chezPart) && !(await part.$('[data-testid="prompteur-suggestion"]')), chezPart.slice(0, 80));
+      await hot.click('[data-testid="prompteur-utiliser"]');
+      await hot.waitForTimeout(200);
+      await hot.fill('[data-testid="prompteur-editeur"]', 'Oui bien sûr, viens comme tu es, je te montre tout tranquillement.');
+      await hot.click('[data-testid="prompteur-afficher"]');
+      await hot.waitForTimeout(200);
+      const affiche = await hot.textContent('[data-testid="voix-affiche"]');
+      noter('V7 Utiliser → Modifier → Afficher', 'la réplique entre dans « Mon texte », l\'hôte la modifie, puis l\'affiche',
+        affiche === 'Oui bien sûr, viens comme tu es, je te montre tout tranquillement.', affiche);
+      await hot.evaluate(() => window.contrat.voixDire('item_2', 'J’ai peur de ne pas suivre.'));
+      await hot.waitForSelector('[data-testid="prompteur-suggestion"]', { timeout: 3000 }).catch(() => {});
+      const bloc2 = await hot.textContent('[data-testid="prompteur-suggestion"]').catch(() => '');
+      await hot.click('[data-testid="prompteur-ignorer"]').catch(() => {});
+      await hot.waitForTimeout(200);
+      noter('V8 « J’ai peur de ne pas suivre » → suggestion → Ignorer', 'réplique courte et humaine ; Ignorer → supprimée, affiché intact',
+        /T’inquiète/.test(bloc2) && !(await hot.$('[data-testid="prompteur-suggestion"]'))
+        && (await hot.textContent('[data-testid="voix-affiche"]')) === affiche && (await hot.evaluate(() => window.contrat.voixEtat.appelsIA)) === 2, bloc2.slice(0, 110));
+      await hot.click('[data-testid="prompteur-onglet-assistant"]');
+      await hot.click('[data-testid="assistant-mode-chat"]');
+      await hot.waitForTimeout(600);
+      const sonApres = await hot.evaluate(() => window.contrat.voixSonOriginal());
+      const fin = await hot.evaluate(() => ({ fermetures: window.contrat.voixEtat.fermetures }));
+      const avisParti = !(await part.$('[data-testid="avis-voix"]'));
+      noter('V9 Retour au chat : écoute coupée, son intact', 'connexion fermée + copie arrêtée ; piste originale toujours vivante et lue ; avis retiré chez le participant',
+        fin.fermetures === 1 && sonApres?.copieEtat === 'ended' && sonApres.vivante && sonApres.lecture && sonApres.energie > 1 && avisParti,
+        `${JSON.stringify(fin)} | ${JSON.stringify(sonApres)} | avisParti=${avisParti}`);
       await ctx.close();
     }
 

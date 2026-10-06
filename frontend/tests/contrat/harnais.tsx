@@ -32,10 +32,13 @@ import { droitChatLive, inviteLiveIdentifie, messageChatSortant, accepterMessage
 import { questionAPreparer } from '@/lib/assistantHote';
 import { estQuestionPertinente } from '@/lib/prompteurSources';
 import {
-  ETAT_INITIAL, recevoirMessages, recevoirSuggestionAuto, utiliserSuggestion, ignorerSuggestion, ecrire, afficher,
+  ETAT_INITIAL, recevoirMessages, recevoirSuggestionAuto, utiliserSuggestion, ignorerSuggestion, ecrire, afficher, recevoirTranscription,
   type EtatPrompteur,
 } from '@/lib/prompteurSources';
 import { AssistantHotePanel } from '@/components/session/AssistantHotePanel';
+import { AvisVoixParticipant } from '@/components/session/AvisVoixParticipant';
+import { useTranscriptionVisio } from '@/hooks/useTranscriptionVisio';
+import { cibleVoix, voixATranscrire, transcriptionAutorisee, EVT_AVIS_VOIX, EVT_AVIS_VOIX_VU, type ConnecteurTranscription } from '@/lib/transcriptionVisio';
 import type { OngletPrompteur } from '@/lib/prompteurSources';
 import { optionsCameraLive, associerPisteVideo, brancherVideo, ajusterDebitsCouches, OPTIONS_ROOM_LIVE } from '@/lib/qualiteVideo';
 import { cibleBascule } from '@/lib/sourcesLogic';
@@ -262,6 +265,155 @@ function chatLiveRediffuser(): void {
   const c = new BroadcastChannel('contrat-chat-live');
   for (const m of chatLiveEtat.recus) c.postMessage(m);
   c.close();
+}
+
+/* ═══ 06/10 — « ÉCHANGER EN VISIO » : la voix du participant → texte → UNE suggestion chez l'hôte.
+ *  Deux pages, un canal (BroadcastChannel = broadcast Supabase) pour l'AVIS et son accusé. Côté hôte,
+ *  la voix est une VRAIE piste distante WebRTC (boucle locale, comme PeerJS), jouée dans un <audio> ;
+ *  le VRAI hook d'écoute reçoit un fournisseur simulé (aucun réseau) qui vérifie qu'il reçoit une
+ *  COPIE vivante portant du son, puis renvoie les phrases. Le son original est mesuré avant/pendant/après. ═══ */
+const voixEtat = {
+  connexions: 0, fermetures: 0, appelsIA: 0, copie: null as null | { id: string; etat: string; kind: string; energie: number },
+  originalId: '', emettre: null as null | ((ev: Record<string, unknown>) => void), copiePiste: null as MediaStreamTrack | null,
+};
+let voixAudio: { el: HTMLAudioElement; analyse: AnalyserNode; piste: MediaStreamTrack } | null = null;
+function energie(a: AnalyserNode): number {
+  const d = new Uint8Array(a.fftSize); a.getByteTimeDomainData(d);
+  let e = 0; for (const x of d) e += Math.abs(x - 128); return e / d.length;
+}
+async function voixDistante(): Promise<MediaStream> {
+  const ctx = new AudioContext();
+  const osc = ctx.createOscillator(); osc.frequency.value = 440;
+  const dest = ctx.createMediaStreamDestination(); osc.connect(dest); osc.start();
+  const [a, b] = [new RTCPeerConnection(), new RTCPeerConnection()];
+  a.onicecandidate = (e) => { if (e.candidate) void b.addIceCandidate(e.candidate); };
+  b.onicecandidate = (e) => { if (e.candidate) void a.addIceCandidate(e.candidate); };
+  const recu = new Promise<MediaStream>((r) => { b.ontrack = (e) => r(e.streams[0] || new MediaStream([e.track])); });
+  dest.stream.getTracks().forEach((t) => a.addTrack(t, dest.stream));
+  await a.setLocalDescription(await a.createOffer()); await b.setRemoteDescription(a.localDescription!);
+  await b.setLocalDescription(await b.createAnswer()); await a.setRemoteDescription(b.localDescription!);
+  return recu;
+}
+const connecteurSimule: ConnecteurTranscription = async (piste, secret, onEvenement) => {
+  voixEtat.connexions += 1;
+  const ctx = new AudioContext();
+  const an = ctx.createAnalyser(); ctx.createMediaStreamSource(new MediaStream([piste])).connect(an);
+  await attendre(600);
+  voixEtat.copie = { id: piste.id, etat: piste.readyState, kind: piste.kind, energie: +energie(an).toFixed(2) };
+  voixEtat.copiePiste = piste;
+  if (secret !== 'ek_banc') throw new Error('secret');
+  voixEtat.emettre = (ev) => onEvenement(ev as never);
+  return { fermer: () => { voixEtat.fermetures += 1; voixEtat.emettre = null; void ctx.close(); } };
+};
+const REPLIQUES: Record<string, string> = {
+  debutant: 'Oui bien sûr, tu peux commencer même si tu débutes. Je te montrerai les mouvements tranquillement.',
+  peur: 'T’inquiète, tu vas à ton rythme. Le but c’est surtout de bouger et de passer un bon moment.',
+};
+function voixVisio(role: 'hote' | 'participant'): void {
+  Object.assign(voixEtat, { connexions: 0, fermetures: 0, appelsIA: 0, copie: null, emettre: null, copiePiste: null });
+  const canal = new BroadcastChannel('contrat-voix-visio');
+  if (role === 'participant') {
+    function Participant() {
+      const [visible, setVisible] = React.useState(false);
+      useEffect(() => {
+        canal.onmessage = (ev) => {
+          const m = ev.data as { event: string; payload: { userId?: string; actif?: boolean } };
+          if (m.event === EVT_AVIS_VOIX && m.payload.userId === 'user_amina') setVisible(!!m.payload.actif);
+        };
+        return () => { canal.onmessage = null; };
+      }, []);
+      return (
+        <div data-testid="cote-participant">
+          <AvisVoixParticipant visible={visible} onAffiche={() => canal.postMessage({ event: EVT_AVIS_VOIX_VU, payload: { userId: 'user_amina' } })} />
+          <span data-testid="participant-recu">aucun message</span>
+        </div>
+      );
+    }
+    monter(<Participant />);
+    return;
+  }
+  function Hote() {
+    const [mode, setMode] = React.useState<'chat' | 'visio'>('chat');
+    const [vuPar, setVuPar] = React.useState<string | null>(null);
+    const [flux, setFlux] = React.useState<MediaStream | null>(null);
+    const [etat, setEtat] = React.useState<EtatPrompteur>(() => ecrire(ETAT_INITIAL, ''));
+    const [onglet, setOnglet] = React.useState<OngletPrompteur>('questions');
+    const deja = React.useRef(new Set<string>());
+    useEffect(() => {
+      void voixDistante().then((s) => {
+        const el = document.createElement('audio'); el.srcObject = s; el.autoplay = true; document.body.appendChild(el); void el.play().catch(() => {});
+        const ctx = new AudioContext(); const an = ctx.createAnalyser(); ctx.createMediaStreamSource(s).connect(an);
+        voixAudio = { el, analyse: an, piste: s.getAudioTracks()[0] };
+        voixEtat.originalId = s.getAudioTracks()[0].id;
+        setFlux(s);
+      });
+      canal.onmessage = (ev) => {
+        const m = ev.data as { event: string; payload: { userId?: string } };
+        if (m.event === EVT_AVIS_VOIX_VU && m.payload.userId === cibleRef.current) setVuPar(m.payload.userId as string);
+      };
+      return () => { canal.onmessage = null; };
+    }, []);
+    const cible = cibleVoix({ estHote: true, assistantActif: true, mode, inviteId: 'user_amina', moi: 'user_hote' });
+    const cibleRef = React.useRef(cible); cibleRef.current = cible;
+    useEffect(() => {
+      if (!cible) return undefined;
+      const envoyer = () => canal.postMessage({ event: EVT_AVIS_VOIX, payload: { userId: cible, actif: true } });
+      envoyer();
+      if (vuPar === cible) return undefined;
+      const t = setInterval(envoyer, 1000);
+      return () => clearInterval(t);
+    }, [cible, vuPar]);
+    useEffect(() => {
+      if (!cible) return undefined;
+      return () => { canal.postMessage({ event: EVT_AVIS_VOIX, payload: { userId: cible, actif: false } }); setVuPar(null); };
+    }, [cible]);
+    const voix = flux ? voixATranscrire([{ peerId: 'p1', userId: 'user_amina', stream: flux }], cible, 'user_hote') : null;
+    const t = useTranscriptionVisio({
+      actif: transcriptionAutorisee({ cible, avisVuPar: vuPar, voixPresente: !!voix }), flux: voix ? voix.stream : null,
+      obtenirJeton: async () => ({ ok: true, client_secret: 'ek_banc' }), connecteur: connecteurSimule,
+      onSegment: (seg) => setEtat((e) => recevoirTranscription(e, { id: seg.id, auteur: 'Amina', texte: seg.texte })),
+    });
+    useEffect(() => {                                    // même garde que la page : UNE demande à la fois, une par phrase
+      const q = questionAPreparer({ file: etat.file, dejaDemandees: deja.current, suggestionEnAttente: !!etat.suggestion,
+        actif: true, enCours: false, pertinente: estQuestionPertinente, maintenant: Date.now() });
+      if (!q || !q.id.startsWith('voix-')) return;
+      deja.current.add(q.id);
+      voixEtat.appelsIA += 1;
+      setEtat((e) => recevoirSuggestionAuto(e, /débutant/.test(q.texte) ? REPLIQUES.debutant : REPLIQUES.peur, q));
+    }, [etat.file.length, etat.suggestion]);
+    const rien = () => undefined;
+    return (
+      <div data-testid="cote-hote" style={{ position: 'relative', width: 1000, height: 760 }}>
+        <AssistantHotePanel open disposition="zone-camera" onClose={rien} actif onBasculer={rien} onglet={onglet} onOnglet={setOnglet}
+          etat={etat} theme="" onTheme={rien} enCours={false} indisponible={null} invite="Amina" modeQuestion={mode}
+          onModeQuestion={(m) => setMode(m as 'chat' | 'visio')}
+          etatVoix={mode === 'visio' ? (vuPar !== cible ? 'Avis de transcription envoyé à Amina…' : t.etat === 'ecoute' ? 'L’IA écoute Amina (sa voix seulement, rien n’est enregistré).' : t.etat) : null}
+          onEcrire={(x) => setEtat((e) => ecrire(e, x))} onAfficher={(src) => setEtat((e) => afficher(e, src))} onEffacer={rien}
+          onUtiliserSuggestion={() => { setEtat((e) => utiliserSuggestion(e)); setOnglet('texte'); }}
+          onIgnorerSuggestion={() => setEtat((e) => ignorerSuggestion(e))}
+          onDemanderTexte={rien} onOuvrirQuestion={rien} onAutreReponse={rien} onReprendre={rien} />
+        <span data-testid="voix-affiche">{etat.affiche}</span>
+        <span data-testid="voix-transcription">{t.etat}</span>
+      </div>
+    );
+  }
+  monter(<Hote />);
+}
+/** Le fournisseur simulé « entend » une phrase : fin de parole puis texte final (latence réelle du chemin client). */
+async function voixDire(id: string, texte: string): Promise<boolean> {
+  if (!voixEtat.emettre) return false;
+  voixEtat.emettre({ type: 'input_audio_buffer.speech_stopped', item_id: id });
+  voixEtat.emettre({ type: 'conversation.item.input_audio_transcription.delta', item_id: id, delta: texte.slice(0, 6) });
+  voixEtat.emettre({ type: 'conversation.item.input_audio_transcription.completed', item_id: id, transcript: texte });
+  await attendre(200);
+  return true;
+}
+/** Le son ORIGINAL chez l'hôte : piste vivante, activée, élément en lecture, énergie mesurée. */
+async function voixSonOriginal() {
+  if (!voixAudio) return null;
+  await attendre(300);
+  return { vivante: voixAudio.piste.readyState === 'live', activee: voixAudio.piste.enabled, lecture: !voixAudio.el.paused,
+    muet: voixAudio.el.muted, energie: +energie(voixAudio.analyse).toFixed(2), copieEtat: voixEtat.copiePiste?.readyState ?? null };
 }
 
 /* ═══ Invitation : QR de la session = lien de partage (décodé) ═══ */
@@ -616,6 +768,7 @@ async function hoteBeaute(n: NiveauBeaute) {
 async function spectateurRafale(ms: number) { return rafale(videoRecue!, ms); }
 
 (window as unknown as Record<string, unknown>).contrat = {
+  voixVisio, voixEtat, voixDire, voixSonOriginal,
   menu, appels, promoParticipant, promoConnexion, promoInvite, finPromoInvite, chatLive, chatLiveEtat, chatLiveRediffuser, requetes, chat, envoyes, questionsVuesParLHote, acces, prompteur, suggestionIA, qr,
   micro, etatMicro, pipelineBeaute, looksGpu, mesurerLooks, chronoGpu,
   lk: { hotePublier, etatHote, hoteChangerCamera, hoteCamera, quitter, spectateurRejoindre, spectateurTaille, spectateurReconnexion,

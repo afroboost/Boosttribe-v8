@@ -1894,6 +1894,7 @@ TRANSCRIPTION_FENETRE_S = 600.0
 #   multiplie pas les jetons payés par la clé de la plateforme.
 TRANSCRIPTION_MAX_JETONS_COMPTE = 20
 TRANSCRIPTION_FENETRE_COMPTE_S = 3600.0
+TRANSCRIPTION_MAX_CLES = 5000      # borne mémoire de la table des plafonds
 _transcription_jetons: Dict[str, List[float]] = {}
 
 
@@ -1926,6 +1927,16 @@ async def transcription_jeton(body: TranscriptionJetonBody, authorization: Optio
     compte = [t for t in _transcription_jetons.get(cle_compte, []) if maintenant - t < TRANSCRIPTION_FENETRE_COMPTE_S]
     if len(recents) >= TRANSCRIPTION_MAX_JETONS or len(compte) >= TRANSCRIPTION_MAX_JETONS_COMPTE:
         return {"ok": False, "raison": "trop_de_demandes"}
+    # Borne mémoire SANS jamais oublier un compteur vivant (revue sécurité) : on ne retire que les
+    #   compteurs EXPIRÉS ; si la table reste pleine, on REFUSE (échec fermé) plutôt que d'effacer
+    #   des plafonds en cours — sinon multiplier les Lives remettrait le plafond du compte à zéro.
+    if len(_transcription_jetons) >= TRANSCRIPTION_MAX_CLES and cle_quota not in _transcription_jetons:
+        for k, v in list(_transcription_jetons.items()):
+            if not any(maintenant - t < TRANSCRIPTION_FENETRE_COMPTE_S for t in v):
+                _transcription_jetons.pop(k, None)
+        if len(_transcription_jetons) >= TRANSCRIPTION_MAX_CLES:
+            logger.warning("[TRANSCRIPTION] table des plafonds pleine : demande refusée")
+            return {"ok": False, "raison": "trop_de_demandes"}
 
     key = await get_openai_key()
     if not key:
@@ -1934,9 +1945,6 @@ async def transcription_jeton(body: TranscriptionJetonBody, authorization: Optio
     compte.append(maintenant)
     _transcription_jetons[cle_quota] = recents
     _transcription_jetons[cle_compte] = compte
-    if len(_transcription_jetons) > 5000:                    # borne mémoire
-        for k in list(_transcription_jetons)[:1000]:
-            _transcription_jetons.pop(k, None)
 
     corps = {
         "expires_after": {"anchor": "created_at", "seconds": TRANSCRIPTION_JETON_S},

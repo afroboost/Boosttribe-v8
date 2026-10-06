@@ -181,6 +181,36 @@ def test_jeton_plafond_par_compte_tous_lives(appli):
     assert rep[20] == {"ok": False, "raison": "trop_de_demandes"}
 
 
+def test_jeton_plafond_compte_jamais_efface_par_la_borne_memoire(appli):
+    """Revue sécurité : d'AUTRES comptes qui remplissent la table ne remettent PAS à zéro le plafond
+    d'un compte (avant : la purge effaçait les 1000 premières clés, compteur du compte compris)."""
+    m, etat, c = appli
+    m.TRANSCRIPTION_MAX_JETONS = 100
+    for i in range(20):                                   # le compte épuise son plafond horaire
+        etat["hotes"].add((f"LIVE-{i:03d}", "uid-hote"))
+        assert c.post(JETON, headers=H, json={"session_id": f"LIVE-{i:03d}"}).json()["ok"] is True
+    m.TRANSCRIPTION_MAX_CLES = 25
+    maintenant = m.time.time()
+    for j in range(10):                                   # d'autres comptes remplissent la table (compteurs vivants)
+        m._transcription_jetons[f"autre-{j}|LIVE"] = [maintenant]
+    etat["hotes"].add(("LIVE-ADM", "uid-admin"))
+    c.post(JETON, headers={"Authorization": "Bearer admin"}, json={"session_id": "LIVE-ADM"})   # déclencheur de purge
+    etat["hotes"].add(("LIVE-NEUF", "uid-hote"))
+    r = c.post(JETON, headers=H, json={"session_id": "LIVE-NEUF"}).json()
+    assert r == {"ok": False, "raison": "trop_de_demandes"}, "plafond du compte contourné par la purge"
+    assert "uid-hote|*" in m._transcription_jetons
+
+
+def test_jeton_table_pleine_purge_seulement_l_expire(appli):
+    m, _e, c = appli
+    m.TRANSCRIPTION_MAX_CLES = 3
+    vieux = m.time.time() - 2 * m.TRANSCRIPTION_FENETRE_COMPTE_S
+    m._transcription_jetons.update({"x|A": [vieux], "x|*": [vieux], "y|*": [m.time.time()]})
+    assert c.post(JETON, headers=H, json={"session_id": "SESS-1"}).json()["ok"] is True
+    assert "y|*" in m._transcription_jetons, "un compteur vivant n'est jamais effacé"
+    assert "x|A" not in m._transcription_jetons
+
+
 def test_jeton_limite_de_frequence(appli):
     _m, _e, c = appli
     rep = [c.post(JETON, headers=H, json={"session_id": "SESS-1"}).json() for _ in range(12)]

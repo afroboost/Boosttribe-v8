@@ -65,11 +65,17 @@ try {
     await a.setLocalDescription(await a.createOffer()); await b.setRemoteDescription(a.localDescription);
     await b.setLocalDescription(await b.createAnswer()); await a.setRemoteDescription(b.localDescription);
     const originale = await recu;
+    // Comme usePeerAudio chez l'hôte : la voix reçue est JOUÉE dans un <audio> (Chrome n'alimente une
+    // piste WebRTC distante que si elle est consommée).
+    const el = document.createElement('audio'); el.srcObject = new MediaStream([originale]); el.muted = true;
+    document.body.appendChild(el); await el.play().catch(() => {});
     const copie = originale.clone();
     const chrono = TV.creerChrono();
-    const segments = [], latences = [], evts = [];
+    const segments = [], latences = [], evts = [], details = [];
     const cx = await TV.connecterOpenAI(copie, secret, (ev) => {
       evts.push(ev.type);
+      if (ev.type === 'session.created' || ev.type === 'session.updated' || ev.type === 'error')
+        details.push(JSON.stringify(ev.type === 'error' ? ev.error : (ev.session && ev.session.audio) || ev.session).slice(0, 700));
       const l = chrono.evenement(ev, performance.now());
       const s = TV.segmentDepuisEvenement(ev);
       if (s) { segments.push(s.texte); if (l !== null) latences.push(Math.round(l)); }
@@ -82,7 +88,8 @@ try {
     }
     for (let i = 0; i < 40 && segments.length < wavs.length; i++) await new Promise((r) => setTimeout(r, 250));
     cx.fermer(); copie.stop();
-    return { segments, latences, originaleVivante: originale.readyState === 'live', copie: copie.readyState,
+    const stats = []; (await cx.stats?.())?.forEach?.((r) => stats.push(r));
+    return { ctxEtat: ctx.state, details, segments, latences, originaleVivante: originale.readyState === 'live', copie: copie.readyState,
       types: [...new Set(evts)] };
   }, { wavs, secret: j.client_secret });
   await nav.close();
@@ -92,6 +99,8 @@ try {
   console.log('Latence fin de parole → texte (ms) :', res.latences.join(', ') || '—');
   console.log('Piste originale vivante après :', res.originaleVivante, '| copie :', res.copie);
   console.log('Événements reçus :', res.types.join(', '));
+  console.log('AudioContext :', res.ctxEtat);
+  for (const d of res.details) console.log('Détail :', d);
   for (const s of res.segments) {
     const t0 = Date.now();
     const d = aide('souffle', s);

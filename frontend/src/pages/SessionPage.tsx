@@ -46,7 +46,7 @@ import { PrompteurOverlay } from '@/components/session/PrompteurOverlay';
 import { useLivePromo } from '@/hooks/useLivePromo'; // 📣 promo participant (couche additionnelle)
 import { LivePromoBanner } from '@/components/session/LivePromoBanner';
 import { promoLayout, definirSessionInvitePromo } from '@/lib/livePromoApi'; // 📣 01/10 : position de la promo diffusée (hôte)
-import { droitChatLive, inviteLiveIdentifie, messageChatSortant, accepterMessageChatRecu } from '@/lib/liveChat'; // 💬 05/10 : chat de l'invité identifié
+import { droitChatLive, inviteLiveIdentifie, membreLiveAfroboost, messageChatSortant, accepterMessageChatRecu } from '@/lib/liveChat'; // 💬 05/10 : chat de l'invité identifié
 import { actionPromoParticipant } from '@/lib/livePromo'; // 📣 05/10 : « Faire ma promo » aussi pour l'invité sans compte
 import { lireOutilsCoach } from '@/lib/outilsCoachApi'; // 🎓 01/10 : outils réservés aux Lives d'un Espace Coach
 import { appliquerPreferencesLive, memoriserDroitsInvites, appliquerPreferencesPromo } from '@/lib/preferencesLiveApi'; // ⚙️ 01/10 : réglages du coach d'un Live à l'autre
@@ -898,7 +898,9 @@ export const SessionPage: React.FC = () => {
   //    « Faire la promo » avec SA session invité (aucune 2e connexion, aucune 2e saisie).
   const inviteIdentifie = inviteLiveIdentifie({ marque: BRAND_ID, estHote: isHost, connecte: !!user?.id,
     pseudo: nickname, ecranIdentiteOuvert: showNicknameModal || !!bonRetour });
-  const peutChatter = droitChatLive({ estPro: isPro, inviteIdentifie });
+  const membreAfroboost = membreLiveAfroboost({ marque: BRAND_ID, connecte: !!user?.id, pseudo: nickname,
+    ecranIdentiteOuvert: showNicknameModal }); // 🔗 06/10 : compte arrivé par le pont Afroboost (0 crédit)
+  const peutChatter = droitChatLive({ estPro: isPro, inviteIdentifie, membreAfroboost });
   const [modeModification, setModeModification] = useState(false);
   const [showAvatarCrop, setShowAvatarCrop] = useState(false);
   const pendingAfterAvatarRef = useRef<(() => void) | null>(null);

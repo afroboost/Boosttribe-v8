@@ -7,7 +7,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inviteLiveIdentifie, droitChatLive, messageChatSortant, accepterMessageChatRecu } from './.build/liveChat.mjs';
+import { inviteLiveIdentifie, membreLiveAfroboost, droitChatLive, messageChatSortant, accepterMessageChatRecu } from './.build/liveChat.mjs';
 import { actionPromoParticipant } from './.build/livePromo.mjs';
 import { questionAPreparer, modeAutomatique, VISIO_IA_DISPONIBLE } from './.build/assistantHote.mjs';
 import { ETAT_INITIAL, recevoirMessages, estQuestionPertinente, recevoirSuggestionAuto, utiliserSuggestion, ignorerSuggestion } from './.build/prompteurSources.mjs';
@@ -24,6 +24,27 @@ test('invité identifié : Afroboost, sans compte, pseudo donné, écran d’ide
   assert.equal(inviteLiveIdentifie({ ...INVITE_TEST, connecte: true }), false);              // compte : règles du compte
   assert.equal(inviteLiveIdentifie({ ...INVITE_TEST, estHote: true }), false);
   assert.equal(inviteLiveIdentifie({ ...INVITE_TEST, marque: 'boosttribe' }), false);        // boosttribe.pro : inchangé
+});
+
+/* ═══ 06/10 — bug terrain : le participant arrivé par le PONT Afroboost a un compte (embed/verify) ═══ */
+const MEMBRE_PONT = { marque: 'afroboost', connecte: true, pseudo: 'Amina', ecranIdentiteOuvert: false };
+test('membre connecté par le pont Afroboost (0 crédit) : peut discuter dans un Live Afroboost', () => {
+  assert.equal(membreLiveAfroboost(MEMBRE_PONT), true);
+  assert.equal(droitChatLive({ estPro: false, inviteIdentifie: false, membreAfroboost: membreLiveAfroboost(MEMBRE_PONT) }), true);
+  assert.equal(membreLiveAfroboost({ ...MEMBRE_PONT, ecranIdentiteOuvert: true }), false);  // pseudo pas encore validé
+  assert.equal(membreLiveAfroboost({ ...MEMBRE_PONT, pseudo: '' }), false);
+  assert.equal(membreLiveAfroboost({ ...MEMBRE_PONT, connecte: false }), false);             // sans compte : règle invité
+  assert.equal(membreLiveAfroboost({ ...MEMBRE_PONT, marque: 'boosttribe' }), false);        // boosttribe.pro : gate Pro inchangé
+});
+test('coach hôte NON admin et sans crédit d’un Live Afroboost : reçoit le message de l’invité', () => {
+  const peutChatterHote = droitChatLive({ estPro: false, inviteIdentifie: false,
+    membreAfroboost: membreLiveAfroboost({ marque: 'afroboost', connecte: true, pseudo: 'Coach Léa', ecranIdentiteOuvert: false }) });
+  assert.equal(accepterMessageChatRecu({ peutChatter: peutChatterHote, monId: 'hote',
+    message: { id: 'invite-1', text: 'Bonjour', userId: 'invite' } }), true);
+});
+test('page : la règle « membre Afroboost » est branchée sur peutChatter', () => {
+  assert.match(PAGE, /const membreAfroboost = membreLiveAfroboost\(\{/);
+  assert.match(PAGE, /droitChatLive\(\{ estPro: isPro, inviteIdentifie, membreAfroboost \}\)/);
 });
 
 /* ═══ A + B : le message de l'invité part, et l'hôte le reçoit ═══ */
@@ -50,7 +71,7 @@ test('B — l’hôte REÇOIT le message de l’invité ; l’invité reçoit au
 });
 
 test('A/B branchement : la page envoie et reçoit avec CES règles (plus `isPro` seul)', () => {
-  assert.match(PAGE, /const peutChatter = droitChatLive\(\{ estPro: isPro, inviteIdentifie \}\);/);
+  assert.match(PAGE, /const peutChatter = droitChatLive\(\{ estPro: isPro, inviteIdentifie, membreAfroboost \}\);/);
   assert.match(PAGE, /const inviteIdentifie = inviteLiveIdentifie\(\{/);
   assert.match(PAGE, /messageChatSortant\(\{ peutChatter,/);
   assert.match(PAGE, /accepterMessageChatRecu\(\{ peutChatter: peutChatterRef\.current,/);

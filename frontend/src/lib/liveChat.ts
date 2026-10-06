@@ -99,8 +99,23 @@ export function inviteLiveIdentifie(p: {
  * l'envoi sortait en silence (`if (!isPro) return`) et il ne recevait aucun message. Un Live ne
  * doit JAMAIS exiger un compte plateforme pour discuter : invité identifié = autorisé.
  */
-export function droitChatLive(p: { estPro: boolean; inviteIdentifie: boolean }): boolean {
-  return p.estPro || p.inviteIdentifie;
+export function droitChatLive(p: { estPro: boolean; inviteIdentifie: boolean; membreAfroboost?: boolean }): boolean {
+  return p.estPro || p.inviteIdentifie || !!p.membreAfroboost;
+}
+
+/**
+ * 🔗 06/10 — Bug terrain : l'abonné ou le coach qui entre dans un Live Afroboost par le PONT
+ * (`/api/embed/verify`) reçoit un compte BoostTribe → `connecte = true` → jamais « invité
+ * identifié » ; et ce compte n'a aucun crédit BoostTribe → jamais `isPro`. Résultat : champ de
+ * chat bloqué pour lui, et un coach hôte non admin ne recevait AUCUN message. Dans un Live
+ * Afroboost, un compte avec un pseudo validé (hôte compris) discute comme l'invité identifié.
+ * boosttribe.pro : inchangé (le chat reste un avantage Pro).
+ */
+export function membreLiveAfroboost(p: {
+  marque: string; connecte: boolean; pseudo: string | null | undefined; ecranIdentiteOuvert: boolean;
+}): boolean {
+  return p.marque === 'afroboost' && p.connecte && !p.ecranIdentiteOuvert
+    && String(p.pseudo || '').trim().length >= 2;
 }
 
 /** Message SORTANT du chat de groupe (extraction de handleSendGroupMessage) ; null = rien ne part. */

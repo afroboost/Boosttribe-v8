@@ -146,6 +146,10 @@ function demandeApprouvee(sessionId: string): number | null {
   }
 }
 
+function preuveDemande(sessionId: string): string | null {
+  try { return localStorage.getItem(`bt_ar_preuve_${sessionId}`); } catch { return null; }
+}
+
 export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageReturn {
   const { sessionId, userId, name, active, canPublish, publicationPrete = true, maxCameras = MAX_STAGE, onStageFull } = options;
 
@@ -365,7 +369,7 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
         // S0 : le serveur décide de l'accès. Un participant ANONYME approuvé (session payante, ?ar=)
         //      présente sa demande approuvée — même clé que SessionPage (bt_ar_<session>).
         body: JSON.stringify({ session_id: sessionId, identity: userId, name: nameRef.current || userId, role,
-          request_id: demandeApprouvee(sessionId) }),
+          request_id: demandeApprouvee(sessionId), request_token: preuveDemande(sessionId) }),
       });
       if (res.status === 409) return 'stage_full';
       if (!res.ok) return null;

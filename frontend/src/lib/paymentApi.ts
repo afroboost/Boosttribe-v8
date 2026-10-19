@@ -798,7 +798,7 @@ export interface PromoConfig {
 }
 
 /** Participant : demande l'accès gratuit à une session payante (l'hôte approuve/refuse). */
-export async function requestSessionAccess(sessionId: string, requesterName: string): Promise<{ ok: boolean; id?: number; error?: string }> {
+export async function requestSessionAccess(sessionId: string, requesterName: string): Promise<{ ok: boolean; id?: number; preuve?: string; error?: string }> {
   if (!API_URL) return { ok: false, error: 'API non configurée' };
   const token = await getAccessToken();
   try {
@@ -809,7 +809,9 @@ export async function requestSessionAccess(sessionId: string, requesterName: str
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.detail || `Erreur ${res.status}` };
-    return { ok: true, id: data.id };
+    // S0 : la preuve n'est remise qu'ici, au navigateur qui a fait la demande (jamais dans l'URL).
+    if (data.id && data.preuve) { try { localStorage.setItem(`bt_ar_preuve_${sessionId}`, String(data.preuve)); } catch { /* ignore */ } }
+    return { ok: true, id: data.id, preuve: data.preuve };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Backend injoignable' };
   }

@@ -27,10 +27,12 @@ from test_s0_parcours_afroboost import (banc, dans, entrer_par_afroboost,  # noq
                                         session)
 
 
-def jeton(client, auth, sid, role="viewer", request_id=None):
+def jeton(client, auth, sid, role="viewer", request_id=None, request_token=None):
     corps = {"session_id": sid, "identity": "u_x", "role": role}
     if request_id is not None:
         corps["request_id"] = request_id
+    if request_token is not None:
+        corps["request_token"] = request_token
     return client.post("/livekit/token", headers={"Authorization": "Bearer " + auth} if auth else {}, json=corps)
 
 
@@ -177,7 +179,8 @@ def test_ouvert_gratuit_par_lien_entree_libre_billet_demande_admin(monde):
     assert jeton(client, "pauvre", "SESS-BILLET").status_code == 200         # billet payé
     sb.tables["access_requests"].append({"id": 77, "session_id": "SESS-BILLET", "status": "approved",
                                          "requester_user_id": None})
-    assert jeton(client, None, "SESS-BILLET", request_id=77).status_code == 200   # anonyme approuvé
+    preuve = m._s0_preuve_demande("SESS-BILLET", 77)                         # remise au demandeur à la création
+    assert jeton(client, None, "SESS-BILLET", request_id=77, request_token=preuve).status_code == 200   # anonyme approuvé
     admin = sb.utilisateur("contact.artboost@gmail.com", "admin")
     assert jeton(client, "admin", "SESS-OUVERTE").status_code == 200
     assert jeton(client, "coach", "SESS-OUVERTE").status_code == 200        # l'hôte
@@ -250,3 +253,48 @@ def test_session_non_revendiquee_un_tiers_ne_devient_pas_hote(monde):
     assert jeton(client, "riche", "SESS-VIDE", role="stage").status_code == 403
     assert jeton(client, None, "SESS-VIDE").status_code == 401           # aucune ligne fiable : règle stricte
     assert sb.ledger(u["riche"])[1:] == []
+
+
+
+# ═══════════════════════ revue finale (43afe98) ═══════════════════════
+
+def test_numero_de_demande_devine_ne_suffit_pas(monde):
+    """Le numéro d'une demande approuvée est séquentiel et son statut public : seul le navigateur
+    qui l'a CRÉÉE détient la preuve qui ouvre la vidéo."""
+    m, sb, client, u = monde
+    session(sb, "SESS-BILLET", u["coach"], mode="paid")
+    r = client.post("/session/access-request", json={"session_id": "SESS-BILLET", "requester_name": "Anonyme"})
+    assert r.status_code == 200 and r.json()["preuve"]
+    rid, preuve = r.json()["id"], r.json()["preuve"]
+    next(x for x in sb.tables["access_requests"] if x["id"] == rid)["status"] = "approved"   # l'hôte approuve
+    assert jeton(client, None, "SESS-BILLET", request_id=rid).status_code == 403                         # numéro seul
+    assert jeton(client, None, "SESS-BILLET", request_id=rid, request_token="0" * 40).status_code == 403  # preuve inventée
+    assert jeton(client, None, "SESS-BILLET", request_id=rid,
+                 request_token=m._s0_preuve_demande("AUTRE-SESS", rid)).status_code == 403              # preuve d'une autre session
+    assert jeton(client, None, "SESS-BILLET", request_id=rid, request_token=preuve).status_code == 200
+
+
+def test_cohote_n_emprunte_pas_la_preuve_d_enregistrement_de_l_hote(monde):
+    m, sb, client, u = monde
+    sb.profil(u["riche"])["coach_payment_type"] = "commission"
+    sb.crediter(u["riche"], 10)
+    h = {"Authorization": "Bearer riche"}
+    assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-CO"}).status_code == 200
+    assert client.post("/session/record/start", headers=h, json={"session_id": "SESS-CO"}).json()["cost"] == 4
+    next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-CO")["cohosts"] = [u["pauvre"]]
+    r = client.post("/session/record/upload", headers={"Authorization": "Bearer pauvre"}, data={"session_id": "SESS-CO"},
+                    files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
+    assert r.status_code == 403 and r.json()["detail"] == "enregistrement_non_autorise"
+    assert sb.ledger(u["pauvre"]) == []
+
+
+def test_email_de_profil_falsifie_ne_detourne_pas_l_acces_afroboost(monde):
+    """Avant S0, un compte pouvait écrire l'e-mail d'un membre Afroboost dans SON profil :
+    /api/embed/verify lui aurait accordé l'accès 12 h du membre. GoTrue fait foi."""
+    m, sb, client, u = monde
+    victime = sb.utilisateur("membre@exemple.test", None)
+    sb.tables["profiles"] = [p for p in sb.tables["profiles"] if p["id"] != victime]   # pas encore de profil
+    sb.profil(u["pauvre"])["email"] = "membre@exemple.test"                           # e-mail falsifié (avant S0)
+    entrer_par_afroboost(sb, client, email="membre@exemple.test", jeton_bt="membre")
+    assert sb.profil(u["pauvre"])["comp_access_plan"] is None
+    assert sb.profil(victime)["comp_access_plan"] == "pro"

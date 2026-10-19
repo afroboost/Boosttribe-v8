@@ -164,3 +164,53 @@ commit;
 select banc.verifier('P7. le backend revendique et approuve normalement',
   (select host_id = :A from public.playlists where session_id = 'LIBRE')
   and (select status = 'approved' from public.access_requests where id = 1));
+
+-- ── upsert du navigateur (onConflict session_id, sans host_id) : comme saveSessionPrivacy ──
+begin; set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-0000-0000-0000-00000000000a","email":"a@exemple.test","role":"authenticated"}';
+insert into public.playlists (session_id, is_private, description, updated_at) values ('HOTE-A', true, 'upsert', now())
+  on conflict (session_id) do update set is_private = excluded.is_private, description = excluded.description,
+                                         updated_at = excluded.updated_at;
+commit;
+select banc.verifier('U1. l''hôte : upsert is_private / description sur SA session → appliqué',
+  (select is_private and description = 'upsert' from public.playlists where session_id = 'HOTE-A'));
+-- session SANS hôte : un tiers ne pose ni access_mode, ni is_private, ni lien de promo
+insert into public.playlists (session_id) values ('VIDE');
+begin; set local role authenticated;
+set local request.jwt.claims = '{"sub":"bbbbbbbb-0000-0000-0000-00000000000b","email":"b@exemple.test","role":"authenticated"}';
+update public.playlists set access_mode = 'guest', is_private = true, description = 'tiers' where session_id = 'VIDE';
+insert into public.playlists (session_id, access_mode, is_private) values ('VIDE', 'guest', true)
+  on conflict (session_id) do update set access_mode = excluded.access_mode, is_private = excluded.is_private;
+insert into public.playlists (session_id, access_mode, is_private, created_at)
+  values ('VIDE-NEUVE', 'guest', true, '1970-01-01');
+commit;
+select banc.verifier('U2. session sans hôte : un tiers ne pose PAS access_mode / is_private',
+  (select access_mode is null and coalesce(is_private, false) = false from public.playlists where session_id = 'VIDE'));
+select banc.verifier('U3. session sans hôte : le contenu reste modifiable (description)',
+  (select description = 'tiers' from public.playlists where session_id = 'VIDE'));
+select banc.verifier('U4. création sans hôte : réglages d''accès vides, created_at jamais antidaté',
+  (select access_mode is null and coalesce(is_private, false) = false and created_at > now() - interval '1 hour'
+     from public.playlists where session_id = 'VIDE-NEUVE'));
+
+-- ── portefeuille CHF : un utilisateur (ou un anonyme) ne peut pas se créditer ──
+do $$ begin
+  set local role anon;
+  begin
+    perform public.wallet_add('aaaaaaaa-0000-0000-0000-00000000000a', 50000, 'sale', 'pirate', true);
+    reset role; perform banc.verifier('W0. anonyme appelle wallet_add (portefeuille CHF) → refus', false);
+  exception when insufficient_privilege then
+    reset role; perform banc.verifier('W0. anonyme appelle wallet_add (portefeuille CHF) → refus', true);
+  end;
+end $$;
+-- ── création du profil d'UN AUTRE compte ──
+insert into auth.users values ('dddddddd-0000-0000-0000-00000000000d', 'd@exemple.test') on conflict do nothing;
+do $$ begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-00000000000a","email":"a@exemple.test","role":"authenticated"}', true);
+  begin
+    insert into public.profiles (id, full_name) values ('dddddddd-0000-0000-0000-00000000000d', 'Faux');
+    reset role; perform banc.verifier('I0. A crée le profil d''un AUTRE compte → refus', false);
+  exception when insufficient_privilege then
+    reset role; perform banc.verifier('I0. A crée le profil d''un AUTRE compte → refus', true);
+  end;
+end $$;

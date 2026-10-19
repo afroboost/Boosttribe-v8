@@ -70,7 +70,9 @@ test('3. prise d\'hôte refusée (crédits) → paywall, pas de faux rôle d\'h�
 
 test('4. le jeton vidéo transmet la demande approuvée (même clé que SessionPage)', () => {
   const hook = codeSeul(lire('hooks/useLiveKitStage.ts'));
-  assert.match(hook, /request_id: demandeApprouvee\(sessionId\)/);
+  assert.match(hook, /request_id: demandeApprouvee\(sessionId\), request_token: preuveDemande\(sessionId\)/);
+  assert.match(hook, /bt_ar_preuve_\$\{sessionId\}/);
+  assert.match(codeSeul(lire('lib/paymentApi.ts')), /bt_ar_preuve_\$\{sessionId\}/);
   assert.match(hook, /bt_ar_\$\{sessionId\}/);
   assert.match(codeSeul(lire('pages/SessionPage.tsx')), /bt_ar_\$\{sessionId\}/);
 });

@@ -32,9 +32,25 @@ la RLS des playlists). Le rôle admin du BACKEND reste décidé par `ADMIN_EMAIL
 Côté backend, seules les lignes `playlists` de l'hôte de RÉFÉRENCE (la plus ancienne ligne de la
 session) décident de l'accès ; la preuve d'enregistrement compare la session exactement.
 
+## Revue finale (sur 43afe98) — corrections S0d
+
+| Constat | Statut | Correction |
+|---|---|---|
+| `wallet_add` (portefeuille CHF) et `recalc_user_credits` **exécutables par un anonyme** — CONSTATÉ EN PRODUCTION sur les 2 bases | préexistant, **critique** | `00_urgent_wallet_add.sql` (applicable seul, tout de suite) + rejoué dans 01 |
+| Demande d'accès approuvée : numéro séquentiel + statut public → vidéo d'un Live payant | introduit par S0 | preuve signée remise au seul demandeur (`preuve`, localStorage, jamais dans l'URL) |
+| Session sans hôte : un tiers pose access_mode / is_private / promo, conservés après la revendication | introduit par S0 | sur une session sans hôte, le navigateur n'écrit que du contenu |
+| `created_at` antidatable / `session_id` non unique | conditionnel | created_at jamais écrit par le navigateur ; 01 s'ARRÊTE si `session_id` n'est pas UNIQUE |
+| Une preuve d'enregistrement profitait au co-hôte | introduit par S0b | preuve liée à celui qui envoie (`record:{session}:{uid}` exact) |
+| Règle INSERT « System can insert profiles » (true) éventuelle | préexistant | toutes les règles INSERT de profiles remplacées par « son propre profil » |
+| Valeurs DÉJÀ falsifiées dans `profiles` (avant S0) | préexistant | **non corrigé automatiquement** : `audit_avant_verrou.sql` (lecture seule) à lancer avant l'étape 2 ; `/api/embed/verify` vérifie désormais l'e-mail auprès de GoTrue |
+| Accès Afroboost 12 h sans que `session-started` soit appelé | préexistant | **non corrigé** : changerait le parcours Afroboost (décision produit) |
+| Identité LiveKit choisie par le client (éjecter l'hôte) | préexistant | **non corrigé** : lot à part (identité liée au compte) |
+
 ## Ordre d'application (au GO)
 
-1. **`01_s0_additif.sql`** sur les 2 bases — ajouts purs (solde autoritaire, vue publique). Sans risque.
+0. **`00_urgent_wallet_add.sql`** sur les 2 bases — indépendant de S0, le plus tôt possible.
+
+1. **`audit_avant_verrou.sql`** (lecture seule) puis **`01_s0_additif.sql`** sur les 2 bases — ajouts purs (solde autoritaire, vue publique). 01 s'arrête seul si `playlists.session_id` n'est pas unique.
 2. **Déployer backend + frontend S0** (les 2 apps : boosttribe.pro et afroboost.com/live).
    Le frontend lit `profiles_public` et retombe sur `profiles` si la vue manque : compatible avant/après.
 3. **`02_s0_verrou.sql`** sur les 2 bases — le verrou. Les règles d'origine sont sauvegardées
@@ -77,7 +93,7 @@ se passer de `credits_disponibles` (repli sur `profiles.credits`). Backend/front
 ## Bancs
 
 - `infra/s0/banc/banc_s0.sh` — Postgres 16 local jetable : état actuel reproduit, migration ×2
-  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 10/26 (les failles), APRÈS 31/31, ROLLBACK 3/3.
+  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 12/32 (les failles), COMPAT migration 1 seule 6/6, APRÈS 39/39, ROLLBACK 3/3, RÉAPPLIQUÉ 37/37.
 - `backend/tests/test_s0_parcours_afroboost.py` (A-F, écrit AVANT la modification) et
   `backend/tests/test_s0_acces_serveur.py` (7-15 + ce qui doit rester ouvert).
 - `frontend/tests/s0Acces.test.mjs`.

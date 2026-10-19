@@ -31,23 +31,29 @@ run "$RACINE/infra/credits/schema.sql"
   ('purchase','spend_join','spend_host','offered','signup_bonus','referral','launch_bonus','refund','gift','spend_record'));" >/dev/null
 
 phase AVANT;   run "$ICI/20_tests_s0.sql"
-run "$RACINE/infra/s0/01_s0_additif.sql"; run "$RACINE/infra/s0/02_s0_verrou.sql"
-run "$RACINE/infra/s0/01_s0_additif.sql"; run "$RACINE/infra/s0/02_s0_verrou.sql"   # idempotence
+run "$RACINE/infra/s0/00_urgent_wallet_add.sql"; run "$RACINE/infra/s0/00_urgent_wallet_add.sql"   # correctif urgent, 2×
+run "$RACINE/infra/s0/01_s0_additif.sql"; run "$RACINE/infra/s0/01_s0_additif.sql"   # migration 1 rejouée 2×
+phase COMPAT_MIGRATION1; run "$ICI/25_tests_compat_migration1.sql"
+run "$RACINE/infra/s0/02_s0_verrou.sql"; run "$RACINE/infra/s0/02_s0_verrou.sql"     # migration 2 rejouée 2×
 phase APRES;   run "$ICI/20_tests_s0.sql"; run "$ICI/30_tests_vue.sql"
-"${PSQL[@]}" -c "select banc.verifier('M1. migration rejouée 2× sans erreur (idempotente)', true);" >/dev/null
-"${PSQL[@]}" -c "select banc.verifier('M2. règles d''origine sauvegardées (3 profiles + 1 access_requests)', (select count(*) = 4 from public.s0_sauvegarde_policies));" >/dev/null
+"${PSQL[@]}" -c "select banc.verifier('M1. migrations 1 et 2 rejouées chacune 2× sans erreur (idempotentes)', true);" >/dev/null
+"${PSQL[@]}" -c "select banc.verifier('M2. règles d''origine sauvegardées (4 profiles + 1 access_requests)', (select count(*) = 5 from public.s0_sauvegarde_policies));" >/dev/null
 run "$RACINE/infra/s0/rollback_s0.sql"
 phase ROLLBACK
 "${PSQL[@]}" -c "select banc.verifier('R1. règles d''origine recréées à l''identique',
    (select array_agg(policyname || '|' || cmd || '|' || coalesce(qual,'') || '|' || coalesce(with_check,'') order by policyname)
       from pg_policies where tablename = 'profiles') =
-   array['profiles_insert|INSERT||(auth.uid() = id)','profiles_select|SELECT|true|','profiles_update|UPDATE|(auth.uid() = id)|']);
+   array['System can insert profiles|INSERT||true','profiles_insert|INSERT||(auth.uid() = id)','profiles_select|SELECT|true|','profiles_update|UPDATE|(auth.uid() = id)|']);
   select banc.verifier('R3. règle access_requests_host_update recréée, verrou playlists retiré',
    exists (select 1 from pg_policies where tablename = 'access_requests' and policyname = 'access_requests_host_update')
    and to_regprocedure('public.s0_proteger_playlist()') is null);
   select banc.verifier('R2. verrou retiré, vue et solde autoritaire retirés',
    to_regprocedure('public.s0_proteger_profil()') is null and to_regclass('public.profiles_public') is null
    and to_regprocedure('public.credits_disponibles(uuid)') is null);" >/dev/null
+
+# Réappliquer après rollback, puis TOUT revérifier.
+run "$RACINE/infra/s0/01_s0_additif.sql"; run "$RACINE/infra/s0/02_s0_verrou.sql"
+phase REAPPLIQUE; run "$ICI/20_tests_s0.sql"; run "$ICI/30_tests_vue.sql"
 
 "${PSQL[@]}" -A -F ' ' -t -c "select phase, case when ok then 'OK    ' else 'ECHEC ' end, nom from banc.resultats order by n"
 echo "---"

@@ -681,7 +681,7 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
     # grand livre), sauf admin, accès illimité (dont Afroboost 12 h) ou option gratuite.
     if not _is_admin_email(user) and not await is_coach_unlimited(uid):
         cout = int((await get_pricing_settings()).get("cost_record_transcribe", 4) or 0)
-        if cout > 0 and not await _s0_preuve_enregistrement(session_id):
+        if cout > 0 and not await _s0_preuve_enregistrement(session_id, uid):
             raise HTTPException(status_code=403, detail="enregistrement_non_autorise")
     data = await file.read()
     if not data:
@@ -1039,6 +1039,20 @@ async def _has_approved_access_request(session_id: str, uid: Optional[str]) -> b
                                         "status": "eq.approved", "select": "id", "limit": "1"})
     return resp.status_code == 200 and bool(resp.json())
 
+def _s0_preuve_demande(session_id: str, request_id: Optional[int]) -> str:
+    """S0 — preuve qu'on EST le demandeur anonyme d'une demande d'accès : remise UNE fois, à la
+    création, au navigateur qui l'a faite. Le numéro de demande (séquentiel, statut public) ne suffit plus."""
+    import hashlib as _h, hmac as _hm
+    cle = (SUPABASE_SERVICE_ROLE_KEY or LIVEKIT_API_SECRET or "").encode()
+    return _hm.new(cle, f"bt-ar:{session_id}:{request_id}".encode(), _h.sha256).hexdigest()[:40]
+
+
+def _s0_preuve_demande_valide(session_id: str, request_id: Optional[int], preuve: Optional[str]) -> bool:
+    import hmac as _hm
+    return bool(request_id and preuve and (SUPABASE_SERVICE_ROLE_KEY or LIVEKIT_API_SECRET)
+                and _hm.compare_digest(preuve, _s0_preuve_demande(session_id, request_id)))
+
+
 async def _access_request_approved_by_id(session_id: str, request_id: Optional[int]) -> bool:
     """Vrai si la demande d'accès `request_id` est APPROUVÉE ET concerne bien `session_id`.
     Chemin par id (sans uid) → permet à un demandeur ANONYME approuvé d'entrer en session payante."""
@@ -1070,7 +1084,8 @@ async def create_access_request(body: AccessRequestBody, authorization: Optional
                                  json={"session_id": body.session_id, "requester_user_id": uid,
                                        "requester_name": name, "status": "pending"})
     row = resp.json()[0] if resp.status_code in (200, 201) and resp.json() else {}
-    return {"ok": bool(row), "id": row.get("id")}
+    rid = row.get("id")
+    return {"ok": bool(row), "id": rid, "preuve": _s0_preuve_demande(body.session_id, rid) if rid else None}
 
 @app.get("/session/access-requests/{session_id}")
 async def list_access_requests(session_id: str, authorization: Optional[str] = Header(default=None)):
@@ -1176,6 +1191,7 @@ class LiveKitTokenBody(BaseModel):
     name: Optional[str] = None
     role: str = "viewer"  # "stage" | "viewer"
     request_id: Optional[int] = None  # S0 : demande d'accès approuvée (participant anonyme, session payante)
+    request_token: Optional[str] = None  # S0 : preuve remise au demandeur à la création (le numéro seul ne suffit pas)
 
 
 class LiveKitParticipantBody(BaseModel):
@@ -1319,7 +1335,7 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
             raise HTTPException(status_code=409, detail="stage_full")
         can_publish = True
     else:
-        motif = await _s0_autoriser_spectateur(session_id, user, body.request_id)
+        motif = await _s0_autoriser_spectateur(session_id, user, body.request_id, body.request_token)
         logger.info("[S0] jeton spectateur session=%s motif=%s", session_id, motif)
         can_publish = False
 
@@ -2814,7 +2830,7 @@ async def _s0_session_acces(session_id: str) -> Dict[str, Any]:
 
 
 async def _s0_autoriser_spectateur(session_id: str, user: Optional[Dict[str, Any]],
-                                   request_id: Optional[int]) -> str:
+                                   request_id: Optional[int], request_token: Optional[str] = None) -> str:
     """Autorisation d'un jeton vidéo SPECTATEUR. Renvoie le motif, ou lève 401/402/403/410.
     Ordre : admin / hôte / co-hôte → live terminé → règle du mode de la session."""
     uid = (user or {}).get("id")
@@ -2830,7 +2846,8 @@ async def _s0_autoriser_spectateur(session_id: str, user: Optional[Dict[str, Any
         return "gratuit_par_lien"
     if mode == "paid":
         if (await has_valid_ticket(session_id, uid) or await _has_approved_access_request(session_id, uid)
-                or await _access_request_approved_by_id(session_id, request_id)):
+                or (_s0_preuve_demande_valide(session_id, request_id, request_token)
+                    and await _access_request_approved_by_id(session_id, request_id))):
             return "billet"
         raise HTTPException(status_code=403, detail="billet_requis")
     # mode « open » (Ouverte, crédits) — défaut d'une session inconnue
@@ -2865,17 +2882,17 @@ def _s0_sources_publication(user: Optional[Dict[str, Any]], session_id: str) -> 
     return None
 
 
-async def _s0_preuve_enregistrement(session_id: str) -> bool:
-    """Un enregistrement de CETTE session a-t-il été réellement autorisé et débité (`record/start`) ?"""
+async def _s0_preuve_enregistrement(session_id: str, uid: str) -> bool:
+    """CETTE personne a-t-elle réellement fait autoriser et débiter l'enregistrement de CETTE
+    session (`record/start`, référence `record:{session}:{uid}`) ? Égalité STRICTE (jamais `like` :
+    « _ » y est un joker) ; un co-hôte qui n'a rien payé n'emprunte pas la preuve de l'hôte."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
-                                 params={"reason": "eq.spend_record", "ref": f"like.record:{session_id}:*",
-                                         "select": "ref"})
+                                 params={"reason": "eq.spend_record", "user_id": f"eq.{uid}",
+                                         "ref": f"eq.record:{session_id}:{uid}", "select": "ref"})
         rows = r.json() if r.status_code == 200 else []
-        # Comparaison EXACTE : dans un filtre `like`, « _ » est un joker (autorisé dans un code de
-        # session) — « AB_C » correspondrait à « ABXC ». Le filtre réduit, Python tranche.
-        return any(isinstance(x, dict) and (x.get("ref") or "").split(":")[1:2] == [session_id] for x in rows or [])
+        return any(isinstance(x, dict) and x.get("ref") == f"record:{session_id}:{uid}" for x in rows or [])
     except Exception:  # noqa: BLE001
         return False
 
@@ -5105,7 +5122,17 @@ async def _find_auth_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     repli sur l'API admin (source de vérité)."""
     prof = await get_profile_by_email(email)
     if prof and prof.get("id"):
-        return {"id": prof["id"], "email": prof.get("email") or email}
+        # S0 : `profiles.email` a été modifiable par son propriétaire (avant le verrou S0) — une valeur
+        # falsifiée détournerait l'accès d'un membre Afroboost. La source de vérité est GoTrue.
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{prof['id']}", headers=_service_headers())
+            vrai = ((r.json() or {}).get("email") or "").strip().lower() if r.status_code == 200 else ""
+        except Exception:  # noqa: BLE001
+            vrai = ""
+        if vrai == email:
+            return {"id": prof["id"], "email": email}
+        logger.warning("[S0-AFRO] profiles.email ne correspond pas au compte (%s…) : recherche GoTrue", prof["id"][:8])
     au = next(
         (u for u in await list_auth_users() if (u.get("email") or "").lower() == email),
         None,

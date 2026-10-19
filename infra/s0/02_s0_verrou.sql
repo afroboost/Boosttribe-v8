@@ -64,15 +64,21 @@ drop policy if exists s0_profiles_update_soi on public.profiles;
 create policy s0_profiles_update_soi on public.profiles
   for update to authenticated using (auth.uid() = id) with check (auth.uid() = id);
 
--- Une création de SON profil doit rester possible (le frontend la fait à la 1re connexion).
+-- Création : SEULEMENT son propre profil. Toute autre règle INSERT (ex. « System can insert
+-- profiles » WITH CHECK (true) de frontend/supabase-setup.sql) est retirée (sauvegardée ci-dessus).
 do $$
+declare p record;
 begin
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles'
-                  and cmd = 'INSERT') then
-    execute 'create policy s0_profiles_insert_soi on public.profiles for insert to authenticated
-             with check (auth.uid() = id)';
-  end if;
+  for p in select policyname from pg_policies
+            where schemaname = 'public' and tablename = 'profiles' and cmd = 'INSERT'
+              and policyname not like 's0\_%'
+  loop
+    execute format('drop policy %I on public.profiles', p.policyname);
+  end loop;
 end $$;
+drop policy if exists s0_profiles_insert_soi on public.profiles;
+create policy s0_profiles_insert_soi on public.profiles for insert to authenticated
+  with check (auth.uid() = id);
 
 -- 2) Liste blanche des colonnes modifiables par l'utilisateur -------------------
 --    SECURITY INVOKER (défaut) : current_user = le rôle de la requête PostgREST.
@@ -145,29 +151,50 @@ create trigger s0_proteger_profil
 -- 3) playlists : l'AUTORITÉ d'une session ne s'écrit pas depuis le navigateur ----------
 --    Avant : `playlists_update` autorise tout compte tant que host_id est NULL → un tiers pouvait
 --    s'inscrire hôte d'une session pas encore revendiquée, puis (règle access_requests ci-dessous)
---    approuver sa propre demande d'accès à un Live payant. host_id n'est posé que par le backend
---    (/session/claim-host, après débit). Les colonnes d'accès (mode, prix, capacité, co-hôtes,
---    fin du Live, option d'enregistrement) sont écrites par le backend uniquement (comme aujourd'hui).
---    Le navigateur garde : pistes, description, média partagé, is_private, access_mode.
+--    approuver sa propre demande d'accès à un Live payant. Le navigateur ne peut plus CHANGER
+--    host_id (seul le backend le pose sur une session existante, après débit) ; à la CRÉATION d'une
+--    session neuve, host_id = soi-même reste permis (session_id est UNIQUE : impossible pour une
+--    session existante). created_at n'est jamais antidaté. Mode, prix, capacité, co-hôtes, fin du
+--    Live, option d'enregistrement : backend uniquement (comme aujourd'hui). L'hôte garde : pistes,
+--    description, média partagé, is_private, access_mode, promo. Session SANS hôte : contenu seul.
 create or replace function public.s0_proteger_playlist()
 returns trigger language plpgsql set search_path = public as $$
 declare
-  serveur text[] := array['cohosts','mode','price_chf','capacity','live_ended_at','record_enabled'];
+  -- Écrites par le backend SEULEMENT (même par l'hôte) :
+  serveur  text[] := array['host_id','cohosts','mode','price_chf','capacity','live_ended_at','record_enabled','created_at'];
+  -- Session SANS hôte (pas encore revendiquée) : la RLS laisse TOUT compte la modifier ; on n'y
+  -- accepte alors que du CONTENU, jamais un réglage d'accès, de promo ou de paiement.
+  contenu  text[] := array['session_id','tracks','selected_track_id','description','updated_at','id'];
   n jsonb := to_jsonb(new);
+  o jsonb;
   forcer jsonb := '{}'::jsonb;
   k text;
+  sans_hote boolean;
 begin
   if current_user not in ('anon', 'authenticated') then
     return new;
   end if;
   if tg_op = 'UPDATE' then
-    forcer := jsonb_build_object('host_id', to_jsonb(old) -> 'host_id');
-    foreach k in array serveur loop
-      if n ? k then forcer := forcer || jsonb_build_object(k, to_jsonb(old) -> k); end if;
+    o := to_jsonb(old);
+    sans_hote := (o ->> 'host_id') is null;
+    for k in select jsonb_object_keys(n) loop
+      if (k = any(serveur) or (sans_hote and not (k = any(contenu)))) and (n -> k) is distinct from (o -> k) then
+        forcer := forcer || jsonb_build_object(k, o -> k);
+      end if;
     end loop;
   else
-    foreach k in array serveur loop
-      if n ? k and jsonb_typeof(n -> k) <> 'null' then
+    -- INSERT : host_id = soi-même ou NULL (RLS) ; created_at = maintenant (jamais antidaté).
+    -- ⚠️ Un UPSERT du navigateur (onConflict session_id, SANS host_id) passe d'abord ici : si la
+    --    session existe déjà avec un hôte, ce n'est PAS une session sans hôte (la mise à jour qui
+    --    suit est contrôlée par la RLS et par la branche UPDATE).
+    sans_hote := (n ->> 'host_id') is null
+                 and not exists (select 1 from public.playlists p
+                                  where p.session_id = new.session_id and p.host_id is not null);
+    forcer := jsonb_build_object('created_at', to_jsonb(now()));
+    for k in select jsonb_object_keys(n) loop
+      if k in ('host_id', 'created_at', 'id', 'session_id') then continue; end if;
+      if (k = any(serveur) or (sans_hote and not (k = any(contenu))))
+         and jsonb_typeof(n -> k) <> 'null' then
         forcer := forcer || jsonb_build_object(k, case when k = 'record_enabled' then 'false'::jsonb else 'null'::jsonb end);
       end if;
     end loop;

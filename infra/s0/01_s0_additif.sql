@@ -16,6 +16,30 @@
 -- ============================================================================
 begin;
 
+-- 0) Garde-fous ---------------------------------------------------------------
+--    a) une ligne `playlists` par session : le backend et le frontend en dépendent (upsert
+--       onConflict session_id). Sans contrainte d'unicité, on S'ARRÊTE (rien n'est appliqué).
+do $$
+begin
+  if not exists (
+    select 1 from pg_index i join pg_class t on t.oid = i.indrelid
+     where t.relname = 'playlists' and t.relnamespace = 'public'::regnamespace and i.indisunique
+       and i.indnatts = 1
+       and (select attname from pg_attribute where attrelid = t.oid and attnum = i.indkey[0]) = 'session_id'
+  ) then
+    raise exception 'S0 : playlists.session_id n''est pas UNIQUE sur cette base — migration arrêtée, à traiter d''abord';
+  end if;
+end $$;
+--    b) fonctions de portefeuille / copie de solde : jamais appelables par un utilisateur
+--       (identique à 00_urgent_wallet_add.sql, rejoué ici par sécurité).
+do $$
+begin
+  if to_regprocedure('public.wallet_add(uuid,numeric,text,text,boolean)') is not null then
+    revoke all on function public.wallet_add(uuid,numeric,text,text,boolean) from public, anon, authenticated;
+    grant execute on function public.wallet_add(uuid,numeric,text,text,boolean) to service_role;
+  end if;
+end $$;
+
 -- 1) Solde autoritaire ---------------------------------------------------------
 --    Rejeu CHRONOLOGIQUE du grand livre : chaque dépense consomme les crédits encore
 --    valides À SA DATE, ceux qui expirent le plus tôt d'abord. Le solde = ce qui reste
@@ -70,6 +94,8 @@ create or replace function public.recalc_user_credits(p_user uuid)
 returns void language sql security definer set search_path = public as $$
   update public.profiles set credits = public.credits_disponibles(p_user) where id = p_user;
 $$;
+revoke all on function public.recalc_user_credits(uuid) from public, anon, authenticated;
+grant execute on function public.recalc_user_credits(uuid) to service_role;
 
 create or replace function public.add_credits(
   p_user uuid, p_amount int, p_reason text, p_ref text default null,

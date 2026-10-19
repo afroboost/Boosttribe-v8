@@ -57,3 +57,15 @@ create policy access_requests_host_select on public.access_requests for select t
 create policy access_requests_host_update on public.access_requests for update to authenticated
   using (exists (select 1 from public.playlists p where p.session_id = access_requests.session_id and p.host_id = auth.uid()))
   with check (exists (select 1 from public.playlists p where p.session_id = access_requests.session_id and p.host_id = auth.uid()));
+
+-- Pire cas plausible : la règle « System can insert profiles » de frontend/supabase-setup.sql.
+create policy "System can insert profiles" on public.profiles for insert with check (true);
+-- wallet_add (infra/billetterie/schema.sql) : SECURITY DEFINER, EXECUTE accordé par défaut à anon /
+-- authenticated (constaté en production le 19/10 via la description publique de l'API). Doublure.
+create table public.coach_wallet (user_id uuid primary key, balance_chf numeric not null default 0);
+create function public.wallet_add(p_user uuid, p_delta numeric, p_reason text, p_ref text, p_is_revenue boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.coach_wallet(user_id, balance_chf) values (p_user, p_delta)
+  on conflict (user_id) do update set balance_chf = coach_wallet.balance_chf + p_delta;
+end $$;

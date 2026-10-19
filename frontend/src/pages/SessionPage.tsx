@@ -3802,10 +3802,15 @@ export const SessionPage: React.FC = () => {
   }, [sendPlaybackEvent]);
 
   // 🚪 Hôte/co-hôte : activer/désactiver la salle d'attente (session privée)
-  const handleTogglePrivacy = useCallback(() => {
+  const handleTogglePrivacy = useCallback(async () => {
     const next = !isPrivate;
     setIsPrivate(next);
-    if (sessionId) saveSessionPrivacy(sessionId, next);
+    // Post-S0 : le réglage n'est annoncé qu'une fois RELU en base ; refusé → l'interface revient en arrière.
+    if (sessionId && !(await saveSessionPrivacy(sessionId, next))) {
+      setIsPrivate(!next);
+      showToast('Réglage non enregistré : seul l\'hôte ou un co-hôte de cette session peut le modifier.', 'error');
+      return;
+    }
     showToast(next ? '🔒 Session privée : les participants passent par la salle d\'attente' : '🌐 Session publique : entrée directe', 'default');
   }, [isPrivate, sessionId, showToast]);
 

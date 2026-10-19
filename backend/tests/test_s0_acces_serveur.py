@@ -298,3 +298,37 @@ def test_email_de_profil_falsifie_ne_detourne_pas_l_acces_afroboost(monde):
     entrer_par_afroboost(sb, client, email="membre@exemple.test", jeton_bt="membre")
     assert sb.profil(u["pauvre"])["comp_access_plan"] is None
     assert sb.profil(victime)["comp_access_plan"] == "pro"
+
+
+
+# ═══════════════════════ revue sur 7746d01 ═══════════════════════
+
+def test_tickets_check_numero_seul_ne_suffit_pas(monde):
+    m, sb, client, u = monde
+    session(sb, "SESS-BILLET", u["coach"], mode="paid")
+    r = client.post("/session/access-request", json={"session_id": "SESS-BILLET", "requester_name": "Anonyme"})
+    rid, preuve = r.json()["id"], r.json()["preuve"]
+    next(x for x in sb.tables["access_requests"] if x["id"] == rid)["status"] = "approved"
+    assert client.get(f"/tickets/check/SESS-BILLET?request_id={rid}").json()["has_ticket"] is False
+    assert client.get(f"/tickets/check/SESS-BILLET?request_id={rid}",
+                      headers={"X-Access-Proof": preuve}).json()["has_ticket"] is True
+    # preuve non ASCII : refus propre, jamais une 500
+    assert jeton(client, None, "SESS-BILLET", request_id=rid, request_token="é" * 40).status_code == 403
+
+
+def test_claim_host_simultane_le_perdant_est_rembourse(monde, monkeypatch):
+    """Deux revendications en même temps : le perdant n'est pas hôte, ne reçoit pas ok, et récupère son crédit."""
+    m, sb, client, u = monde
+    vraie = m.upsert_playlist_fields
+
+    async def course(session_id, patch):        # un autre compte écrit host_id juste après nous
+        await vraie(session_id, patch)
+        for p in sb.tables["playlists"]:
+            if p.get("session_id") == session_id:
+                p["host_id"] = u["coach"]
+        return True
+    monkeypatch.setattr(m, "upsert_playlist_fields", course)
+    r = client.post("/session/claim-host", headers={"Authorization": "Bearer riche"}, json={"session_id": "SESS-COURSE"})
+    assert r.status_code == 200 and r.json() == {"ok": False, "host_id": u["coach"]}
+    assert sb.disponibles(u["riche"]) == 5
+    assert sorted(x["reason"] for x in sb.ledger(u["riche"])) == ["purchase", "refund", "spend_host"]

@@ -80,6 +80,27 @@ drop policy if exists s0_profiles_insert_soi on public.profiles;
 create policy s0_profiles_insert_soi on public.profiles for insert to authenticated
   with check (auth.uid() = id);
 
+-- 1b) Valeur par DÉFAUT d'une colonne (catalogue Postgres). Une colonne neutralisée à la création
+--     reprend SA valeur par défaut — jamais NULL : plusieurs colonnes sont NOT NULL en production
+--     (playlists.mode 'open', playlists.is_private false, profiles.coach_payment_type 'subscription'…).
+create or replace function public.s0_defaut(p_table regclass, p_col text)
+returns jsonb language plpgsql stable set search_path = public as $$
+declare expr text; v jsonb;
+begin
+  if p_table not in ('public.profiles'::regclass, 'public.playlists'::regclass) then
+    raise exception 's0_defaut : table non prise en charge';
+  end if;
+  select pg_get_expr(d.adbin, d.adrelid) into expr
+    from pg_attribute a join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+   where a.attrelid = p_table and a.attname = p_col and not a.attisdropped;
+  if expr is null or expr ~* '(nextval|gen_random|uuid_generate)' then
+    return 'null'::jsonb;
+  end if;
+  execute format('select to_jsonb(%s)', expr) into v;
+  return coalesce(v, 'null'::jsonb);
+end;
+$$;
+
 -- 2) Liste blanche des colonnes modifiables par l'utilisateur -------------------
 --    SECURITY INVOKER (défaut) : current_user = le rôle de la requête PostgREST.
 --    anon / authenticated → verrou ; service_role, postgres, fonctions SECURITY DEFINER → libre.
@@ -109,7 +130,7 @@ begin
         forcer := forcer || jsonb_build_object(k, o -> k);
       end if;
     end loop;
-  else  -- INSERT : les colonnes SENSIBLES prennent une valeur SÛRE (les autres gardent la valeur fournie)
+  else  -- INSERT : les colonnes SENSIBLES prennent une valeur SÛRE = leur valeur par DÉFAUT (les autres gardent la valeur fournie)
     for k in select jsonb_object_keys(n) loop
       if k = any(libres) then continue; end if;
       if not (k ~ '^(credits|role|subscription_status|email|coach_payment_type)$'
@@ -124,12 +145,8 @@ begin
         forcer := forcer || jsonb_build_object(k, case when admin then 'enterprise'
                                                        when n ->> k in ('free','trial') then n ->> k
                                                        else 'free' end);
-      elsif jsonb_typeof(n -> k) = 'number' then
-        forcer := forcer || jsonb_build_object(k, 0);
-      elsif jsonb_typeof(n -> k) = 'boolean' then
-        forcer := forcer || jsonb_build_object(k, false);
-      elsif jsonb_typeof(n -> k) <> 'null' then
-        forcer := forcer || jsonb_build_object(k, null);
+      elsif (n -> k) is distinct from public.s0_defaut('public.profiles', k) then
+        forcer := forcer || jsonb_build_object(k, public.s0_defaut('public.profiles', k));
       end if;
     end loop;
   end if;
@@ -194,8 +211,8 @@ begin
     for k in select jsonb_object_keys(n) loop
       if k in ('host_id', 'created_at', 'id', 'session_id') then continue; end if;
       if (k = any(serveur) or (sans_hote and not (k = any(contenu))))
-         and jsonb_typeof(n -> k) <> 'null' then
-        forcer := forcer || jsonb_build_object(k, case when k = 'record_enabled' then 'false'::jsonb else 'null'::jsonb end);
+         and (n -> k) is distinct from public.s0_defaut('public.playlists', k) then
+        forcer := forcer || jsonb_build_object(k, public.s0_defaut('public.playlists', k));
       end if;
     end loop;
   end if;

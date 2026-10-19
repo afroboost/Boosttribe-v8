@@ -12,6 +12,7 @@ drop trigger if exists s0_proteger_profil on public.profiles;
 drop function if exists public.s0_proteger_profil();
 drop trigger if exists s0_proteger_playlist on public.playlists;
 drop function if exists public.s0_proteger_playlist();
+drop function if exists public.s0_defaut(regclass, text);
 drop policy if exists s0_profiles_select_soi on public.profiles;
 drop policy if exists s0_profiles_update_soi on public.profiles;
 drop policy if exists s0_profiles_insert_soi on public.profiles;

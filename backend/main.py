@@ -1049,7 +1049,8 @@ def _s0_preuve_demande(session_id: str, request_id: Optional[int]) -> str:
 
 def _s0_preuve_demande_valide(session_id: str, request_id: Optional[int], preuve: Optional[str]) -> bool:
     import hmac as _hm
-    return bool(request_id and preuve and (SUPABASE_SERVICE_ROLE_KEY or LIVEKIT_API_SECRET)
+    return bool(request_id and isinstance(preuve, str) and preuve.isascii()
+                and (SUPABASE_SERVICE_ROLE_KEY or LIVEKIT_API_SECRET)
                 and _hm.compare_digest(preuve, _s0_preuve_demande(session_id, request_id)))
 
 
@@ -3293,7 +3294,10 @@ async def buy_ticket(body: BuyTicketBody, authorization: Optional[str] = Header(
     return {"url": session.url}
 
 @app.get("/tickets/check/{session_id}")
-async def ticket_check(session_id: str, request_id: Optional[int] = None, authorization: Optional[str] = Header(default=None)):
+async def ticket_check(session_id: str, request_id: Optional[int] = None,
+                       authorization: Optional[str] = Header(default=None),
+                       x_access_proof: Optional[str] = Header(default=None)):
+    request_token = x_access_proof   # S0 : en-tête, jamais dans l'URL (journaux d'accès)
     if not SESSION_ID_RE.match(session_id):
         raise HTTPException(status_code=400, detail="Identifiant de session invalide")
     # 🔓 Auth OPTIONNELLE : un demandeur ANONYME approuvé (via request_id) doit pouvoir vérifier son accès.
@@ -3310,7 +3314,9 @@ async def ticket_check(session_id: str, request_id: Optional[int] = None, author
     ok = (
         await has_valid_ticket(session_id, uid)
         or await _has_approved_access_request(session_id, uid)
-        or await _access_request_approved_by_id(session_id, request_id)
+        # S0 : le numéro de demande (séquentiel, statut public) ne suffit pas — preuve du demandeur exigée.
+        or (_s0_preuve_demande_valide(session_id, request_id, request_token)
+            and await _access_request_approved_by_id(session_id, request_id))
     )
     return {"has_ticket": ok}
 
@@ -3475,9 +3481,19 @@ async def claim_host(body: ClaimHostBody, authorization: Optional[str] = Header(
         return {"ok": False, "host_id": current}
     # S0 : devenir hôte exige une autorisation d'animer AVANT d'écrire host_id (402 sinon,
     # host_id non posé). Idempotent : une re-revendication du même hôte ne redébite pas.
-    await _s0_autoriser_hote(body.session_id, user)
+    motif = await _s0_autoriser_hote(body.session_id, user)
     if current != uid:
         await upsert_playlist_fields(body.session_id, {"host_id": uid})
+        # S0 : deux revendications simultanées → le dernier écrit gagne. On RELIT : le perdant n'est pas
+        # hôte, ne reçoit pas ok, et son débit d'animation est remboursé (idempotent).
+        apres = (await get_session_authz(body.session_id) or {}).get("host_id")
+        if apres and apres != uid:
+            if motif == "credit":
+                cout = int((await get_pricing_settings()).get("cost_host", 1) or 0)
+                if cout > 0:
+                    await _add_credits(uid, cout, "refund", ref=f"refund_host:{body.session_id}:{uid}",
+                                       note=f"host perdu {body.session_id}")
+            return {"ok": False, "host_id": apres}
     return {"ok": True, "host_id": uid}
 
 
@@ -5194,6 +5210,7 @@ async def _generate_magic_link(email: str) -> Optional[Dict[str, Any]]:
 AFRO_REESSAIS_S = (30, 120, 300)
 _AFRO_OCTROIS: Dict[str, Dict[str, Any]] = {}
 _AFRO_OCTROIS_MAX = 5000
+_AFRO_REESSAIS_EN_COURS: set = set()
 _AFRO_TACHES: set = set()   # réessais en cours (référence gardée : une tâche orpheline peut être ramassée)
 
 
@@ -5356,9 +5373,12 @@ async def embed_session_started(body: EmbedTokenBody):
         await _s0_retirer_octroi(jti, "refus Afroboost")
         return {"ok": False, "reason": r.get("reason") or "refus_afroboost", "jti": jti}
     # Aucun verdict : la session déjà validée continue, sans être présentée comme débitée.
-    tache = asyncio.ensure_future(_embed_reessayer_consume(body.token or "", jti))
-    _AFRO_TACHES.add(tache)
-    tache.add_done_callback(_AFRO_TACHES.discard)
+    if (jti or "") not in _AFRO_REESSAIS_EN_COURS:            # au plus UN réessai par jeton
+        _AFRO_REESSAIS_EN_COURS.add(jti or "")
+        tache = asyncio.ensure_future(_embed_reessayer_consume(body.token or "", jti))
+        _AFRO_TACHES.add(tache)
+        tache.add_done_callback(_AFRO_TACHES.discard)
+        tache.add_done_callback(lambda _t, j=(jti or ""): _AFRO_REESSAIS_EN_COURS.discard(j))
     return {"ok": True, "en_attente": True, "reason": "afroboost_injoignable", "jti": jti}
 
 

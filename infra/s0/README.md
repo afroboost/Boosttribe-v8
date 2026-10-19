@@ -46,6 +46,15 @@ session) décident de l'accès ; la preuve d'enregistrement compare la session e
 | Accès Afroboost 12 h sans que `session-started` soit appelé | préexistant | **non corrigé** : changerait le parcours Afroboost (décision produit) |
 | Identité LiveKit choisie par le client (éjecter l'hôte) | préexistant | **non corrigé** : lot à part (identité liée au compte) |
 
+## Revue sur 7746d01 — corrections S0e
+
+| Constat | Correction |
+|---|---|
+| **Régression** : les triggers forçaient à NULL des colonnes NOT NULL (`playlists.mode`, `is_private`, `profiles.coach_payment_type`) → tout upsert de l'hôte et la création de profil auraient échoué (23502). Le banc ne le voyait pas (schéma simplifié). | une colonne neutralisée reprend sa **valeur par défaut** (`s0_defaut`, catalogue Postgres) ; banc aligné sur les vraies contraintes NOT NULL + tests des upserts réels du navigateur (U5/U6). Le banc rejoué avec la migration de 7746d01 échoue bien (23502). |
+| `/tickets/check` acceptait encore le numéro de demande seul | preuve exigée, transmise en **en-tête** `X-Access-Proof` (jamais dans l'URL) |
+| Deux prises d'hôte simultanées : le perdant payait sans être hôte | relecture après écriture ; le perdant reçoit `ok:false` et est **remboursé** (idempotent) |
+| Preuve non ASCII → 500 ; réessais Afroboost empilables | refus propre (403) ; un seul réessai par jeton |
+
 ## Ordre d'application (au GO)
 
 0. **`00_urgent_wallet_add.sql`** sur les 2 bases — indépendant de S0, le plus tôt possible.
@@ -93,7 +102,7 @@ se passer de `credits_disponibles` (repli sur `profiles.credits`). Backend/front
 ## Bancs
 
 - `infra/s0/banc/banc_s0.sh` — Postgres 16 local jetable : état actuel reproduit, migration ×2
-  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 12/32 (les failles), COMPAT migration 1 seule 6/6, APRÈS 39/39, ROLLBACK 3/3, RÉAPPLIQUÉ 37/37.
+  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 13/34 (les failles), COMPAT migration 1 seule 6/6, APRÈS 41/41, ROLLBACK 3/3, RÉAPPLIQUÉ 39/39.
 - `backend/tests/test_s0_parcours_afroboost.py` (A-F, écrit AVANT la modification) et
   `backend/tests/test_s0_acces_serveur.py` (7-15 + ce qui doit rester ouvert).
 - `frontend/tests/s0Acces.test.mjs`.

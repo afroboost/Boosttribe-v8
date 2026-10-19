@@ -49,7 +49,7 @@ select banc.verifier('4. A change son role → refus', (select role from public.
 select banc.verifier('4b. A change subscription_status → refus', (select subscription_status from public.profiles where id = :A) = 'free');
 select banc.verifier('5. A se donne comp_access → refus', (select comp_access_plan from public.profiles where id = :A) is null);
 select banc.verifier('5b. A change son e-mail / coach_payment_type → refus',
-  (select email = 'a@exemple.test' and coach_payment_type is null from public.profiles where id = :A));
+  (select email = 'a@exemple.test' and coach_payment_type = 'subscription' from public.profiles where id = :A));
 select banc.verifier('5c. A modifie nom / photo / CGU → OK (légitime)',
   (select full_name = 'Alice Nouveau' and avatar_url = 'https://x/a.png' and has_accepted_terms from public.profiles where id = :A));
 select banc.verifier('5d. A modifie le profil de B → refus', (select credits from public.profiles where id = :B) = 2);
@@ -62,7 +62,7 @@ values (:C, 'contact.artboost@gmail.com', 'Carl', 'admin', 'enterprise', 999999,
 commit;
 select banc.verifier('5e. création forgée → valeurs sûres (crédits 0, user, sans accès, vrai e-mail)',
   (select credits = 0 and role = 'user' and subscription_status = 'free' and comp_access_plan is null
-          and coach_payment_type is null and email = 'c@exemple.test' and full_name = 'Carl'
+          and coach_payment_type = 'subscription' and email = 'c@exemple.test' and full_name = 'Carl'
      from public.profiles where id = :C));
 
 -- 5f. l'admin (adresse fixe) garde son auto-correction de rôle
@@ -129,6 +129,7 @@ select banc.verifier('8. même débit rejoué → 1 seule ligne',
 -- ── playlists / access_requests : l'autorité d'une session ne s'écrit pas depuis le navigateur ──
 delete from public.access_requests; delete from public.playlists;
 insert into public.playlists (session_id, host_id, mode) values ('LIBRE', null, 'paid'), ('HOTE-A', :A, 'paid');
+-- (en postgres : ces lignes de départ ne passent pas par le verrou)
 insert into public.access_requests (id, session_id, requester_user_id, requester_name)
   values (1, 'HOTE-A', :B, 'Bob'), (2, 'LIBRE', :B, 'Bob');
 begin; set local role authenticated;
@@ -146,7 +147,7 @@ select banc.verifier('P2. un tiers ne change ni mode, ni prix, ni co-hôtes',
 select banc.verifier('P3. un participant n''approuve pas sa propre demande d''accès',
   (select count(*) from public.access_requests where status = 'approved') = 0);
 select banc.verifier('P4. nouvelle session créée par un compte : colonnes d''accès vides (backend)',
-  (select host_id = :B and mode is null and cohosts is null and live_ended_at is null
+  (select host_id = :B and mode = 'open' and cohosts is null and live_ended_at is null
      from public.playlists where session_id = 'NEUVE-B'));
 begin; set local role authenticated;
 set local request.jwt.claims = '{"sub":"aaaaaaaa-0000-0000-0000-00000000000a","email":"a@exemple.test","role":"authenticated"}';
@@ -214,3 +215,19 @@ do $$ begin
     reset role; perform banc.verifier('I0. A crée le profil d''un AUTRE compte → refus', true);
   end;
 end $$;
+
+-- ── upserts RÉELS du navigateur (supabaseClient.ts) sur le VRAI schéma (colonnes NOT NULL) ──
+begin; set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-0000-0000-0000-00000000000a","email":"a@exemple.test","role":"authenticated"}';
+insert into public.playlists (session_id, tracks, selected_track_id, updated_at, host_id)
+  values ('HOTE-A', '[{"id":2}]', '2', now(), :A)
+  on conflict (session_id) do update set tracks = excluded.tracks, selected_track_id = excluded.selected_track_id,
+    updated_at = excluded.updated_at, host_id = excluded.host_id;                            -- savePlaylist
+insert into public.playlists (session_id, shared_media, updated_at) values ('HOTE-A', null, now())
+  on conflict (session_id) do update set updated_at = excluded.updated_at;                   -- saveSharedMedia (forme)
+insert into public.playlists (session_id, access_mode, updated_at, host_id) values ('SESS-NEUVE-A', 'guest', now(), :A); -- saveAccessMode (insert)
+commit;
+select banc.verifier('U5. upserts réels de l''hôte (pistes, média) acceptés malgré les colonnes NOT NULL',
+  (select tracks = '[{"id":2}]'::jsonb and mode = 'paid' from public.playlists where session_id = 'HOTE-A'));
+select banc.verifier('U6. création de SA session : mode par défaut ''open'', access_mode de l''hôte conservé',
+  (select mode = 'open' and access_mode = 'guest' and host_id = :A from public.playlists where session_id = 'SESS-NEUVE-A'));

@@ -666,10 +666,15 @@ export async function checkTicket(sessionId: string, requestId?: number | null):
   // ⚠️ Sans token MAIS avec une demande approuvée (requestId) → on interroge quand même (accès anonyme).
   if (!token && !requestId) return { has_ticket: false };
   try {
+    // S0 : la preuve du demandeur accompagne le numéro (le numéro seul ne suffit plus côté serveur),
+    //      dans un EN-TÊTE — jamais dans l'URL (elle finirait dans les journaux d'accès).
+    let preuve = '';
+    try { preuve = localStorage.getItem(`bt_ar_preuve_${sessionId}`) || ''; } catch { /* ignore */ }
     const qs = requestId ? `?request_id=${encodeURIComponent(String(requestId))}` : '';
-    const res = await fetch(`${API_URL}/tickets/check/${encodeURIComponent(sessionId)}${qs}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    if (requestId && preuve) headers['X-Access-Proof'] = preuve;
+    const res = await fetch(`${API_URL}/tickets/check/${encodeURIComponent(sessionId)}${qs}`, { headers });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { has_ticket: false, error: data?.detail || `Erreur ${res.status}` };
     return { has_ticket: !!data.has_ticket };

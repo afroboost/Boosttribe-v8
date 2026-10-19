@@ -76,3 +76,11 @@ test('4. le jeton vidéo transmet la demande approuvée (même clé que SessionP
   assert.match(hook, /bt_ar_\$\{sessionId\}/);
   assert.match(codeSeul(lire('pages/SessionPage.tsx')), /bt_ar_\$\{sessionId\}/);
 });
+
+test('5. /tickets/check : la preuve voyage dans un EN-TÊTE, jamais dans l\'URL', () => {
+  const api = codeSeul(lire('lib/paymentApi.ts'));
+  const i = api.indexOf('export async function checkTicket');
+  const bloc = api.slice(i, i + 1400);
+  assert.match(bloc, /'X-Access-Proof'\] = preuve/);
+  assert.ok(!/request_token=/.test(bloc), 'la preuve ne doit pas apparaître dans l\'URL');
+});

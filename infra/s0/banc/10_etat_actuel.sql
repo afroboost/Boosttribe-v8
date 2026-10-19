@@ -13,7 +13,8 @@ create table public.profiles (
   terms_accepted boolean default false,
   comp_access_plan text,
   comp_access_until timestamptz,
-  coach_payment_type text,
+  coach_payment_type text not null default 'subscription'
+    check (coach_payment_type in ('subscription','commission')),   -- infra/coach-subscription/schema.sql:14
   stripe_customer_id text,
   stripe_subscription_id text,
   live_preferences jsonb,
@@ -31,9 +32,12 @@ create policy "profiles_update" on public.profiles for update using (auth.uid() 
 create table public.playlists (
   id uuid default gen_random_uuid() primary key,
   session_id text unique not null,
-  host_id uuid, cohosts text[], mode text, price_chf numeric, capacity int,
-  access_mode text, is_private boolean, tracks jsonb default '[]', description text,
-  live_ended_at timestamptz, record_enabled boolean default false,
+  host_id uuid, cohosts text[],
+  mode text not null default 'open',                    -- infra/billetterie/schema.sql:14
+  price_chf numeric, capacity int, access_mode text,
+  is_private boolean not null default false,            -- frontend/SUPABASE_PRIVATE_SESSIONS.sql:11
+  tracks jsonb default '[]', selected_track_id text, shared_media jsonb, description text, live_ended_at timestamptz,
+  record_enabled boolean not null default false,        -- infra/recording/schema.sql:7
   created_at timestamptz default now(), updated_at timestamptz default now()
 );
 alter table public.playlists enable row level security;

@@ -176,6 +176,18 @@ def appli(monkeypatch):
         return 10
     monkeypatch.setattr(m, "get_pricing_settings", faux_tarifs)
     monkeypatch.setattr(m, "_spend_credits", faux_debit)
+
+    # Aucun réseau dans ce banc : d'autres bancs remplacent `httpx.AsyncClient` GLOBALEMENT sans le
+    # restaurer — sans ce verrou, ce banc lirait leurs faux et changerait de résultat selon l'ordre.
+    import httpx as _httpx
+
+    class _SansReseau:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): raise _httpx.ConnectError("réseau interdit dans ce banc")
+        async def __aexit__(self, *a): return False
+    sans_reseau = types.SimpleNamespace(**{k: getattr(_httpx, k) for k in dir(_httpx) if not k.startswith("__")})
+    sans_reseau.AsyncClient = _SansReseau
+    monkeypatch.setattr(m, "httpx", sans_reseau)
     # `main.py` partage le module `multistream` avec les autres bancs : le recharger ici
     # écrase son état global. On le remet à neuf, exactement comme le fait
     # `test_broadcast_routes_verrou` — sinon ce banc ferait rougir le voisin.

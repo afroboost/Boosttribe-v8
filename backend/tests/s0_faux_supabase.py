@@ -120,9 +120,10 @@ class FauxSupabase:
         if op == "is":
             return v is None if val == "null" else str(v).lower() == val
         if op in ("like", "ilike"):
-            import fnmatch
-            return v is not None and fnmatch.fnmatchcase(str(v).lower() if op == "ilike" else str(v),
-                                                         val.lower() if op == "ilike" else val)
+            # Comme Postgres : `*` (PostgREST) = `%` = n'importe quelle suite ; `_` = UN caractère quelconque.
+            import re as _re
+            motif = "".join(".*" if ch == "*" or ch == "%" else "." if ch == "_" else _re.escape(ch) for ch in val)
+            return v is not None and _re.fullmatch(motif, str(v), _re.I if op == "ilike" else 0) is not None
         if op == "in":
             return str(v) in [x.strip('"') for x in val.strip("()").split(",")]
         if op in ("gt", "gte", "lt", "lte"):
@@ -136,6 +137,10 @@ class FauxSupabase:
         rows = self.tables.setdefault(table, [])
         speciaux = {"select", "order", "limit", "offset", "on_conflict"}
         out = [r for r in rows if all(self._filtre(r, k, v) for k, v in params if k not in speciaux)]
+        ordre = dict(params).get("order")
+        if ordre:
+            col, _, sens = ordre.partition(".")
+            out = sorted(out, key=lambda r: str(r.get(col) or ""), reverse=sens.startswith("desc"))
         lim = dict(params).get("limit")
         return out[: int(lim)] if lim else out
 

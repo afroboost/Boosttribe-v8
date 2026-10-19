@@ -110,7 +110,8 @@ def entrer_par_afroboost(sb, client, email="membre@exemple.test", jeton_bt="memb
 def session(sb, sid, host_id, mode="open", access_mode="account"):
     sb.tables["playlists"].append({"session_id": sid, "host_id": host_id, "cohosts": [], "mode": mode,
                                    "access_mode": access_mode, "price_chf": None, "capacity": None,
-                                   "record_enabled": False, "live_ended_at": None})
+                                   "record_enabled": False, "live_ended_at": None,
+                                   "created_at": dans(-1), "updated_at": dans(-1)})
 
 
 def dans(heures):

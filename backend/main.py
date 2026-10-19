@@ -376,10 +376,14 @@ async def get_session_authz(session_id: str) -> Optional[Dict[str, Any]]:
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/playlists",
             headers=_service_headers(),
-            params={"session_id": f"eq.{session_id}", "select": "session_id,host_id,cohosts"},
+            params={"session_id": f"eq.{session_id}", "select": "session_id,host_id,cohosts,created_at",
+                    "order": "created_at.asc"},
         )
     if resp.status_code == 200 and resp.json():
-        return resp.json()[0]
+        rows = resp.json()
+        # S0 : déterministe — l'hôte de RÉFÉRENCE est celui de la plus ancienne ligne revendiquée.
+        # (Une ligne ajoutée plus tard par un tiers ne peut pas prendre la place de l'hôte.)
+        return next((r for r in rows if r.get("host_id")), rows[0])
     return None
 
 
@@ -2782,25 +2786,31 @@ S0_MODES_GRATUITS = ("private",)   # « Gratuit par lien / QR » : le lien EST l
 
 
 async def _s0_session_acces(session_id: str) -> Dict[str, Any]:
-    """Mode d'accès RÉEL de la session (plusieurs lignes `playlists` possibles par session) :
-    mode (open|paid|private), access_mode (guest|account), live_ended_at. Colonnes optionnelles
-    tolérées : une colonne absente n'invente jamais un accès."""
-    base = await get_session_row(session_id) or {}
-    extra: Dict[str, Any] = {}
+    """Mode d'accès RÉEL de la session : mode (open|paid|private), access_mode (guest|account),
+    live_ended_at. SEULES les lignes `playlists` de l'HÔTE DE RÉFÉRENCE comptent : la RLS permet
+    à tout compte d'insérer une ligne pour n'importe quelle session (host_id NULL ou lui-même) —
+    une telle ligne ne doit JAMAIS ouvrir l'accès (« private », « guest »). Sans hôte : règle stricte."""
+    hote = (await get_session_authz(session_id) or {}).get("host_id")
+    rows: Optional[List[Dict[str, Any]]] = None
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
-                                 params={"session_id": f"eq.{session_id}",
-                                         "select": "access_mode,live_ended_at,updated_at",
+                                 params={"session_id": f"eq.{session_id}", "select": "*",
                                          "order": "updated_at.desc"})
-        rows = r.json() if r.status_code == 200 else []
-        rows = rows if isinstance(rows, list) else []
-        extra["access_mode"] = next((x.get("access_mode") for x in rows
-                                     if x.get("access_mode") in ("guest", "account")), None)
-        extra["live_ended_at"] = next((x.get("live_ended_at") for x in rows if x.get("live_ended_at")), None)
+        if r.status_code == 200 and isinstance(r.json(), list):
+            rows = r.json()
     except Exception:  # noqa: BLE001
-        pass
-    return {"mode": base.get("mode") or "open", "host_id": base.get("host_id"), **extra}
+        rows = None
+    if rows is None:
+        base = await get_session_row(session_id)
+        rows = [base] if base else []
+    fiables = [x for x in rows if hote and x.get("host_id") == hote]
+    return {
+        "host_id": hote,
+        "mode": next((x.get("mode") for x in fiables if x.get("mode")), None) or "open",
+        "access_mode": next((x.get("access_mode") for x in fiables if x.get("access_mode") in ("guest", "account")), None),
+        "live_ended_at": next((x.get("live_ended_at") for x in fiables if x.get("live_ended_at")), None),
+    }
 
 
 async def _s0_autoriser_spectateur(session_id: str, user: Optional[Dict[str, Any]],
@@ -2861,8 +2871,11 @@ async def _s0_preuve_enregistrement(session_id: str) -> bool:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
                                  params={"reason": "eq.spend_record", "ref": f"like.record:{session_id}:*",
-                                         "select": "id", "limit": "1"})
-        return r.status_code == 200 and bool(r.json())
+                                         "select": "ref"})
+        rows = r.json() if r.status_code == 200 else []
+        # Comparaison EXACTE : dans un filtre `like`, « _ » est un joker (autorisé dans un code de
+        # session) — « AB_C » correspondrait à « ABXC ». Le filtre réduit, Python tranche.
+        return any(isinstance(x, dict) and (x.get("ref") or "").split(":")[1:2] == [session_id] for x in rows or [])
     except Exception:  # noqa: BLE001
         return False
 

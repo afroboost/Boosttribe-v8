@@ -202,3 +202,38 @@ def test_le_navigateur_ne_peut_rien_imposer(monde):
     r = client.post("/livekit/token", headers={"Authorization": "Bearer pauvre"},
                     json={"session_id": "SESS-OUVERTE", "identity": "u_x", "role": "stage"})
     assert r.status_code == 403
+
+
+# ═══════════════════════ revue de sécurité du commit S0 ═══════════════════════
+
+def test_ligne_playlists_ajoutee_par_un_tiers_n_ouvre_rien(monde):
+    """La RLS laisse tout compte insérer une ligne `playlists` pour n'importe quelle session
+    (host_id NULL ou lui-même). Une telle ligne « private » / « guest » ne doit RIEN ouvrir,
+    ni faire de son auteur l'hôte."""
+    m, sb, client, u = monde
+    for host in (u["pauvre"], None):
+        sb.tables["playlists"].append({"session_id": "SESS-OUVERTE", "host_id": host, "mode": "private",
+                                       "access_mode": "guest", "live_ended_at": None,
+                                       "created_at": dans(0), "updated_at": dans(1)})
+    assert jeton(client, None, "SESS-OUVERTE").status_code == 401
+    assert jeton(client, "pauvre", "SESS-OUVERTE").status_code == 402
+    assert jeton(client, "pauvre", "SESS-OUVERTE", role="stage").status_code == 403
+    assert sb.ledger(u["pauvre"]) == []
+    # …et un « live terminé » posé par un tiers ne coupe pas les autres.
+    sb.tables["playlists"].append({"session_id": "SESS-OUVERTE", "host_id": None, "live_ended_at": dans(-1),
+                                   "created_at": dans(0), "updated_at": dans(2)})
+    assert jeton(client, "riche", "SESS-OUVERTE").status_code == 200
+
+
+def test_preuve_enregistrement_exacte_pas_de_joker(monde):
+    """`_` est un joker dans un filtre `like` : le paiement de « RECXA » ne vaut pas pour « REC_A »."""
+    m, sb, client, u = monde
+    sb.profil(u["riche"])["coach_payment_type"] = "commission"
+    sb.crediter(u["riche"], 10)
+    h = {"Authorization": "Bearer riche"}
+    for sid in ("RECXA", "REC_A"):
+        assert client.post("/session/claim-host", headers=h, json={"session_id": sid}).status_code == 200
+    assert client.post("/session/record/start", headers=h, json={"session_id": "RECXA"}).json()["cost"] == 4
+    r = client.post("/session/record/upload", headers=h, data={"session_id": "REC_A"},
+                    files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
+    assert r.status_code == 403 and r.json()["detail"] == "enregistrement_non_autorise"

@@ -169,7 +169,7 @@ def test_C_pendant_12h_join_host_enregistrement_sans_credit(banc):
     assert r.status_code == 200 and r.json()["role"] == "stage", r.text
     r = client.post("/session/record/start", headers=h, json={"session_id": "SESS-HOTE"})
     assert r.status_code == 200 and r.json()["cost"] == 0, r.text
-    assert sb.ledger(uid) == []
+    assert all(x["delta"] == 0 for x in sb.ledger(uid)), "0 crédit consommé (seule une trace d'autorisation à 0)"
 
 
 # ═══════════════════════ D. après 12 h : crédits BoostTribe normaux ═══════════════════════

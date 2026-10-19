@@ -100,6 +100,10 @@ begin
   return coalesce(v, 'null'::jsonb);
 end;
 $$;
+-- Nécessaire aux triggers (SECURITY INVOKER, exécutés sous le rôle de l'utilisateur connecté) ;
+-- inutile à un anonyme (aucune écriture anonyme sur ces tables).
+revoke all on function public.s0_defaut(regclass, text) from public, anon;
+grant execute on function public.s0_defaut(regclass, text) to authenticated, service_role;
 
 -- 2) Liste blanche des colonnes modifiables par l'utilisateur -------------------
 --    SECURITY INVOKER (défaut) : current_user = le rôle de la requête PostgREST.
@@ -130,13 +134,9 @@ begin
         forcer := forcer || jsonb_build_object(k, o -> k);
       end if;
     end loop;
-  else  -- INSERT : les colonnes SENSIBLES prennent une valeur SÛRE = leur valeur par DÉFAUT (les autres gardent la valeur fournie)
+  else  -- INSERT : LISTE BLANCHE, comme l'UPDATE — toute autre colonne prend sa valeur par DÉFAUT
     for k in select jsonb_object_keys(n) loop
       if k = any(libres) then continue; end if;
-      if not (k ~ '^(credits|role|subscription_status|email|coach_payment_type)$'
-              or k ~ '^(comp_access|stripe|payout|is_|plan|wallet|balance)') then
-        continue;
-      end if;
       if k = 'email' then
         forcer := forcer || jsonb_build_object(k, nullif(auth.jwt() ->> 'email', ''));
       elsif k = 'role' then

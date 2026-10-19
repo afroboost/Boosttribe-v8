@@ -171,6 +171,9 @@ class FauxSupabase:
                 ex = None
                 if cle and "merge-duplicates" in pref:
                     ex = next((r for r in self.tables.setdefault(table, []) if r.get(cle) == l.get(cle)), None)
+                if ex is None and table == "playlists" and any(
+                        r.get("session_id") == l.get("session_id") for r in self.tables.setdefault(table, [])):
+                    return httpx.Response(409, json={"code": "23505", "message": "duplicate key (session_id)"})
                 if ex is not None:
                     ex.update(l)
                     out.append(dict(ex))

@@ -57,12 +57,13 @@ select banc.verifier('5d. A modifie le profil de B → refus', (select credits f
 -- 5e. création de SON profil avec des valeurs forgées
 begin; set local role authenticated;
 set local request.jwt.claims = '{"sub":"cccccccc-0000-0000-0000-00000000000c","email":"c@exemple.test","role":"authenticated"}';
-insert into public.profiles (id, email, full_name, role, subscription_status, credits, comp_access_plan, coach_payment_type)
-values (:C, 'contact.artboost@gmail.com', 'Carl', 'admin', 'enterprise', 999999, 'enterprise', 'commission');
+insert into public.profiles (id, email, full_name, role, subscription_status, credits, comp_access_plan, coach_payment_type, live_preferences)
+values (:C, 'contact.artboost@gmail.com', 'Carl', 'admin', 'enterprise', 999999, 'enterprise', 'commission', '{"x":1}');
 commit;
 select banc.verifier('5e. création forgée → valeurs sûres (crédits 0, user, sans accès, vrai e-mail)',
   (select credits = 0 and role = 'user' and subscription_status = 'free' and comp_access_plan is null
           and coach_payment_type = 'subscription' and email = 'c@exemple.test' and full_name = 'Carl'
+     and live_preferences is null
      from public.profiles where id = :C));
 
 -- 5f. l'admin (adresse fixe) garde son auto-correction de rôle

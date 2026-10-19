@@ -652,6 +652,10 @@ async def record_start(body: RecordStartBody, authorization: Optional[str] = Hea
         spent = cost
         balance = bal
     else:
+        # S0 : trace d'autorisation à 0 crédit (illimité / admin / option gratuite) — l'envoi reste
+        # possible même si l'accès illimité expire pendant le Live.
+        await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": "spend_record",
+                                     "p_ref": f"record:{body.session_id}:{uid}", "p_note": f"record autorisé {body.session_id}"})
         balance = await get_balance(uid)
     await upsert_playlist_fields(body.session_id, {"record_enabled": True})
     return {"ok": True, "cost": spent, "balance": balance, "unlimited": unlimited}
@@ -679,9 +683,10 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
         raise HTTPException(status_code=403, detail="Enregistrement réservé aux Lives d'un Espace Coach")
     # S0 : transcrire = l'enregistrement a été AUTORISÉ par /session/record/start (débit au
     # grand livre), sauf admin, accès illimité (dont Afroboost 12 h) ou option gratuite.
-    if not _is_admin_email(user) and not await is_coach_unlimited(uid):
+    if (not _is_admin_email(user) and not await _s0_preuve_enregistrement(session_id, uid)
+            and not await is_coach_unlimited(uid)):
         cout = int((await get_pricing_settings()).get("cost_record_transcribe", 4) or 0)
-        if cout > 0 and not await _s0_preuve_enregistrement(session_id, uid):
+        if cout > 0:
             raise HTTPException(status_code=403, detail="enregistrement_non_autorise")
     data = await file.read()
     if not data:
@@ -1047,8 +1052,14 @@ def _s0_preuve_demande(session_id: str, request_id: Optional[int]) -> str:
     return _hm.new(cle, f"bt-ar:{session_id}:{request_id}".encode(), _h.sha256).hexdigest()[:40]
 
 
+S0_AR_SANS_PREUVE_MAX_ID = int(os.environ.get("S0_AR_SANS_PREUVE_MAX_ID", "0") or 0)
+
+
 def _s0_preuve_demande_valide(session_id: str, request_id: Optional[int], preuve: Optional[str]) -> bool:
     import hmac as _hm
+    # Transition : une demande créée AVANT S0 (id ≤ seuil posé au déploiement) n'a pas de preuve.
+    if request_id and S0_AR_SANS_PREUVE_MAX_ID and 0 < int(request_id) <= S0_AR_SANS_PREUVE_MAX_ID:
+        return True
     return bool(request_id and isinstance(preuve, str) and preuve.isascii()
                 and (SUPABASE_SERVICE_ROLE_KEY or LIVEKIT_API_SECRET)
                 and _hm.compare_digest(preuve, _s0_preuve_demande(session_id, request_id)))
@@ -1329,8 +1340,13 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
         # S0 : l'HÔTE (pas un co-hôte invité) n'obtient la scène qu'avec une autorisation
         # d'animer — débit idempotent, déjà fait au claim-host dans le cas normal.
         authz = await get_session_authz(session_id)
-        if (authz or {}).get("host_id") == user_id:
+        hote_ref = (authz or {}).get("host_id")
+        if hote_ref == user_id:
             await _s0_autoriser_hote(session_id, user)
+        elif not await _s0_hote_autorise(session_id, hote_ref):
+            # Co-hôte d'une session dont l'animation n'est pas réglée (host_id posé sans claim-host,
+            # ex. /session/configure ou INSERT direct) : la scène reste fermée.
+            raise HTTPException(status_code=402, detail="animation_non_reglee")
         # Limite scène : refuser un nouveau publisher si la room est déjà pleine (10 max).
         if await _count_livekit_publishers(session_id) >= MAX_LIVEKIT_STAGE:
             raise HTTPException(status_code=409, detail="stage_full")
@@ -2876,6 +2892,53 @@ async def _s0_autoriser_hote(session_id: str, user: Dict[str, Any]) -> str:
     return "credit"
 
 
+async def _s0_poser_hote_si_libre(session_id: str, uid: str) -> bool:
+    """Pose host_id = uid SEULEMENT s'il est vide (UPDATE conditionnel), ou crée la ligne (session_id
+    UNIQUE : une création concurrente échoue). Vrai = cette requête a gagné la place d'hôte."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.patch(f"{SUPABASE_URL}/rest/v1/playlists",
+                               headers=_service_headers({"Prefer": "return=representation"}),
+                               params={"session_id": f"eq.{session_id}", "host_id": "is.null"},
+                               json={"host_id": uid})
+        if r.status_code == 200 and (r.json() or []):
+            return True
+        existe = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                                  params={"session_id": f"eq.{session_id}", "select": "session_id", "limit": "1"})
+        if existe.status_code == 200 and existe.json():
+            return False                                   # la ligne existe : quelqu'un d'autre est hôte
+        c = await client.post(f"{SUPABASE_URL}/rest/v1/playlists",
+                              headers=_service_headers({"Prefer": "return=representation"}),
+                              json={"session_id": session_id, "host_id": uid})
+    return c.status_code in (200, 201) and bool(c.json() if c.content else [])
+
+
+async def _s0_liberer_hote(session_id: str, uid: str) -> None:
+    async with httpx.AsyncClient(timeout=10) as client:
+        await client.patch(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                           params={"session_id": f"eq.{session_id}", "host_id": f"eq.{uid}"},
+                           json={"host_id": None})
+
+
+async def _s0_hote_autorise(session_id: str, hote_id: Optional[str]) -> bool:
+    """L'HÔTE DE RÉFÉRENCE de la session est-il autorisé à animer ? (admin, illimité dont Afroboost,
+    ou débit d'animation au grand livre pour CETTE session). Ne débite jamais."""
+    if not hote_id:
+        return False
+    if await is_coach_unlimited(hote_id):
+        return True
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
+                                 params={"reason": "eq.spend_host", "user_id": f"eq.{hote_id}",
+                                         "ref": f"eq.{session_id}:{hote_id}", "select": "ref"})
+            if r.status_code == 200 and any(x.get("ref") == f"{session_id}:{hote_id}" for x in (r.json() or [])):
+                return True
+            u = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{hote_id}", headers=_service_headers())
+            return u.status_code == 200 and _is_admin_email(u.json() or {})
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _s0_sources_publication(user: Optional[Dict[str, Any]], session_id: str) -> Optional[List[str]]:
     """Sources LiveKit qu'un publieur peut émettre (caméra, micro, écran…).
     S0 : None = AUCUNE restriction (comportement inchangé). BT-CREDIT-2 renverra ici la liste
@@ -3481,19 +3544,19 @@ async def claim_host(body: ClaimHostBody, authorization: Optional[str] = Header(
         return {"ok": False, "host_id": current}
     # S0 : devenir hôte exige une autorisation d'animer AVANT d'écrire host_id (402 sinon,
     # host_id non posé). Idempotent : une re-revendication du même hôte ne redébite pas.
-    motif = await _s0_autoriser_hote(body.session_id, user)
-    if current != uid:
-        await upsert_playlist_fields(body.session_id, {"host_id": uid})
-        # S0 : deux revendications simultanées → le dernier écrit gagne. On RELIT : le perdant n'est pas
-        # hôte, ne reçoit pas ok, et son débit d'animation est remboursé (idempotent).
+    if current == uid:
+        await _s0_autoriser_hote(body.session_id, user)          # re-revendication : idempotent
+        return {"ok": True, "host_id": uid}
+    # S0 : on PREND la place d'abord, de façon CONDITIONNELLE (host_id encore vide), puis on débite.
+    # Deux revendications simultanées : une seule gagne l'écriture, le perdant n'est jamais débité.
+    if not await _s0_poser_hote_si_libre(body.session_id, uid):
         apres = (await get_session_authz(body.session_id) or {}).get("host_id")
-        if apres and apres != uid:
-            if motif == "credit":
-                cout = int((await get_pricing_settings()).get("cost_host", 1) or 0)
-                if cout > 0:
-                    await _add_credits(uid, cout, "refund", ref=f"refund_host:{body.session_id}:{uid}",
-                                       note=f"host perdu {body.session_id}")
-            return {"ok": False, "host_id": apres}
+        return {"ok": False, "host_id": apres}
+    try:
+        await _s0_autoriser_hote(body.session_id, user)
+    except HTTPException:
+        await _s0_liberer_hote(body.session_id, uid)          # 402 : on rend la place, rien n'est débité
+        raise
     return {"ok": True, "host_id": uid}
 
 

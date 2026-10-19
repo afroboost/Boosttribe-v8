@@ -55,12 +55,23 @@ session) décident de l'accès ; la preuve d'enregistrement compare la session e
 | Deux prises d'hôte simultanées : le perdant payait sans être hôte | relecture après écriture ; le perdant reçoit `ok:false` et est **remboursé** (idempotent) |
 | Preuve non ASCII → 500 ; réessais Afroboost empilables | refus propre (403) ; un seul réessai par jeton |
 
+## Revue sur 52167ff — corrections S0f
+
+| Constat | Correction |
+|---|---|
+| Scène sans aucun paiement : host_id posé gratuitement (`/session/configure`, INSERT direct) puis un CO-HÔTE publie | tout publieur exige que l'**hôte de référence** soit autorisé (admin / illimité / débit d'animation au grand livre) ; le co-hôte reste gratuit une fois l'hôte réglé |
+| Remboursement de course : un crédit sur le point d'expirer revenait permanent | plus AUCUN remboursement : la place d'hôte se prend par écriture **conditionnelle** (host_id vide) AVANT le débit ; 402 → la place est rendue |
+| Demandeur anonyme approuvé AVANT le déploiement (sans preuve) | variable `S0_AR_SANS_PREUVE_MAX_ID` (backend) = dernier id de demande au moment du déploiement : ces demandes restent valables |
+| Enregistrement perdu si l'accès illimité expire pendant le Live | `/record/start` laisse une trace d'autorisation à 0 crédit au grand livre ; l'envoi la reconnaît |
+| `s0_defaut` appelable par anon | exécution retirée à anon (gardée pour authenticated : nécessaire aux verrous) |
+| Création de profil en liste noire | liste BLANCHE, comme la modification |
+
 ## Ordre d'application (au GO)
 
 0. **`00_urgent_wallet_add.sql`** sur les 2 bases — indépendant de S0, le plus tôt possible.
 
 1. **`audit_avant_verrou.sql`** (lecture seule) puis **`01_s0_additif.sql`** sur les 2 bases — ajouts purs (solde autoritaire, vue publique). 01 s'arrête seul si `playlists.session_id` n'est pas unique.
-2. **Déployer backend + frontend S0** (les 2 apps : boosttribe.pro et afroboost.com/live).
+2. **Déployer frontend PUIS backend S0** (poser `S0_AR_SANS_PREUVE_MAX_ID` = `select max(id) from access_requests` juste avant) (les 2 apps : boosttribe.pro et afroboost.com/live).
    Le frontend lit `profiles_public` et retombe sur `profiles` si la vue manque : compatible avant/après.
 3. **`02_s0_verrou.sql`** sur les 2 bases — le verrou. Les règles d'origine sont sauvegardées
    (`s0_sauvegarde_policies`) avant d'être retirées.
@@ -102,7 +113,7 @@ se passer de `credits_disponibles` (repli sur `profiles.credits`). Backend/front
 ## Bancs
 
 - `infra/s0/banc/banc_s0.sh` — Postgres 16 local jetable : état actuel reproduit, migration ×2
-  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 13/34 (les failles), COMPAT migration 1 seule 6/6, APRÈS 41/41, ROLLBACK 3/3, RÉAPPLIQUÉ 39/39.
+  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 13/34 (les failles), COMPAT migration 1 seule 6/6, APRÈS 42/42, ROLLBACK 3/3, RÉAPPLIQUÉ 40/40.
 - `backend/tests/test_s0_parcours_afroboost.py` (A-F, écrit AVANT la modification) et
   `backend/tests/test_s0_acces_serveur.py` (7-15 + ce qui doit rester ouvert).
 - `frontend/tests/s0Acces.test.mjs`.

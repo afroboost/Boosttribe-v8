@@ -107,8 +107,12 @@ def test_11_hote_avec_credit_un_seul_debit(monde):
 
 
 def test_11b_cohote_invite_ne_paie_pas(monde):
+    """Le co-hôte invité ne paie rien — une fois que l'hôte de référence a réglé l'animation."""
     m, sb, client, u = monde
     sb.tables["playlists"][0]["cohosts"] = [u["pauvre"]]
+    sb.crediter(u["coach"], 1)
+    assert client.post("/session/claim-host", headers={"Authorization": "Bearer coach"},
+                       json={"session_id": "SESS-OUVERTE"}).json()["ok"] is True
     r = jeton(client, "pauvre", "SESS-OUVERTE", role="stage")
     assert r.status_code == 200 and r.json()["role"] == "stage"
     assert sb.ledger(u["pauvre"]) == []
@@ -128,7 +132,7 @@ def test_12_afroboost_entrer_animer_enregistrer_zero_credit(monde):
     r = client.post("/session/record/upload", headers=h, data={"session_id": "SESS-M"},
                     files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
     assert r.status_code == 200, r.text
-    assert sb.ledger(uid) == []
+    assert all(x["delta"] == 0 for x in sb.ledger(uid)), "0 crédit consommé (seule une trace d'autorisation à 0)"
 
 
 def test_13_afroboost_expire_credits_normaux(monde):
@@ -316,19 +320,65 @@ def test_tickets_check_numero_seul_ne_suffit_pas(monde):
     assert jeton(client, None, "SESS-BILLET", request_id=rid, request_token="é" * 40).status_code == 403
 
 
-def test_claim_host_simultane_le_perdant_est_rembourse(monde, monkeypatch):
-    """Deux revendications en même temps : le perdant n'est pas hôte, ne reçoit pas ok, et récupère son crédit."""
+def test_claim_host_simultane_le_perdant_n_est_jamais_debite(monde, monkeypatch):
+    """Deux revendications en même temps : la place d'hôte se prend par écriture CONDITIONNELLE
+    AVANT tout débit. Le perdant n'est pas hôte, ne reçoit pas ok, et n'a rien payé (aucun remboursement)."""
     m, sb, client, u = monde
-    vraie = m.upsert_playlist_fields
+    session(sb, "SESS-COURSE", u["coach"])               # l'autre compte a écrit host_id…
+    vraie = m.get_session_authz
+    appels = {"n": 0}
 
-    async def course(session_id, patch):        # un autre compte écrit host_id juste après nous
-        await vraie(session_id, patch)
-        for p in sb.tables["playlists"]:
-            if p.get("session_id") == session_id:
-                p["host_id"] = u["coach"]
-        return True
-    monkeypatch.setattr(m, "upsert_playlist_fields", course)
+    async def lecture_perimee(sid):                       # …juste après notre lecture
+        appels["n"] += 1
+        return None if appels["n"] == 1 else await vraie(sid)
+    monkeypatch.setattr(m, "get_session_authz", lecture_perimee)
     r = client.post("/session/claim-host", headers={"Authorization": "Bearer riche"}, json={"session_id": "SESS-COURSE"})
     assert r.status_code == 200 and r.json() == {"ok": False, "host_id": u["coach"]}
-    assert sb.disponibles(u["riche"]) == 5
-    assert sorted(x["reason"] for x in sb.ledger(u["riche"])) == ["purchase", "refund", "spend_host"]
+    assert [x["reason"] for x in sb.ledger(u["riche"])] == ["purchase"]          # ni débit, ni remboursement
+
+
+def test_claim_host_sans_credit_rend_la_place(monde):
+    m, sb, client, u = monde
+    r = client.post("/session/claim-host", headers={"Authorization": "Bearer pauvre"}, json={"session_id": "SESS-P"})
+    assert r.status_code == 402
+    assert not any(p.get("session_id") == "SESS-P" and p.get("host_id") for p in sb.tables["playlists"])
+
+
+def test_cohote_sans_animation_reglee_pas_de_scene(monde):
+    """host_id posé GRATUITEMENT (/session/configure, ou INSERT direct) + co-hôte : la scène reste fermée
+    tant que l'hôte de référence n'a pas réglé l'animation (ou n'est pas illimité / admin)."""
+    m, sb, client, u = monde
+    h = {"Authorization": "Bearer pauvre"}
+    assert client.post("/session/configure", headers=h, json={"session_id": "SESS-CONF", "mode": "private"}).status_code == 200
+    assert next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-CONF")["host_id"] == u["pauvre"]
+    next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-CONF")["cohosts"] = [u["riche"]]
+    assert jeton(client, "riche", "SESS-CONF", role="stage").status_code == 402      # co-hôte : scène fermée
+    assert jeton(client, "pauvre", "SESS-CONF", role="stage").status_code == 402     # hôte sans crédit
+    sb.crediter(u["pauvre"], 1)
+    assert jeton(client, "pauvre", "SESS-CONF", role="stage").status_code == 200     # l'hôte règle (1 débit)
+    assert jeton(client, "riche", "SESS-CONF", role="stage").status_code == 200      # le co-hôte suit, gratuit
+    assert [d["delta"] for d in sb.debits(u["pauvre"])] == [-1] and sb.debits(u["riche"]) == []
+
+
+def test_demande_anterieure_au_deploiement_toleree_jusqu_au_seuil(monde, monkeypatch):
+    m, sb, client, u = monde
+    session(sb, "SESS-BILLET", u["coach"], mode="paid")
+    sb.tables["access_requests"].append({"id": 40, "session_id": "SESS-BILLET", "status": "approved", "requester_user_id": None})
+    sb.tables["access_requests"].append({"id": 41, "session_id": "SESS-BILLET", "status": "approved", "requester_user_id": None})
+    monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_MAX_ID", 40)
+    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 200   # antérieure : tolérée
+    assert jeton(client, None, "SESS-BILLET", request_id=41).status_code == 403   # postérieure : preuve exigée
+
+
+def test_enregistrement_garde_son_autorisation_si_l_illimite_expire(monde):
+    m, sb, client, u = monde
+    uid, _t, _j = entrer_par_afroboost(sb, client)
+    sb.profil(uid)["coach_payment_type"] = "commission"
+    h = {"Authorization": "Bearer membre"}
+    assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-EXP"}).status_code == 200
+    assert client.post("/session/record/start", headers=h, json={"session_id": "SESS-EXP"}).json()["cost"] == 0
+    sb.profil(uid)["comp_access_until"] = dans(-1)                    # les 12 h s'achèvent pendant le Live
+    r = client.post("/session/record/upload", headers=h, data={"session_id": "SESS-EXP"},
+                    files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
+    assert r.status_code == 200, r.text
+    assert all(x["delta"] == 0 for x in sb.ledger(uid))

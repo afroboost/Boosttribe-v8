@@ -24,3 +24,5 @@ select banc.verifier('W1. wallet_add / recalc_user_credits NON exécutables par 
            and not has_function_privilege('authenticated', 'public.wallet_add(uuid,numeric,text,text,boolean)', 'execute'))));
 select banc.verifier('I1. une seule règle INSERT sur profiles : la sienne (s0_profiles_insert_soi)',
   (select array_agg(policyname::text) from pg_policies where tablename = 'profiles' and cmd = 'INSERT') = array['s0_profiles_insert_soi']);
+select banc.verifier('W2. s0_defaut non exécutable par anon (aide interne des verrous)',
+  not has_function_privilege('anon', 'public.s0_defaut(regclass,text)', 'execute'));

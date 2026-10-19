@@ -69,7 +69,7 @@ do $$ declare r text; p public.profiles; begin
   perform ok('P6 sans ligne : ligne CRÉÉE, acceptée, version 2026-10-19, date = maintenant (serveur)',
     p.id is not null and p.terms_accepted is true and p.terms_version = '2026-10-19' and p.terms_accepted_at = now());
   perform ok('P7 ligne créée sans privilège (role=' || coalesce(p.role,'-') || ', abo=' || coalesce(p.subscription_status,'-')
-    || ', email du compte)', p.role = 'user' and p.subscription_status = 'free' and p.email = 'sans.ligne@exemple.invalid'
+    || ', email du compte)', p.role = 'user' and p.subscription_status = 'none' and coalesce(p.credits, 0) = 0 and p.email = 'sans.ligne@exemple.invalid'
     and p.comp_access_plan is null);
   insert into banc_memo values ('a', p.terms_accepted_at);
 end $$;

@@ -108,11 +108,14 @@ begin
   select p.terms_accepted, p.terms_accepted_at, p.terms_version into prec
     from public.profiles p where p.id = uid for update;
   if not found then
-    insert into public.profiles (id, email, full_name, avatar_url, terms_accepted, terms_accepted_at, terms_version)
+    -- subscription_status = 'none' (aucun abonnement) : jamais 'trial' (= « a déjà eu un abonnement »
+    -- pour le backend, _has_prior_subscription → essai refusé), jamais 'free' (le front le compte
+    -- comme un plan). Toutes les autres colonnes : valeur par DÉFAUT de la base.
+    insert into public.profiles (id, email, full_name, avatar_url, subscription_status, terms_accepted, terms_accepted_at, terms_version)
     values (uid, mail,
             coalesce(nullif(meta ->> 'full_name', ''), nullif(meta ->> 'name', ''), split_part(coalesce(mail, ''), '@', 1)),
             coalesce(nullif(meta ->> 'avatar_url', ''), nullif(meta ->> 'picture', ''), ''),
-            true, now(), v)
+            'none', true, now(), v)
     on conflict (id) do nothing;
     if found then                                 -- ligne créée avec la preuve : terminé
       return query

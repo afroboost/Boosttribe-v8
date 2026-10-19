@@ -654,9 +654,8 @@ async def record_start(body: RecordStartBody, authorization: Optional[str] = Hea
     else:
         # S0 : trace d'autorisation à 0 crédit (illimité / admin / option gratuite) — l'envoi reste
         # possible même si l'accès illimité expire pendant le Live.
-        await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": "spend_record",
-                                     "p_ref": f"auth0:record:{body.session_id}:{uid}",
-                                     "p_note": f"record autorisé {body.session_id}"})
+        await _s0_ecrire_trace(uid, "spend_record", f"auth0:record:{body.session_id}:{uid}",
+                               f"record autorisé {body.session_id}")
         balance = await get_balance(uid)
     await upsert_playlist_fields(body.session_id, {"record_enabled": True})
     return {"ok": True, "cost": spent, "balance": balance, "unlimited": unlimited}
@@ -2910,16 +2909,46 @@ async def _s0_autoriser_hote(session_id: str, user: Dict[str, Any]) -> str:
     else:
         cost = int((await get_pricing_settings()).get("cost_host", 1) or 0)
         if cost > 0:
+            # Accès illimité / gratuit qui a expiré PENDANT ce Live : la trace récente (≤ 6 h) couvre
+            # la fin du Live — pas de débit ni de refus en plein direct. Au-delà, le vrai débit est dû.
+            if any(_s0_trace_recente(x) for x in await _s0_ledger_refs(uid, "spend_host", (f"auth0:{ref}",))):
+                return "trace_recente"
             await _spend_credits(uid, cost, "spend_host", ref=ref, note=f"host {session_id}")
             return "credit"
         motif = "gratuit"
-    # Trace d'autorisation à 0 crédit (admin / illimité / animation gratuite) : les co-hôtes s'y fient
-    # (`_s0_hote_autorise`), y compris si l'accès illimité de l'hôte expire pendant le Live.
-    # Référence DISTINCTE du débit réel (`auth0:` + ref) : une trace gratuite ne doit jamais valoir
-    # paiement plus tard (fin d'essai, tarif rétabli) — l'idempotence porte sur (raison, référence).
-    await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": "spend_host",
-                                 "p_ref": f"auth0:{ref}", "p_note": f"host autorisé ({motif}) {session_id}"})
+    # Trace d'autorisation à 0 crédit (admin / illimité / animation gratuite), référence DISTINCTE du
+    # débit réel (`auth0:` + ref) et valable UN Live (6 h) : elle couvre l'expiration en cours de Live,
+    # jamais les Lives suivants (fin d'essai, tarif rétabli).
+    await _s0_ecrire_trace(uid, "spend_host", f"auth0:{ref}", f"host autorisé ({motif}) {session_id}")
     return motif
+
+
+S0_TRACE_VALIDITE_H = 6   # = durée d'un jeton LiveKit : une trace gratuite couvre UN Live, jamais les suivants
+
+
+async def _s0_ledger_refs(uid: str, reason: str, refs: tuple) -> List[Dict[str, Any]]:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
+                                 params={"reason": f"eq.{reason}", "user_id": f"eq.{uid}",
+                                         "ref": "in.(" + ",".join(refs) + ")", "select": "ref,created_at"})
+        rows = r.json() if r.status_code == 200 else []
+        return [x for x in rows if isinstance(x, dict) and x.get("ref") in refs]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _s0_trace_recente(row: Dict[str, Any]) -> bool:
+    t = _s0_instant(row.get("created_at"))
+    if t is not None and t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t is not None and t > datetime.now(timezone.utc) - timedelta(hours=S0_TRACE_VALIDITE_H)
+
+
+async def _s0_ecrire_trace(uid: str, reason: str, ref: str, note: str) -> None:
+    r = await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": reason, "p_ref": ref, "p_note": note})
+    if r.status_code not in (200, 204):
+        logger.error("[S0] trace d'autorisation NON écrite (%s %s) : HTTP %s", reason, ref.split(":")[0], r.status_code)
 
 
 async def _s0_poser_hote_si_libre(session_id: str, uid: str) -> bool:
@@ -2964,14 +2993,17 @@ async def _s0_hote_autorise(session_id: str, hote_id: Optional[str]) -> bool:
         return False
     if await is_coach_unlimited(hote_id):
         return True
+    reel, trace = f"{session_id}:{hote_id}", f"auth0:{session_id}:{hote_id}"
+    lignes = await _s0_ledger_refs(hote_id, "spend_host", (reel, trace))
+    if any(x["ref"] == reel for x in lignes):
+        return True                                       # animation réellement payée pour cette session
+    if any(x["ref"] == trace for x in lignes):
+        if _s0_trace_recente(next(x for x in lignes if x["ref"] == trace)):
+            return True                                   # ce Live-ci (≤ 6 h), même si l'illimité a expiré
+        if int((await get_pricing_settings()).get("cost_host", 1) or 0) <= 0:
+            return True                                   # l'animation est toujours gratuite
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            refs = (f"{session_id}:{hote_id}", f"auth0:{session_id}:{hote_id}")     # débit réel OU trace gratuite
-            r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
-                                 params={"reason": "eq.spend_host", "user_id": f"eq.{hote_id}",
-                                         "ref": f"in.({refs[0]},{refs[1]})", "select": "ref"})
-            if r.status_code == 200 and any(x.get("ref") in refs for x in (r.json() or [])):
-                return True
             u = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{hote_id}", headers=_service_headers())
             return u.status_code == 200 and _is_admin_email(u.json() or {})
     except Exception:  # noqa: BLE001
@@ -2989,16 +3021,10 @@ async def _s0_preuve_enregistrement(session_id: str, uid: str) -> bool:
     """CETTE personne a-t-elle réellement fait autoriser et débiter l'enregistrement de CETTE
     session (`record/start`, référence `record:{session}:{uid}`) ? Égalité STRICTE (jamais `like` :
     « _ » y est un joker) ; un co-hôte qui n'a rien payé n'emprunte pas la preuve de l'hôte."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            refs = (f"record:{session_id}:{uid}", f"auth0:record:{session_id}:{uid}")   # débit réel OU trace gratuite
-            r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
-                                 params={"reason": "eq.spend_record", "user_id": f"eq.{uid}",
-                                         "ref": f"in.({refs[0]},{refs[1]})", "select": "ref"})
-        rows = r.json() if r.status_code == 200 else []
-        return any(isinstance(x, dict) and x.get("ref") in refs for x in rows or [])
-    except Exception:  # noqa: BLE001
-        return False
+    reel, trace = f"record:{session_id}:{uid}", f"auth0:record:{session_id}:{uid}"
+    lignes = await _s0_ledger_refs(uid, "spend_record", (reel, trace))
+    # Débit réel : toujours valable. Trace gratuite : seulement pour CE Live (≤ 6 h).
+    return any(x["ref"] == reel or (x["ref"] == trace and _s0_trace_recente(x)) for x in lignes)
 
 
 async def upsert_coach_subscription(uid: str, patch: Dict[str, Any]) -> None:

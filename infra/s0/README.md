@@ -82,6 +82,14 @@ session) décident de l'accès ; la preuve d'enregistrement compare la session e
 | Une trace d'autorisation à 0 crédit (essai illimité, tarif à 0) valait ensuite paiement définitif pour la même session (idempotence sur la référence) | les traces gratuites ont une référence DISTINCTE (`auth0:…`) : le vrai débit reste dû quand le tarif revient |
 | Live en cours au moment du déploiement : un co-hôte qui se reconnecte peut recevoir 402 tant que l'hôte n'a pas redemandé son jeton | **déployer le backend S0 HORS Live** (voir ordre ci-dessous) |
 
+## Revue sur 1ceb5ab — corrections S0i
+
+| Constat | Correction |
+|---|---|
+| Une trace gratuite (`auth0:`) valait sans limite pour les co-hôtes : session réutilisée après la fin d'un essai / d'un tarif à 0 → co-hôte sur scène sans débit | une trace gratuite ne vaut que pour **le Live en cours (6 h**, durée d'un jeton vidéo) — ou tant que l'hôte est illimité / l'animation gratuite |
+| L'hôte lui-même perdait la scène (débit ou 402) si son accès illimité expirait en plein Live | une trace récente (≤ 6 h) couvre la fin du Live, sans débit |
+| Écriture de la trace non vérifiée | échec journalisé (`[S0] trace d'autorisation NON écrite`) |
+
 ## Ordre d'application (au GO)
 
 0. **`00_urgent_wallet_add.sql`** sur les 2 bases — indépendant de S0, le plus tôt possible.

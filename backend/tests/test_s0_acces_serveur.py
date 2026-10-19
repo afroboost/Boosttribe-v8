@@ -457,6 +457,7 @@ def test_trace_gratuite_ne_vaut_pas_paiement_quand_le_tarif_revient(monde):
     sb.tables["pricing_settings"][0]["cost_host"] = 0
     assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-AVANCE"}).json()["ok"] is True
     sb.tables["pricing_settings"][0]["cost_host"] = 1
+    _vieillir(sb, u["riche"], "auth0:", 30)            # un Live SUIVANT (la trace couvre seulement le Live en cours)
     assert jeton(client, "riche", "SESS-AVANCE", role="stage").status_code == 200
     assert [d["delta"] for d in sb.debits(u["riche"])] == [-1]
 
@@ -472,3 +473,49 @@ def test_trace_gratuite_d_enregistrement_ne_vaut_pas_paiement(monde):
     sb.tables["pricing_settings"][0]["cost_record_transcribe"] = 4
     assert client.post("/session/record/start", headers=h, json={"session_id": "SESS-REC0"}).json()["cost"] == 4
     assert [d["reason"] for d in sb.debits(u["riche"])] == ["spend_host", "spend_record"]
+
+
+# ═══════════════════════ revue sur 1ceb5ab ═══════════════════════
+
+def _vieillir(sb, uid, prefixe, heures):
+    for x in sb.ledger(uid):
+        if (x.get("ref") or "").startswith(prefixe):
+            x["created_at"] = dans(-heures)
+
+
+def test_trace_gratuite_ancienne_n_ouvre_plus_la_scene_aux_cohotes(monde):
+    """Essai illimité / tarif 0 il y a longtemps, session réutilisée après : le co-hôte n'a plus la scène
+    tant que l'hôte ne règle pas l'animation de CE Live."""
+    m, sb, client, u = monde
+    sb.tables["pricing_settings"][0]["cost_host"] = 0
+    assert client.post("/session/claim-host", headers={"Authorization": "Bearer pauvre"},
+                       json={"session_id": "SESS-REUSE"}).json()["ok"] is True
+    _vieillir(sb, u["pauvre"], "auth0:", 30)
+    sb.tables["pricing_settings"][0]["cost_host"] = 1
+    next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-REUSE")["cohosts"] = [u["riche"]]
+    assert jeton(client, "riche", "SESS-REUSE", role="stage").status_code == 402
+    assert sb.debits(u["riche"]) == []
+
+
+def test_hote_garde_la_scene_si_son_illimite_expire_en_plein_live(monde):
+    m, sb, client, u = monde
+    uid, _t, _j = entrer_par_afroboost(sb, client)                 # hôte Afroboost, 0 crédit BoostTribe
+    h = {"Authorization": "Bearer membre"}
+    assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-LIVE"}).json()["ok"] is True
+    sb.profil(uid)["comp_access_until"] = dans(-1)                 # l'accès expire pendant le Live
+    assert jeton(client, "membre", "SESS-LIVE", role="stage").status_code == 200   # rechargement de page
+    assert all(x["delta"] == 0 for x in sb.ledger(uid))
+
+
+def test_trace_d_enregistrement_ancienne_ne_vaut_plus(monde):
+    m, sb, client, u = monde
+    uid, _t, _j = entrer_par_afroboost(sb, client)
+    sb.profil(uid)["coach_payment_type"] = "commission"
+    h = {"Authorization": "Bearer membre"}
+    assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-R6"}).status_code == 200
+    assert client.post("/session/record/start", headers=h, json={"session_id": "SESS-R6"}).json()["cost"] == 0
+    sb.profil(uid)["comp_access_until"] = dans(-1)
+    _vieillir(sb, uid, "auth0:record:", 30)
+    r = client.post("/session/record/upload", headers=h, data={"session_id": "SESS-R6"},
+                    files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
+    assert r.status_code == 403

@@ -20,6 +20,18 @@ Exception conservée : l'adresse admin `contact.artboost@gmail.com` garde l'auto
 `role=admin / subscription_status=enterprise` faite par `AuthContext.tsx` (même adresse fixe que
 la RLS des playlists). Le rôle admin du BACKEND reste décidé par `ADMIN_EMAILS` (inchangé).
 
+## Règles de `public.playlists` et `public.access_requests` (ajout S0b/S0c, revue de sécurité)
+
+| | AVANT | APRÈS S0 |
+|---|---|---|
+| `host_id` d'une session non revendiquée | tout compte pouvait s'y inscrire (`playlists_update` : `host_id IS NULL`) | posé **uniquement par le backend** (`/session/claim-host`, après débit) |
+| mode, prix, capacité, co-hôtes, fin du Live, option d'enregistrement | modifiables par tout « hôte » RLS | backend uniquement (c'est déjà le cas du code) |
+| pistes, description, média partagé, `is_private`, `access_mode` | hôte / co-hôte | inchangé |
+| Approuver une demande d'accès | tout « hôte » RLS — donc un tiers inscrit hôte pouvait approuver SA demande | backend uniquement (`/session/access-request/{id}/decision`, hôte de référence vérifié) |
+
+Côté backend, seules les lignes `playlists` de l'hôte de RÉFÉRENCE (la plus ancienne ligne de la
+session) décident de l'accès ; la preuve d'enregistrement compare la session exactement.
+
 ## Ordre d'application (au GO)
 
 1. **`01_s0_additif.sql`** sur les 2 bases — ajouts purs (solde autoritaire, vue publique). Sans risque.
@@ -65,7 +77,7 @@ se passer de `credits_disponibles` (repli sur `profiles.credits`). Backend/front
 ## Bancs
 
 - `infra/s0/banc/banc_s0.sh` — Postgres 16 local jetable : état actuel reproduit, migration ×2
-  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 8/19 (les failles), APRÈS 24/24, ROLLBACK 2/2.
+  (idempotence), tests 1-6 + solde, rollback. Résultat : AVANT 10/26 (les failles), APRÈS 31/31, ROLLBACK 3/3.
 - `backend/tests/test_s0_parcours_afroboost.py` (A-F, écrit AVANT la modification) et
   `backend/tests/test_s0_acces_serveur.py` (7-15 + ce qui doit rester ouvert).
 - `frontend/tests/s0Acces.test.mjs`.

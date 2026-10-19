@@ -10,6 +10,8 @@
 begin;
 drop trigger if exists s0_proteger_profil on public.profiles;
 drop function if exists public.s0_proteger_profil();
+drop trigger if exists s0_proteger_playlist on public.playlists;
+drop function if exists public.s0_proteger_playlist();
 drop policy if exists s0_profiles_select_soi on public.profiles;
 drop policy if exists s0_profiles_update_soi on public.profiles;
 drop policy if exists s0_profiles_insert_soi on public.profiles;
@@ -21,12 +23,12 @@ begin
     raise exception 'Sauvegarde S0 absente : rollback impossible automatiquement';
   end if;
   for p in select * from public.s0_sauvegarde_policies loop
-    if exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'profiles'
+    if exists (select 1 from pg_policies where schemaname = 'public' and tablename = p.tablename
                 and policyname = p.policyname) then
-      continue;                                   -- règle INSERT jamais retirée : déjà là
+      continue;                                   -- règle jamais retirée (INSERT) : déjà là
     end if;
-    sql := format('create policy %I on public.profiles as %s for %s to %s',
-                  p.policyname, p.permissive, p.cmd,
+    sql := format('create policy %I on public.%I as %s for %s to %s',
+                  p.policyname, p.tablename, p.permissive, p.cmd,
                   (select string_agg(case when r = 'public' then 'public' else quote_ident(r) end, ', ')
                      from unnest(p.roles) r));
     if p.qual is not null then sql := sql || ' using (' || p.qual || ')'; end if;

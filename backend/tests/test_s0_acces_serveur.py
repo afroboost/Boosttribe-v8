@@ -237,3 +237,16 @@ def test_preuve_enregistrement_exacte_pas_de_joker(monde):
     r = client.post("/session/record/upload", headers=h, data={"session_id": "REC_A"},
                     files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
     assert r.status_code == 403 and r.json()["detail"] == "enregistrement_non_autorise"
+
+
+def test_session_non_revendiquee_un_tiers_ne_devient_pas_hote(monde):
+    """La ligne de RÉFÉRENCE est la plus ancienne. Si elle n'a pas encore d'hôte, une ligne plus
+    récente portant host_id = tiers ne fait pas de lui l'hôte (ni pour la scène, ni pour l'accès)."""
+    m, sb, client, u = monde
+    sb.tables["playlists"].append({"session_id": "SESS-VIDE", "host_id": None, "mode": "paid",
+                                   "created_at": dans(-2), "updated_at": dans(-2)})
+    sb.tables["playlists"].append({"session_id": "SESS-VIDE", "host_id": u["riche"], "mode": "private",
+                                   "access_mode": "guest", "created_at": dans(-1), "updated_at": dans(-1)})
+    assert jeton(client, "riche", "SESS-VIDE", role="stage").status_code == 403
+    assert jeton(client, None, "SESS-VIDE").status_code == 401           # aucune ligne fiable : règle stricte
+    assert sb.ledger(u["riche"])[1:] == []

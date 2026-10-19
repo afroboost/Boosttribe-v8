@@ -125,3 +125,42 @@ select banc.verifier('7c. solde E après dépense du dernier crédit = 0 (copie 
   (select coalesce(sum(delta),0) from public.credit_ledger where user_id = :E and delta < 0) = -3);
 select banc.verifier('8. même débit rejoué → 1 seule ligne',
   (select count(*) from public.credit_ledger where ref = 'SESS1:a') = 1);
+
+-- ── playlists / access_requests : l'autorité d'une session ne s'écrit pas depuis le navigateur ──
+delete from public.access_requests; delete from public.playlists;
+insert into public.playlists (session_id, host_id, mode) values ('LIBRE', null, 'paid'), ('HOTE-A', :A, 'paid');
+insert into public.access_requests (id, session_id, requester_user_id, requester_name)
+  values (1, 'HOTE-A', :B, 'Bob'), (2, 'LIBRE', :B, 'Bob');
+begin; set local role authenticated;
+set local request.jwt.claims = '{"sub":"bbbbbbbb-0000-0000-0000-00000000000b","email":"b@exemple.test","role":"authenticated"}';
+update public.playlists set host_id = :B, mode = 'private', cohosts = array['bbbbbbbb-0000-0000-0000-00000000000b'],
+                            price_chf = 0 where session_id = 'LIBRE';
+update public.access_requests set status = 'approved' where id in (1, 2);
+insert into public.playlists (session_id, host_id, mode, cohosts, live_ended_at)
+  values ('NEUVE-B', :B, 'private', array['x'], now());
+commit;
+select banc.verifier('P1. un tiers ne s''inscrit pas hôte d''une session non revendiquée',
+  (select host_id is null from public.playlists where session_id = 'LIBRE'));
+select banc.verifier('P2. un tiers ne change ni mode, ni prix, ni co-hôtes',
+  (select mode = 'paid' and price_chf is null and cohosts is null from public.playlists where session_id = 'LIBRE'));
+select banc.verifier('P3. un participant n''approuve pas sa propre demande d''accès',
+  (select count(*) from public.access_requests where status = 'approved') = 0);
+select banc.verifier('P4. nouvelle session créée par un compte : colonnes d''accès vides (backend)',
+  (select host_id = :B and mode is null and cohosts is null and live_ended_at is null
+     from public.playlists where session_id = 'NEUVE-B'));
+begin; set local role authenticated;
+set local request.jwt.claims = '{"sub":"aaaaaaaa-0000-0000-0000-00000000000a","email":"a@exemple.test","role":"authenticated"}';
+update public.playlists set access_mode = 'guest', description = 'Mon live', tracks = '[{"id":1}]',
+                            mode = 'private', live_ended_at = now() where session_id = 'HOTE-A';
+commit;
+select banc.verifier('P5. l''hôte garde ses réglages navigateur (access_mode, description, pistes)',
+  (select access_mode = 'guest' and description = 'Mon live' and tracks = '[{"id":1}]'::jsonb from public.playlists where session_id = 'HOTE-A'));
+select banc.verifier('P6. l''hôte ne pose pas mode / fin du Live hors backend',
+  (select mode = 'paid' and live_ended_at is null from public.playlists where session_id = 'HOTE-A'));
+begin; set local role service_role;
+update public.playlists set host_id = :A where session_id = 'LIBRE';
+update public.access_requests set status = 'approved' where id = 1;
+commit;
+select banc.verifier('P7. le backend revendique et approuve normalement',
+  (select host_id = :A from public.playlists where session_id = 'LIBRE')
+  and (select status = 'approved' from public.access_requests where id = 1));

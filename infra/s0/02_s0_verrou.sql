@@ -22,22 +22,25 @@ begin;
 
 -- 0) Sauvegarde exacte des règles actuelles de profiles -------------------------
 create table if not exists public.s0_sauvegarde_policies (
-  policyname text primary key,
+  tablename  text not null default 'profiles',
+  policyname text not null,
   cmd        text not null,
   permissive text not null,
   roles      text[] not null,
   qual       text,
   with_check text,
-  saved_at   timestamptz not null default now()
+  saved_at   timestamptz not null default now(),
+  primary key (tablename, policyname)
 );
 alter table public.s0_sauvegarde_policies enable row level security;   -- aucune policy : service-role seul
 revoke all on public.s0_sauvegarde_policies from anon, authenticated;
-insert into public.s0_sauvegarde_policies (policyname, cmd, permissive, roles, qual, with_check)
-select policyname, cmd, permissive, roles::text[], qual, with_check
+insert into public.s0_sauvegarde_policies (tablename, policyname, cmd, permissive, roles, qual, with_check)
+select tablename, policyname, cmd, permissive, roles::text[], qual, with_check
   from pg_policies
- where schemaname = 'public' and tablename = 'profiles'
+ where schemaname = 'public'
+   and (tablename = 'profiles' or (tablename = 'access_requests' and policyname = 'access_requests_host_update'))
    and policyname not like 's0\_%'
-on conflict (policyname) do nothing;
+on conflict (tablename, policyname) do nothing;
 
 -- 1) Retrait des règles de LECTURE et de MODIFICATION existantes ---------------
 do $$
@@ -138,5 +141,55 @@ drop trigger if exists s0_proteger_profil on public.profiles;
 create trigger s0_proteger_profil
   before insert or update on public.profiles
   for each row execute function public.s0_proteger_profil();
+
+-- 3) playlists : l'AUTORITÉ d'une session ne s'écrit pas depuis le navigateur ----------
+--    Avant : `playlists_update` autorise tout compte tant que host_id est NULL → un tiers pouvait
+--    s'inscrire hôte d'une session pas encore revendiquée, puis (règle access_requests ci-dessous)
+--    approuver sa propre demande d'accès à un Live payant. host_id n'est posé que par le backend
+--    (/session/claim-host, après débit). Les colonnes d'accès (mode, prix, capacité, co-hôtes,
+--    fin du Live, option d'enregistrement) sont écrites par le backend uniquement (comme aujourd'hui).
+--    Le navigateur garde : pistes, description, média partagé, is_private, access_mode.
+create or replace function public.s0_proteger_playlist()
+returns trigger language plpgsql set search_path = public as $$
+declare
+  serveur text[] := array['cohosts','mode','price_chf','capacity','live_ended_at','record_enabled'];
+  n jsonb := to_jsonb(new);
+  forcer jsonb := '{}'::jsonb;
+  k text;
+begin
+  if current_user not in ('anon', 'authenticated') then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    forcer := jsonb_build_object('host_id', to_jsonb(old) -> 'host_id');
+    foreach k in array serveur loop
+      if n ? k then forcer := forcer || jsonb_build_object(k, to_jsonb(old) -> k); end if;
+    end loop;
+  else
+    foreach k in array serveur loop
+      if n ? k and jsonb_typeof(n -> k) <> 'null' then
+        forcer := forcer || jsonb_build_object(k, case when k = 'record_enabled' then 'false'::jsonb else 'null'::jsonb end);
+      end if;
+    end loop;
+  end if;
+  if forcer <> '{}'::jsonb then
+    new := jsonb_populate_record(new, forcer);
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists s0_proteger_playlist on public.playlists;
+create trigger s0_proteger_playlist
+  before insert or update on public.playlists
+  for each row execute function public.s0_proteger_playlist();
+
+-- 4) access_requests : l'approbation passe par le BACKEND (/session/access-request/{id}/decision,
+--    qui vérifie l'hôte de référence). Le navigateur ne l'écrit jamais directement.
+do $$
+begin
+  if to_regclass('public.access_requests') is not null then
+    execute 'drop policy if exists access_requests_host_update on public.access_requests';
+  end if;
+end $$;
 
 commit;

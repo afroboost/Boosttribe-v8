@@ -380,10 +380,10 @@ async def get_session_authz(session_id: str) -> Optional[Dict[str, Any]]:
                     "order": "created_at.asc"},
         )
     if resp.status_code == 200 and resp.json():
-        rows = resp.json()
-        # S0 : déterministe — l'hôte de RÉFÉRENCE est celui de la plus ancienne ligne revendiquée.
-        # (Une ligne ajoutée plus tard par un tiers ne peut pas prendre la place de l'hôte.)
-        return next((r for r in rows if r.get("host_id")), rows[0])
+        # S0 : déterministe — la ligne de RÉFÉRENCE est la PLUS ANCIENNE de la session (session_id
+        # est unique en production ; sinon, une ligne ajoutée plus tard par un tiers ne peut pas
+        # prendre la place de l'hôte — ni « revendiquer » une session dont l'hôte n'est pas posé).
+        return resp.json()[0]
     return None
 
 

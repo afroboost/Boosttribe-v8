@@ -10,6 +10,8 @@ import { Label } from '@/components/ui/label';
 import { ArrowLeft, Mail, Lock, User, Eye, EyeOff, AlertCircle, CheckCircle, Gift } from 'lucide-react';
 import { isSupabaseConfigured } from '@/lib/supabaseClient';
 import { getCreditsConfig } from '@/lib/paymentApi';
+import { BRAND } from '@/config/brand';
+import { texteRejoindre } from '@/lib/cguConsentement';
 
 type AuthMode = 'login' | 'signup' | 'forgot';
 
@@ -120,9 +122,16 @@ const LoginPage: React.FC = () => {
   };
 
   // Handle Google login
+  // Inscription : la case CGU est exigée AVANT la redirection Google, et le consentement est
+  // enregistré (preuve serveur) au retour. Connexion : comptes existants — s'ils n'ont pas encore
+  // accepté, la fenêtre CGU leur est imposée avant tout achat.
   const handleGoogleLogin = async () => {
     setError(null);
-    const { error } = await signInWithGoogle();
+    if (mode === 'signup' && !acceptedTerms) {
+      setError('Vous devez accepter les CGU pour créer un compte');
+      return;
+    }
+    const { error } = await signInWithGoogle(mode === 'signup' && acceptedTerms);
     
     if (error) {
       setError(translateError(error.message));
@@ -225,7 +234,7 @@ const LoginPage: React.FC = () => {
           </CardTitle>
           <CardDescription className="text-white/50">
             {mode === 'login' && 'Connectez-vous pour accéder à votre espace'}
-            {mode === 'signup' && 'Rejoignez la communauté Boosttribe'}
+            {mode === 'signup' && texteRejoindre(BRAND.communityName)}
             {mode === 'forgot' && 'Entrez votre email pour réinitialiser'}
           </CardDescription>
         </CardHeader>
@@ -478,6 +487,7 @@ const LoginPage: React.FC = () => {
                 type="button"
                 variant="outline"
                 onClick={handleGoogleLogin}
+                disabled={mode === 'signup' && !acceptedTerms}
                 className="w-full h-11 border-white/10 bg-white/5 text-white hover:bg-white/10"
               >
                 <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">

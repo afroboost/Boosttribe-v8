@@ -23,6 +23,8 @@ export type BrandId = 'boosttribe' | 'afroboost';
 export interface Brand {
   id: BrandId;
   name: string;
+  /** Nom de la communauté dans les textes (« Rejoignez la communauté … »). */
+  communityName: string;
   title: string;
   description: string;
   shortDescription: string;

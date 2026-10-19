@@ -1,6 +1,8 @@
 # S0 — Profils verrouillés + accès au Live décidé par le serveur (19/10/2026)
 
-**Statut (19/10/2026) : `00_urgent_wallet_add.sql` et `01_s0_additif.sql` APPLIQUÉS en production sur les 2 bases ; `02_s0_verrou.sql` et le backend/front S0 NON appliqués.**
+**Statut (19/10/2026) : `00_urgent_wallet_add.sql`, `01_s0_additif.sql` ET `02_s0_verrou.sql` APPLIQUÉS en production sur les 2 bases (02 le 19/10/2026 — ne JAMAIS le rejouer en production).**
+
+**Post-S0 (`infra/post-s0/migrations/`) : `03_cgu_preuve.sql` (2 bases) et `04_session_sans_hote.sql` (afroboost.com/live seulement, sans effet sur boosttribe.pro) PRÉPARÉES, NON appliquées.** Après chaque application, passer `POST_S0_NIVEAU` (03 puis 03_04) dans la configuration des sauvegardes (`infra/sauvegardes/README.md`).
 
 Méthode d'application (sûre) : fichier transmis compressé en une ligne au conteneur `supabase-db-…` (terminal Coolify), empreinte MD5 vérifiée, puis `psql -U supabase_admin -v ON_ERROR_STOP=1 -f`. Ne JAMAIS taper un long script multi-lignes dans le terminal web : une 1re tentative a été mélangée par la saisie (transaction annulée, base intacte, vérifié).
 À appliquer sur les DEUX bases : `api.boosttribe.pro` (boosttribe.pro) et

@@ -19,6 +19,10 @@
 --   Valeur inconnue → ligne MANQUANTE (niveau.post_s0.valide).
 \pset footer off
 \pset tuples_only on
+-- Post-S0 : chemin de recherche FIXE. pg_policies réécrit les expressions selon le search_path de la
+-- session : en supabase_admin (search_path « $user, public, auth, extensions ») « auth.uid() » devient
+-- « uid() », et les règles S0 pourtant présentes étaient déclarées MANQUANTES (constaté en prod le 19/10).
+set search_path = public, extensions;
 \if :{?post_s0}
 \else
 \set post_s0 aucun

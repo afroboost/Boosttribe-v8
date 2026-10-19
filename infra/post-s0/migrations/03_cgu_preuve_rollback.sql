@@ -40,4 +40,7 @@ alter table public.profiles drop constraint if exists profiles_cgu_preuve_cohere
 alter table public.profiles drop column if exists terms_accepted_at;
 alter table public.profiles drop column if exists terms_version;
 
+-- Post-S0 QA : PostgREST recharge son cache de schéma (sinon la RPC accepter_cgu peut rester invisible quelques instants).
+notify pgrst, 'reload schema';
+
 commit;

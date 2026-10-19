@@ -152,4 +152,7 @@ end $$;
 revoke all on function public.accepter_cgu(text) from public, anon;
 grant execute on function public.accepter_cgu(text) to authenticated, service_role;
 
+-- Post-S0 QA : PostgREST recharge son cache de schéma (sinon la RPC accepter_cgu peut rester invisible quelques instants).
+notify pgrst, 'reload schema';
+
 commit;

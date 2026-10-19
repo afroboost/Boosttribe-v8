@@ -66,12 +66,20 @@ session) décident de l'accès ; la preuve d'enregistrement compare la session e
 | `s0_defaut` appelable par anon | exécution retirée à anon (gardée pour authenticated : nécessaire aux verrous) |
 | Création de profil en liste noire | liste BLANCHE, comme la modification |
 
+## Revue sur 09f1588 — corrections S0g
+
+| Constat | Correction |
+|---|---|
+| **Régression** : animation réglée à 0 crédit (réglage admin) → aucune trace au grand livre → les co-hôtes perdaient la scène ; idem si l'accès illimité de l'hôte expire pendant le Live | l'autorisation d'animer laisse TOUJOURS une trace (débit réel, ou trace à 0 crédit pour admin / illimité / gratuit) |
+| Course rare : ligne sans hôte créée entre la vérification et la création → faux échec de prise d'hôte | la prise conditionnelle est retentée une fois |
+| Tolérance de transition trop large | limitée aux demandes ANONYMES, bornée par `S0_AR_SANS_PREUVE_JUSQUA` (date ISO) ; lire `max(id)` au DERNIER moment |
+
 ## Ordre d'application (au GO)
 
 0. **`00_urgent_wallet_add.sql`** sur les 2 bases — indépendant de S0, le plus tôt possible.
 
 1. **`audit_avant_verrou.sql`** (lecture seule) puis **`01_s0_additif.sql`** sur les 2 bases — ajouts purs (solde autoritaire, vue publique). 01 s'arrête seul si `playlists.session_id` n'est pas unique.
-2. **Déployer frontend PUIS backend S0** (poser `S0_AR_SANS_PREUVE_MAX_ID` = `select max(id) from access_requests` juste avant) (les 2 apps : boosttribe.pro et afroboost.com/live).
+2. **Déployer frontend PUIS backend S0** (poser `S0_AR_SANS_PREUVE_MAX_ID` = `select max(id) from access_requests` lu au DERNIER moment, et `S0_AR_SANS_PREUVE_JUSQUA` = déploiement + 3 jours ; retirer les deux ensuite) (les 2 apps : boosttribe.pro et afroboost.com/live).
    Le frontend lit `profiles_public` et retombe sur `profiles` si la vue manque : compatible avant/après.
 3. **`02_s0_verrou.sql`** sur les 2 bases — le verrou. Les règles d'origine sont sauvegardées
    (`s0_sauvegarde_policies`) avant d'être retirées.

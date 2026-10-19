@@ -365,9 +365,16 @@ def test_demande_anterieure_au_deploiement_toleree_jusqu_au_seuil(monde, monkeyp
     session(sb, "SESS-BILLET", u["coach"], mode="paid")
     sb.tables["access_requests"].append({"id": 40, "session_id": "SESS-BILLET", "status": "approved", "requester_user_id": None})
     sb.tables["access_requests"].append({"id": 41, "session_id": "SESS-BILLET", "status": "approved", "requester_user_id": None})
+    sb.tables["access_requests"].append({"id": 39, "session_id": "SESS-BILLET", "status": "approved",
+                                         "requester_user_id": u["riche"]})
     monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_MAX_ID", 40)
-    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 200   # antérieure : tolérée
+    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 403   # sans date de fin : rien
+    monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_JUSQUA", dans(24))
+    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 200   # antérieure anonyme : tolérée
     assert jeton(client, None, "SESS-BILLET", request_id=41).status_code == 403   # postérieure : preuve exigée
+    assert jeton(client, None, "SESS-BILLET", request_id=39).status_code == 403   # demande d'un COMPTE : jamais par numéro
+    monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_JUSQUA", dans(-1))
+    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 403   # transition terminée
 
 
 def test_enregistrement_garde_son_autorisation_si_l_illimite_expire(monde):
@@ -382,3 +389,47 @@ def test_enregistrement_garde_son_autorisation_si_l_illimite_expire(monde):
                     files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
     assert r.status_code == 200, r.text
     assert all(x["delta"] == 0 for x in sb.ledger(uid))
+
+
+
+# ═══════════════════════ revue sur 09f1588 ═══════════════════════
+
+def test_cohote_avec_animation_gratuite(monde, monkeypatch):
+    """L'admin peut régler l'animation à 0 crédit : l'hôte ordinaire l'obtient sans débit, et ses
+    co-hôtes gardent la scène (trace d'autorisation à 0 crédit)."""
+    m, sb, client, u = monde
+    sb.tables["pricing_settings"][0]["cost_host"] = 0
+    assert client.post("/session/claim-host", headers={"Authorization": "Bearer pauvre"},
+                       json={"session_id": "SESS-GRATUITE"}).json()["ok"] is True
+    next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-GRATUITE")["cohosts"] = [u["riche"]]
+    assert jeton(client, "riche", "SESS-GRATUITE", role="stage").status_code == 200
+    assert sb.debits(u["pauvre"]) == [] and sb.debits(u["riche"]) == []
+
+
+def test_cohote_garde_la_scene_si_l_illimite_de_l_hote_expire(monde):
+    m, sb, client, u = monde
+    uid, _t, _j = entrer_par_afroboost(sb, client)                     # hôte illimité (Afroboost 12 h)
+    assert client.post("/session/claim-host", headers={"Authorization": "Bearer membre"},
+                       json={"session_id": "SESS-AF"}).json()["ok"] is True
+    sb.profil(uid)["comp_access_until"] = dans(-1)                     # l'accès expire pendant le Live
+    next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-AF")["cohosts"] = [u["riche"]]
+    assert jeton(client, "riche", "SESS-AF", role="stage").status_code == 200
+    assert all(x["delta"] == 0 for x in sb.ledger(uid))
+
+
+def test_prise_d_hote_course_ligne_sans_hote_creee_entre_temps(monde):
+    """Une ligne SANS hôte apparaît entre la vérification et la création : la prise est retentée,
+    l'hôte l'obtient (au lieu d'un faux échec qui le laissait payer sans être hôte)."""
+    m, sb, client, u = monde
+    vrai_rest = sb._rest
+
+    def rest(req, table, params):
+        rep = vrai_rest(req, table, params)
+        if (req.method == "GET" and table == "playlists" and dict(params).get("select") == "session_id"
+                and dict(params).get("session_id") == "eq.SESS-COURSE2"):
+            sb.tables["playlists"].append({"session_id": "SESS-COURSE2", "host_id": None, "description": "x"})
+        return rep
+    sb._rest = rest
+    r = client.post("/session/claim-host", headers={"Authorization": "Bearer riche"}, json={"session_id": "SESS-COURSE2"})
+    assert r.json() == {"ok": True, "host_id": u["riche"]}
+    assert next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-COURSE2")["host_id"] == u["riche"]

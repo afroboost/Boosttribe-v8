@@ -1052,14 +1052,31 @@ def _s0_preuve_demande(session_id: str, request_id: Optional[int]) -> str:
     return _hm.new(cle, f"bt-ar:{session_id}:{request_id}".encode(), _h.sha256).hexdigest()[:40]
 
 
+# Transition (déploiement S0) : les demandes ANONYMES créées avant S0 n'ont pas de preuve. Elles restent
+# valables si leur id ≤ S0_AR_SANS_PREUVE_MAX_ID ET jusqu'à S0_AR_SANS_PREUVE_JUSQUA (ISO). À retirer ensuite.
 S0_AR_SANS_PREUVE_MAX_ID = int(os.environ.get("S0_AR_SANS_PREUVE_MAX_ID", "0") or 0)
+S0_AR_SANS_PREUVE_JUSQUA = os.environ.get("S0_AR_SANS_PREUVE_JUSQUA", "").strip()
+
+
+async def _s0_demande_approuvee(session_id: str, request_id: Optional[int], preuve: Optional[str]) -> bool:
+    """Demande d'accès approuvée, présentée par son DEMANDEUR (preuve), ou — transition bornée —
+    demande ANONYME antérieure au déploiement S0."""
+    if _s0_preuve_demande_valide(session_id, request_id, preuve):
+        return await _access_request_approved_by_id(session_id, request_id)
+    fin = _s0_instant(S0_AR_SANS_PREUVE_JUSQUA) if S0_AR_SANS_PREUVE_JUSQUA else None
+    if not (request_id and S0_AR_SANS_PREUVE_MAX_ID and fin and datetime.now(timezone.utc) < fin
+            and 0 < int(request_id) <= S0_AR_SANS_PREUVE_MAX_ID):
+        return False
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(f"{SUPABASE_URL}/rest/v1/access_requests", headers=_service_headers(),
+                             params={"id": f"eq.{request_id}", "session_id": f"eq.{session_id}",
+                                     "status": "eq.approved", "requester_user_id": "is.null",
+                                     "select": "id", "limit": "1"})
+    return r.status_code == 200 and bool(r.json())
 
 
 def _s0_preuve_demande_valide(session_id: str, request_id: Optional[int], preuve: Optional[str]) -> bool:
     import hmac as _hm
-    # Transition : une demande créée AVANT S0 (id ≤ seuil posé au déploiement) n'a pas de preuve.
-    if request_id and S0_AR_SANS_PREUVE_MAX_ID and 0 < int(request_id) <= S0_AR_SANS_PREUVE_MAX_ID:
-        return True
     return bool(request_id and isinstance(preuve, str) and preuve.isascii()
                 and (SUPABASE_SERVICE_ROLE_KEY or LIVEKIT_API_SECRET)
                 and _hm.compare_digest(preuve, _s0_preuve_demande(session_id, request_id)))
@@ -2863,8 +2880,7 @@ async def _s0_autoriser_spectateur(session_id: str, user: Optional[Dict[str, Any
         return "gratuit_par_lien"
     if mode == "paid":
         if (await has_valid_ticket(session_id, uid) or await _has_approved_access_request(session_id, uid)
-                or (_s0_preuve_demande_valide(session_id, request_id, request_token)
-                    and await _access_request_approved_by_id(session_id, request_id))):
+                or await _s0_demande_approuvee(session_id, request_id, request_token)):
             return "billet"
         raise HTTPException(status_code=403, detail="billet_requis")
     # mode « open » (Ouverte, crédits) — défaut d'une session inconnue
@@ -2883,13 +2899,22 @@ async def _s0_autoriser_hote(session_id: str, user: Dict[str, Any]) -> str:
     """Autorisation d'ANIMER : admin → illimité (Afroboost 12 h, abonnement coach) → débit
     `cost_host` idempotent (même référence que /credits/spend host). 402 si solde insuffisant."""
     uid = user.get("id")
+    ref = f"{session_id}:{uid}"
     if _is_admin_email(user):
-        return "admin"
-    if await is_coach_unlimited(uid):
-        return "illimite"
-    cost = int((await get_pricing_settings()).get("cost_host", 1) or 0)
-    await _spend_credits(uid, cost, "spend_host", ref=f"{session_id}:{uid}", note=f"host {session_id}")
-    return "credit"
+        motif = "admin"
+    elif await is_coach_unlimited(uid):
+        motif = "illimite"
+    else:
+        cost = int((await get_pricing_settings()).get("cost_host", 1) or 0)
+        if cost > 0:
+            await _spend_credits(uid, cost, "spend_host", ref=ref, note=f"host {session_id}")
+            return "credit"
+        motif = "gratuit"
+    # Trace d'autorisation à 0 crédit (admin / illimité / animation gratuite) : les co-hôtes s'y fient
+    # (`_s0_hote_autorise`), y compris si l'accès illimité de l'hôte expire pendant le Live.
+    await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": "spend_host",
+                                 "p_ref": ref, "p_note": f"host autorisé ({motif}) {session_id}"})
+    return motif
 
 
 async def _s0_poser_hote_si_libre(session_id: str, uid: str) -> bool:
@@ -2909,7 +2934,15 @@ async def _s0_poser_hote_si_libre(session_id: str, uid: str) -> bool:
         c = await client.post(f"{SUPABASE_URL}/rest/v1/playlists",
                               headers=_service_headers({"Prefer": "return=representation"}),
                               json={"session_id": session_id, "host_id": uid})
-    return c.status_code in (200, 201) and bool(c.json() if c.content else [])
+        if c.status_code in (200, 201) and (c.json() if c.content else []):
+            return True
+        # Une ligne SANS hôte a pu être créée entre-temps (contenu enregistré par le navigateur) :
+        # on retente UNE fois la prise conditionnelle.
+        r = await client.patch(f"{SUPABASE_URL}/rest/v1/playlists",
+                               headers=_service_headers({"Prefer": "return=representation"}),
+                               params={"session_id": f"eq.{session_id}", "host_id": "is.null"},
+                               json={"host_id": uid})
+    return r.status_code == 200 and bool(r.json() or [])
 
 
 async def _s0_liberer_hote(session_id: str, uid: str) -> None:
@@ -3378,8 +3411,7 @@ async def ticket_check(session_id: str, request_id: Optional[int] = None,
         await has_valid_ticket(session_id, uid)
         or await _has_approved_access_request(session_id, uid)
         # S0 : le numéro de demande (séquentiel, statut public) ne suffit pas — preuve du demandeur exigée.
-        or (_s0_preuve_demande_valide(session_id, request_id, request_token)
-            and await _access_request_approved_by_id(session_id, request_id))
+        or await _s0_demande_approuvee(session_id, request_id, request_token)
     )
     return {"has_ticket": ok}
 

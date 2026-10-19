@@ -30,6 +30,27 @@ test('A. média partagé : jsonb ne garde pas l’ordre des clés, le retrait (n
   assert.equal(ecritureSessionConfirmee({ shared_media: null }, [{ shared_media: media }]), false);
 });
 
+test('A2. clés à undefined : absentes du JSON envoyé ET relu → ignorées à toute profondeur (plus de faux « non enregistré »)', () => {
+  // Cas réel : SharedMedia construit avec des champs optionnels non renseignés (ex. startedAt, title).
+  const envoye = { url: 'https://exemple.invalid/v.mp4', type: 'video', isPlaying: true, currentTime: 12, startedAt: undefined, title: undefined };
+  const relu = JSON.parse(JSON.stringify(envoye));                    // ce que jsonb rend : clés undefined absentes
+  assert.equal(Object.prototype.hasOwnProperty.call(relu, 'startedAt'), false);
+  assert.equal(ecritureSessionConfirmee({ shared_media: envoye }, [{ shared_media: relu }]), true, 'niveau 1');
+  const imbrique = { url: 'u', meta: { a: 1, b: undefined, c: { d: undefined, e: 'x' } }, pistes: [{ id: 1, x: undefined }] };
+  assert.equal(ecritureSessionConfirmee({ shared_media: imbrique }, [{ shared_media: JSON.parse(JSON.stringify(imbrique)) }]), true, 'objets et tableaux imbriqués');
+  // L'oubli n'excuse pas une vraie différence :
+  assert.equal(ecritureSessionConfirmee({ shared_media: imbrique }, [{ shared_media: { url: 'u', meta: { a: 2, c: { e: 'x' } }, pistes: [{ id: 1 }] } }]), false, 'valeur réellement différente');
+  assert.equal(ecritureSessionConfirmee({ shared_media: { url: 'u', b: undefined } }, [{ shared_media: { url: 'u', b: 'relu en plus' } }]), false, 'clé présente seulement à la relecture');
+  // Tableau : undefined → null, comme JSON.stringify.
+  assert.equal(ecritureSessionConfirmee({ shared_media: { l: [1, undefined] } }, [{ shared_media: { l: [1, null] } }]), true);
+  assert.equal(ecritureSessionConfirmee({ shared_media: { l: [1, undefined] } }, [{ shared_media: { l: [1] } }]), false);
+  // Colonne demandée à undefined : non envoyée → rien à confirmer → jamais un succès par défaut.
+  assert.equal(ecritureSessionConfirmee({ description: undefined }, [{ description: 'ancienne' }]), false);
+  assert.equal(ecritureSessionConfirmee({ description: 'x', shared_media: undefined }, [{ description: 'x', shared_media: { url: 'ancien' } }]), true, 'seule la colonne envoyée compte');
+  // null reste une VALEUR (retrait du média), pas une absence.
+  assert.equal(ecritureSessionConfirmee({ shared_media: { url: 'u', t: null } }, [{ shared_media: { url: 'u' } }]), false);
+});
+
 const client = codeSeul(lire('lib', 'supabaseClient.ts'));
 const corps = (nom) => {
   const i = client.indexOf(`function ${nom}(`);

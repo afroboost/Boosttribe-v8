@@ -15,7 +15,10 @@ export interface UserProfile {
   avatar_url?: string;
   role: UserRole;
   subscription_status: SubscriptionStatus;
+  // CGU : valeur d'AFFICHAGE, déduite de la colonne réelle `terms_accepted` (post-S0, 19/10/2026).
+  // ⚠️ `has_accepted_terms` n'existe dans AUCUNE base (boosttribe.pro, afroboost.com/live) : ne jamais l'écrire.
   has_accepted_terms: boolean;
+  terms_accepted?: boolean | null;
   // 💳 Solde de crédits (colonne maintenue par trigger côté Supabase). 1 crédit = 1 accès à un live.
   credits?: number;
   // POINT 6 : accès offert par l'admin (DÉPRÉCIÉ — conservé pour compat migration)
@@ -24,6 +27,10 @@ export interface UserProfile {
   created_at: string;
   updated_at: string;
 }
+
+// Post-S0 : la colonne en base est `terms_accepted`. Seul un `true` explicite vaut acceptation
+// (aucun ancien compte n'est réputé avoir accepté sans preuve).
+const avecCgu = (row: UserProfile): UserProfile => ({ ...row, has_accepted_terms: row?.terms_accepted === true });
 
 export interface AuthContextValue {
   // Auth state
@@ -208,10 +215,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('[AUTH] Upgrading user to admin role');
         // Update DB if possible
         await supabase.from('profiles').update({ role: 'admin', subscription_status: 'enterprise' }).eq('id', userId);
-        return { ...data, role: 'admin', subscription_status: 'enterprise' } as UserProfile;
+        return avecCgu({ ...data, role: 'admin', subscription_status: 'enterprise' } as UserProfile);
       }
 
-      return data as UserProfile;
+      return avecCgu(data as UserProfile);
     } catch (err) {
       console.error('[AUTH] Exception fetching profile:', err);
       return createLocalProfile(userId, userEmail, userMetadata);
@@ -233,7 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       avatar_url: (userMetadata?.avatar_url as string) || '',
       role: isAdminUser ? 'admin' : 'user',
       subscription_status: isAdminUser ? 'enterprise' : 'trial',
-      has_accepted_terms: false,
+      terms_accepted: false,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -250,7 +257,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return createLocalProfile(userId, userEmail, userMetadata);
       }
 
-      return data as UserProfile;
+      return avecCgu(data as UserProfile);
     } catch (err) {
       console.error('[AUTH] Exception creating profile:', err);
       return createLocalProfile(userId, userEmail, userMetadata);
@@ -451,9 +458,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { error } = await supabase
         .from('profiles')
-        .update({ 
-          has_accepted_terms: true, 
-          updated_at: new Date().toISOString() 
+        .update({
+          terms_accepted: true,
+          updated_at: new Date().toISOString()
         })
         .eq('id', user.id);
 
@@ -462,7 +469,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      setProfile(prev => prev ? { ...prev, has_accepted_terms: true } : null);
+      setProfile(prev => prev ? { ...prev, terms_accepted: true, has_accepted_terms: true } : null);
       return true;
     } catch (err) {
       console.error('[AUTH] Exception accepting terms:', err);

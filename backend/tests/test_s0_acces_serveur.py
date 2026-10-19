@@ -519,3 +519,21 @@ def test_trace_d_enregistrement_ancienne_ne_vaut_plus(monde):
     r = client.post("/session/record/upload", headers=h, data={"session_id": "SESS-R6"},
                     files={"file": ("a.webm", io.BytesIO(b"audio"), "audio/webm")})
     assert r.status_code == 403
+
+
+# ═══════════════════════ comptes sans ligne profiles (audit du 19/10) ═══════════════════════
+
+def test_compte_sans_profil_solde_exact_du_grand_livre(monde):
+    """Audit : des comptes ont un bonus d'inscription au grand livre mais AUCUNE ligne profiles.
+    Le solde vient du grand livre : exactement 1 (pas 0, pas 2) ; redemander le bonus ne crée rien."""
+    m, sb, client, u = monde
+    uid = sb.utilisateur("sansprofil@exemple.test", "sansprofil")
+    sb.tables["profiles"] = [p for p in sb.tables["profiles"] if p["id"] != uid]        # pas de profil
+    sb.crediter(uid, 1, reason="signup_bonus", ref=f"signup:{uid}")
+    assert client.get("/credits/me", headers={"Authorization": "Bearer sansprofil"}).json()["balance"] == 1
+    r = client.post("/credits/signup-bonus", headers={"Authorization": "Bearer sansprofil"})
+    assert r.status_code == 200 and r.json()["balance"] == 1
+    assert len(sb.ledger(uid)) == 1, "aucun bonus recréé, aucun doublon"
+    # et ce crédit historique est bien utilisable (une entrée payante)
+    assert jeton(client, "sansprofil", "SESS-OUVERTE").status_code == 200
+    assert sb.disponibles(uid) == 0

@@ -88,6 +88,19 @@ end;
 $$;
 revoke all on function public.credits_disponibles(uuid) from public, anon, authenticated;
 grant execute on function public.credits_disponibles(uuid) to service_role;
+-- Même PROPRIÉTAIRE que les fonctions de crédit existantes (supabase_admin sur boosttribe.pro, postgres
+-- sur afroboost.com/live) : add_credits / spend_credits / recalc_user_credits sont SECURITY DEFINER et
+-- s'exécutent au nom de ce propriétaire — sans cela, sur /live, elles n'auraient pas le droit d'appeler
+-- credits_disponibles et TOUT crédit / débit échouerait (constaté au banc sur le schéma réel, 19/10).
+do $$
+declare proprio text;
+begin
+  select pg_get_userbyid(proowner) into proprio
+    from pg_proc where oid = to_regprocedure('public.spend_credits(uuid,integer,text,text,text)');
+  if proprio is not null then
+    execute format('alter function public.credits_disponibles(uuid) owner to %I', proprio);
+  end if;
+end $$;
 
 -- 2) Copie d'affichage profiles.credits = solde disponible ----------------------
 create or replace function public.recalc_user_credits(p_user uuid)

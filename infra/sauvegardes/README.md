@@ -224,3 +224,12 @@ T1-T3 rotation 35 jours, copie chiffrée, restauration depuis la copie.
   sont pas dans le manifeste ; la copie chiffrée du jour contient les archives de fichiers (volume à prévoir).
 - Le test de restauration démarre un conteneur de ~512 Mo et extrait les fichiers : hors des heures de Live.
 - `studiio-db` : rétention illimitée et fichiers lisibles par tous (hors périmètre).
+
+## Restauration RÉELLE — étape obligatoire (constat du 19/10/2026)
+
+Avant tout `pg_restore` dans une base Supabase neuve, exécuter `droits_par_defaut_neutres.sql`
+dans la base cible (après `roles.sql`). Sans cette étape, les droits par défaut de l'image
+redonnent EXECUTE à anon / authenticated sur `wallet_add`, `spend_credits`, `add_credits`… :
+la restauration rouvrirait les failles S0. `test_restauration.sh` le fait et le vérifie
+(protections S0 contrôlées après restauration). Stockage réel du serveur : backend **s3 (MinIO)**,
+volume `/data/coolify/services/<uuid>/volumes/storage` (≈ 590 Mo BoostTribe, 221 Mo Live au 19/10).

@@ -36,6 +36,7 @@ ICI=$(cd "$(dirname "$0")" && pwd)
 EMPREINTES_SQL=${EMPREINTES_SQL:-$ICI/empreintes.sql}
 PROTECTIONS_SQL=${PROTECTIONS_SQL:-$ICI/protections_s0.sql}
 ERREURS_CONNUES=${ERREURS_CONNUES:-$ICI/erreurs_restauration_connues.txt}
+DROITS_DEFAUT_SQL=${DROITS_DEFAUT_SQL:-$ICI/droits_par_defaut_neutres.sql}
 S0_NIVEAU=${S0_NIVEAU:-complet}
 POST_S0_NIVEAU=${POST_S0_NIVEAU:-aucun}      # post-S0 exigé : aucun | 03 | 03_04 (voir protections_s0.sql)
 EXIGER_STOCKAGE=${EXIGER_STOCKAGE:-1}         # 1 = une base sans archive de fichiers = ÉCHEC
@@ -59,7 +60,7 @@ arreter() { journal "ÉCHEC : $*"; alerter echec "test de restauration : $*"; ex
 
 case "$S0_NIVEAU" in complet|etape1|aucun) ;; *) arreter "S0_NIVEAU invalide ($S0_NIVEAU)";; esac
 case "$POST_S0_NIVEAU" in aucun|03|03_04) ;; *) arreter "POST_S0_NIVEAU invalide ($POST_S0_NIVEAU)";; esac
-for f in "$EMPREINTES_SQL" "$PROTECTIONS_SQL" "$ERREURS_CONNUES"; do [ -f "$f" ] || arreter "fichier introuvable : $f"; done
+for f in "$EMPREINTES_SQL" "$PROTECTIONS_SQL" "$ERREURS_CONNUES" "$DROITS_DEFAUT_SQL"; do [ -f "$f" ] || arreter "fichier introuvable : $f"; done
 
 JOUR=${1:-$(find "$RACINE/quotidien" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)}
 [ -n "$JOUR" ] && [ -d "$JOUR" ] || arreter "aucune sauvegarde trouvée"
@@ -113,6 +114,12 @@ for dump in "$JOUR"/*-postgres.dump; do
   "$DOCKER" exec -i "$CONTENEUR" psql -U "$PG_USER" -h localhost -d postgres -X -q \
     < "$JOUR/$nom-roles.sql" > "$TRAVAIL/$nom-roles.log" 2>&1
   code_roles=$?
+  # Droits par défaut de l'image neutralisés AVANT pg_restore (sinon anon retrouve les fonctions de
+  # crédit : voir droits_par_defaut_neutres.sql). Un échec ici = restauration non fiable.
+  if ! "$DOCKER" exec -i "$CONTENEUR" psql -U "$PG_USER" -h localhost -d postgres -X -q \
+       < "$DROITS_DEFAUT_SQL" > "$TRAVAIL/$nom-droits-defaut.log" 2>&1; then
+    ko "neutralisation des droits par défaut impossible : $(head -3 "$TRAVAIL/$nom-droits-defaut.log" | tr '\n' ' ' | cut -c1-200)"
+  fi
   "$DOCKER" exec -i "$CONTENEUR" pg_restore -U "$PG_USER" -h localhost -d postgres --clean --if-exists \
     < "$dump" > "$TRAVAIL/$nom-restore.log" 2>&1
   code_restore=$?
@@ -180,16 +187,17 @@ for dump in "$JOUR"/*-postgres.dump; do
       nfich=$(wc -l < "$TRAVAIL/$nom-manifeste" | tr -d ' ')
       fichiers="$nfich identiques"
       # Cohérence avec storage.objects restauré : chaque objet doit avoir son fichier.
-      # Disposition Supabase (backend « file ») : <racine>/<seau global>/<tenant>/<seau>/<nom>/<version> ;
+      # Disposition Supabase : backend « file » <racine>/<seau global>/<tenant>/<seau>/<nom>/<version>,
       # la comparaison est tolérante : on cherche « <seau>/<nom> » comme suite de dossiers d'un fichier.
       if "$DOCKER" exec -i "$CONTENEUR" psql -U "$PG_USER" -h localhost -d postgres -At -X -v ON_ERROR_STOP=1 \
            -c "select case when to_regclass('storage.objects') is null then '' else 'x' end" 2>/dev/null | grep -q x; then
         "$DOCKER" exec -i "$CONTENEUR" psql -U "$PG_USER" -h localhost -d postgres -At -X -v ON_ERROR_STOP=1 \
           -c "select bucket_id || '/' || name from storage.objects order by 1" > "$TRAVAIL/$nom-objets" 2>/dev/null \
           || ko "lecture de storage.objects impossible"
+        # Post-S0 : TOUTE sous-suite contiguë de dossiers compte — avec le backend s3 (MinIO, cas réel du
+        # serveur) un objet est un DOSSIER « <seau>/<nom>/ » contenant <id>/xl.meta et <id>/<id>/part.N.
         awk 'NR == FNR { p = $0; sub(/^[^ ]+ [^ ]+ \.\//, "", p); n = split(p, c, "/");
-                         for (i = 1; i <= n; i++) { s = c[i]; for (j = i + 1; j <= n; j++) s = s "/" c[j]; vus[s] = 1;
-                           if (i < n) { d = c[i]; for (j = i + 1; j < n; j++) d = d "/" c[j]; vus[d] = 1 } }
+                         for (i = 1; i <= n; i++) { s = c[i]; vus[s] = 1; for (j = i + 1; j <= n; j++) { s = s "/" c[j]; vus[s] = 1 } }
                          next }
              !($0 in vus) { print }' "$TRAVAIL/$nom-manifeste" "$TRAVAIL/$nom-objets" > "$TRAVAIL/$nom-sans-fichier"
         nobj=$(wc -l < "$TRAVAIL/$nom-objets" | tr -d ' ')

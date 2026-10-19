@@ -14,6 +14,10 @@
 
 # ── Protections S0 exigées (complet = 00 + 01 + 02, état des 2 bases depuis le 19/10/2026) ─────
 # S0_NIVEAU=complet
+# ── Migrations post-S0 exigées (infra/post-s0/migrations) — À METTRE À JOUR après chaque application ──
+#   aucun  : 03 / 04 contrôlées seulement si elles sont présentes (état actuel : préparées, NON appliquées) ;
+#   03     : après application de 03 sur les 2 bases ;  03_04 : après 03 (2 bases) + 04 (/live).
+# POST_S0_NIVEAU=aucun
 
 # ── Copie hors serveur (uniquement la copie CHIFFRÉE) ───────────────────────────────────────────
 # CLE_PUBLIQUE=/root/s0-sauvegardes/cle_publique_mac.pem

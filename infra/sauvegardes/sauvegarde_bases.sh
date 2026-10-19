@@ -47,6 +47,7 @@ ESPACE_MIN_MO=${ESPACE_MIN_MO:-2048}     # refuse de tourner sous 2 Go libres (+
 PG_USER=${PG_USER:-supabase_admin}
 DOCKER=${DOCKER:-docker}                 # remplaçable par un faux « docker » pour les tests locaux
 S0_NIVEAU=${S0_NIVEAU:-complet}          # protections exigées : complet (00+01+02) | etape1 | aucun
+POST_S0_NIVEAU=${POST_S0_NIVEAU:-aucun}  # post-S0 exigé : aucun (03/04 contrôlées si présentes) | 03 | 03_04
 ENVOI_CMD=${ENVOI_CMD:-}                 # ex. rsync vers la destination HORS serveur (après GO)
 EXIGER_HORS_SERVEUR=${EXIGER_HORS_SERVEUR:-0}   # 1 = échec s'il n'y a ni copie chiffrée ni envoi
 ALERTE_CMD=${ALERTE_CMD:-}               # ex. ping healthchecks.io / e-mail (après GO) — voir README § 4
@@ -80,6 +81,7 @@ echec() {
 trap 'echec "ligne $LINENO (commande : $BASH_COMMAND)"' ERR
 
 case "$S0_NIVEAU" in complet|etape1|aucun) ;; *) echec "S0_NIVEAU invalide ($S0_NIVEAU)";; esac
+case "$POST_S0_NIVEAU" in aucun|03|03_04) ;; *) echec "POST_S0_NIVEAU invalide ($POST_S0_NIVEAU)";; esac
 
 # ── Un seul passage à la fois ────────────────────────────────────────────────────────────────────
 mkdir -p "$RACINE"; chmod 700 "$RACINE"
@@ -137,7 +139,7 @@ PRECEDENT=$({ ls -1 "$RACINE/quotidien" 2>/dev/null || true; } | { grep -E '^[0-
 # ── Sauvegarde de chaque base ────────────────────────────────────────────────────────────────────
 releve() {  # $1 = conteneur, $2 = fichier SQL — lecture seule
   "$DOCKER" exec -i -e PGOPTIONS='-c default_transaction_read_only=on' "$1" \
-    psql -U "$PG_USER" -d postgres -At -X -v ON_ERROR_STOP=1 -v niveau="$S0_NIVEAU" < "$2"
+    psql -U "$PG_USER" -d postgres -At -X -v ON_ERROR_STOP=1 -v niveau="$S0_NIVEAU" -v post_s0="$POST_S0_NIVEAU" < "$2"
 }
 MANQUE=""
 nb_bases=0

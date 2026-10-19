@@ -37,6 +37,7 @@ EMPREINTES_SQL=${EMPREINTES_SQL:-$ICI/empreintes.sql}
 PROTECTIONS_SQL=${PROTECTIONS_SQL:-$ICI/protections_s0.sql}
 ERREURS_CONNUES=${ERREURS_CONNUES:-$ICI/erreurs_restauration_connues.txt}
 S0_NIVEAU=${S0_NIVEAU:-complet}
+POST_S0_NIVEAU=${POST_S0_NIVEAU:-aucun}      # post-S0 exigé : aucun | 03 | 03_04 (voir protections_s0.sql)
 EXIGER_STOCKAGE=${EXIGER_STOCKAGE:-1}         # 1 = une base sans archive de fichiers = ÉCHEC
 STOCKAGE_COHERENCE=${STOCKAGE_COHERENCE:-strict}   # strict | avertir : ligne storage.objects sans fichier
 VERIF_DIR=${VERIF_DIR:-$RACINE}               # où extraire les fichiers (même disque que les sauvegardes)
@@ -57,6 +58,7 @@ alerter() {  # $1 = echec|succes, $2 = message
 arreter() { journal "ÉCHEC : $*"; alerter echec "test de restauration : $*"; exit 1; }
 
 case "$S0_NIVEAU" in complet|etape1|aucun) ;; *) arreter "S0_NIVEAU invalide ($S0_NIVEAU)";; esac
+case "$POST_S0_NIVEAU" in aucun|03|03_04) ;; *) arreter "POST_S0_NIVEAU invalide ($POST_S0_NIVEAU)";; esac
 for f in "$EMPREINTES_SQL" "$PROTECTIONS_SQL" "$ERREURS_CONNUES"; do [ -f "$f" ] || arreter "fichier introuvable : $f"; done
 
 JOUR=${1:-$(find "$RACINE/quotidien" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)}
@@ -150,7 +152,7 @@ for dump in "$JOUR"/*-postgres.dump; do
 
   # 3. Protections S0 critiques, en valeur absolue.
   if "$DOCKER" exec -i "$CONTENEUR" psql -U "$PG_USER" -h localhost -d postgres -At -X -v ON_ERROR_STOP=1 \
-       -v niveau="$S0_NIVEAU" < "$PROTECTIONS_SQL" > "$TRAVAIL/$nom-protections" 2> "$TRAVAIL/$nom-protections.err"; then
+       -v niveau="$S0_NIVEAU" -v post_s0="$POST_S0_NIVEAU" < "$PROTECTIONS_SQL" > "$TRAVAIL/$nom-protections" 2> "$TRAVAIL/$nom-protections.err"; then
     nprot=$(grep -c '^PROTECTION ' "$TRAVAIL/$nom-protections" || true)
     nok=$(grep -c ' OK — ' "$TRAVAIL/$nom-protections" || true)
     if [ "$nprot" -lt 20 ]; then

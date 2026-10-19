@@ -7,7 +7,7 @@
 | `sauvegarde_bases.sh` | sauvegarde quotidienne : 2 bases + leurs fichiers (Supabase Storage), chiffrement, rotation, envoi, alertes |
 | `test_restauration.sh` | test mensuel : restauration complète dans un conteneur jetable, comparaison stricte |
 | `empreintes.sql` | empreintes de contrôle (données + chaque protection d'accès, objet par objet) |
-| `protections_s0.sql` | les 37 protections S0 critiques, vérifiées une à une en valeur absolue |
+| `protections_s0.sql` | les 51 protections S0 / post-S0 critiques, vérifiées une à une en valeur absolue |
 | `erreurs_restauration_connues.txt` | liste blanche documentée des messages bénins d'une restauration Supabase |
 | `sauvegarde-bases.conf.exemple` | modèle de configuration (envoi, alertes healthchecks.io / Resend) — aucun secret |
 | `logrotate-sauvegarde-bases.exemple` | modèle logrotate du journal |
@@ -88,6 +88,32 @@ Le succès est signalé explicitement (`RESTAURATION OK …` par base, `TERMINÉ
   `s0_sauvegarde_policies` fermée ; `access_requests_host_update` absente.
 
 `S0_NIVEAU=etape1` n'exige que 00 + 01 ; `aucun` désactive ce contrôle (déconseillé).
+
+### Les protections post-S0 (migrations `infra/post-s0/migrations/03` et `04`, `POST_S0_NIVEAU`)
+- **03 (preuve CGU, 2 bases)** : `accepter_cgu(text)` sans EXECUTE pour PUBLIC/anon, avec EXECUTE pour
+  authenticated, SECURITY DEFINER, search_path figé, même propriétaire que `profiles` ; colonnes
+  `terms_accepted_at` / `terms_version` ; déclencheur `s0_proteger_profil_cgu` actif, BEFORE INSERT OR UPDATE
+  par ligne, SECURITY INVOKER, et dont le corps rétablit les deux colonnes pour anon/authenticated (les droits
+  de colonne ne peuvent pas exprimer cette protection) ; contrainte `profiles_cgu_preuve_coherente` validée ;
+  `s0c_cgu_preuve_sauvegarde` (laissée par le rollback 03) fermée si elle existe.
+- **04 (session sans hôte, /live)** : `playlists_update` = seule règle UPDATE, sans `host_id IS NULL`, de la
+  forme posée par 04 (ou de la forme d'origine de boosttribe.pro, qui n'a jamais eu la faille) ;
+  `ps0_04_sauvegarde_policy` en RLS et fermée à anon/authenticated si elle existe.
+
+**Niveau** (`POST_S0_NIVEAU`, un seul pour les 2 bases, défaut `aucun`) — approche retenue : la plus simple,
+une variable comme `S0_NIVEAU` :
+
+| valeur | 03 | 04 | quand |
+|---|---|---|---|
+| `aucun` | contrôlée **si un objet 03 existe** (sinon `SANS_OBJET`) | contrôlée **si `ps0_04_sauvegarde_policy` existe** | aujourd'hui (03/04 préparées, non appliquées) |
+| `03` | **exigée** : absente = `MANQUANTE` | conditionnelle | après 03 sur les 2 bases |
+| `03_04` | exigée | **exigée** : `host_id IS NULL` revenu = `MANQUANTE` (boosttribe.pro : déjà conforme) | après 03 + 04 |
+
+Pourquoi un niveau : en `aucun`, une restauration qui a perdu 03/04 **en entier** (objets disparus) ressemble à
+une base où elles n'ont jamais été appliquées → `SANS_OBJET`. Seul le niveau explicite le voit en valeur
+absolue. **Après chaque application de 03 / 04 en production, passer `POST_S0_NIVEAU` au niveau atteint**
+dans `/root/.sauvegarde-bases.env`. Valeur inconnue = ligne `MANQUANTE` (`niveau.post_s0.valide`).
+Manuellement : `psql -At -v niveau=complet -v post_s0=03_04 < protections_s0.sql` (sans `post_s0` : `aucun`).
 
 ## 3. Destination hors serveur — options et coûts (approximatifs, à confirmer au moment de souscrire)
 

@@ -18,7 +18,9 @@
 #   R  erreurs de restauration : connues tolérées, inconnues / sauvegarde corrompue → échec ;
 #   E  envoi et chiffrement : envoi en échec, clé absente ou illisible → échec ; envoi réussi ;
 #   F  fichiers audio : restauration identique, fichier altéré / manquant détecté, archive réutilisée ;
-#   T  rotation 7 + 4 sur 35 jours, copie chiffrée ouverte par la clé privée (clé de BANC).
+#   T  rotation 7 + 4 sur 35 jours, copie chiffrée ouverte par la clé privée (clé de BANC) ;
+#   S  post-S0 : sources 00+01+02+03 (bt) et 00+01+02+03+04 (live), POST_S0_NIVEAU=03_04 : nominal OK ;
+#      03 retirée / affaiblie, 04 perdue → échec ; 03 / 04 perdues EN ENTIER → vues seulement grâce au niveau.
 # =============================================================================================
 set -u
 ICI=$(cd "$(dirname "$0")" && pwd); S=$(cd "$ICI/.." && pwd); S0=$(cd "$S/../s0" && pwd)
@@ -102,14 +104,16 @@ res "N3 restauration nominale : 2 bases identiques, 4 fichiers identiques, erreu
 # rôles, empreintes / protections / fichiers de la sauvegarde nominale conservés.
 cas_mutation() {  # $1 = id, $2 = libellé, $3 = SQL, $4 = base (boosttribe|live), $5 = motif attendu (grep -E)
   local id=$1 lib=$2 sql=$3 nom=${4:-boosttribe} motif=${5:-'empreintes DIFFÉRENTES|MANQUANTE'}
-  local src; [ "$nom" = live ] && src=src-live || src=src-bt
+  local src; [ "$nom" = live ] && src=${SRC_LIVE:-src-live} || src=${SRC_BT:-src-bt}
+  local jr=${JREF:-$J}     # sauvegarde de référence (famille S : celle des sources post-S0)
   local d="$T/cas/$id"; mkdir -p "$d"
   D clone "$src" mut >/dev/null 2>&1 || { res "$id $lib (clone impossible)" 1; return; }
   if [ -n "$sql" ]; then
-    D exec mut psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -X -c "$sql" > "$T/cas/$id.sql.log" 2>&1 \
+    local q=(-c "$sql"); [ "${sql#@}" != "$sql" ] && q=(-f "${sql#@}")   # « @fichier » = script SQL
+    D exec mut psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -X "${q[@]}" > "$T/cas/$id.sql.log" 2>&1 \
       || { res "$id $lib (SQL refusé : $(head -1 "$T/cas/$id.sql.log"))" 1; D rm -f mut; return; }
   fi
-  cp "$J/$nom-empreintes.txt" "$J/$nom-protections.txt" "$J/$nom-stockage.tar" "$J/$nom-stockage.manifeste" "$d/"
+  cp "$jr/$nom-empreintes.txt" "$jr/$nom-protections.txt" "$jr/$nom-stockage.tar" "$jr/$nom-stockage.manifeste" "$d/"
   D exec mut pg_dump -U supabase_admin -d postgres -Fc > "$d/$nom-postgres.dump"
   D exec mut pg_dumpall -U supabase_admin --globals-only --no-role-passwords > "$d/$nom-roles.sql"
   D rm -f mut
@@ -161,6 +165,56 @@ RACINE="$T/racine-q" EXIGER_STOCKAGE=0 rest > "$T/q2.log" 2>&1; c=$?
 [ $c -ne 0 ] && grep -q 'MANQUANTE' "$T/q2.log" && ! grep -q 'empreintes DIFFÉRENTES' "$T/q2.log"
 res "Q2 restauration de cette sauvegarde : empreintes identiques MAIS protection manquante → échec" $?
 D rm -f prod-trouee
+
+# ═════ S — post-S0 : 03 (2 bases) + 04 (/live), POST_S0_NIVEAU=03_04 ═════════════════════════════
+MIG=$(cd "$S/../post-s0/migrations" && pwd)
+D clone src-bt src-bt3 >/dev/null 2>&1 && D clone src-live src-live34 >/dev/null 2>&1 \
+  && D exec src-bt3 psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -X -f "$MIG/03_cgu_preuve.sql" > "$T/s-construction.log" 2>&1 \
+  && D exec src-live34 psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -X -f "$MIG/03_cgu_preuve.sql" >> "$T/s-construction.log" 2>&1 \
+  && D exec src-live34 psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -X -f "$MIG/04_session_sans_hote.sql" >> "$T/s-construction.log" 2>&1
+res "S0 sources post-S0 construites (bt : 00+01+02+03 ; live : 00+01+02+03+04)" $?
+: > "$ALERTES"
+RACINE="$T/racine-s" BASES="boosttribe:src-bt3 live:src-live34" POST_S0_NIVEAU=03_04 sauv > "$T/s1.log" 2>&1; c=$?
+JS=$(ls -d "$T"/racine-s/quotidien/* 2>/dev/null | tail -1)
+[ $c = 0 ] && alerte_vue succes sauvegarde && ! grep -q MANQUANTE "$JS"/*-protections.txt \
+  && [ "$(grep -c ' OK — ' "$JS/boosttribe-protections.txt")" -ge 48 ] && [ "$(grep -c ' OK — ' "$JS/live-protections.txt")" -ge 49 ] \
+  && [ "$(grep -Ec '^PROTECTION cgu\.[a-z_.]+ OK' "$JS/live-protections.txt")" = 8 ] \
+  && grep -q '^PROTECTION regle.playlists.sans_hote_vide OK' "$JS/live-protections.txt" \
+  && grep -q '^PROTECTION table.ps0_04_sauvegarde_policy.fermee OK' "$JS/live-protections.txt" \
+  && grep -q '^PROTECTION table.ps0_04_sauvegarde_policy.fermee SANS_OBJET' "$JS/boosttribe-protections.txt"
+res "S1 sauvegarde post-S0 nominale (niveau 03_04) : code 0, 03 + 04 OK ($(grep -c ' OK — ' "$JS/boosttribe-protections.txt" 2>/dev/null) / $(grep -c ' OK — ' "$JS/live-protections.txt" 2>/dev/null) contrôles OK)" $?
+[ $c = 0 ] || { sed 's/^/      /' "$T/s1.log" | tail -15; }
+: > "$ALERTES"
+RACINE="$T/racine-s" POST_S0_NIVEAU=03_04 rest > "$T/s2.log" 2>&1; c=$?
+[ $c = 0 ] && [ "$(grep -c 'RESTAURATION OK' "$T/s2.log")" = 2 ] && alerte_vue succes restauration
+res "S2 restauration post-S0 nominale (niveau 03_04) : 2 bases identiques, protections OK" $?
+[ $c = 0 ] || sed 's/^/      /' "$T/s2.log" | tail -20
+export POST_S0_NIVEAU=03_04 SRC_BT=src-bt3 SRC_LIVE=src-live34 JREF="$JS"
+cas_mutation S3 "accepter_cgu rouverte à anon (GRANT EXECUTE)" "grant execute on function public.accepter_cgu(text) to anon" boosttribe 'MANQUANTE'
+cas_mutation S4 "déclencheur s0_proteger_profil_cgu désactivé" "alter table public.profiles disable trigger s0_proteger_profil_cgu" boosttribe 'MANQUANTE'
+cas_mutation S5 "accepter_cgu passée en SECURITY INVOKER (live)" "alter function public.accepter_cgu(text) security invoker" live 'MANQUANTE'
+cas_mutation S6 "contrainte profiles_cgu_preuve_coherente retirée (live)" "alter table public.profiles drop constraint profiles_cgu_preuve_coherente" live 'MANQUANTE'
+cas_mutation S7 "04 perdue : playlists_update remise avec host_id IS NULL (live)" "drop policy playlists_update on public.playlists;
+  create policy playlists_update on public.playlists for update to authenticated
+    using ((host_id is null) or ((host_id)::text = (auth.uid())::text) or (coalesce(cohosts, '[]'::jsonb) @> to_jsonb((auth.uid())::text)))
+    with check ((host_id is null) or ((host_id)::text = (auth.uid())::text) or (coalesce(cohosts, '[]'::jsonb) @> to_jsonb((auth.uid())::text)))" live 'MANQUANTE'
+cas_mutation S8 "03 perdue EN ENTIER (rollback 03 joué sur la copie)" "@$MIG/03_cgu_preuve_rollback.sql" boosttribe 'MANQUANTE'
+unset SRC_BT SRC_LIVE JREF; export POST_S0_NIVEAU=aucun
+# Production DÉJÀ privée de 04 en entier (rollback 04 : règle d'origine + table de sauvegarde retirée) :
+# seul le niveau explicite le voit ; en « aucun », l'absence ressemble à « jamais appliquée ».
+D clone src-live34 prod-sans04 >/dev/null 2>&1
+D exec prod-sans04 psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1 -q -X -f "$MIG/04_session_sans_hote_rollback.sql" >/dev/null 2>&1
+: > "$ALERTES"
+RACINE="$T/racine-s9" BASES="live:prod-sans04" STOCKAGES="" POST_S0_NIVEAU=03_04 sauv > "$T/s9.log" 2>&1; c1=$?
+RACINE="$T/racine-s9b" BASES="live:prod-sans04" STOCKAGES="" POST_S0_NIVEAU=aucun sauv > "$T/s9b.log" 2>&1; c2=$?
+[ $c1 -ne 0 ] && grep -q 'MANQUANTE(S) EN PRODUCTION.*regle.playlists.sans_hote_vide' "$T/s9.log" && alerte_vue echec sauvegarde \
+  && [ $c2 = 0 ] && grep -q '^PROTECTION regle.playlists.sans_hote_vide SANS_OBJET' "$(ls -d "$T"/racine-s9b/quotidien/*)/live-protections.txt"
+res "S9 production /live sans 04 (rollback complet) : niveau 03_04 → code ≠ 0 + alerte ; niveau aucun → non vu (SANS_OBJET)" $?
+D rm -f prod-sans04
+RACINE="$T/racine-s" POST_S0_NIVEAU=O3 rest > "$T/s10.log" 2>&1; c=$?
+[ $c -ne 0 ] && grep -q 'POST_S0_NIVEAU invalide' "$T/s10.log"
+res "S10 POST_S0_NIVEAU inconnu (faute de frappe « O3 ») → refus immédiat" $?
+D rm -f src-bt3; D rm -f src-live34
 
 # ═════ R — erreurs de restauration ═════════════════════════════════════════════════════════════
 copie_jour() { local d="$T/cas/$1"; mkdir -p "$d"; cp "$J"/* "$d/"; echo "$d"; }

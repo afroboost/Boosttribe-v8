@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
+import { ecritureSessionConfirmee } from './accesSession';
 
 // Environment variables
 const supabaseUrl = import.meta.env.REACT_APP_SUPABASE_URL;
@@ -691,25 +692,39 @@ export async function uploadSessionVideoDirect(
 }
 
 /**
+ * 🛡️ Post-S0 (19/10/2026) — Écrit un réglage de CONTENU d'une session EXISTANTE (description, média
+ * partagé, is_private) : UPDATE ciblé + relecture (RETURNING), jamais d'upsert.
+ * Pourquoi : l'upsert (INSERT … ON CONFLICT DO UPDATE) exige que la ligne CANDIDATE, sans host_id
+ * (mode open, accès account, sans hôte), soit visible selon `playlists_select` → Postgres la refusait
+ * (42501) même pour l'hôte légitime, sur les deux bases, avant comme après S0.
+ * L'UPDATE n'est accepté par la RLS que pour l'hôte et ses co-hôtes ; une session absente ou sans hôte
+ * n'est jamais créée ni revendiquée ici (la place d'hôte reste au backend : /session/claim-host).
+ * Succès = au moins une ligne relue portant EXACTEMENT la valeur demandée (ecritureSessionConfirmee).
+ */
+async function ecrireReglageSession(sessionId: string, champs: Record<string, unknown>): Promise<boolean> {
+  if (!supabase) return false;
+  const { data, error } = await supabase
+    .from('playlists')
+    .update({ ...champs, updated_at: new Date().toISOString() })
+    .eq('session_id', sessionId)
+    .select(['session_id', ...Object.keys(champs)].join(', '));
+  const ok = !error && ecritureSessionConfirmee(champs, data);
+  if (!ok) console.warn('[SESSION] réglage non enregistré', Object.keys(champs).join(','), error?.code || 'aucune ligne modifiable');
+  return ok;
+}
+
+/**
  * Met à jour la description courte de la session (playlists.description).
  */
 export async function saveSessionDescription(sessionId: string, description: string): Promise<boolean> {
-  if (!supabase) return false;
-  const { error } = await supabase
-    .from('playlists')
-    .upsert({ session_id: sessionId, description, updated_at: new Date().toISOString() }, { onConflict: 'session_id' });
-  return !error;
+  return ecrireReglageSession(sessionId, { description });
 }
 
 /**
  * Met à jour le média partagé de la session (playlists.shared_media, jsonb).
  */
 export async function saveSharedMedia(sessionId: string, sharedMedia: SharedMedia | null): Promise<boolean> {
-  if (!supabase) return false;
-  const { error } = await supabase
-    .from('playlists')
-    .upsert({ session_id: sessionId, shared_media: sharedMedia, updated_at: new Date().toISOString() }, { onConflict: 'session_id' });
-  return !error;
+  return ecrireReglageSession(sessionId, { shared_media: sharedMedia });
 }
 
 /**
@@ -717,11 +732,7 @@ export async function saveSharedMedia(sessionId: string, sharedMedia: SharedMedi
  * L'écriture est protégée côté serveur par la policy RLS (hôte/co-hôte uniquement).
  */
 export async function saveSessionPrivacy(sessionId: string, isPrivate: boolean): Promise<boolean> {
-  if (!supabase) return false;
-  const { error } = await supabase
-    .from('playlists')
-    .upsert({ session_id: sessionId, is_private: isPrivate, updated_at: new Date().toISOString() }, { onConflict: 'session_id' });
-  return !error;
+  return ecrireReglageSession(sessionId, { is_private: isPrivate });
 }
 
 /**

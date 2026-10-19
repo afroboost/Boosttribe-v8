@@ -41,3 +41,25 @@ export function sauvegardeConfirmee(
 ): boolean {
   return !!relu && relu.mode === attendu.mode && relu.acces === attendu.acces;
 }
+
+/** Forme canonique d'une valeur JSON (clés triées) : jsonb ne garde pas l'ordre des clés. */
+function canonique(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonique).join(',')}]`;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonique(o[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+
+/**
+ * 🛡️ Post-S0 (19/10/2026) — Réglage de session écrit par le navigateur (is_private, média partagé,
+ * description) : succès SEULEMENT si la base renvoie au moins une ligne ET que chaque ligne relue porte
+ * exactement la valeur demandée. 0 ligne = la RLS a filtré (tiers, admin non hôte, session sans hôte
+ * ou absente) ; valeur différente = le verrou S0 l'a neutralisée. Jamais de faux succès.
+ */
+export function ecritureSessionConfirmee(attendu: Record<string, unknown>, lignes: unknown): boolean {
+  if (!Array.isArray(lignes) || lignes.length === 0) return false;
+  return lignes.every((l) => !!l && typeof l === 'object'
+    && Object.keys(attendu).every((k) => canonique((l as Record<string, unknown>)[k]) === canonique(attendu[k])));
+}

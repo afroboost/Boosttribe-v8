@@ -42,14 +42,29 @@ export function sauvegardeConfirmee(
   return !!relu && relu.mode === attendu.mode && relu.acces === attendu.acces;
 }
 
-/** Forme canonique d'une valeur JSON (clés triées) : jsonb ne garde pas l'ordre des clés. */
+/**
+ * Forme canonique d'une valeur JSON (clés triées) : jsonb ne garde pas l'ordre des clés.
+ * Post-S0 (19/10/2026) — mêmes règles que JSON.stringify, donc que la valeur réellement ENVOYÉE :
+ * une clé d'objet à `undefined` (ou fonction) n'existe pas dans le JSON écrit, donc pas non plus dans
+ * le JSON relu → elle est IGNORÉE, à toute profondeur (sinon faux « non enregistré ») ; dans un
+ * tableau, `undefined` devient `null`, comme dans le JSON envoyé. `toJSON` (Date…) est respecté.
+ */
 function canonique(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(canonique).join(',')}]`;
+  if (v && typeof v === 'object' && typeof (v as { toJSON?: unknown }).toJSON === 'function') {
+    return canonique((v as { toJSON: () => unknown }).toJSON());
+  }
+  if (Array.isArray(v)) return `[${v.map((x) => (absentDuJson(x) ? 'null' : canonique(x))).join(',')}]`;
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonique(o[k])}`).join(',')}}`;
+    return `{${Object.keys(o).filter((k) => !absentDuJson(o[k])).sort()
+      .map((k) => `${JSON.stringify(k)}:${canonique(o[k])}`).join(',')}}`;
   }
   return JSON.stringify(v ?? null);
+}
+
+/** Valeur que JSON.stringify OMET d'un objet (et remplace par null dans un tableau). */
+function absentDuJson(v: unknown): boolean {
+  return v === undefined || typeof v === 'function' || typeof v === 'symbol';
 }
 
 /**
@@ -60,6 +75,10 @@ function canonique(v: unknown): string {
  */
 export function ecritureSessionConfirmee(attendu: Record<string, unknown>, lignes: unknown): boolean {
   if (!Array.isArray(lignes) || lignes.length === 0) return false;
+  // Une colonne demandée à `undefined` n'est pas envoyée (JSON) : elle ne peut pas être « confirmée ».
+  //   Rien de confirmable (aucune colonne réellement envoyée) = échec, jamais un succès par défaut.
+  const cles = Object.keys(attendu).filter((k) => !absentDuJson(attendu[k]));
+  if (cles.length === 0) return false;
   return lignes.every((l) => !!l && typeof l === 'object'
-    && Object.keys(attendu).every((k) => canonique((l as Record<string, unknown>)[k]) === canonique(attendu[k])));
+    && cles.every((k) => canonique((l as Record<string, unknown>)[k]) === canonique(attendu[k])));
 }

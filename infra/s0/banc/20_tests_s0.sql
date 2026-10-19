@@ -215,9 +215,15 @@ end $$;
 select banc.verifier('U2. session sans hôte : un tiers ne pose PAS access_mode / is_private',
   (select access_mode is distinct from 'guest' and coalesce(is_private, false) = false from public.playlists where session_id = 'VIDE'));
 -- U3 dépend de la RÈGLE RLS réelle : /live laisse écrire une session sans hôte, boosttribe.pro non.
-select banc.verifier('U3. session sans hôte : le contenu suit la règle RLS de la base (' || current_setting('banc.variante') || ')',
-  (select case when current_setting('banc.variante') = 'live' then description = 'tiers' else description is distinct from 'tiers' end
-     from public.playlists where session_id = 'VIDE'));
+-- Post-S0 04 (infra/post-s0/migrations/04_session_sans_hote.sql) retire « host_id IS NULL » sur /live :
+-- la règle constatée en base décide donc (identique à la variante tant que 04 n'est pas passé).
+select banc.verifier('U3. session sans hôte : le contenu suit la règle RLS de la base (' || current_setting('banc.variante')
+    || case when hote_vide then ', hôte vide autorisé' else ', hôte vide refusé' end || ')',
+  (select case when hote_vide then description = 'tiers' else description is distinct from 'tiers' end
+     from public.playlists where session_id = 'VIDE'))
+  from (select exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'playlists'
+                        and policyname = 'playlists_update' and qual ilike '%host_id IS NULL%')
+               and current_setting('banc.variante') = 'live' as hote_vide) r;
 select banc.verifier('U4. création sans hôte : réglages d''accès vides, created_at jamais antidaté',
   (select access_mode is distinct from 'guest' and coalesce(is_private, false) = false and created_at > now() - interval '1 hour'
      from public.playlists where session_id = 'VIDE-NEUVE'));

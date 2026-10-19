@@ -31,6 +31,7 @@ import { droitsApresChoixEntree, sauvegardeConfirmee, type ModeEntree } from '@/
 import { AccessModeSelector, type AccessMode } from '@/components/session/AccessModeSelector';
 import type { SharedMedia } from '@/lib/supabaseClient';
 import supabase from '@/lib/supabaseClient';
+import { lireProfilsPublics } from '@/lib/profilsPublics';
 import { AvatarUploadCrop } from '@/components/profile/AvatarUploadCrop';
 import { SharedMediaPlayer } from '@/components/session/SharedMediaPlayer';
 import { usePlaceStable } from '@/components/session/SceneRenderer';
@@ -2933,9 +2934,8 @@ export const SessionPage: React.FC = () => {
     const uuidIds = ids.filter(isUuid);
     (async () => {
       try {
-        const { data } = uuidIds.length > 0
-          ? await supabase!.from('profiles').select('id, avatar_url').in('id', uuidIds)
-          : { data: [] as { id: string; avatar_url: string | null }[] };
+        // S0 : les AUTRES profils se lisent par la vue publique (nom/photo seulement).
+        const data = await lireProfilsPublics(supabase!, uuidIds, 'id, avatar_url');
         setProfileAvatars(prev => {
           const next = { ...prev };
           (data as { id: string; avatar_url: string | null }[] | null || []).forEach(p => { next[p.id] = p.avatar_url; });
@@ -4394,6 +4394,12 @@ export const SessionPage: React.FC = () => {
     claimedSessionRef.current = sessionId;
     (async () => {
       const r = await claimHost(sessionId);
+      // S0 : crédits insuffisants pour animer → paywall clair ; le serveur n'a PAS posé host_id.
+      if (r.insufficient) {
+        claimedSessionRef.current = null; // permet une nouvelle tentative après achat
+        setCreditsBlocked('host');
+        return;
+      }
       // 🔒 Auto-correction : la session appartient déjà à un AUTRE compte → je reste participant.
       if (r.host_id && r.host_id !== user.id) {
         setSessionHostId(r.host_id);

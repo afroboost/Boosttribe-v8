@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Heart, Send, Trash2, MessageCircle, X, LogIn } from 'lucide-react';
 import supabase from '@/lib/supabaseClient';
+import { lireProfilsPublics } from '@/lib/profilsPublics';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,9 +51,8 @@ export const SessionSocial: React.FC<SessionSocialProps> = ({ sessionId }) => {
     const uuidMissing = missing.filter(isUuid);
     const guests = missing.filter((id) => !isUuid(id));
     try {
-      const { data } = uuidMissing.length > 0
-        ? await supabase.from('profiles').select('id, full_name, avatar_url').in('id', uuidMissing)
-        : { data: [] as { id: string; full_name: string | null; avatar_url: string | null }[] };
+      // S0 : les AUTRES profils se lisent par la vue publique (nom/photo seulement).
+      const data = await lireProfilsPublics(supabase, uuidMissing, 'id, full_name, avatar_url');
       setAuthors((prev) => {
         const next = { ...prev };
         (data || []).forEach((p) => {

@@ -163,6 +163,19 @@ def appli(monkeypatch):
     monkeypatch.setattr(m, "count_paid_tickets", faux_count_tickets)
     monkeypatch.setattr(m, "has_valid_ticket", faux_has_ticket)
     monkeypatch.setattr(m, "_count_livekit_publishers", faux_publishers)
+
+    # S0 (19/10) : `/livekit/token` et `/session/claim-host` débitent eux-mêmes (idempotent).
+    etat["debits"] = []                       # (uid, reason, ref, montant)
+
+    async def faux_tarifs():
+        return {"cost_join": 1, "cost_host": 1, "cost_record_transcribe": 4}
+
+    async def faux_debit(uid, montant, reason, ref, note=None):
+        if not any(d[2] == ref and d[1] == reason for d in etat["debits"]):
+            etat["debits"].append((uid, reason, ref, montant))
+        return 10
+    monkeypatch.setattr(m, "get_pricing_settings", faux_tarifs)
+    monkeypatch.setattr(m, "_spend_credits", faux_debit)
     # `main.py` partage le module `multistream` avec les autres bancs : le recharger ici
     # écrase son état global. On le remet à neuf, exactement comme le fait
     # `test_broadcast_routes_verrou` — sinon ce banc ferait rougir le voisin.
@@ -179,8 +192,15 @@ def appli(monkeypatch):
 # ══════════════ 1. LA VIDÉO : où le serveur dit oui, où il dit non ══════════════
 
 def test_viewer_anonyme_autorise_a_sabonner(appli):
-    """Le blocage du participant n'a jamais été ici : un anonyme peut s'abonner."""
-    m, _etat, client = appli
+    """S0 (19/10/2026) — CHANGEMENT VOULU. Jusqu'ici n'importe quel anonyme recevait un jeton
+    spectateur (la faille « regarder sans payer »). Désormais le SERVEUR applique la règle de la
+    session : un anonyme est REFUSÉ sur une session « Ouverte (crédits) », et reste ACCEPTÉ là où
+    le produit l'accepte (session « Gratuite par lien / QR », entrée libre par pseudo)."""
+    m, etat, client = appli
+    refus = client.post("/livekit/token", json={"session_id": "SESS-TEST", "identity": "user_1", "role": "viewer"})
+    assert refus.status_code == 401 and refus.json()["detail"] == "connexion_requise"
+
+    etat["sessions"]["SESS-TEST"] = {"session_id": "SESS-TEST", "host_id": "uid-coach", "mode": "private"}
     r = client.post("/livekit/token", json={"session_id": "SESS-TEST", "identity": "user_1", "role": "viewer"})
     assert r.status_code == 200, r.text
     d = r.json()

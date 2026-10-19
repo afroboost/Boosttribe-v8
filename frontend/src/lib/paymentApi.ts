@@ -1146,13 +1146,15 @@ export async function savePawapayKeys(payload: {
 }
 
 // F : autorité hôte / co-animateurs (source de vérité serveur)
-export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_id?: string }> {
+export async function claimHost(sessionId: string): Promise<{ ok: boolean; host_id?: string; insufficient?: boolean }> {
   // 🔐 Passe par le helper à RETRY sur 401 (force un token frais et réessaie une fois) → l'hôte revendique
   //    fiablement son rôle même si le token a expiré (sinon 401 → host_id non posé → voix/synchro cassées).
-  const { data } = await adminFetch('/session/claim-host', {
+  const { data, error } = await adminFetch('/session/claim-host', {
     method: 'POST',
     body: JSON.stringify({ session_id: sessionId }),
   });
+  // S0 : le serveur débite l'animation AVANT d'accorder le rôle ; solde insuffisant = 402 (host_id non posé).
+  if (error && /insuffisant/i.test(error)) return { ok: false, insufficient: true };
   return { ok: !!data?.ok, host_id: data?.host_id };
 }
 

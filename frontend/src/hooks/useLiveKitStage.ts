@@ -137,6 +137,15 @@ async function getAuthHeader(): Promise<Record<string, string>> {
   }
 }
 
+function demandeApprouvee(sessionId: string): number | null {
+  try {
+    const v = localStorage.getItem(`bt_ar_${sessionId}`);
+    return v && /^\d+$/.test(v) ? Number(v) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageReturn {
   const { sessionId, userId, name, active, canPublish, publicationPrete = true, maxCameras = MAX_STAGE, onStageFull } = options;
 
@@ -353,7 +362,10 @@ export function useLiveKitStage(options: LiveKitStageOptions): LiveKitStageRetur
       const res = await fetch(`${API_URL}/livekit/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(await getAuthHeader()) },
-        body: JSON.stringify({ session_id: sessionId, identity: userId, name: nameRef.current || userId, role }),
+        // S0 : le serveur décide de l'accès. Un participant ANONYME approuvé (session payante, ?ar=)
+        //      présente sa demande approuvée — même clé que SessionPage (bt_ar_<session>).
+        body: JSON.stringify({ session_id: sessionId, identity: userId, name: nameRef.current || userId, role,
+          request_id: demandeApprouvee(sessionId) }),
       });
       if (res.status === 409) return 'stage_full';
       if (!res.ok) return null;

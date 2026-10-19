@@ -673,6 +673,12 @@ async def record_upload(file: UploadFile = File(...), session_id: str = Form(...
     await _record_authz(session_id, uid, _is_admin_email(user))
     if not _is_admin_email(user) and not await _hote_session_coach(session_id):
         raise HTTPException(status_code=403, detail="Enregistrement réservé aux Lives d'un Espace Coach")
+    # S0 : transcrire = l'enregistrement a été AUTORISÉ par /session/record/start (débit au
+    # grand livre), sauf admin, accès illimité (dont Afroboost 12 h) ou option gratuite.
+    if not _is_admin_email(user) and not await is_coach_unlimited(uid):
+        cout = int((await get_pricing_settings()).get("cost_record_transcribe", 4) or 0)
+        if cout > 0 and not await _s0_preuve_enregistrement(session_id):
+            raise HTTPException(status_code=403, detail="enregistrement_non_autorise")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Fichier audio vide")
@@ -1165,6 +1171,7 @@ class LiveKitTokenBody(BaseModel):
     identity: str
     name: Optional[str] = None
     role: str = "viewer"  # "stage" | "viewer"
+    request_id: Optional[int] = None  # S0 : demande d'accès approuvée (participant anonyme, session payante)
 
 
 class LiveKitParticipantBody(BaseModel):
@@ -1268,8 +1275,9 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
     """Émet un token LiveKit.
     - role="stage" : RÉSERVÉ à l'hôte/co-hôte authentifié (publie caméra/micro/écran), cap 10.
       L'identité est FORCÉE à l'user_id vérifié (anti-usurpation / anti-élévation de privilège).
-    - role="viewer" : lecture seule. Jonction anonyme autorisée (lien/QR) ; si un token Supabase
-      valide est fourni, l'identité est liée au compte, sinon préfixée "anon-".
+    - role="viewer" : lecture seule. S0 : délivré seulement avec une autorisation SERVEUR
+      (`_s0_autoriser_spectateur` : session gratuite par lien, entrée libre, billet, accès
+      illimité/Afroboost, ou crédit débité une seule fois). Sinon 401/402/403/410.
     """
     _require_livekit_ready()
 
@@ -1297,19 +1305,28 @@ async def livekit_token(body: LiveKitTokenBody, authorization: Optional[str] = H
             raise HTTPException(status_code=401, detail="authentification requise pour publier")
         if not await _is_host_or_cohost(session_id, user_id):
             raise HTTPException(status_code=403, detail="stage_reserved_to_host")
+        # S0 : l'HÔTE (pas un co-hôte invité) n'obtient la scène qu'avec une autorisation
+        # d'animer — débit idempotent, déjà fait au claim-host dans le cas normal.
+        authz = await get_session_authz(session_id)
+        if (authz or {}).get("host_id") == user_id:
+            await _s0_autoriser_hote(session_id, user)
         # Limite scène : refuser un nouveau publisher si la room est déjà pleine (10 max).
         if await _count_livekit_publishers(session_id) >= MAX_LIVEKIT_STAGE:
             raise HTTPException(status_code=409, detail="stage_full")
         can_publish = True
     else:
+        motif = await _s0_autoriser_spectateur(session_id, user, body.request_id)
+        logger.info("[S0] jeton spectateur session=%s motif=%s", session_id, motif)
         can_publish = False
 
+    sources = _s0_sources_publication(user, session_id) if can_publish else None
     grants = livekit_api.VideoGrants(
         room_join=True,
         room=session_id,
         can_subscribe=True,
         can_publish=can_publish,
         can_publish_data=can_publish,  # données réservées aux publishers (viewer = lecture seule)
+        **({"can_publish_sources": sources} if sources is not None else {}),
     )
     token = (
         livekit_api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
@@ -2291,6 +2308,14 @@ async def get_credit_packs(active_only: bool = True) -> List[Dict[str, Any]]:
     return resp.json() if resp.status_code == 200 else []
 
 async def get_balance(user_id: str) -> int:
+    """S0 — solde AUTORITAIRE : `credits_disponibles` (grand livre, crédits expirés exclus).
+    Repli sur la copie `profiles.credits` tant que la migration S0 étape 1 n'est pas appliquée."""
+    try:
+        r = await _rpc("credits_disponibles", {"p_user": user_id})
+        if r.status_code == 200:
+            return int(r.json() or 0)
+    except Exception:  # noqa: BLE001
+        pass
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(
             f"{SUPABASE_URL}/rest/v1/profiles",
@@ -2742,6 +2767,105 @@ async def is_coach_unlimited(uid: str) -> bool:
     if await get_coach_payment_type(uid) != "subscription":
         return False
     return _subscription_active(await get_coach_subscription(uid))
+
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# 🛡️ S0 (19/10/2026) — L'ACCÈS SE DÉCIDE ICI, PAS DANS LE NAVIGATEUR.
+#   Avant : le jeton vidéo « spectateur » était délivré à n'importe qui, et devenir hôte ne
+#   coûtait rien côté serveur (le débit était un appel séparé que le navigateur choisissait de
+#   faire). Désormais `/livekit/token` et `/session/claim-host` vérifient eux-mêmes une
+#   autorisation, et débitent (idempotent : même référence que `/credits/spend`, donc jamais
+#   deux fois) quand c'est la règle de la session.
+#   RÈGLE AFROBOOST INCHANGÉE : un accès « pro »/« enterprise » actif (comp_access, posé par
+#   /api/embed/verify pour 12 h) = `is_coach_unlimited` → AUCUN crédit BoostTribe.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+S0_MODES_GRATUITS = ("private",)   # « Gratuit par lien / QR » : le lien EST l'autorisation (règle produit)
+
+
+async def _s0_session_acces(session_id: str) -> Dict[str, Any]:
+    """Mode d'accès RÉEL de la session (plusieurs lignes `playlists` possibles par session) :
+    mode (open|paid|private), access_mode (guest|account), live_ended_at. Colonnes optionnelles
+    tolérées : une colonne absente n'invente jamais un accès."""
+    base = await get_session_row(session_id) or {}
+    extra: Dict[str, Any] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/rest/v1/playlists", headers=_service_headers(),
+                                 params={"session_id": f"eq.{session_id}",
+                                         "select": "access_mode,live_ended_at,updated_at",
+                                         "order": "updated_at.desc"})
+        rows = r.json() if r.status_code == 200 else []
+        rows = rows if isinstance(rows, list) else []
+        extra["access_mode"] = next((x.get("access_mode") for x in rows
+                                     if x.get("access_mode") in ("guest", "account")), None)
+        extra["live_ended_at"] = next((x.get("live_ended_at") for x in rows if x.get("live_ended_at")), None)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"mode": base.get("mode") or "open", "host_id": base.get("host_id"), **extra}
+
+
+async def _s0_autoriser_spectateur(session_id: str, user: Optional[Dict[str, Any]],
+                                   request_id: Optional[int]) -> str:
+    """Autorisation d'un jeton vidéo SPECTATEUR. Renvoie le motif, ou lève 401/402/403/410.
+    Ordre : admin / hôte / co-hôte → live terminé → règle du mode de la session."""
+    uid = (user or {}).get("id")
+    if user and _is_admin_email(user):
+        return "admin"
+    if uid and await _is_host_or_cohost(session_id, uid):
+        return "hote"
+    acces = await _s0_session_acces(session_id)
+    if acces.get("live_ended_at"):
+        raise HTTPException(status_code=410, detail="live_termine")
+    mode = acces.get("mode") or "open"
+    if mode in S0_MODES_GRATUITS:
+        return "gratuit_par_lien"
+    if mode == "paid":
+        if (await has_valid_ticket(session_id, uid) or await _has_approved_access_request(session_id, uid)
+                or await _access_request_approved_by_id(session_id, request_id)):
+            return "billet"
+        raise HTTPException(status_code=403, detail="billet_requis")
+    # mode « open » (Ouverte, crédits) — défaut d'une session inconnue
+    if acces.get("access_mode") == "guest":
+        return "entree_libre"                       # l'hôte a choisi l'entrée directe par pseudo
+    if not uid:
+        raise HTTPException(status_code=401, detail="connexion_requise")
+    if await is_coach_unlimited(uid):
+        return "illimite"                           # dont l'accès Afroboost 12 h : 0 crédit BT
+    cost = int((await get_pricing_settings()).get("cost_join", 1) or 0)
+    await _spend_credits(uid, cost, "spend_join", ref=f"{session_id}:{uid}", note=f"join {session_id}")
+    return "credit"
+
+
+async def _s0_autoriser_hote(session_id: str, user: Dict[str, Any]) -> str:
+    """Autorisation d'ANIMER : admin → illimité (Afroboost 12 h, abonnement coach) → débit
+    `cost_host` idempotent (même référence que /credits/spend host). 402 si solde insuffisant."""
+    uid = user.get("id")
+    if _is_admin_email(user):
+        return "admin"
+    if await is_coach_unlimited(uid):
+        return "illimite"
+    cost = int((await get_pricing_settings()).get("cost_host", 1) or 0)
+    await _spend_credits(uid, cost, "spend_host", ref=f"{session_id}:{uid}", note=f"host {session_id}")
+    return "credit"
+
+
+def _s0_sources_publication(user: Optional[Dict[str, Any]], session_id: str) -> Optional[List[str]]:
+    """Sources LiveKit qu'un publieur peut émettre (caméra, micro, écran…).
+    S0 : None = AUCUNE restriction (comportement inchangé). BT-CREDIT-2 renverra ici la liste
+    déduite des permissions de l'utilisateur (ex. sans « screen_share »)."""
+    return None
+
+
+async def _s0_preuve_enregistrement(session_id: str) -> bool:
+    """Un enregistrement de CETTE session a-t-il été réellement autorisé et débité (`record/start`) ?"""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
+                                 params={"reason": "eq.spend_record", "ref": f"like.record:{session_id}:*",
+                                         "select": "id", "limit": "1"})
+        return r.status_code == 200 and bool(r.json())
+    except Exception:  # noqa: BLE001
+        return False
+
 
 async def upsert_coach_subscription(uid: str, patch: Dict[str, Any]) -> None:
     patch = {"user_id": uid, "updated_at": datetime.now(timezone.utc).isoformat(), **patch}
@@ -3319,6 +3443,9 @@ async def claim_host(body: ClaimHostBody, authorization: Optional[str] = Header(
     if current and current != uid:
         # Déjà revendiquée par un autre compte → on ne réécrit pas
         return {"ok": False, "host_id": current}
+    # S0 : devenir hôte exige une autorisation d'animer AVANT d'écrire host_id (402 sinon,
+    # host_id non posé). Idempotent : une re-revendication du même hôte ne redébite pas.
+    await _s0_autoriser_hote(body.session_id, user)
     if current != uid:
         await upsert_playlist_fields(body.session_id, {"host_id": uid})
     return {"ok": True, "host_id": uid}
@@ -5012,20 +5139,112 @@ async def _generate_magic_link(email: str) -> Optional[Dict[str, Any]]:
     }
 
 
+# S0 (19/10/2026) — RÈGLE F : AUCUNE AUTORISATION SANS VERDICT D'AFROBOOST.
+#   La preuve de l'abonné, c'est le jeton SIGNÉ par Afroboost (il a vérifié le forfait avant de
+#   signer) : /api/embed/verify accorde donc l'accès 12 h comme avant. Le débit de la séance se
+#   fait au démarrage (/api/boosttribe/consume, idempotent sur jti). Trois issues :
+#     • verdict OK                 → l'accès reste (12 h) ;
+#     • refus explicite (no_credit, 4xx) → ok:false (le Live s'arrête, comme avant pour no_credit)
+#                                          ET l'accès offert par CE jeton est retiré ;
+#     • AUCUN verdict (réseau, 5xx, réponse illisible) → le Live déjà ouvert CONTINUE
+#       (`ok:true, en_attente:true`), BoostTribe réessaie tant que le jeton est valable
+#       (15 min) ; toujours sans verdict → l'accès offert par CE jeton est retiré.
+#   « Retiré » = l'état d'AVANT ce jeton est restauré, et seulement si personne ne l'a modifié
+#   entre-temps : un accès antérieur (enterprise, abonnement…) n'est jamais touché.
+AFRO_REESSAIS_S = (30, 120, 300)
+_AFRO_OCTROIS: Dict[str, Dict[str, Any]] = {}
+_AFRO_OCTROIS_MAX = 5000
+_AFRO_TACHES: set = set()   # réessais en cours (référence gardée : une tâche orpheline peut être ramassée)
+
+
+def _s0_instant(v: Optional[str]) -> Optional[datetime]:
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _s0_acces_fusionne(plan: Optional[str], until: Optional[str], nouveau_until: str) -> Optional[Dict[str, Any]]:
+    """RÈGLE E — le MEILLEUR accès gagne : on ne rétrograde jamais un plan supérieur ni n'écourte
+    un accès plus long. Renvoie le patch à écrire, ou None s'il n'y a rien à écrire."""
+    if _comp_access_active(plan, until):
+        if plan == "enterprise":
+            return None
+        fin = _s0_instant(until)
+        if fin is None or fin >= _s0_instant(nouveau_until):
+            return None
+    return {"comp_access_plan": "pro", "comp_access_until": nouveau_until}
+
+
+def _s0_memoriser_octroi(jti: Optional[str], uid: str, avant: tuple, ecrit: Dict[str, Any]) -> None:
+    if not jti:
+        return
+    deja = _AFRO_OCTROIS.get(jti)
+    if deja and deja["uid"] == uid:
+        avant = deja["avant"]      # même jeton revérifié (rechargement) : l'état d'ORIGINE reste celui du 1er passage
+    elif len(_AFRO_OCTROIS) >= _AFRO_OCTROIS_MAX:
+        _AFRO_OCTROIS.pop(next(iter(_AFRO_OCTROIS)))
+    _AFRO_OCTROIS[jti] = {"uid": uid, "avant": avant,
+                          "ecrit": (ecrit["comp_access_plan"], ecrit["comp_access_until"])}
+
+
+async def _s0_retirer_octroi(jti: Optional[str], motif: str) -> bool:
+    """Restaure l'accès d'AVANT ce jeton — seulement si l'accès actuel est encore celui qu'il a écrit."""
+    rec = _AFRO_OCTROIS.pop(jti or "", None)
+    if not rec:
+        logger.warning("[S0-AFRO] retrait impossible (octroi inconnu, jti=%s, %s)", (jti or "")[:8], motif)
+        return False
+    plan, until = await _get_comp_access(rec["uid"])
+    e_plan, e_until = rec["ecrit"]
+    if plan != e_plan or _s0_instant(until) != _s0_instant(e_until):
+        logger.info("[S0-AFRO] accès modifié depuis l'octroi : rien retiré (jti=%s)", (jti or "")[:8])
+        return False
+    a_plan, a_until = rec["avant"]
+    await update_profile(rec["uid"], {"comp_access_plan": a_plan, "comp_access_until": a_until})
+    logger.warning("[S0-AFRO] accès offert par le jeton %s RETIRÉ (%s)", (jti or "")[:8], motif)
+    return True
+
+
 async def notify_afroboost_session_started(token: str) -> Dict[str, Any]:
-    """Prévient afroboost qu'une session a réellement démarré → débit d'1 crédit (idempotent sur jti
-    côté afroboost). Souci réseau → on NE bloque PAS l'UX (return ok:true)."""
+    """Prévient afroboost qu'une session a réellement démarré → débit d'1 séance (idempotent sur
+    jti côté afroboost). Renvoie {verdict: ok|refus|aucun, ...}."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(AFROBOOST_CONSUME_URL, json={"token": token})
-        data = resp.json() if resp.content else {}
-        if not data.get("ok") and data.get("reason") == "no_credit":
-            return {"ok": False, "reason": "no_credit"}
-        return {"ok": bool(data.get("ok", True)),
-                "remaining_credits": data.get("remaining_credits")}
-    except Exception as exc:  # réseau/DNS/TLS → ne pas bloquer l'expérience
+    except Exception as exc:  # réseau/DNS/TLS → aucun verdict
         logger.warning("Callback afroboost/consume injoignable : %s", exc)
-        return {"ok": True, "reason": "callback_unreachable"}
+        return {"verdict": "aucun"}
+    if resp.status_code >= 500:
+        return {"verdict": "aucun"}
+    try:
+        data = resp.json() if resp.content else {}
+    except Exception:  # noqa: BLE001
+        return {"verdict": "aucun"}
+    if resp.status_code >= 400:
+        return {"verdict": "refus", "reason": "refus_afroboost"}
+    if data.get("ok") is True:
+        return {"verdict": "ok", "remaining_credits": data.get("remaining_credits")}
+    if data.get("ok") is False:
+        return {"verdict": "refus", "reason": data.get("reason") or "refus_afroboost"}
+    return {"verdict": "aucun"}
+
+
+async def _embed_reessayer_consume(token: str, jti: Optional[str], delais: tuple = AFRO_REESSAIS_S) -> bool:
+    """Réessaie le débit Afroboost tant que le jeton est valable. Sans verdict à la fin → retrait."""
+    for attente in delais:
+        await asyncio.sleep(attente)
+        r = await notify_afroboost_session_started(token)
+        if r["verdict"] == "ok":
+            logger.info("[S0-AFRO] débit Afroboost obtenu après réessai (jti=%s)", (jti or "")[:8])
+            return True
+        if r["verdict"] == "refus":
+            await _s0_retirer_octroi(jti, "refus Afroboost au réessai")
+            return False
+    logger.error("[S0-AFRO] séance Afroboost NON débitée après réessais (jti=%s)", (jti or "")[:8])
+    await _s0_retirer_octroi(jti, "aucun verdict d'Afroboost")
+    return False
 
 
 @app.post("/api/embed/verify")
@@ -5055,11 +5274,17 @@ async def verify_embed_token(body: EmbedTokenBody):
     # 2) ACCÈS GRATUIT — on réutilise le mécanisme d'accès existant (comp_access) : un accès
     #    « pro » non expiré = crédits illimités (is_coach_unlimited) → aucun débit ni paywall
     #    lors du join/host. On ne touche PAS coach_payment_type (ce n'est pas un coach vendeur).
+    #    S0 — RÈGLE E : le MEILLEUR accès gagne (jamais de rétrogradation d'un enterprise, jamais
+    #    d'accès plus long écourté). L'état d'AVANT est mémorisé pour la règle F.
     until = (datetime.now(timezone.utc) + timedelta(hours=AFRO_BT_ACCESS_HOURS)).isoformat()
-    grant_row: Dict[str, Any] = {"id": uid, "email": email,
-                                 "comp_access_plan": "pro", "comp_access_until": until}
-    if not await upsert_profile(grant_row):
-        await update_profile(uid, {"comp_access_plan": "pro", "comp_access_until": until})
+    avant = await _get_comp_access(uid)
+    patch = _s0_acces_fusionne(avant[0], avant[1], until)
+    if patch is not None:
+        if not await upsert_profile({"id": uid, "email": email, **patch}):
+            await update_profile(uid, patch)
+        _s0_memoriser_octroi(jti, uid, avant, patch)
+    else:
+        logger.info("[S0-AFRO] accès existant conservé (meilleur que l'accès Afroboost 12 h)")
 
     # 3) Connexion automatique : lien magique (pas d'email envoyé) → verifyOtp côté frontend.
     link = await _generate_magic_link(email)
@@ -5083,9 +5308,18 @@ async def embed_session_started(body: EmbedTokenBody):
     """Appelé par le frontend quand une session live démarre RÉELLEMENT → déclenche le débit
     d'1 crédit côté afroboost (idempotent sur jti). Renvoie {ok, reason?, remaining_credits?}."""
     payload = _decode_afro_token(body.token)  # re-vérifie signature/iss/aud/exp
-    result = await notify_afroboost_session_started(body.token or "")
-    result["jti"] = payload.get("jti")
-    return result
+    jti = payload.get("jti")
+    r = await notify_afroboost_session_started(body.token or "")
+    if r["verdict"] == "ok":
+        return {"ok": True, "remaining_credits": r.get("remaining_credits"), "jti": jti}
+    if r["verdict"] == "refus":
+        await _s0_retirer_octroi(jti, "refus Afroboost")
+        return {"ok": False, "reason": r.get("reason") or "refus_afroboost", "jti": jti}
+    # Aucun verdict : la session déjà validée continue, sans être présentée comme débitée.
+    tache = asyncio.ensure_future(_embed_reessayer_consume(body.token or "", jti))
+    _AFRO_TACHES.add(tache)
+    tache.add_done_callback(_AFRO_TACHES.discard)
+    return {"ok": True, "en_attente": True, "reason": "afroboost_injoignable", "jti": jti}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════════════════

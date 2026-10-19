@@ -655,7 +655,8 @@ async def record_start(body: RecordStartBody, authorization: Optional[str] = Hea
         # S0 : trace d'autorisation à 0 crédit (illimité / admin / option gratuite) — l'envoi reste
         # possible même si l'accès illimité expire pendant le Live.
         await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": "spend_record",
-                                     "p_ref": f"record:{body.session_id}:{uid}", "p_note": f"record autorisé {body.session_id}"})
+                                     "p_ref": f"auth0:record:{body.session_id}:{uid}",
+                                     "p_note": f"record autorisé {body.session_id}"})
         balance = await get_balance(uid)
     await upsert_playlist_fields(body.session_id, {"record_enabled": True})
     return {"ok": True, "cost": spent, "balance": balance, "unlimited": unlimited}
@@ -1064,6 +1065,8 @@ async def _s0_demande_approuvee(session_id: str, request_id: Optional[int], preu
     if _s0_preuve_demande_valide(session_id, request_id, preuve):
         return await _access_request_approved_by_id(session_id, request_id)
     fin = _s0_instant(S0_AR_SANS_PREUVE_JUSQUA) if S0_AR_SANS_PREUVE_JUSQUA else None
+    if fin is not None and fin.tzinfo is None:
+        fin = fin.replace(tzinfo=timezone.utc)          # « 2026-10-22 » : lu en UTC (jamais une 500)
     if not (request_id and S0_AR_SANS_PREUVE_MAX_ID and fin and datetime.now(timezone.utc) < fin
             and 0 < int(request_id) <= S0_AR_SANS_PREUVE_MAX_ID):
         return False
@@ -2912,8 +2915,10 @@ async def _s0_autoriser_hote(session_id: str, user: Dict[str, Any]) -> str:
         motif = "gratuit"
     # Trace d'autorisation à 0 crédit (admin / illimité / animation gratuite) : les co-hôtes s'y fient
     # (`_s0_hote_autorise`), y compris si l'accès illimité de l'hôte expire pendant le Live.
+    # Référence DISTINCTE du débit réel (`auth0:` + ref) : une trace gratuite ne doit jamais valoir
+    # paiement plus tard (fin d'essai, tarif rétabli) — l'idempotence porte sur (raison, référence).
     await _rpc("spend_credits", {"p_user": uid, "p_amount": 0, "p_reason": "spend_host",
-                                 "p_ref": ref, "p_note": f"host autorisé ({motif}) {session_id}"})
+                                 "p_ref": f"auth0:{ref}", "p_note": f"host autorisé ({motif}) {session_id}"})
     return motif
 
 
@@ -2961,10 +2966,11 @@ async def _s0_hote_autorise(session_id: str, hote_id: Optional[str]) -> bool:
         return True
     try:
         async with httpx.AsyncClient(timeout=10) as client:
+            refs = (f"{session_id}:{hote_id}", f"auth0:{session_id}:{hote_id}")     # débit réel OU trace gratuite
             r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
                                  params={"reason": "eq.spend_host", "user_id": f"eq.{hote_id}",
-                                         "ref": f"eq.{session_id}:{hote_id}", "select": "ref"})
-            if r.status_code == 200 and any(x.get("ref") == f"{session_id}:{hote_id}" for x in (r.json() or [])):
+                                         "ref": f"in.({refs[0]},{refs[1]})", "select": "ref"})
+            if r.status_code == 200 and any(x.get("ref") in refs for x in (r.json() or [])):
                 return True
             u = await client.get(f"{SUPABASE_URL}/auth/v1/admin/users/{hote_id}", headers=_service_headers())
             return u.status_code == 200 and _is_admin_email(u.json() or {})
@@ -2985,11 +2991,12 @@ async def _s0_preuve_enregistrement(session_id: str, uid: str) -> bool:
     « _ » y est un joker) ; un co-hôte qui n'a rien payé n'emprunte pas la preuve de l'hôte."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
+            refs = (f"record:{session_id}:{uid}", f"auth0:record:{session_id}:{uid}")   # débit réel OU trace gratuite
             r = await client.get(f"{SUPABASE_URL}/rest/v1/credit_ledger", headers=_service_headers(),
                                  params={"reason": "eq.spend_record", "user_id": f"eq.{uid}",
-                                         "ref": f"eq.record:{session_id}:{uid}", "select": "ref"})
+                                         "ref": f"in.({refs[0]},{refs[1]})", "select": "ref"})
         rows = r.json() if r.status_code == 200 else []
-        return any(isinstance(x, dict) and x.get("ref") == f"record:{session_id}:{uid}" for x in rows or [])
+        return any(isinstance(x, dict) and x.get("ref") in refs for x in rows or [])
     except Exception:  # noqa: BLE001
         return False
 

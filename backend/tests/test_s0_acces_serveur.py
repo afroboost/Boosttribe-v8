@@ -433,3 +433,42 @@ def test_prise_d_hote_course_ligne_sans_hote_creee_entre_temps(monde):
     r = client.post("/session/claim-host", headers={"Authorization": "Bearer riche"}, json={"session_id": "SESS-COURSE2"})
     assert r.json() == {"ok": True, "host_id": u["riche"]}
     assert next(p for p in sb.tables["playlists"] if p["session_id"] == "SESS-COURSE2")["host_id"] == u["riche"]
+
+
+# ═══════════════════════ revue sur 6fb515d ═══════════════════════
+
+def test_transition_date_sans_fuseau_pas_de_500(monde, monkeypatch):
+    m, sb, client, u = monde
+    session(sb, "SESS-BILLET", u["coach"], mode="paid")
+    sb.tables["access_requests"].append({"id": 40, "session_id": "SESS-BILLET", "status": "approved", "requester_user_id": None})
+    monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_MAX_ID", 40)
+    monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_JUSQUA", "2099-01-01")          # telle qu'un opérateur l'écrit
+    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 200
+    assert client.get("/tickets/check/SESS-BILLET?request_id=40").json()["has_ticket"] is True
+    monkeypatch.setattr(m, "S0_AR_SANS_PREUVE_JUSQUA", "2000-01-01")
+    assert jeton(client, None, "SESS-BILLET", request_id=40).status_code == 403
+
+
+def test_trace_gratuite_ne_vaut_pas_paiement_quand_le_tarif_revient(monde):
+    """Animation à 0 crédit : trace d'autorisation. Tarif rétabli ensuite : le MÊME identifiant de
+    session se paie normalement (la trace ne bloque pas le vrai débit)."""
+    m, sb, client, u = monde
+    h = {"Authorization": "Bearer riche"}
+    sb.tables["pricing_settings"][0]["cost_host"] = 0
+    assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-AVANCE"}).json()["ok"] is True
+    sb.tables["pricing_settings"][0]["cost_host"] = 1
+    assert jeton(client, "riche", "SESS-AVANCE", role="stage").status_code == 200
+    assert [d["delta"] for d in sb.debits(u["riche"])] == [-1]
+
+
+def test_trace_gratuite_d_enregistrement_ne_vaut_pas_paiement(monde):
+    m, sb, client, u = monde
+    sb.profil(u["riche"])["coach_payment_type"] = "commission"
+    sb.crediter(u["riche"], 10)
+    h = {"Authorization": "Bearer riche"}
+    assert client.post("/session/claim-host", headers=h, json={"session_id": "SESS-REC0"}).status_code == 200
+    sb.tables["pricing_settings"][0]["cost_record_transcribe"] = 0
+    assert client.post("/session/record/start", headers=h, json={"session_id": "SESS-REC0"}).json()["cost"] == 0
+    sb.tables["pricing_settings"][0]["cost_record_transcribe"] = 4
+    assert client.post("/session/record/start", headers=h, json={"session_id": "SESS-REC0"}).json()["cost"] == 4
+    assert [d["reason"] for d in sb.debits(u["riche"])] == ["spend_host", "spend_record"]

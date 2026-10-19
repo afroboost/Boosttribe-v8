@@ -1,8 +1,12 @@
 import { PUBLIC_URL } from '@/config/brand';
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 import { claimSignupBonus, getMyCredits } from '@/lib/paymentApi';
+import {
+  CGU_VERSION, CLE_CGU_EN_ATTENTE, MESSAGE_ECHEC_CGU, cguAJour, consentementInscription, enAttenteValide,
+  fonctionCguAbsente, metadonneesInscription, serialiserEnAttente, verdictRelecture, type ResultatCgu,
+} from '@/lib/cguConsentement';
 
 // Types
 export type UserRole = 'user' | 'admin';
@@ -19,6 +23,9 @@ export interface UserProfile {
   // ⚠️ `has_accepted_terms` n'existe dans AUCUNE base (boosttribe.pro, afroboost.com/live) : ne jamais l'écrire.
   has_accepted_terms: boolean;
   terms_accepted?: boolean | null;
+  // Preuve SERVEUR (migration post-S0 03) : date et version des CGU acceptées. Jamais écrites par le navigateur.
+  terms_accepted_at?: string | null;
+  terms_version?: string | null;
   // 💳 Solde de crédits (colonne maintenue par trigger côté Supabase). 1 crédit = 1 accès à un live.
   credits?: number;
   // POINT 6 : accès offert par l'admin (DÉPRÉCIÉ — conservé pour compat migration)
@@ -29,8 +36,9 @@ export interface UserProfile {
 }
 
 // Post-S0 : la colonne en base est `terms_accepted`. Seul un `true` explicite vaut acceptation
-// (aucun ancien compte n'est réputé avoir accepté sans preuve).
-const avecCgu = (row: UserProfile): UserProfile => ({ ...row, has_accepted_terms: row?.terms_accepted === true });
+// (aucun ancien compte n'est réputé avoir accepté sans preuve). Avec la migration 03 : il faut en plus
+// la date serveur ET la version courante (CGU_VERSION) — sinon l'utilisateur est sollicité une fois.
+const avecCgu = (row: UserProfile): UserProfile => ({ ...row, has_accepted_terms: cguAJour(row, CGU_VERSION) });
 
 export interface AuthContextValue {
   // Auth state
@@ -64,13 +72,15 @@ export interface AuthContextValue {
   // Auth actions
   signInWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
   signUpWithEmail: (email: string, password: string, fullName?: string) => Promise<{ error: AuthError | null }>;
-  signInWithGoogle: () => Promise<{ error: AuthError | null }>;
+  // consentementCgu : case CGU cochée AVANT la redirection Google (inscription) → enregistrée au retour.
+  signInWithGoogle: (consentementCgu?: boolean) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>;
   updatePassword: (newPassword: string) => Promise<{ error: AuthError | null }>;
   
   // Profile actions
-  acceptTerms: () => Promise<boolean>;
+  // Enregistre l'acceptation (serveur) puis RELIT la ligne : ok uniquement si la relecture le confirme.
+  acceptTerms: () => Promise<ResultatCgu>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<boolean>;
   refreshProfile: () => Promise<void>;
 }
@@ -188,6 +198,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  // Crée SA ligne profiles (RLS : soi-même uniquement ; S0 02 force les colonnes sensibles à une
+  // valeur sûre). Charge minimale : rôle, crédits… prennent la valeur par DÉFAUT de la base.
+  // Utilisée par acceptTerms en REPLI (fonction serveur accepter_cgu absente, migration 03 non appliquée).
+  const createProfile = useCallback(async (userId: string, userEmail: string, userMetadata?: Record<string, unknown>,
+    accepteCgu = false): Promise<UserProfile | null> => {
+    if (!supabase) return null;
+
+    const newProfile: Partial<UserProfile> = {
+      id: userId,
+      email: userEmail,
+      full_name: (userMetadata?.full_name as string) || (userMetadata?.name as string) || userEmail.split('@')[0] || '',
+      avatar_url: (userMetadata?.avatar_url as string) || (userMetadata?.picture as string) || '',
+      terms_accepted: accepteCgu,
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .insert(newProfile)
+        .select()
+        .single();
+
+      if (error) {
+        // Course (ligne créée entre-temps, 23505) ou refus : on relit avant de se rabattre sur le local.
+        const { data: relue } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+        if (relue) return avecCgu(relue as UserProfile);
+        console.error('[AUTH] Error creating profile:', error.message);
+        return null;
+      }
+
+      return avecCgu(data as UserProfile);
+    } catch (err) {
+      console.error('[AUTH] Exception creating profile:', err);
+      return null;
+    }
+  }, []);
+
   // Fetch user profile from database
   const fetchProfile = useCallback(async (userId: string, userEmail: string, userMetadata?: Record<string, unknown>): Promise<UserProfile | null> => {
     if (!supabase) return createLocalProfile(userId, userEmail, userMetadata);
@@ -201,8 +248,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (error) {
         // Table doesn't exist or profile not found
+        // Ligne absente : profil LOCAL d'affichage (inchangé). La ligne en base est créée par le
+        // serveur au moment de l'acceptation des CGU (accepter_cgu), avec des valeurs neutres —
+        // la créer ici donnerait subscription_status = 'free' (défaut base), que le front compte
+        // à tort comme un plan payant (isSubscribed).
         if (error.code === 'PGRST116' || error.code === '42P01') {
-          console.warn('[AUTH] Profile not found, creating default profile');
+          console.warn('[AUTH] Profile not found, using local profile');
           return createLocalProfile(userId, userEmail, userMetadata);
         }
         console.error('[AUTH] Error fetching profile:', error.message);
@@ -224,45 +275,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return createLocalProfile(userId, userEmail, userMetadata);
     }
   }, [createLocalProfile]);
-
-  // Create new profile for user in database
-  const createProfile = async (userId: string, userEmail: string, userMetadata?: Record<string, unknown>): Promise<UserProfile | null> => {
-    if (!supabase) return createLocalProfile(userId, userEmail, userMetadata);
-
-    // Check if user should be admin
-    const adminEmails = ['contact.artboost@gmail.com'];
-    const isAdminUser = adminEmails.includes(userEmail.toLowerCase());
-
-    const newProfile: Partial<UserProfile> = {
-      id: userId,
-      email: userEmail,
-      full_name: (userMetadata?.full_name as string) || userEmail.split('@')[0] || '',
-      avatar_url: (userMetadata?.avatar_url as string) || '',
-      role: isAdminUser ? 'admin' : 'user',
-      subscription_status: isAdminUser ? 'enterprise' : 'trial',
-      terms_accepted: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .insert(newProfile)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('[AUTH] Error creating profile:', error.message);
-        return createLocalProfile(userId, userEmail, userMetadata);
-      }
-
-      return avecCgu(data as UserProfile);
-    } catch (err) {
-      console.error('[AUTH] Exception creating profile:', err);
-      return createLocalProfile(userId, userEmail, userMetadata);
-    }
-  };
 
   // Refresh profile
   const refreshProfile = useCallback(async (): Promise<void> => {
@@ -336,9 +348,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email,
         password,
         options: {
-          data: {
-            full_name: fullName || email.split('@')[0],
-          },
+          // Consentement CGU tracé sur le COMPTE dès l'inscription (version + heure locale), puis
+          // enregistré comme PREUVE serveur (accepter_cgu) dès la première session.
+          data: metadonneesInscription(fullName, email, CGU_VERSION),
         },
       });
 
@@ -360,9 +372,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   // Sign in with Google - force production URL redirect
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (consentementCgu?: boolean) => {
     if (!supabase) {
       return { error: { message: 'Supabase non configuré' } as AuthError };
+    }
+    // Case CGU cochée avant de partir chez Google : mémorisée (version + heure), relue au retour.
+    const oublierEnAttente = () => { try { localStorage.removeItem(CLE_CGU_EN_ATTENTE); } catch { /* ignore */ } };
+    if (consentementCgu) {
+      try { localStorage.setItem(CLE_CGU_EN_ATTENTE, serialiserEnAttente(CGU_VERSION)); } catch { /* ignore */ }
+    } else {
+      oublierEnAttente();
     }
 
     // 🔒 VERROUILLAGE DOMAINE PRODUCTION — l'URL publique de la MARQUE du build
@@ -387,6 +406,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (error) {
+        oublierEnAttente();
         console.error('[AUTH] Google sign in error:', error.message);
         // Specific message for unsupported provider
         if (error.message.includes('unsupported') || error.message.includes('provider')) {
@@ -401,6 +421,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return { error: null };
     } catch (err) {
+      oublierEnAttente();
       console.error('[AUTH] Google sign in exception:', err);
       return { 
         error: { 
@@ -415,6 +436,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!supabase) return;
 
     await supabase.auth.signOut();
+    try { localStorage.removeItem(CLE_CGU_EN_ATTENTE); } catch { /* ignore */ }
     setUser(null);
     setProfile(null);
     setSession(null);
@@ -451,31 +473,85 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { error };
   }, []);
 
-  // Accept terms
-  const acceptTerms = useCallback(async (): Promise<boolean> => {
-    if (!supabase || !user) return false;
+  // Accept terms — PREUVE SERVEUR puis RELECTURE. Jamais de faux succès :
+  //  1. accepter_cgu(CGU_VERSION) (migration 03) : date serveur, version, ligne créée si absente ;
+  //  2. repli tant que 03 n'est pas appliquée : terms_accepted = true sur SA ligne, créée si absente ;
+  //  3. relecture de la ligne : ok seulement si elle confirme l'acceptation de CETTE version.
+  const acceptTerms = useCallback(async (): Promise<ResultatCgu> => {
+    if (!supabase || !user) return { ok: false, erreur: 'Connectez-vous pour accepter les CGU.' };
 
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          terms_accepted: true,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user.id);
-
-      if (error) {
-        console.error('[AUTH] Error accepting terms:', error);
-        return false;
+      const { error: errRpc } = await supabase.rpc('accepter_cgu', { p_version: CGU_VERSION });
+      if (errRpc) {
+        if (!fonctionCguAbsente(errRpc)) {
+          console.error('[AUTH] Error accepting terms:', errRpc);
+          return { ok: false, erreur: MESSAGE_ECHEC_CGU };
+        }
+        const { data: maj, error } = await supabase
+          .from('profiles')
+          .update({
+            terms_accepted: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', user.id)
+          .select('id');
+        if (error) {
+          console.error('[AUTH] Error accepting terms:', error);
+          return { ok: false, erreur: MESSAGE_ECHEC_CGU };
+        }
+        if (!maj || maj.length === 0) {
+          // Aucune ligne modifiée = ligne absente : on la crée (acceptée), sinon échec explicite.
+          const creee = await createProfile(user.id, user.email || '', user.user_metadata, true);
+          if (!creee) return { ok: false, erreur: MESSAGE_ECHEC_CGU };
+        }
       }
 
-      setProfile(prev => prev ? { ...prev, terms_accepted: true, has_accepted_terms: true } : null);
-      return true;
+      const { data: relue, error: errLec } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (errLec || !relue) {
+        console.error('[AUTH] Terms re-read failed:', errLec);
+        return { ok: false, erreur: MESSAGE_ECHEC_CGU };
+      }
+      const verdict = verdictRelecture(relue, CGU_VERSION);
+      if (verdict.ok) {
+        const ligne = avecCgu(relue as UserProfile);
+        setProfile(prev => prev ? { ...prev, ...ligne } : ligne);
+      }
+      return verdict;
     } catch (err) {
       console.error('[AUTH] Exception accepting terms:', err);
-      return false;
+      return { ok: false, erreur: MESSAGE_ECHEC_CGU };
     }
-  }, [user]);
+  }, [user, createProfile]);
+
+  // Consentement donné AVANT la session (inscription e-mail : métadonnées du compte ; Google : case
+  // cochée avant la redirection) → enregistré comme preuve serveur dès que la session existe.
+  // Une seule tentative par compte et par chargement ; dépendances PRIMITIVES (aucune boucle).
+  const cguAutoRef = useRef<string | null>(null);
+  const userId = user?.id ?? null;
+  const profilId = profile?.id ?? null;
+  const cguOk = profile?.has_accepted_terms === true;
+  useEffect(() => {
+    if (!userId || !profilId || isAdmin) return;
+    let enAttente: string | null = null;
+    try { enAttente = localStorage.getItem(CLE_CGU_EN_ATTENTE); } catch { /* ignore */ }
+    if (cguOk) {
+      if (enAttente) { try { localStorage.removeItem(CLE_CGU_EN_ATTENTE); } catch { /* ignore */ } }
+      return;
+    }
+    if (cguAutoRef.current === userId) return;
+    const consenti = consentementInscription(user?.user_metadata, CGU_VERSION) || enAttenteValide(enAttente, CGU_VERSION);
+    if (enAttente) { try { localStorage.removeItem(CLE_CGU_EN_ATTENTE); } catch { /* ignore */ } }
+    if (!consenti) return;
+    cguAutoRef.current = userId;
+    acceptTerms().then((r) => {
+      if (!r.ok) console.warn('[AUTH] Consentement CGU non enregistré (sera redemandé avant tout achat)');
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, profilId, cguOk, isAdmin]);
 
   // Update profile
   const updateProfile = useCallback(async (updates: Partial<UserProfile>): Promise<boolean> => {

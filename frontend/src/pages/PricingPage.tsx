@@ -143,12 +143,16 @@ const PricingPage: React.FC = () => {
     }
   }, [ppCountry, billing, showToast, isAuthenticated, ppEmail]);
 
-  const handleAcceptTerms = async () => {
-    if (termsChecked && !hasAcceptedTerms) {
-      setIsAccepting(true);
-      await acceptTerms();
-      setIsAccepting(false);
-    }
+  // Vrai seulement si l'acceptation est CONFIRMÉE par relecture serveur ; sinon message clair et
+  // aucun paiement ne démarre (le consentement n'est jamais supposé).
+  const handleAcceptTerms = async (): Promise<boolean> => {
+    if (hasAcceptedTerms) return true;
+    if (!termsChecked) return false;
+    setIsAccepting(true);
+    const r = await acceptTerms();
+    setIsAccepting(false);
+    if (!r.ok) { showToast(r.erreur, 'error'); return false; }
+    return true;
   };
 
   const startCheckout = useCallback(async (pack: CreditPack) => {
@@ -172,7 +176,7 @@ const PricingPage: React.FC = () => {
       setShowTermsModal(true);
       return;
     }
-    if (termsChecked && !hasAcceptedTerms) await handleAcceptTerms();
+    if (termsChecked && !hasAcceptedTerms && !(await handleAcceptTerms())) return;
     await startCheckout(pack);
   };
 
@@ -200,7 +204,7 @@ const PricingPage: React.FC = () => {
       setShowTermsModal(true);
       return;
     }
-    if (termsChecked && !hasAcceptedTerms) await handleAcceptTerms();
+    if (termsChecked && !hasAcceptedTerms && !(await handleAcceptTerms())) return;
     await startSubscribe(plan);
   };
 
@@ -714,7 +718,7 @@ const PricingPage: React.FC = () => {
                 <Button
                   onClick={async () => {
                     if (!termsChecked) return;
-                    await handleAcceptTerms();
+                    if (!(await handleAcceptTerms())) return;   // fenêtre gardée ouverte, message affiché
                     setShowTermsModal(false);
                     if (pendingPack) { const p = pendingPack; setPendingPack(null); await startCheckout(p); }
                     else if (pendingPlan) { const pl = pendingPlan; setPendingPlan(null); await startSubscribe(pl); }

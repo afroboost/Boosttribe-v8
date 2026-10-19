@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Footer } from '@/components/layout/Footer';
 import { MobileMenu } from '@/components/layout/MobileMenu';
 import { useToast } from '@/components/ui/Toast';
@@ -34,8 +34,9 @@ const STATUS_LABEL: Record<string, string> = {
 
 // 💰 Portefeuille coach (style Spordateur) — solde, revenus, IBAN, demande de virement.
 const WalletPage: React.FC = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, hasAcceptedTerms } = useAuth();
   const { showToast } = useToast();
+  const navigate = useNavigate();
   const [wallet, setWallet] = useState<CoachWallet | null>(null);
   const [plan, setPlan] = useState<CoachPlan | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,6 +94,12 @@ const WalletPage: React.FC = () => {
   // 💎 Abonnement Coach UNIFIÉ : même parcours que la page tarifs → Checkout Stripe avec essai 7 j + carte.
   //    (L'ancien /coach/subscribe reste en repli backend, mais n'est plus utilisé côté UI.)
   const handleSubscribe = useCallback(async () => {
+    // Post-S0 : aucun paiement sans CGU acceptées (preuve serveur) → la page Tarifs les fait accepter.
+    if (!hasAcceptedTerms) {
+      showToast("Acceptez d'abord les CGU (page Tarifs) pour vous abonner", 'warning');
+      navigate('/pricing');
+      return;
+    }
     setSubscribing(true);
     try {
       const { url, error } = await createCheckout('enterprise', 'month');
@@ -101,7 +108,7 @@ const WalletPage: React.FC = () => {
     } finally {
       setSubscribing(false);
     }
-  }, [showToast]);
+  }, [showToast, hasAcceptedTerms, navigate]);
 
   const handleSaveBank = useCallback(async () => {
     if (!iban.trim() || !holder.trim()) { showToast('IBAN et titulaire requis', 'warning'); return; }

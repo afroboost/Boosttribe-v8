@@ -36,12 +36,14 @@ test('acceptation des CGU : écrit terms_accepted = true, jamais has_accepted_te
 test('création de profil : la charge ne nomme aucune colonne inexistante', () => {
   const f = corps('const createProfile');
   const charge = f.slice(f.indexOf('const newProfile'), f.indexOf('try {'));
-  assert.match(charge, /terms_accepted:\s*false/);
+  assert.match(charge, /terms_accepted:\s*accepteCgu/);
+  assert.match(f, /accepteCgu = false\)/, 'par défaut : NON accepté (seul acceptTerms passe true)');
   assert.doesNotMatch(charge, /has_accepted_terms/);
 });
 
 test('lecture : seul un true explicite en base vaut acceptation', () => {
-  assert.match(code, /const avecCgu = \(row: UserProfile\): UserProfile => \(\{ \.\.\.row, has_accepted_terms: row\?\.terms_accepted === true \}\)/);
+  // Post-S0 03 : la règle (true explicite + preuve serveur de la version courante) vit dans lib/cguConsentement.ts.
+  assert.match(code, /const avecCgu = \(row: UserProfile\): UserProfile => \(\{ \.\.\.row, has_accepted_terms: cguAJour\(row, CGU_VERSION\) \}\)/);
   const f = corps('const fetchProfile');
   assert.match(f, /return avecCgu\(data as UserProfile\)/);
   assert.match(f, /return avecCgu\(\{ \.\.\.data, role: 'admin'/);

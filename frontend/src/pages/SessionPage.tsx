@@ -3802,16 +3802,24 @@ export const SessionPage: React.FC = () => {
   }, [sendPlaybackEvent]);
 
   // 🚪 Hôte/co-hôte : activer/désactiver la salle d'attente (session privée)
+  // Post-S0 : un seul enregistrement à la fois (deux clics rapides ne se croisent plus).
+  const confidentialiteEnCoursRef = useRef(false);
   const handleTogglePrivacy = useCallback(async () => {
+    if (confidentialiteEnCoursRef.current) return;
+    confidentialiteEnCoursRef.current = true;
     const next = !isPrivate;
     setIsPrivate(next);
-    // Post-S0 : le réglage n'est annoncé qu'une fois RELU en base ; refusé → l'interface revient en arrière.
-    if (sessionId && !(await saveSessionPrivacy(sessionId, next))) {
-      setIsPrivate(!next);
-      showToast('Réglage non enregistré : seul l\'hôte ou un co-hôte de cette session peut le modifier.', 'error');
-      return;
+    try {
+      // Post-S0 : le réglage n'est annoncé qu'une fois RELU en base ; refusé → l'interface revient en arrière.
+      if (sessionId && !(await saveSessionPrivacy(sessionId, next))) {
+        setIsPrivate(!next);
+        showToast('Réglage non enregistré : seul l\'hôte ou un co-hôte de cette session peut le modifier.', 'error');
+        return;
+      }
+      showToast(next ? '🔒 Session privée : les participants passent par la salle d\'attente' : '🌐 Session publique : entrée directe', 'default');
+    } finally {
+      confidentialiteEnCoursRef.current = false;
     }
-    showToast(next ? '🔒 Session privée : les participants passent par la salle d\'attente' : '🌐 Session publique : entrée directe', 'default');
   }, [isPrivate, sessionId, showToast]);
 
   // 🚪 Participant (session privée, non admis) : émet sa demande d'accès (+ heartbeat 3s)
@@ -3830,9 +3838,11 @@ export const SessionPage: React.FC = () => {
   // E : partager un média (vidéo/image/lien)
   const handleShareMedia = useCallback((media: SharedMedia) => {
     setSharedMedia(media);
-    if (sessionId) saveSharedMedia(sessionId, media);
+    // Post-S0 : la diffusion en direct continue ; un échec d'enregistrement est signalé (plus de silence).
+    if (sessionId) saveSharedMedia(sessionId, media)
+      .then((ok) => { if (!ok) showToast('Média diffusé en direct, mais non mémorisé pour les personnes qui arrivent ensuite.', 'error'); });
     sendPlaybackEvent('MEDIA_COMMAND', { media, isPlaying: media.isPlaying ?? false, currentTime: media.currentTime ?? 0 });
-  }, [sessionId, sendPlaybackEvent]);
+  }, [sessionId, sendPlaybackEvent, showToast]);
 
   // 🎬 ÉMETTEUR VIDÉO UNIQUE : le SharedMediaPlayer (hôte) appelle ceci avec l'état LIVE du lecteur
   // (via son unique interval 700ms + à chaque action play/pause/seek). C'est la SEULE source qui
@@ -3847,9 +3857,10 @@ export const SessionPage: React.FC = () => {
   // E : retirer le média partagé
   const handleCloseMedia = useCallback(() => {
     setSharedMedia(null);
-    if (sessionId) saveSharedMedia(sessionId, null);
+    if (sessionId) saveSharedMedia(sessionId, null)
+      .then((ok) => { if (!ok) showToast('Média diffusé en direct, mais non mémorisé pour les personnes qui arrivent ensuite.', 'error'); });
     sendPlaybackEvent('MEDIA_COMMAND', { media: null });
-  }, [sessionId, sendPlaybackEvent]);
+  }, [sessionId, sendPlaybackEvent, showToast]);
 
   // C : le champ « description courte » a été retiré de l'onglet Diffusion (P8). La description
   // reçue en temps réel (DESC_UPDATE / DB) reste stockée pour compatibilité, mais n'est plus éditable.

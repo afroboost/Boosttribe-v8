@@ -67,10 +67,23 @@ rm -rf "$TMP"; mkdir -p "$TMP"
 for entree in $BASES; do
   nom=${entree%%:*}; conteneur=${entree#*:}
   journal "$nom : début ($conteneur)"
-  "$DOCKER" exec "$conteneur" pg_dump -U "$PG_USER" -d postgres -Fc > "$TMP/$nom-postgres.dump"
-  "$DOCKER" exec "$conteneur" pg_dumpall -U "$PG_USER" --globals-only --no-role-passwords > "$TMP/$nom-roles.sql"
-  "$DOCKER" exec -i -e PGOPTIONS='-c default_transaction_read_only=on' "$conteneur" \
-    psql -U "$PG_USER" -d postgres -At -v ON_ERROR_STOP=1 < "$EMPREINTES_SQL" > "$TMP/$nom-empreintes.txt"
+  # Empreintes relevées AVANT et APRÈS la sauvegarde : si une écriture tombe entre les deux, on
+  # recommence (sinon le test de restauration signalerait un faux écart). 3 essais au plus.
+  empreintes() {
+    "$DOCKER" exec -i -e PGOPTIONS='-c default_transaction_read_only=on' "$conteneur" \
+      psql -U "$PG_USER" -d postgres -At -v ON_ERROR_STOP=1 < "$EMPREINTES_SQL"
+  }
+  stable=0
+  for essai in 1 2 3; do
+    empreintes > "$TMP/$nom-empreintes.avant"
+    "$DOCKER" exec "$conteneur" pg_dump -U "$PG_USER" -d postgres -Fc > "$TMP/$nom-postgres.dump"
+    "$DOCKER" exec "$conteneur" pg_dumpall -U "$PG_USER" --globals-only --no-role-passwords > "$TMP/$nom-roles.sql"
+    empreintes > "$TMP/$nom-empreintes.txt"
+    if cmp -s "$TMP/$nom-empreintes.avant" "$TMP/$nom-empreintes.txt"; then stable=1; break; fi
+    journal "$nom : écriture pendant la sauvegarde (essai $essai) — on recommence"
+  done
+  rm -f "$TMP/$nom-empreintes.avant"
+  [ "$stable" = 1 ] || echec "$nom : base modifiée pendant chaque essai — empreintes non fiables"
   # La sauvegarde doit se relire entièrement (table des matières complète).
   entrees=$("$DOCKER" exec -i "$conteneur" pg_restore --list < "$TMP/$nom-postgres.dump" | grep -vc '^;')
   [ "$entrees" -gt 50 ] || echec "$nom : sauvegarde illisible ou vide ($entrees entrées)"
@@ -95,9 +108,11 @@ CHIFFRE="$RACINE/chiffre"
 if [ -f "$CLE_PUBLIQUE" ]; then
   mkdir -p "$CHIFFRE"
   base="$CHIFFRE/sauvegarde-$AUJOURDHUI"
-  S0K=$(openssl rand -hex 32); export S0K
+  # Clé AES jamais exportée : transmise à openssl par un descripteur (absente de l'environnement
+  # des autres commandes, dont la commande d'alerte en cas d'échec).
+  S0K=$(openssl rand -hex 32)
   tar czf - -C "$RACINE/quotidien" "$AUJOURDHUI" \
-    | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -out "$base.tgz.enc" -pass env:S0K
+    | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -out "$base.tgz.enc" -pass fd:3 3< <(printf %s "$S0K")
   printf %s "$S0K" | openssl pkeyutl -encrypt -pubin -inkey "$CLE_PUBLIQUE" \
     -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -out "$base.cle.enc"
   unset S0K
@@ -111,7 +126,7 @@ fi
 garder() {  # $1 = dossier, $2 = nombre, $3 = motif
   [ -d "$1" ] || return 0
   # shellcheck disable=SC2012
-  ls -1 "$1" | grep -E "$3" | sort -r | tail -n +"$(( $2 + 1 ))" | while read -r vieux; do
+  ls -1 "$1" | { grep -E "$3" || true; } | sort -r | tail -n +"$(( $2 + 1 ))" | while read -r vieux; do
     rm -rf -- "${1:?}/$vieux"; journal "rotation : $1/$vieux retiré"
   done
 }

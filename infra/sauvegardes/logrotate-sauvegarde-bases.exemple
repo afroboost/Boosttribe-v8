@@ -1,0 +1,17 @@
+# MODÈLE logrotate du journal des sauvegardes (NON installé).
+# Installation (APRÈS GO) : cp logrotate-sauvegarde-bases.exemple /etc/logrotate.d/sauvegarde-bases
+#                           chmod 644 /etc/logrotate.d/sauvegarde-bases
+# Journal créé une fois en 600 : install -m 600 /dev/null /var/log/sauvegarde-bases.log
+# Contrôle à blanc :        logrotate -d /etc/logrotate.d/sauvegarde-bases
+# Le journal ne contient aucun secret ni aucune donnée personnelle (comptes, md5, chemins, messages).
+# copytruncate : le cron écrit par « >> » ; aucun signal à envoyer. 12 semaines conservées.
+/var/log/sauvegarde-bases.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root root
+}

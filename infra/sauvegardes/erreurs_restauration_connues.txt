@@ -1,0 +1,25 @@
+# Messages d'erreur CONNUS et BÉNINS d'une restauration Supabase (roles.sql puis pg_restore --clean
+# --if-exists dans la base « postgres » d'une image supabase/postgres NEUVE).
+# Une ligne = une expression régulière étendue (grep -E), comparée au texte qui suit « ERROR: ».
+# Toute erreur qui ne correspond à AUCUNE ligne fait ÉCHOUER le test de restauration.
+#
+# Règle : n'ajouter une ligne qu'après avoir compris le message et vérifié que les empreintes restent
+# IDENTIQUES. Jamais de motif large (« .* », « does not exist » seul, « permission denied » seul…).
+# Origine : restauration manuelle validée le 19/10/2026 (image supabase/postgres:15.8.1.085) —
+# « rôles supabase_functions_admin / supabase_realtime_admin absents de l'image nue + graphql »,
+# « schéma storage, clé auth.users, fonction GraphQL ». ⚠ Textes EXACTS à confirmer au 1er test sur
+# le serveur (README § 5, étape 4) : s'il en apparaît un autre, l'examiner AVANT de l'ajouter ici.
+
+# 1) roles.sql recrée tous les rôles : ceux que l'image a déjà sont refusés (sans effet).
+^role "[^"]+" already exists$
+# 2) Rôles de services Supabase (Edge Functions, Realtime) absents de l'image nue : les GRANT / OWNER
+#    qui les visent sont ignorés (objets de leurs schémas seulement, hors public).
+^role "(supabase_functions_admin|supabase_realtime_admin)" does not exist$
+# 3) Schémas créés et gérés par l'image Supabase.
+^schema "(auth|storage|extensions|graphql|graphql_public|realtime|_realtime|supabase_functions|vault|pgsodium|pgsodium_masks|net|pgbouncer|_analytics)" already exists$
+^cannot drop schema (auth|storage|extensions|graphql|graphql_public|realtime|vault|pgsodium) because other objects depend on it$
+# 4) GraphQL (extension pg_graphql, objets de l'image) : uniquement des objets des schémas graphql*.
+(^|[ "(])graphql(_public)?[."]
+# 5) Clé primaire de auth.users déjà posée par l'image.
+^multiple primary keys for table "users" are not allowed$
+^relation "users_pkey" already exists$

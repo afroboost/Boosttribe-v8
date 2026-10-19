@@ -1,0 +1,50 @@
+# =============================================================================================
+# MODÈLE de /root/.sauvegarde-bases.env (lu par sauvegarde_bases.sh ET test_restauration.sh).
+# AUCUN secret réel ici : les valeurs « VOTRE-… » sont à remplacer SUR LE SERVEUR, APRÈS GO.
+# Installation : cp sauvegarde-bases.conf.exemple /root/.sauvegarde-bases.env && chmod 600 /root/.sauvegarde-bases.env
+# Tout est commenté : sans modification, ce fichier n'active RIEN (comportement par défaut des scripts).
+# =============================================================================================
+
+# ── Bases et fichiers (valeurs par défaut des scripts, rappelées pour mémoire) ─────────────────
+# BASES="boosttribe:supabase-db-gneo8v4uuw94cpmf5fh2db3a live:supabase-db-l12j96qw3srbix6s5h29yoo4"
+# Fichiers Supabase Storage : « nom:conteneur » (dossier lu par docker inspect, montage /var/lib/storage)
+# ou « nom:/chemin/absolu ». À CONFIRMER sur le serveur (README § 5, étape 0).
+# STOCKAGES="boosttribe:supabase-storage-gneo8v4uuw94cpmf5fh2db3a live:supabase-storage-l12j96qw3srbix6s5h29yoo4"
+# STOCKAGES="boosttribe:/data/coolify/services/gneo8v4uuw94cpmf5fh2db3a/volumes/storage live:/data/coolify/services/l12j96qw3srbix6s5h29yoo4/volumes/storage"
+
+# ── Protections S0 exigées (complet = 00 + 01 + 02, état des 2 bases depuis le 19/10/2026) ─────
+# S0_NIVEAU=complet
+
+# ── Copie hors serveur (uniquement la copie CHIFFRÉE) ───────────────────────────────────────────
+# CLE_PUBLIQUE=/root/s0-sauvegardes/cle_publique_mac.pem
+# Arguments reçus : $1 = dossier des copies chiffrées, $2 = préfixe du jour (sauvegarde-AAAA-MM-JJ).
+# Si ENVOI_CMD est défini : clé absente / illisible ou envoi en échec = ÉCHEC (code ≠ 0 + alerte).
+# ENVOI_CMD='rsync -a -e "ssh -i /root/.ssh/sauvegarde_storagebox -p 23" "$1/$2".* uVOTRE-COMPTE-sub1@uVOTRE-COMPTE.your-storagebox.de:sauvegardes/'
+# EXIGER_HORS_SERVEUR=1      # à poser une fois l'envoi en place : son absence devient un échec
+
+# ── Alertes ─────────────────────────────────────────────────────────────────────────────────────
+# Appelée à CHAQUE passage, succès comme échec, par les deux scripts :
+#   $1 = succes | echec    $2 = message (sans secret)    $3 = sauvegarde | restauration
+# Les variables utilisées DANS la commande doivent être « export »ées.
+#
+# Variante A — healthchecks.io (« homme mort ») : un contrôle par script. Sans ping de succès dans
+# le délai prévu (sauvegarde : 1 j + 1 h de grâce ; restauration : 31 j + 1 j), healthchecks.io prévient.
+# export HC_SAUVEGARDE=https://hc-ping.com/VOTRE-UUID-SAUVEGARDE
+# export HC_RESTAURATION=https://hc-ping.com/VOTRE-UUID-RESTAURATION
+# ALERTE_CMD='u=$HC_SAUVEGARDE; [ "$3" = restauration ] && u=$HC_RESTAURATION; [ "$1" = succes ] || u="$u/fail"; curl -fsS -m 10 --retry 3 -o /dev/null --data-raw "$3 : $2" "$u"'
+#
+# Variante B — e-mail via l'API Resend (échecs seulement ; clé API dédiée « envoi seul »).
+# export RESEND_API_KEY=VOTRE-CLE-RESEND
+# export ALERTE_DE=alertes@afroboosteur.com
+# export ALERTE_A=contact.artboost@gmail.com
+# ALERTE_CMD='[ "$1" = succes ] && exit 0; m=$(printf "%s : %s" "$3" "$2" | tr -d "\r\n\t" | sed "s/\\\\/\\\\\\\\/g; s/\"/\\\\\"/g"); curl -fsS -m 15 --retry 2 -o /dev/null https://api.resend.com/emails -H "Authorization: Bearer $RESEND_API_KEY" -H "Content-Type: application/json" -d "{\"from\":\"$ALERTE_DE\",\"to\":[\"$ALERTE_A\"],\"subject\":\"[Sauvegardes] ÉCHEC $3\",\"text\":\"$m\"}"'
+#
+# Les deux à la fois : écrire un petit script /root/sauvegardes-bases/outils/alerte.sh (700) qui fait
+# A puis B, et poser ALERTE_CMD='/root/sauvegardes-bases/outils/alerte.sh "$@"'.
+# ALERTE_DELAI_S=30          # délai maximal d'une alerte (commande « timeout »)
+
+# ── Test de restauration ────────────────────────────────────────────────────────────────────────
+# IMAGE=supabase/postgres:15.8.1.085     # la MÊME image que la production
+# EXIGER_STOCKAGE=1                       # une base sans archive de fichiers = échec
+# STOCKAGE_COHERENCE=strict               # ligne storage.objects sans fichier = échec (avertir = simple message)
+# VERIF_DIR=/root/sauvegardes-bases       # où extraire les fichiers pendant le test
